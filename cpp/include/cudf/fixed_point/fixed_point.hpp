@@ -706,6 +706,21 @@ CUDF_HOST_DEVICE inline fixed_point<Rep1, Rad1> operator*(fixed_point<Rep1, Rad1
     scaled_integer<Rep1>(lhs._value * rhs._value, scale_type{lhs._scale + rhs._scale})};
 }
 
+namespace detail {
+
+}  // namespace detail
+
+/**
+ * @brief Rounding modes for decimal division operations
+ *
+ * Specifies how to round the result when performing decimal division
+ * with scale preservation.
+ */
+enum class decimal_rounding_mode : int32_t {
+  HALF_UP   = 0,  ///< Round half away from zero
+  HALF_EVEN = 1   ///< Round half to even (banker's rounding)
+};
+
 // DIVISION Operation
 template <typename Rep1, Radix Rad1>
 CUDF_HOST_DEVICE inline fixed_point<Rep1, Rad1> operator/(fixed_point<Rep1, Rad1> const& lhs,
@@ -719,6 +734,131 @@ CUDF_HOST_DEVICE inline fixed_point<Rep1, Rad1> operator/(fixed_point<Rep1, Rad1
 
   return fixed_point<Rep1, Rad1>{
     scaled_integer<Rep1>(lhs._value / rhs._value, scale_type{lhs._scale - rhs._scale})};
+}
+
+/**
+ * @brief Performs decimal division with scale preservation
+ *
+ * This function divides two fixed-point numbers while preserving the scale
+ * of the dividend (left-hand side). This behavior is similar to Java's
+ * BigDecimal.divide(divisor, roundingMode) which maintains the dividend's scale.
+ *
+ * @tparam Rep1 The representation type of the fixed-point numbers
+ * @tparam Rad1 The radix of the fixed-point numbers
+ * @param lhs The dividend (left-hand side of division)
+ * @param rhs The divisor (right-hand side of division)
+ * @param rounding_mode The rounding mode to use (default: HALF_UP)
+ * @return A fixed-point number with the same scale as the dividend
+ */
+template <typename Rep1, Radix Rad1>
+CUDF_HOST_DEVICE inline fixed_point<Rep1, Rad1> divide_decimal(
+  fixed_point<Rep1, Rad1> const& lhs,
+  fixed_point<Rep1, Rad1> const& rhs,
+  decimal_rounding_mode rounding_mode = decimal_rounding_mode::HALF_UP)
+{
+  // Check for division by zero
+  // In CUDA device code, we cannot throw exceptions, so we assert
+  // In host code, this will cause undefined behavior (same as standard division)
+#if defined(__CUDACC_DEBUG__)
+  assert(rhs.value() != 0 && "division by zero");
+  assert(!detail::division_overflow<Rep1>(lhs.value(), rhs.value()) && "fixed_point overflow");
+#endif
+
+  // Scale up the dividend to maintain precision
+  // Result will have scale = lhs.scale()
+  // We need to compensate for the scale difference to preserve the dividend's scale
+  // Standard division would give us scale = lhs.scale() - rhs.scale()
+  // To preserve lhs.scale(), we need to scale up by 10^(-rhs.scale())
+  auto const scale_factor = detail::ipow<Rep1, Rad1>(-static_cast<int>(rhs.scale()));
+
+  // Check for potential overflow when scaling
+  bool overflow = multiplication_overflow<Rep1>(lhs.value(), scale_factor);
+
+  if (!overflow) {
+    // Standard calculation without overflow
+    Rep1 scaled_dividend = lhs.value() * scale_factor;
+    Rep1 quotient        = scaled_dividend / rhs.value();
+    Rep1 remainder       = scaled_dividend % rhs.value();
+
+    // Apply rounding based on remainder
+    if (rounding_mode == decimal_rounding_mode::HALF_UP) {
+      // Round half away from zero
+      // Avoid abs() ambiguity for __int128 by using conditional
+      auto abs_remainder = (remainder < 0) ? -remainder : remainder;
+      auto abs_divisor   = (rhs.value() < 0) ? -rhs.value() : rhs.value();
+      if (abs_remainder * 2 >= abs_divisor) {
+        // Round away from zero: if quotient is positive, add 1; if negative, subtract 1
+        quotient += (quotient >= 0) ? 1 : -1;
+      }
+    } else if (rounding_mode == decimal_rounding_mode::HALF_EVEN) {
+      // Banker's rounding
+      // Avoid abs() ambiguity for __int128 by using conditional
+      auto abs_rem_2   = ((remainder < 0) ? -remainder : remainder) * 2;
+      auto abs_divisor = (rhs.value() < 0) ? -rhs.value() : rhs.value();
+      if (abs_rem_2 > abs_divisor || (abs_rem_2 == abs_divisor && (quotient % 2) != 0)) {
+        // Round to nearest even: direction depends on quotient sign
+        quotient += (quotient >= 0) ? 1 : -1;
+      }
+    }
+
+    return fixed_point<Rep1, Rad1>{scaled_integer<Rep1>{quotient, lhs.scale()}};
+  }
+
+  // Handle overflow cases with type promotion
+  if constexpr (cuda::std::is_same_v<Rep1, int32_t>) {
+    // Try int64_t first
+    using WiderRep      = int64_t;
+    WiderRep wide_scale = static_cast<WiderRep>(scale_factor);
+    bool overflow_in_int64 =
+      multiplication_overflow<WiderRep>(static_cast<WiderRep>(lhs.value()), wide_scale);
+
+    if (!overflow_in_int64) {
+      WiderRep scaled_dividend = static_cast<WiderRep>(lhs.value()) * wide_scale;
+      WiderRep wide_divisor    = static_cast<WiderRep>(rhs.value());
+      WiderRep quotient        = scaled_dividend / wide_divisor;
+      WiderRep remainder       = scaled_dividend % wide_divisor;
+
+      // Apply rounding
+      if (rounding_mode == decimal_rounding_mode::HALF_UP) {
+        auto abs_remainder = (remainder < 0) ? -remainder : remainder;
+        auto abs_divisor   = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
+        if (abs_remainder * 2 >= abs_divisor) { quotient += (quotient >= 0) ? 1 : -1; }
+      } else if (rounding_mode == decimal_rounding_mode::HALF_EVEN) {
+        auto abs_rem_2   = ((remainder < 0) ? -remainder : remainder) * 2;
+        auto abs_divisor = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
+        if (abs_rem_2 > abs_divisor || (abs_rem_2 == abs_divisor && (quotient % 2) != 0)) {
+          quotient += (quotient >= 0) ? 1 : -1;
+        }
+      }
+
+      return fixed_point<Rep1, Rad1>{
+        scaled_integer<Rep1>{static_cast<Rep1>(quotient), lhs.scale()}};
+    }
+  }
+
+  // Fallback to __int128_t for severe overflow cases
+  using WidestRep           = __int128_t;
+  WidestRep wide_scale      = static_cast<WidestRep>(scale_factor);
+  WidestRep scaled_dividend = static_cast<WidestRep>(lhs.value()) * wide_scale;
+  WidestRep wide_divisor    = static_cast<WidestRep>(rhs.value());
+  WidestRep quotient        = scaled_dividend / wide_divisor;
+  WidestRep remainder       = scaled_dividend % wide_divisor;
+
+  // Apply rounding
+  if (rounding_mode == decimal_rounding_mode::HALF_UP) {
+    WidestRep abs_rem = (remainder < 0) ? -remainder : remainder;
+    WidestRep abs_div = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
+    if (abs_rem * 2 >= abs_div) { quotient += (quotient >= 0) ? 1 : -1; }
+  } else if (rounding_mode == decimal_rounding_mode::HALF_EVEN) {
+    WidestRep abs_rem   = (remainder < 0) ? -remainder : remainder;
+    WidestRep abs_div   = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
+    WidestRep abs_rem_2 = abs_rem * 2;
+    if (abs_rem_2 > abs_div || (abs_rem_2 == abs_div && (quotient % 2) != 0)) {
+      quotient += (quotient >= 0) ? 1 : -1;
+    }
+  }
+
+  return fixed_point<Rep1, Rad1>{scaled_integer<Rep1>{static_cast<Rep1>(quotient), lhs.scale()}};
 }
 
 // EQUALITY COMPARISON Operation

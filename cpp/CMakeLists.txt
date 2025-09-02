@@ -587,6 +587,7 @@ add_library(
   src/ast/jit/expressions.cpp
   src/ast/operators.cpp
   src/binaryop/binaryop.cpp
+  src/binaryop/decimal_ops.cu
   src/binaryop/compiled/ATan2.cu
   src/binaryop/compiled/Add.cu
   src/binaryop/compiled/BitwiseAnd.cu

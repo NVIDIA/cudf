@@ -26,28 +26,29 @@ def import_check(verbose=False, **kwargs):
 
 def functional_check(verbose=False, **kwargs):
     """Check that a basic groupby/aggregation runs and matches expected values."""
+    import pandas as pd
+
     import cudf
 
-    df = cudf.DataFrame({"a": [1, 2, 2], "b": [10, 20, 30]})
-    res = df.groupby("a", as_index=False).agg({"b": "sum"})
+    data = {"a": [1, 2, 2], "b": [10, 20, 30]}
+    res_pd = pd.DataFrame(data).groupby("a", as_index=False).agg({"b": "sum"})
+    res_cu = (
+        cudf.DataFrame(data).groupby("a", as_index=False).agg({"b": "sum"})
+    )
 
-    if len(res) != 2:
-        raise AssertionError(
-            f"Expected 2 group rows after groupby/agg, got {len(res)}"
-        )
+    got = res_cu.to_pandas()
 
-    got_a = res["a"].to_pandas().tolist()
-    expected_a = [1, 2]
-    if got_a != expected_a:
-        raise AssertionError(
-            f"groupby key column mismatch: got {got_a}, expected {expected_a}"
-        )
+    # cuDF groupby does not guarantee the same row order as pandas; align for
+    # comparison by sorting on all result columns.
+    got = got.sort_values(by=list(got.columns)).reset_index(drop=True)
+    expected = res_pd.sort_values(by=list(res_pd.columns)).reset_index(
+        drop=True
+    )
 
-    got_b = res["b"].to_pandas().tolist()
-    expected_b = [10, 50]
-    if got_b != expected_b:
+    if not got.equals(expected):
         raise AssertionError(
-            f"groupby sum mismatch: got {got_b}, expected {expected_b}"
+            "cuDF groupby/agg result does not match pandas after aligning order:\n"
+            f"cuDF (as pandas):\n{got}\n\npandas:\n{expected}"
         )
 
     if verbose:

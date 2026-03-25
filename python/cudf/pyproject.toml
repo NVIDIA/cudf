@@ -87,6 +87,11 @@ cudf-pandas-tests = [
 Homepage = "https://github.com/NVIDIA/cudf"
 Documentation = "https://docs.rapids.ai/api/cudf/stable/"
 
+[project.entry-points.rapids_doctor_check]
+cudf_import = "cudf.health_checks:import_check"
+cudf_functional = "cudf.health_checks:functional_check"
+cudf_functional_numba = "cudf.health_checks:functional_numba_check"
+
 [tool.pydistcheck]
 select = [
     "distro-too-large-compressed",

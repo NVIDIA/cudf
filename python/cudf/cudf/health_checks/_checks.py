@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-"""cuDF health checks for rapids doctor."""
+"""cuDF health checks for rapids doctor. Docs https://github.com/rapidsai/rapids-cli"""
 
 _INSTALL_DOCS = "https://docs.rapids.ai/install/"
 

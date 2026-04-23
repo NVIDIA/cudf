@@ -33,6 +33,8 @@
 
 #include <thrust/transform.h>
 
+#include <string>
+
 namespace cudf {
 namespace detail {
 
@@ -250,7 +252,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
   CUDF_EXPECTS(lhs.type().id() == type_id::DECIMAL32 || lhs.type().id() == type_id::DECIMAL64 ||
                  lhs.type().id() == type_id::DECIMAL128,
                "Column must be decimal type");
-  CUDF_EXPECTS(rhs.type() == lhs.type(), "Scalar type must match column type");
+  CUDF_EXPECTS(rhs.type() == lhs.type(), "Scalar type (" + std::to_string(int(rhs.type().id())) + ") must match column type (" + std::to_string(int(lhs.type().id())) + ")");
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
 

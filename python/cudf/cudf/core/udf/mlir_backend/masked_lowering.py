@@ -18,6 +18,7 @@ from numba_cuda_mlir.lowering_utilities import (
     false,
 )
 from numba_cuda_mlir.models import PrimitiveModel, register_model
+from numba_cuda_mlir.numba_cuda import typing as nb_typing
 from numba_cuda_mlir.numba_cuda.core import ir as numba_ir
 from numba_cuda_mlir.numba_cuda.types.misc import unliteral
 
@@ -199,6 +200,45 @@ def _lower_masked_na_compare(builder, target, args, kwargs, *, is_null):
     builder.store_var(target, valid)
 
 
+# datetime64 / timedelta64 ``+``/``-`` need numba_cuda_mlir's ``datetime``
+# lowering (which scales by unit), not a raw i64 op.
+def _needs_datetimelike_delegate(op, ty1, ty2):
+    if op not in (operator.add, operator.sub):
+        return False
+    return isinstance(
+        ty1, (types.NPDatetime, types.NPTimedelta)
+    ) or isinstance(ty2, (types.NPDatetime, types.NPTimedelta))
+
+
+def _apply_masked_datetimelike_binary(
+    builder, target, target_type, v1, v2, result_valid, op, ty1, ty2,
+    ref_var,
+):
+    """Delegate ``dt/td +/- dt/td`` to the registered scalar datetime
+    lowering, then pack with the (already-computed) validity."""
+    ret_ty = target_type.value_type
+    nb_sig = nb_typing.signature(ret_ty, ty1, ty2)
+    cg = builder.get_registered_builder(op, nb_sig)
+    if cg is None:
+        raise NotImplementedError(
+            f"No MLIR lowering for masked {op!r} with {ty1}, {ty2}; "
+            f"signature {nb_sig}"
+        )
+    in1 = _make_temp_var(builder, ref_var, "mdt_l", ty1)
+    in2 = _make_temp_var(builder, ref_var, "mdt_r", ty2)
+    outv = _make_temp_var(builder, ref_var, "mdt_o", ret_ty)
+    builder.store_var(in1, convert(v1, builder.get_mlir_type(ty1)))
+    builder.store_var(in2, convert(v2, builder.get_mlir_type(ty2)))
+    cg(builder, outv, [in1, in2], ())
+    result_val = convert(
+        builder.load_var(outv), builder.get_mlir_type(ret_ty)
+    )
+    packed = _pack_masked(
+        builder, target_type, result_val, result_valid
+    )
+    builder.store_var(target, packed)
+
+
 def _apply_masked_binary_op(
     builder: MLIRLower,
     target: Var,
@@ -207,11 +247,29 @@ def _apply_masked_binary_op(
     v2: mlir_ir.Value,
     result_valid: mlir_ir.Value,
     op: Callable,
+    *,
+    inner_ty1: types.Type | None = None,
+    inner_ty2: types.Type | None = None,
+    ref_var: Var | None = None,
 ) -> None:
     """Apply ``op(v1, v2)`` to two scalar MLIR values, convert the result to
     the target Masked's value type, and pack it with the given validity bit.
     Numeric/boolean only at this layer.
     """
+    # datetime/timedelta add/sub: delegate to the unit-aware scalar
+    # lowering when we know the operand inner types.
+    if (
+        inner_ty1 is not None
+        and inner_ty2 is not None
+        and ref_var is not None
+        and _needs_datetimelike_delegate(op, inner_ty1, inner_ty2)
+    ):
+        _apply_masked_datetimelike_binary(
+            builder, target, target_type, v1, v2, result_valid, op,
+            inner_ty1, inner_ty2, ref_var,
+        )
+        return
+
     target_value_mlir_ty = builder.get_mlir_type(target_type.value_type)
     v1, v2 = coerce_numpy_scalars_for_binary_op(v1, v2)
     # Comparisons compute on the (already coerced) operand type and
@@ -239,8 +297,11 @@ def _make_lower_masked_binary(op: Callable) -> Callable:
         v1, valid1 = _extract_masked_value_valid(m1, st1.body[0], st1.body[1])
         v2, valid2 = _extract_masked_value_valid(m2, st2.body[0], st2.body[1])
         result_valid = arith.andi(valid1, valid2)
+        ty1 = builder.get_numba_type(args[0].name).value_type
+        ty2 = builder.get_numba_type(args[1].name).value_type
         _apply_masked_binary_op(
-            builder, target, target_type, v1, v2, result_valid, op
+            builder, target, target_type, v1, v2, result_valid, op,
+            inner_ty1=ty1, inner_ty2=ty2, ref_var=args[0],
         )
 
     return _lower
@@ -287,13 +348,20 @@ def _make_lower_masked_binary_scalar(
         st = llvm.StructType(m.type)
         m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         s_val = _scalar_value_from_var(builder, s_var)
+        m_inner_ty = builder.get_numba_type(m_var.name).value_type
+        s_ty = builder.get_numba_type(s_var.name)
+        s_inner_ty = (
+            unliteral(s_ty) if isinstance(s_ty, types.Literal) else s_ty
+        )
         if masked_first:
             _apply_masked_binary_op(
-                builder, target, target_type, m_val, s_val, m_valid, op
+                builder, target, target_type, m_val, s_val, m_valid, op,
+                inner_ty1=m_inner_ty, inner_ty2=s_inner_ty, ref_var=m_var,
             )
         else:
             _apply_masked_binary_op(
-                builder, target, target_type, s_val, m_val, m_valid, op
+                builder, target, target_type, s_val, m_val, m_valid, op,
+                inner_ty1=s_inner_ty, inner_ty2=m_inner_ty, ref_var=m_var,
             )
 
     return _lower

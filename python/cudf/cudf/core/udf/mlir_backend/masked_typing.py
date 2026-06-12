@@ -27,14 +27,24 @@ from cudf.core.udf._ops import (
 )
 from cudf.core.udf.api import Masked
 
+# Datetime / timedelta resolutions cudf UDFs support. Mirrors the units
+# used by the column dtypes flowing into the kernels.
+_units = ("ns", "us", "ms", "s")
+
 _SUPPORTED_MASKED_VALUE_TYPE_CLASSES = (
     types.Number,
     types.Boolean,
+    types.NPDatetime,
+    types.NPTimedelta,
 )
 
 
 _supported_value_type_instances = (
-    nb_types.integer_domain | nb_types.real_domain | {nb_types.boolean}
+    nb_types.integer_domain
+    | nb_types.real_domain
+    | {nb_types.boolean}
+    | {nb_types.NPDatetime(u) for u in _units}
+    | {nb_types.NPTimedelta(u) for u in _units}
 )
 
 

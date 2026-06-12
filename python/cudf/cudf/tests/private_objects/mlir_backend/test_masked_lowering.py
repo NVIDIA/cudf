@@ -666,3 +666,135 @@ def test_masked_int_cast():
     )
     assert int(out_v.get()[0]) == 3
     assert bool(out_valid.get()[0]) is False
+
+
+# --- datetime / timedelta -------------------------------------------------
+#
+# cupy rejects datetime64/timedelta64 dtypes directly, so device arrays are
+# allocated as int64 and viewed as the temporal dtype (the same trick
+# ``cudf.core.udf.utils._return_arr_from_dtype`` uses).
+
+_DT = types.NPDatetime("ns")
+_TD = types.NPTimedelta("ns")
+
+
+def _dt_in(values):
+    return cp.asarray(np.array(values, dtype="int64")).view("datetime64[ns]")
+
+
+def _td_in(values):
+    return cp.asarray(np.array(values, dtype="int64")).view("timedelta64[ns]")
+
+
+def _dt_out():
+    return cp.zeros(1, dtype=np.int64).view("datetime64[ns]")
+
+
+def _td_out():
+    return cp.zeros(1, dtype=np.int64).view("timedelta64[ns]")
+
+
+def _bool(v):
+    return cp.array([v], dtype=np.bool_)
+
+
+def test_masked_datetime_minus_datetime_is_timedelta():
+    """``Masked(dt) - Masked(dt)`` -> Masked(timedelta), unit-aware."""
+
+    @cuda.jit(
+        types.void(
+            _TD[::1], types.boolean[::1],
+            _DT[::1], types.boolean[::1],
+            _DT[::1], types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av, b, bv):
+        m = Masked(a[0], av[0]) - Masked(b[0], bv[0])
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = _td_out()
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(k, out_v, out_valid, _dt_in([1000]), _bool(True),
+            _dt_in([400]), _bool(True))
+    assert int(out_v.get().view("int64")[0]) == 600
+    assert bool(out_valid.get()[0]) is True
+
+
+def test_masked_datetime_plus_timedelta_is_datetime():
+    """``Masked(dt) + Masked(td)`` -> Masked(datetime)."""
+
+    @cuda.jit(
+        types.void(
+            _DT[::1],
+            _DT[::1], types.boolean[::1],
+            _TD[::1], types.boolean[::1],
+        )
+    )
+    def k(out_v, a, av, t, tv):
+        out_v[0] = (Masked(a[0], av[0]) + Masked(t[0], tv[0])).value
+
+    out_v = _dt_out()
+    _launch(k, out_v, _dt_in([1000]), _bool(True), _td_in([250]), _bool(True))
+    assert int(out_v.get().view("int64")[0]) == 1250
+
+
+def test_masked_timedelta_plus_timedelta_is_timedelta():
+    """``Masked(td) + Masked(td)`` -> Masked(timedelta)."""
+
+    @cuda.jit(
+        types.void(
+            _TD[::1],
+            _TD[::1], types.boolean[::1],
+            _TD[::1], types.boolean[::1],
+        )
+    )
+    def k(out_v, a, av, b, bv):
+        out_v[0] = (Masked(a[0], av[0]) + Masked(b[0], bv[0])).value
+
+    out_v = _td_out()
+    _launch(k, out_v, _td_in([300]), _bool(True), _td_in([120]), _bool(True))
+    assert int(out_v.get().view("int64")[0]) == 420
+
+
+@pytest.mark.parametrize(
+    "op,ref", [(operator.lt, lambda a, b: a < b), (operator.gt, lambda a, b: a > b)]
+)
+def test_masked_datetime_comparison(op, ref):
+    """Comparisons on datetime payloads flow through the numeric path."""
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            _DT[::1], types.boolean[::1],
+            _DT[::1], types.boolean[::1],
+        )
+    )
+    def k(out, a, av, b, bv):
+        out[0] = op(Masked(a[0], av[0]), Masked(b[0], bv[0])).value
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(k, out, _dt_in([400]), _bool(True), _dt_in([1000]), _bool(True))
+    assert bool(out.get()[0]) == ref(400, 1000)
+
+
+def test_masked_datetime_arith_validity_propagates():
+    """One invalid datetime operand -> invalid timedelta result."""
+
+    @cuda.jit(
+        types.void(
+            _TD[::1], types.boolean[::1],
+            _DT[::1], types.boolean[::1],
+            _DT[::1], types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av, b, bv):
+        m = Masked(a[0], av[0]) - Masked(b[0], bv[0])
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = _td_out()
+    out_valid = cp.ones(1, dtype=np.bool_)
+    _launch(k, out_v, out_valid, _dt_in([1000]), _bool(True),
+            _dt_in([400]), _bool(False))
+    assert bool(out_valid.get()[0]) is False

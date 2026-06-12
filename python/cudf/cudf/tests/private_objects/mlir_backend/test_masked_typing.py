@@ -56,6 +56,17 @@ def test_masked_type_unsupported_value_becomes_poison():
     assert isinstance(masked.value_type, types.Poison)
 
 
+@pytest.mark.parametrize("unit", ["ns", "us", "ms", "s"])
+def test_masked_datetime_timedelta_not_poisoned(unit):
+    """``MaskedType(datetime64/timedelta64)`` keeps its value type (not Poison)."""
+    dt = MaskedType(types.NPDatetime(unit))
+    td = MaskedType(types.NPTimedelta(unit))
+    assert dt.value_type == types.NPDatetime(unit)
+    assert td.value_type == types.NPTimedelta(unit)
+    assert not isinstance(dt.value_type, types.Poison)
+    assert not isinstance(td.value_type, types.Poison)
+
+
 def test_na_type_singleton_repr():
     """``NAType`` repr is ``"NA"``."""
     from cudf.core.udf.mlir_backend.masked_typing import NAType, na_type

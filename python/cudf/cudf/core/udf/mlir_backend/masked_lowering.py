@@ -9,13 +9,19 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numba_cuda_mlir import types
 from numba_cuda_mlir._mlir import ir as mlir_ir
-from numba_cuda_mlir._mlir.dialects import arith, llvm
+from numba_cuda_mlir._mlir.dialects import arith, linalg, llvm, tensor
+from numba_cuda_mlir._mlir.extras import types as T
 from numba_cuda_mlir.extending import lower_cast, lowering_registry
 from numba_cuda_mlir.lowering_utilities import (
     bool_of,
     coerce_numpy_scalars_for_binary_op,
+    concretize_tuple_to_tensor,
     convert,
+    equal,
     false,
+    float_of,
+    int_of,
+    try_extract_constant,
 )
 from numba_cuda_mlir.models import PrimitiveModel, register_model
 from numba_cuda_mlir.numba_cuda import typing as nb_typing
@@ -497,6 +503,90 @@ def _make_lower_masked_numeric_cast():
     return _lower
 
 
+# --- membership: ``value in container`` -> Masked(boolean) ----------------
+def _const_mlir_for_membership(py_const, mlir_ty):
+    if isinstance(py_const, float):
+        return float_of(py_const, mlir_ty)
+    if isinstance(py_const, bool):
+        return int_of(int(py_const), mlir_ty)
+    return int_of(py_const, mlir_ty)
+
+
+# ``value in (c0, c1, ...)`` literal tuple: OR of equality vs each const.
+def _lower_masked_literal_tuple_contains(builder, target, args, kwargs):
+    tup = builder.load_var(args[0])
+    m = builder.load_var(args[1])
+    st = llvm.StructType(m.type)
+    m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
+
+    constant_values = []
+    for x in tup:
+        cv = try_extract_constant(x)
+        if cv is None:
+            raise NotImplementedError(
+                "Masked membership in a tuple is only implemented for "
+                f"constant tuple elements, got {x!r}"
+            )
+        constant_values.append(cv)
+
+    result = false()
+    for const_val in constant_values:
+        c = _const_mlir_for_membership(const_val, m_val.type)
+        m_v, c_v = coerce_numpy_scalars_for_binary_op(m_val, c)
+        result = arith.ori(result, equal(m_v, c_v))
+
+    bool_mlir_ty = builder.get_mlir_type(types.boolean)
+    undef_bool = llvm.UndefOp(bool_mlir_ty)
+    final_bool = arith.select(m_valid, result, undef_bool)
+    target_type = builder.get_numba_type(target.name)
+    packed = _pack_masked(builder, target_type, final_bool, m_valid)
+    builder.store_var(target, packed)
+
+
+# ``value in homogeneous_tuple``: reduce equality across the tuple.
+def _lower_masked_unittuple_contains(builder, target, args, kwargs):
+    tup = builder.load_var(args[0])
+    if not isinstance(tup, tuple):
+        raise NotImplementedError(
+            f"UniTuple contains expects a lowered tuple, got {type(tup)}"
+        )
+    tup_t = concretize_tuple_to_tensor(tup)
+
+    m = builder.load_var(args[1])
+    st = llvm.StructType(m.type)
+    m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
+    elem_ty = tup_t.type.element_type
+    m_cmp = convert(m_val, elem_ty)
+
+    def body(_op, element, accumulator):
+        found = equal(element, m_cmp)
+        found = arith.ori(found, accumulator)
+        linalg.yield_([found])
+
+    result_type = mlir_ir.RankedTensorType.get((), T.bool())
+    init = tensor.splat(result_type, false(), [])
+    dims_attr = mlir_ir.DenseI64ArrayAttr.get([0])
+    reduce_op = linalg.ReduceOp(
+        result=[result_type],
+        inputs=[tup_t],
+        inits=[init],
+        dimensions=dims_attr,
+    )
+    block = reduce_op.combiner.blocks.append(
+        tup_t.type.element_type, result_type.element_type
+    )
+    with mlir_ir.InsertionPoint(block):
+        body(reduce_op, *block.arguments)
+    combined = bool_of(tensor.extract(reduce_op.results[0], []))
+
+    bool_mlir_ty = builder.get_mlir_type(types.boolean)
+    undef_bool = llvm.UndefOp(bool_mlir_ty)
+    final_bool = arith.select(m_valid, combined, undef_bool)
+    target_type = builder.get_numba_type(target.name)
+    packed = _pack_masked(builder, target_type, final_bool, m_valid)
+    builder.store_var(target, packed)
+
+
 def _register() -> None:
     """Register the data model and lowerings with ``numba_cuda_mlir``.
 
@@ -558,6 +648,13 @@ def _register() -> None:
 
     lower(float, MaskedType)(_make_lower_masked_numeric_cast())
     lower(int, MaskedType)(_make_lower_masked_numeric_cast())
+
+    lower(operator.contains, types.Tuple, MaskedType)(
+        _lower_masked_literal_tuple_contains
+    )
+    lower(operator.contains, types.UniTuple, MaskedType)(
+        _lower_masked_unittuple_contains
+    )
 
 
 _register()

@@ -275,6 +275,32 @@ class MaskedScalarAbsoluteValue(AbstractTemplate):
         return None
 
 
+# ``value in (a, b, ...)`` membership -> Masked(boolean). ``value`` is a
+# Masked scalar; the container is a literal Tuple of constants or a
+# homogeneous UniTuple. (String membership -- substr in str -- arrives with
+# the string value type in a later PR.)
+def _is_masked_membership_item(ty):
+    return isinstance(ty, MaskedType) and not isinstance(
+        ty.value_type, types.Poison
+    )
+
+
+class MaskedSequenceContainsTemplate(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) != 2 or kws:
+            return None
+        container, item = args
+        if not _is_masked_membership_item(item):
+            return None
+        if isinstance(container, types.Tuple) and all(
+            isinstance(x, types.Literal) for x in container.types
+        ):
+            return nb_signature(MaskedType(types.boolean), container, item)
+        if isinstance(container, types.UniTuple):
+            return nb_signature(MaskedType(types.boolean), container, item)
+        return None
+
+
 def _register() -> None:
     """Register typing for ``Masked`` and ``MaskedType`` attributes with
     ``numba_cuda_mlir``. Called once at module import.
@@ -296,6 +322,10 @@ def _register() -> None:
     typing_registry.register_global(float)(MaskedScalarFloatCast)
     typing_registry.register_global(int)(MaskedScalarIntCast)
     typing_registry.register_global(abs)(MaskedScalarAbsoluteValue)
+
+    typing_registry.register_global(operator.contains)(
+        MaskedSequenceContainsTemplate
+    )
 
 
 _register()

@@ -25,7 +25,7 @@ from cudf.core.udf._ops import (
     comparison_ops,
     unary_ops,
 )
-from cudf.core.udf.api import Masked
+from cudf.core.udf.api import Masked, pack_return
 
 # Datetime / timedelta resolutions cudf UDFs support. Mirrors the units
 # used by the column dtypes flowing into the kernels.
@@ -301,6 +301,18 @@ class MaskedSequenceContainsTemplate(AbstractTemplate):
         return None
 
 
+# ``pack_return(x)`` -> Masked. Identity for a Masked input; wrap a bare
+# numeric/boolean scalar with valid=True. Used by the apply-kernel templates
+# to normalize a UDF's return value (which may be a Masked or a plain scalar).
+class PackReturnTemplate(AbstractTemplate):
+    def generic(self, args, kws):
+        if isinstance(args[0], MaskedType):
+            return nb_signature(args[0], args[0])
+        if isinstance(args[0], (types.Number, types.Boolean)):
+            return nb_signature(MaskedType(args[0]), args[0])
+        return None
+
+
 def _register() -> None:
     """Register typing for ``Masked`` and ``MaskedType`` attributes with
     ``numba_cuda_mlir``. Called once at module import.
@@ -326,6 +338,8 @@ def _register() -> None:
     typing_registry.register_global(operator.contains)(
         MaskedSequenceContainsTemplate
     )
+
+    typing_registry.register_global(pack_return)(PackReturnTemplate)
 
 
 _register()

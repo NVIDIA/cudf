@@ -871,3 +871,72 @@ def test_masked_in_tuple_invalid_propagates():
         cp.array([False], dtype=np.bool_),
     )
     assert bool(out_valid.get()[0]) is False
+
+
+# --- pack_return -----------------------------------------------------------
+#
+# ``pack_return`` is the bridge the apply-kernel templates call on a UDF's
+# return value. Calling it directly here exercises the two lowering paths in
+# isolation, well before the kernel templates that use it exist in the stack.
+
+
+from cudf.core.udf.api import pack_return  # noqa: E402
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_pack_return_masked_is_identity(valid):
+    """``pack_return(masked)`` passes the struct through unchanged."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1], types.boolean[::1],
+            types.int64[::1], types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = pack_return(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k, out_v, out_valid,
+        cp.array([42], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == 42
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize("nb_ty,np_dtype,sample", _DTYPE_SAMPLES)
+def test_pack_return_scalar_wraps_valid(nb_ty, np_dtype, sample):
+    """``pack_return(scalar)`` -> Masked(scalar, valid=True) for every dtype."""
+
+    @cuda.jit(types.void(nb_ty[::1], types.boolean[::1], nb_ty[::1]))
+    def k(out_v, out_valid, a):
+        m = pack_return(a[0])
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np_dtype)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(k, out_v, out_valid, cp.array([sample], dtype=np_dtype))
+    assert out_v.get()[0] == sample
+    assert bool(out_valid.get()[0]) is True
+
+
+def test_pack_return_scalar_literal_constant():
+    """A bare integer literal returned from the UDF wraps to valid Masked."""
+
+    @cuda.jit(types.void(types.int64[::1], types.boolean[::1]))
+    def k(out_v, out_valid):
+        m = pack_return(7)
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(k, out_v, out_valid)
+    assert int(out_v.get()[0]) == 7
+    assert bool(out_valid.get()[0]) is True

@@ -34,7 +34,7 @@ from cudf.core.udf._ops import (
     comparison_ops,
     unary_ops,
 )
-from cudf.core.udf.api import Masked
+from cudf.core.udf.api import Masked, pack_return
 from cudf.core.udf.mlir_backend.masked_typing import (
     MaskedType,
     NAType,
@@ -586,6 +586,26 @@ def _lower_masked_unittuple_contains(builder, target, args, kwargs):
     builder.store_var(target, packed)
 
 
+# --- pack_return ----------------------------------------------------------
+# ``pack_return(masked)`` -> identity.
+def _lower_pack_return_masked(builder, target, args, kwargs):
+    builder.store_var(target, builder.load_var(args[0]))
+
+
+# ``pack_return(scalar)`` -> Masked(scalar, True).
+def _lower_pack_return_scalar(builder, target, args, kwargs):
+    target_type = builder.get_numba_type(target.name)
+    value_mlir_ty = builder.get_mlir_type(target_type.value_type)
+    scalar_val = convert(builder.load_var(args[0]), value_mlir_ty)
+    valid_one = arith.constant(
+        result=builder.get_mlir_type(types.boolean), value=1
+    )
+    packed = _pack_masked(
+        builder, target_type, scalar_val, valid_one
+    )
+    builder.store_var(target, packed)
+
+
 def _register() -> None:
     """Register the data model and lowerings with ``numba_cuda_mlir``.
 
@@ -654,6 +674,26 @@ def _register() -> None:
     lower(operator.contains, types.UniTuple, MaskedType)(
         _lower_masked_unittuple_contains
     )
+
+    lower(pack_return, MaskedType)(_lower_pack_return_masked)
+    # Register per concrete scalar shape so the dispatcher matches exactly
+    # rather than falling through ``types.Number`` (which would shadow
+    # Boolean).
+    for scalar_ty in (
+        types.Integer,
+        types.int8,
+        types.int16,
+        types.int32,
+        types.int64,
+        types.uint8,
+        types.uint16,
+        types.uint32,
+        types.uint64,
+        types.float32,
+        types.float64,
+        types.boolean,
+    ):
+        lower(pack_return, scalar_ty)(_lower_pack_return_scalar)
 
 
 _register()

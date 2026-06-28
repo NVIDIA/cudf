@@ -134,9 +134,9 @@ std::unique_ptr<column> label_bins(column_view const& input,
   // for columns of compound types. The column_view iterators fail for compound
   // types because they return raw pointers to the start of the data. The output
   // does not require these iterators because it's always a primitive type.
-  auto input_device_view       = column_device_view::create(input, stream);
-  auto left_edges_device_view  = column_device_view::create(left_edges, stream);
-  auto right_edges_device_view = column_device_view::create(right_edges, stream);
+  auto input_device_view       = column_device_view::create(input, stream, mr.as_temporary());
+  auto left_edges_device_view  = column_device_view::create(left_edges, stream, mr.as_temporary());
+  auto right_edges_device_view = column_device_view::create(right_edges, stream, mr.as_temporary());
 
   auto left_begin  = left_edges_device_view->begin<T>();
   auto left_end    = left_edges_device_view->end<T>();
@@ -145,7 +145,7 @@ std::unique_ptr<column> label_bins(column_view const& input,
   using RandomAccessIterator = decltype(left_edges_device_view->begin<T>());
 
   dispatch_bool(input.has_nulls(), [&](auto has_nulls) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       input_device_view->pair_begin<T, has_nulls>(),
                       input_device_view->pair_end<T, has_nulls>(),
                       output_begin,

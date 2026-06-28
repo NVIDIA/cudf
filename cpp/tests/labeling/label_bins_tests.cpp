@@ -50,42 +50,34 @@ void expect_label_bins_uses_explicit_memory_resources(
   cudf::column_view expected,
   bool expect_device_allocations)
 {
-  auto stream = cudf::get_default_stream();
-  auto result = [&] {
-    auto current_scope = harness.fail_on_current_device_resource_use();
-    auto output        = cudf::label_bins(input,
-                                   left_edges,
-                                   cudf::inclusive::YES,
-                                   right_edges,
-                                   cudf::inclusive::NO,
-                                   stream,
-                                   harness.resources());
-    harness.synchronize(stream);
-    return output;
-  }();
-
+  auto const stream = cudf::get_default_stream();
+  auto expectations = cudf::test::memory_resource_expectations{};
   if (expect_device_allocations) {
-    harness.expect_output_allocations_live(stream);
-    harness.expect_temporary_allocation_activity(stream);
-    harness.expect_temporary_allocations_released(stream);
-    auto const output_bytes = harness.output_mr().get_bytes_counter();
-    EXPECT_EQ(result->alloc_size(), static_cast<std::size_t>(output_bytes.value));
-    EXPECT_EQ(result->alloc_size(), static_cast<std::size_t>(output_bytes.total));
-  } else {
-    harness.expect_no_live_allocations(stream);
-    EXPECT_EQ(0, harness.output_mr().get_bytes_counter().total);
-    EXPECT_EQ(0, harness.temporary_mr().get_bytes_counter().total);
+    expectations.temporary = cudf::test::temporary_allocation_expectation::SOME;
   }
 
-  auto comparison_resources = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
-                                 result->view(),
-                                 cudf::test::debug_output_level::FIRST_ERROR,
-                                 stream,
-                                 comparison_resources);
-
-  result.reset();
-  harness.expect_no_live_allocations(stream);
+  auto const comparison_resources = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources resources) {
+      return cudf::label_bins(input,
+                              left_edges,
+                              cudf::inclusive::YES,
+                              right_edges,
+                              cudf::inclusive::NO,
+                              stream,
+                              resources);
+    },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) {
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
+                                     result->view(),
+                                     cudf::test::debug_output_level::FIRST_ERROR,
+                                     stream,
+                                     comparison_resources);
+    },
+    expectations,
+    stream);
 }
 
 /*

@@ -134,6 +134,35 @@ repos:
         language: script
         types_or: [c, c++, cuda]
         files: '^cpp/(src|include|tests/utilities)/'
+      - id: test-api-memory-resources
+        name: test-api-memory-resources
+        description: 'Require reusable allocating test APIs to use cudf::memory_resources and its role-specific accessors'
+        entry: ./ci/check_test_memory_resources.py
+        language: script
+        types_or: [c, c++, cuda]
+        files: |
+          (?x)^cpp/(
+            include/cudf_test/(
+              column_wrapper[.]hpp
+              | timestamp_utilities[.]cuh
+              | column_utilities[.]hpp
+              | table_utilities[.]hpp
+              | debug_utilities[.]hpp
+              | tdigest_utilities[.]hpp
+              | nanoarrow_utils[.]hpp
+            )
+            | tests/utilities/(
+              column_utilities[.]cu
+              | table_utilities[.]cu
+              | debug_utilities[.]cu
+              | tdigest_utilities[.]cpp
+            )
+            | tests/interop/(
+              from_arrow_host_test[.]cpp
+              | from_arrow_stream_test[.]cpp
+              | to_arrow_device_test[.]cpp
+            )
+          )$
       - id: use-cuda-memcpy-default
         name: use-cuda-memcpy-default
         description: 'Enforce that cudaMemcpyDefault is used instead of explicit host/device cudaMemcpyKind policies'

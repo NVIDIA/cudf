@@ -503,7 +503,6 @@ def _make_lower_masked_numeric_cast():
     return _lower
 
 
-# --- membership: ``value in container`` -> Masked(boolean) ----------------
 def _const_mlir_for_membership(py_const, mlir_ty):
     if isinstance(py_const, float):
         return float_of(py_const, mlir_ty)

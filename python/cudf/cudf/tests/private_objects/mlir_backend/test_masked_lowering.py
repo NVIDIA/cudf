@@ -799,12 +799,9 @@ def test_masked_datetime_arith_validity_propagates():
     assert bool(out_valid.get()[0]) is False
 
 
-# --- membership: value in (...) -------------------------------------------
-
-
 @pytest.mark.parametrize("x,expected", [(1, True), (3, True), (5, True), (4, False), (0, False)])
 def test_masked_in_literal_tuple_int(x, expected):
-    """``Masked(int) in (1, 3, 5)`` (literal tuple) -> Masked(boolean)."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.boolean[::1], types.int64[::1], types.boolean[::1]))
     def k(out, a, av):
@@ -817,7 +814,7 @@ def test_masked_in_literal_tuple_int(x, expected):
 
 @pytest.mark.parametrize("x,expected", [(1.5, True), (2.5, True), (9.9, False)])
 def test_masked_in_literal_tuple_float(x, expected):
-    """Literal-tuple membership works for float payloads too."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.boolean[::1], types.float64[::1], types.boolean[::1]))
     def k(out, a, av):
@@ -830,7 +827,7 @@ def test_masked_in_literal_tuple_float(x, expected):
 
 @pytest.mark.parametrize("x,expected", [(2, True), (7, True), (9, True), (8, False)])
 def test_masked_in_unittuple_int(x, expected):
-    """``Masked(int) in (a, b, c)`` (runtime homogeneous UniTuple)."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -853,7 +850,7 @@ def test_masked_in_unittuple_int(x, expected):
 
 
 def test_masked_in_tuple_invalid_propagates():
-    """An invalid Masked operand makes the membership result invalid."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(

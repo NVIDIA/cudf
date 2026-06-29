@@ -668,7 +668,6 @@ def test_masked_int_cast():
     assert bool(out_valid.get()[0]) is False
 
 
-# --- datetime / timedelta -------------------------------------------------
 #
 # cupy rejects datetime64/timedelta64 dtypes directly, so device arrays are
 # allocated as int64 and viewed as the temporal dtype (the same trick
@@ -699,7 +698,7 @@ def _bool(v):
 
 
 def test_masked_datetime_minus_datetime_is_timedelta():
-    """``Masked(dt) - Masked(dt)`` -> Masked(timedelta), unit-aware."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -722,7 +721,7 @@ def test_masked_datetime_minus_datetime_is_timedelta():
 
 
 def test_masked_datetime_plus_timedelta_is_datetime():
-    """``Masked(dt) + Masked(td)`` -> Masked(datetime)."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -740,7 +739,7 @@ def test_masked_datetime_plus_timedelta_is_datetime():
 
 
 def test_masked_timedelta_plus_timedelta_is_timedelta():
-    """``Masked(td) + Masked(td)`` -> Masked(timedelta)."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -761,7 +760,7 @@ def test_masked_timedelta_plus_timedelta_is_timedelta():
     "op,ref", [(operator.lt, lambda a, b: a < b), (operator.gt, lambda a, b: a > b)]
 )
 def test_masked_datetime_comparison(op, ref):
-    """Comparisons on datetime payloads flow through the numeric path."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -779,7 +778,7 @@ def test_masked_datetime_comparison(op, ref):
 
 
 def test_masked_datetime_arith_validity_propagates():
-    """One invalid datetime operand -> invalid timedelta result."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(

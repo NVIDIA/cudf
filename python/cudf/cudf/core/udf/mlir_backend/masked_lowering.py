@@ -214,8 +214,7 @@ def _apply_masked_datetimelike_binary(
     builder, target, target_type, v1, v2, result_valid, op, ty1, ty2,
     ref_var,
 ):
-    """Delegate ``dt/td +/- dt/td`` to the registered scalar datetime
-    lowering, then pack with the (already-computed) validity."""
+    """TODO: write docstring."""
     ret_ty = target_type.value_type
     nb_sig = nb_typing.signature(ret_ty, ty1, ty2)
     cg = builder.get_registered_builder(op, nb_sig)

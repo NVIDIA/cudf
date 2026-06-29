@@ -314,12 +314,7 @@ def _lower_masked_binary_null(
 
 
 def _make_temp_var(builder, base_var, name_suffix, numba_type):
-    """Create a synthetic IR var + typemap entry.
-
-    Used to feed a scalar value into a registered numba_cuda_mlir scalar
-    lowering (e.g. ``math.sin``) and read its result back, since those
-    lowerings operate on IR vars rather than raw SSA values.
-    """
+    """TODO: write docstring."""
     scope = getattr(base_var, "scope", None)
     loc = getattr(base_var, "loc", None)
     name = f"$masked_uop_{base_var.name}_{name_suffix}"
@@ -328,7 +323,6 @@ def _make_temp_var(builder, base_var, name_suffix, numba_type):
     return temp
 
 
-# --- Unary ops ------------------------------------------------------------
 # Generic unary: delegate the scalar op to the registered numba_cuda_mlir
 # scalar lowering (``math.sin`` -> math dialect, ``operator.neg`` -> arith,
 # etc.), then re-wrap with the operand's validity.

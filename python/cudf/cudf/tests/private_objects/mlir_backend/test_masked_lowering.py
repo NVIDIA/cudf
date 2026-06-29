@@ -467,14 +467,11 @@ def test_masked_binary_with_na_is_invalid(na_first):
     assert bool(out_valid.get()[0]) is False
 
 
-# --- unary ops + coercions -------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "op,ref", [(operator.neg, lambda x: -x), (operator.pos, lambda x: +x)]
 )
 def test_masked_unary_sign(op, ref):
-    """``-m`` / ``+m`` apply the scalar op and carry validity."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -505,7 +502,7 @@ def test_masked_unary_sign(op, ref):
 
 @pytest.mark.parametrize("x", [5, 0, -6, 255])
 def test_masked_invert(x):
-    """``~m`` is bitwise-not on the integer payload."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.int64[::1], types.int64[::1], types.boolean[::1]))
     def k(out, a, av):
@@ -526,7 +523,7 @@ def test_masked_invert(x):
     ],
 )
 def test_masked_unary_math(fn, ref):
-    """``math.*`` unary ops delegate to the scalar lowering."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.float64[::1], types.float64[::1], types.boolean[::1]))
     def k(out, a, av):
@@ -541,7 +538,7 @@ def test_masked_unary_math(fn, ref):
 
 @pytest.mark.parametrize("x", [-9, 0, 12])
 def test_masked_abs(x):
-    """``abs(m)`` -> Masked with the absolute value."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -579,7 +576,7 @@ def test_masked_abs(x):
     ],
 )
 def test_masked_bool_truth(value, valid, expected):
-    """``bool(m)`` is ``m.valid and bool(m.value)``."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.boolean[::1], types.int64[::1], types.boolean[::1]))
     def k(out, a, av):
@@ -596,7 +593,7 @@ def test_masked_bool_truth(value, valid, expected):
 
 
 def test_masked_bool_in_if_condition():
-    """``bool(m)`` works as an ``if`` predicate inside a UDF."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.int64[::1], types.int64[::1], types.boolean[::1]))
     def k(out, a, av):
@@ -614,7 +611,7 @@ def test_masked_bool_in_if_condition():
 
 
 def test_masked_float_cast():
-    """``float(m)`` -> Masked(float64), validity carried."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -643,7 +640,7 @@ def test_masked_float_cast():
 
 
 def test_masked_int_cast():
-    """``int(m)`` -> Masked(int64), truncating the float payload."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(

@@ -586,7 +586,6 @@ def _lower_masked_unittuple_contains(builder, target, args, kwargs):
     builder.store_var(target, packed)
 
 
-# --- pack_return ----------------------------------------------------------
 # ``pack_return(masked)`` -> identity.
 def _lower_pack_return_masked(builder, target, args, kwargs):
     builder.store_var(target, builder.load_var(args[0]))

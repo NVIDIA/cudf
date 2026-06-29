@@ -873,7 +873,6 @@ def test_masked_in_tuple_invalid_propagates():
     assert bool(out_valid.get()[0]) is False
 
 
-# --- pack_return -----------------------------------------------------------
 #
 # ``pack_return`` is the bridge the apply-kernel templates call on a UDF's
 # return value. Calling it directly here exercises the two lowering paths in
@@ -885,7 +884,7 @@ from cudf.core.udf.api import pack_return  # noqa: E402
 
 @pytest.mark.parametrize("valid", [True, False])
 def test_pack_return_masked_is_identity(valid):
-    """``pack_return(masked)`` passes the struct through unchanged."""
+    """TODO: write docstring."""
 
     @cuda.jit(
         types.void(
@@ -911,7 +910,7 @@ def test_pack_return_masked_is_identity(valid):
 
 @pytest.mark.parametrize("nb_ty,np_dtype,sample", _DTYPE_SAMPLES)
 def test_pack_return_scalar_wraps_valid(nb_ty, np_dtype, sample):
-    """``pack_return(scalar)`` -> Masked(scalar, valid=True) for every dtype."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(nb_ty[::1], types.boolean[::1], nb_ty[::1]))
     def k(out_v, out_valid, a):
@@ -927,7 +926,7 @@ def test_pack_return_scalar_wraps_valid(nb_ty, np_dtype, sample):
 
 
 def test_pack_return_scalar_literal_constant():
-    """A bare integer literal returned from the UDF wraps to valid Masked."""
+    """TODO: write docstring."""
 
     @cuda.jit(types.void(types.int64[::1], types.boolean[::1]))
     def k(out_v, out_valid):

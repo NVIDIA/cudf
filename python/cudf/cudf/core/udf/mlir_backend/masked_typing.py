@@ -14,6 +14,7 @@ from numba_cuda_mlir.numba_cuda.typing.templates import (
     AbstractTemplate,
     AttributeTemplate,
     ConcreteTemplate,
+    Signature,
 )
 from numba_cuda_mlir.typing import signature as nb_signature
 
@@ -140,10 +141,14 @@ class MaskedNAComparison(AbstractTemplate):
         return None
 
 
-# ``Masked <op> Masked``: resolve the underlying scalar op on the two
-# value types, then wrap the result back in a MaskedType.
 class MaskedScalarArithOp(AbstractTemplate):
-    def generic(self, args, kws):
+    """``Masked <op> Masked``: resolve the underlying scalar op on the two
+    value types, then wrap the result back in a ``MaskedType``.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if isinstance(args[0], MaskedType) and isinstance(
             args[1], MaskedType
         ):
@@ -154,10 +159,14 @@ class MaskedScalarArithOp(AbstractTemplate):
         return None
 
 
-# ``Masked <op> scalar`` and ``scalar <op> Masked`` (scalar may be a
-# Literal, e.g. ``row['a'] == 1``).
 class MaskedScalarScalarOp(AbstractTemplate):
-    def generic(self, args, kws):
+    """``Masked <op> scalar`` and ``scalar <op> Masked`` (scalar may be a
+    ``Literal``, e.g. ``row['a'] == 1``).
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if isinstance(args[0], MaskedType) and isinstance(
             args[1], (types.Number, types.Boolean)
         ):
@@ -191,10 +200,14 @@ class MaskedScalarScalarOp(AbstractTemplate):
         return None
 
 
-# ``Masked <op> NA`` / ``NA <op> Masked``: result type is the Masked
-# operand's type; the lowering produces an invalid (poisoned) value.
 class MaskedScalarNullOp(AbstractTemplate):
-    def generic(self, args, kws):
+    """``Masked <op> NA`` / ``NA <op> Masked``: result type is the Masked
+    operand's type; the lowering produces an invalid (poisoned) value.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if isinstance(args[0], MaskedType) and isinstance(args[1], NAType):
             return nb_signature(args[0], args[0], na_type)
         if isinstance(args[0], NAType) and isinstance(args[1], MaskedType):

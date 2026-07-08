@@ -239,15 +239,11 @@ def test_masked_is_not_na(valid_in):
     assert bool(result[1]) is valid_in
 
 
-_ARITH = [
-    (operator.add, lambda a, b: a + b),
-    (operator.sub, lambda a, b: a - b),
-    (operator.mul, lambda a, b: a * b),
-]
+_ARITH = [operator.add, operator.sub, operator.mul]
 
 
-@pytest.mark.parametrize("op,ref", _ARITH)
-def test_masked_masked_arith_value(op, ref):
+@pytest.mark.parametrize("op", _ARITH)
+def test_masked_masked_arith_value(op):
     """``Masked(a) <op> Masked(b)`` computes ``op(a, b)`` in the value field."""
 
     @cuda.jit(
@@ -269,7 +265,7 @@ def test_masked_masked_arith_value(op, ref):
     true_ = cp.array([True], dtype=np.bool_)
     out = cp.zeros(1, dtype=np.int64)
     _launch(k, out, in_a, true_, in_b, true_)
-    assert int(out.get()[0]) == ref(a, b)
+    assert int(out.get()[0]) == op(a, b)
 
 
 @pytest.mark.parametrize(
@@ -312,18 +308,18 @@ def test_masked_masked_validity_is_anded(av, bv, expected):
 
 
 _CMP = [
-    (operator.lt, lambda a, b: a < b),
-    (operator.le, lambda a, b: a <= b),
-    (operator.gt, lambda a, b: a > b),
-    (operator.ge, lambda a, b: a >= b),
-    (operator.eq, lambda a, b: a == b),
-    (operator.ne, lambda a, b: a != b),
+    operator.lt,
+    operator.le,
+    operator.gt,
+    operator.ge,
+    operator.eq,
+    operator.ne,
 ]
 
 
-@pytest.mark.parametrize("op,ref", _CMP)
+@pytest.mark.parametrize("op", _CMP)
 @pytest.mark.parametrize("a,b", [(3, 5), (5, 5), (8, 5)])
-def test_masked_masked_comparison(op, ref, a, b):
+def test_masked_masked_comparison(op, a, b):
     """Comparison of two Masked values yields a Masked(boolean)."""
 
     @cuda.jit(
@@ -349,11 +345,11 @@ def test_masked_masked_comparison(op, ref, a, b):
         cp.array([b], dtype=np.int64),
         true_,
     )
-    assert bool(out.get()[0]) == ref(a, b)
+    assert bool(out.get()[0]) == op(a, b)
 
 
-@pytest.mark.parametrize("op,ref", _ARITH)
-def test_masked_scalar_arith(op, ref):
+@pytest.mark.parametrize("op", _ARITH)
+def test_masked_scalar_arith(op):
     """``Masked(a) <op> literal`` carries the Masked operand's validity."""
 
     @cuda.jit(
@@ -379,13 +375,13 @@ def test_masked_scalar_arith(op, ref):
         cp.array([a], dtype=np.int64),
         cp.array([False], dtype=np.bool_),
     )
-    assert int(out_v.get()[0]) == ref(a, 4)
+    assert int(out_v.get()[0]) == op(a, 4)
     # validity is carried from the (invalid) Masked operand
     assert bool(out_valid.get()[0]) is False
 
 
-@pytest.mark.parametrize("op,ref", _ARITH)
-def test_scalar_masked_arith(op, ref):
+@pytest.mark.parametrize("op", _ARITH)
+def test_scalar_masked_arith(op):
     """``literal <op> Masked(a)`` puts the scalar on the left."""
 
     @cuda.jit(
@@ -411,7 +407,7 @@ def test_scalar_masked_arith(op, ref):
         cp.array([a], dtype=np.int64),
         cp.array([True], dtype=np.bool_),
     )
-    assert int(out_v.get()[0]) == ref(100, a)
+    assert int(out_v.get()[0]) == op(100, a)
     assert bool(out_valid.get()[0]) is True
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import operator
+from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -189,12 +190,19 @@ def _lower_masked_na_compare(builder, target, args, kwargs, *, is_null):
     builder.store_var(target, valid)
 
 
-# Shared helper: apply ``op(v1, v2)`` to two scalar MLIR values, convert the
-# result to the target Masked's value type, and pack it with the given
-# validity bit. Numeric/boolean only at this layer.
 def _apply_masked_binary_op(
-    builder, target, target_type, v1, v2, result_valid, op
-):
+    builder: MLIRLower,
+    target: Var,
+    target_type: MaskedType,
+    v1: mlir_ir.Value,
+    v2: mlir_ir.Value,
+    result_valid: mlir_ir.Value,
+    op: Callable,
+) -> None:
+    """Apply ``op(v1, v2)`` to two scalar MLIR values, convert the result to
+    the target Masked's value type, and pack it with the given validity bit.
+    Numeric/boolean only at this layer.
+    """
     target_value_mlir_ty = builder.get_mlir_type(target_type.value_type)
     v1, v2 = coerce_numpy_scalars_for_binary_op(v1, v2)
     # Comparisons compute on the (already coerced) operand type and
@@ -210,9 +218,12 @@ def _apply_masked_binary_op(
     builder.store_var(target, packed)
 
 
-# ``Masked <op> Masked``: AND the validity bits.
-def _make_lower_masked_binary(op):
-    def _lower(builder, target, args, kwargs):
+def _make_lower_masked_binary(op: Callable) -> Callable:
+    """``Masked <op> Masked``: AND the validity bits."""
+
+    def _lower(
+        builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+    ) -> None:
         target_type = builder.get_numba_type(target.name)
         m1 = builder.load_var(args[0])
         m2 = builder.load_var(args[1])
@@ -232,7 +243,12 @@ def _make_lower_masked_binary(op):
     return _lower
 
 
-def _scalar_value_from_var(builder, s_var, m_var, masked_value_mlir_ty):
+def _scalar_value_from_var(
+    builder: MLIRLower,
+    s_var: Var,
+    m_var: Var,
+    masked_value_mlir_ty: mlir_ir.Type,
+) -> mlir_ir.Value:
     """Resolve the scalar operand for the Masked-vs-scalar path.
 
     Prefer a materialized constant when the scalar is a Literal so we
@@ -258,10 +274,16 @@ def _scalar_value_from_var(builder, s_var, m_var, masked_value_mlir_ty):
     return s_raw
 
 
-# ``Masked <op> scalar`` and ``scalar <op> Masked``: carry the Masked
-# operand's validity.
-def _make_lower_masked_binary_scalar(op, masked_first):
-    def _lower(builder, target, args, kwargs):
+def _make_lower_masked_binary_scalar(
+    op: Callable, masked_first: bool
+) -> Callable:
+    """``Masked <op> scalar`` and ``scalar <op> Masked``: carry the Masked
+    operand's validity.
+    """
+
+    def _lower(
+        builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+    ) -> None:
         target_type = builder.get_numba_type(target.name)
         m_var, s_var = (
             (args[0], args[1]) if masked_first else (args[1], args[0])
@@ -284,8 +306,10 @@ def _make_lower_masked_binary_scalar(op, masked_first):
     return _lower
 
 
-# ``Masked <op> NA`` / ``NA <op> Masked``: result is invalid.
-def _lower_masked_binary_null(builder, target, args, kwargs):
+def _lower_masked_binary_null(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``Masked <op> NA`` / ``NA <op> Masked``: result is invalid."""
     target_type = builder.get_numba_type(target.name)
     value_mlir_ty = builder.get_mlir_type(target_type.value_type)
     undef_val = llvm.UndefOp(value_mlir_ty)

@@ -149,9 +149,7 @@ class MaskedScalarArithOp(AbstractTemplate):
     def generic(
         self, args: tuple[types.Type, ...], kws: dict
     ) -> Signature | None:
-        if isinstance(args[0], MaskedType) and isinstance(
-            args[1], MaskedType
-        ):
+        if isinstance(args[0], MaskedType) and isinstance(args[1], MaskedType):
             return_type = self.context.resolve_function_type(
                 self.key, (args[0].value_type, args[1].value_type), kws
             ).return_type
@@ -182,9 +180,9 @@ class MaskedScalarScalarOp(AbstractTemplate):
                 self.key, (args[0].value_type, scalar_ty), kws
             ).return_type
             return nb_signature(MaskedType(return_type), args[0], args[1])
-        if isinstance(
-            args[0], (types.Number, types.Boolean)
-        ) and isinstance(args[1], MaskedType):
+        if isinstance(args[0], (types.Number, types.Boolean)) and isinstance(
+            args[1], MaskedType
+        ):
             return_type = self.context.resolve_function_type(
                 self.key, (args[0], args[1].value_type), kws
             ).return_type

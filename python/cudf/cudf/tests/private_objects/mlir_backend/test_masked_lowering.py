@@ -413,9 +413,12 @@ def test_scalar_masked_arith(op):
 
 def test_masked_scalar_comparison_against_literal():
     """``Masked(a) < literal`` -- the scalar literal must not be confused
-    with the masked operand (regression guard for ``row['a'] < 1``)."""
+    with the masked operand (regression guard for ``row['a'] < 1``).
+    """
 
-    @cuda.jit(types.void(types.boolean[::1], types.int64[::1], types.boolean[::1]))
+    @cuda.jit(
+        types.void(types.boolean[::1], types.int64[::1], types.boolean[::1])
+    )
     def k(out, a, av):
         m = Masked(a[0], av[0]) < 7
         out[0] = m.value
@@ -435,7 +438,9 @@ def test_masked_binary_with_na_is_invalid(na_first):
     if na_first:
 
         @cuda.jit(
-            types.void(types.boolean[::1], types.int64[::1], types.boolean[::1])
+            types.void(
+                types.boolean[::1], types.int64[::1], types.boolean[::1]
+            )
         )
         def k(out_valid, a, av):
             m = NA + Masked(a[0], av[0])
@@ -443,7 +448,9 @@ def test_masked_binary_with_na_is_invalid(na_first):
     else:
 
         @cuda.jit(
-            types.void(types.boolean[::1], types.int64[::1], types.boolean[::1])
+            types.void(
+                types.boolean[::1], types.int64[::1], types.boolean[::1]
+            )
         )
         def k(out_valid, a, av):
             m = Masked(a[0], av[0]) + NA

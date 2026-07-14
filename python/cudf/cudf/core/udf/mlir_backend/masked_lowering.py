@@ -212,9 +212,7 @@ def _apply_masked_binary_op(
     v1 = convert(v1, operand_ty)
     v2 = convert(v2, operand_ty)
     result_val = convert(op(v1, v2), target_value_mlir_ty)
-    packed = _pack_masked(
-        builder, target_type, result_val, result_valid
-    )
+    packed = _pack_masked(builder, target_type, result_val, result_valid)
     builder.store_var(target, packed)
 
 
@@ -229,12 +227,8 @@ def _make_lower_masked_binary(op: Callable) -> Callable:
         m2 = builder.load_var(args[1])
         st1 = llvm.StructType(m1.type)
         st2 = llvm.StructType(m2.type)
-        v1, valid1 = _extract_masked_value_valid(
-            m1, st1.body[0], st1.body[1]
-        )
-        v2, valid2 = _extract_masked_value_valid(
-            m2, st2.body[0], st2.body[1]
-        )
+        v1, valid1 = _extract_masked_value_valid(m1, st1.body[0], st1.body[1])
+        v2, valid2 = _extract_masked_value_valid(m2, st2.body[0], st2.body[1])
         result_valid = arith.andi(valid1, valid2)
         _apply_masked_binary_op(
             builder, target, target_type, v1, v2, result_valid, op
@@ -290,9 +284,7 @@ def _make_lower_masked_binary_scalar(
         )
         m = builder.load_var(m_var)
         st = llvm.StructType(m.type)
-        m_val, m_valid = _extract_masked_value_valid(
-            m, st.body[0], st.body[1]
-        )
+        m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         s_val = _scalar_value_from_var(builder, s_var, m_var, st.body[0])
         if masked_first:
             _apply_masked_binary_op(
@@ -316,9 +308,7 @@ def _lower_masked_binary_null(
     valid_zero = arith.constant(
         result=builder.get_mlir_type(types.boolean), value=0
     )
-    packed = _pack_masked(
-        builder, target_type, undef_val, valid_zero
-    )
+    packed = _pack_masked(builder, target_type, undef_val, valid_zero)
     builder.store_var(target, packed)
 
 

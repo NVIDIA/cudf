@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import operator
-from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -28,6 +27,8 @@ from cudf.core.udf.mlir_backend.masked_typing import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numba_cuda_mlir.mlir_lowering import MLIRLower
     from numba_cuda_mlir.numba_cuda.core.ir import Var
     from numba_cuda_mlir.numba_cuda.datamodel.manager import (

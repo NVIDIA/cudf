@@ -240,14 +240,12 @@ def _make_lower_masked_binary(op: Callable) -> Callable:
 def _scalar_value_from_var(
     builder: MLIRLower,
     s_var: Var,
-    m_var: Var,
-    masked_value_mlir_ty: mlir_ir.Type,
 ) -> mlir_ir.Value:
     """Resolve the scalar operand for the Masked-vs-scalar path.
 
-    Prefer a materialized constant when the scalar is a Literal so we
-    never mistake the masked operand for the scalar (e.g.
-    ``row['a'] < 1`` must not become ``row['a'] < row['a']``).
+    A ``Literal`` operand carries its value in the type rather than as a
+    distinct runtime register, so materialize it directly as a constant;
+    genuine runtime scalars are loaded from their variable.
     """
     s_ty = builder.get_numba_type(s_var.name)
     if isinstance(s_ty, types.Literal):
@@ -259,13 +257,7 @@ def _scalar_value_from_var(
         ):
             py_val = 1 if py_val else 0
         return arith.constant(mlir_ty, py_val)
-    s_raw = builder.load_var(s_var)
-    if getattr(s_var, "name", None) == getattr(m_var, "name", None):
-        raise RuntimeError(
-            "Masked vs scalar lowering: scalar variable is the same as "
-            "the masked variable; cannot extract a distinct scalar."
-        )
-    return s_raw
+    return builder.load_var(s_var)
 
 
 def _make_lower_masked_binary_scalar(
@@ -285,7 +277,7 @@ def _make_lower_masked_binary_scalar(
         m = builder.load_var(m_var)
         st = llvm.StructType(m.type)
         m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
-        s_val = _scalar_value_from_var(builder, s_var, m_var, st.body[0])
+        s_val = _scalar_value_from_var(builder, s_var)
         if masked_first:
             _apply_masked_binary_op(
                 builder, target, target_type, m_val, s_val, m_valid, op

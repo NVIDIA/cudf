@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,6 +17,7 @@
 #include <functional>
 #include <future>
 #include <tuple>
+#include <utility>
 
 namespace cudf::io::parquet::detail {
 namespace {
@@ -147,6 +148,10 @@ class parquet_field_list : public parquet_field {
     } else {
       assert_field_type(t, EXPECTED_ELEM_TYPE);
     }
+    // Reject a declared count that cannot fit the remaining bytes (each element is >= 1 byte),
+    // guarding against a malformed/hostile size prefix requesting an enormous allocation.
+    CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
+                 "Parquet footer list size exceeds remaining buffer");
     val.resize(n);
     for (uint32_t i = 0; i < n; i++) {
       _read_value(i, cpr);
@@ -414,6 +419,10 @@ class parquet_field_struct_list : public parquet_field {
     assert_field_type(field_type, FieldType::LIST);
     auto const [t, n] = cpr->get_listh();
     assert_field_type(t, FieldType::STRUCT);
+    // Reject a declared count that cannot fit the remaining bytes (each struct is >= 1 byte),
+    // guarding against a malformed/hostile size prefix requesting an enormous allocation.
+    CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
+                 "Parquet footer list size exceeds remaining buffer");
     val.resize(n);
 
     constexpr uint32_t parallel_threshold = 512;
@@ -574,6 +583,10 @@ void CompactProtocolReader::skip_struct_field(int t, int depth)
     case FieldType::LIST:
     case FieldType::SET: {
       auto const [t, n] = get_listh();
+      // Reject a declared count that cannot fit the remaining bytes (each element is >= 1 byte),
+      // bounding the skip loop against a malformed/hostile size prefix.
+      CUDF_EXPECTS(std::cmp_less_equal(n, m_end - m_cur),
+                   "Parquet footer list size exceeds remaining buffer");
       CUDF_EXPECTS(depth <= 10, "struct nesting too deep");
       for (uint32_t i = 0; i < n; i++) {
         skip_struct_field(t, depth + 1);
@@ -605,6 +618,9 @@ void CompactProtocolReader::read(FileMetaData* f)
                             parquet_field_string(6, f->created_by),
                             optional_list_column_order(7, f->column_orders));
   function_builder(this, op);
+  // A well-formed footer never reads past its final stop byte; a set flag means the input was
+  // truncated or corrupt, so fail rather than return structurally-invalid metadata.
+  CUDF_EXPECTS(not m_overread, "Parquet footer is truncated or corrupt (read past end of buffer)");
 }
 
 void CompactProtocolReader::read(SchemaElement* s)

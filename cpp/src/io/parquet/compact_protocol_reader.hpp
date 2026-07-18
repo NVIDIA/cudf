@@ -48,17 +48,29 @@ class CompactProtocolReader {
                  std::invalid_argument);
     m_base = m_cur = base;
     // Guard against `nullptr + len` (undefined) so a zero-length buffer stays fully defined.
-    m_end = base != nullptr ? base + len : base;
+    m_end      = base != nullptr ? base + len : base;
+    m_overread = false;
   }
   [[nodiscard]] ptrdiff_t bytecount() const noexcept
   {
     // Avoid `nullptr - nullptr` on a null-base reader; it has consumed nothing.
     return m_base != nullptr ? m_cur - m_base : 0;
   }
-  unsigned int getb() noexcept { return (m_cur < m_end) ? *m_cur++ : 0; }
+  // Reads one byte. A read attempted at end-of-buffer sets the sticky overread flag (checked in
+  // read(FileMetaData*)) and yields 0, keeping the hot parse path noexcept.
+  unsigned int getb() noexcept
+  {
+    if (m_cur < m_end) { return *m_cur++; }
+    m_overread = true;
+    return 0;
+  }
   void skip_bytes(size_t bytecnt) noexcept
   {
-    bytecnt = std::min(bytecnt, (size_t)(m_end - m_cur));
+    size_t const avail = m_end - m_cur;
+    if (bytecnt > avail) {
+      m_overread = true;
+      bytecnt    = avail;
+    }
     m_cur += bytecnt;
   }
 
@@ -159,12 +171,16 @@ class CompactProtocolReader {
   uint8_t const* m_base = nullptr;
   uint8_t const* m_cur  = nullptr;
   uint8_t const* m_end  = nullptr;
+  // Sticky flag: a required read was attempted past end-of-buffer (truncated/corrupt input).
+  bool m_overread = false;
 
   friend class parquet_field_string;
   friend class parquet_field_string_list;
   friend class parquet_field_binary;
   friend class parquet_field_binary_list;
   friend class parquet_field_struct_blob;
+  template <typename T, FieldType EXPECTED_ELEM_TYPE>
+  friend class parquet_field_list;
   template <typename T>
   friend class parquet_field_struct_list;
 };

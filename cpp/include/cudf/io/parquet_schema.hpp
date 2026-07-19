@@ -27,6 +27,12 @@ namespace io::parquet {
  */
 
 /**
+ * @brief Footer-reader policy on a wire-type/schema-type mismatch: reject (`YES`, the historical
+ * exact-type contract) or skip per Thrift forward-compat (`NO`)
+ */
+enum class throw_if_type_mismatch : bool { YES, NO };
+
+/**
  * @brief Basic data types in Parquet, determines how data is physically stored
  */
 enum class Type : int8_t {

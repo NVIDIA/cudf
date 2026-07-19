@@ -38,7 +38,13 @@ namespace io::parquet::detail {
  */
 class CompactProtocolReader {
  public:
-  explicit CompactProtocolReader(uint8_t const* base = nullptr, size_t len = 0) { init(base, len); }
+  explicit CompactProtocolReader(uint8_t const* base         = nullptr,
+                                 size_t len                  = 0,
+                                 throw_if_type_mismatch mode = throw_if_type_mismatch::YES)
+    : m_throw_if_type_mismatch(mode)
+  {
+    init(base, len);
+  }
   void init(uint8_t const* base, size_t len)
   {
     // A null base is valid only for an empty buffer; a positive length would then have no backing
@@ -55,6 +61,12 @@ class CompactProtocolReader {
   {
     // Avoid `nullptr - nullptr` on a null-base reader; it has consumed nothing.
     return m_base != nullptr ? m_cur - m_base : 0;
+  }
+  // True if a wire-type/schema-type mismatch must be rejected (default YES); false means skip it
+  // per Thrift forward-compat (NO), which the spark-rapids footer facade uses.
+  [[nodiscard]] bool should_throw_on_type_mismatch() const noexcept
+  {
+    return m_throw_if_type_mismatch == throw_if_type_mismatch::YES;
   }
   // Reads one byte. A read attempted at end-of-buffer sets the sticky overread flag (checked in
   // read(FileMetaData*)) and yields 0, keeping the hot parse path noexcept.
@@ -173,6 +185,8 @@ class CompactProtocolReader {
   uint8_t const* m_end  = nullptr;
   // Sticky flag: a required read was attempted past end-of-buffer (truncated/corrupt input).
   bool m_overread = false;
+  // Reject (`YES`) vs skip (`NO`) a struct field whose wire type mismatches the schema type.
+  throw_if_type_mismatch m_throw_if_type_mismatch = throw_if_type_mismatch::YES;
 
   friend class parquet_field_string;
   friend class parquet_field_string_list;

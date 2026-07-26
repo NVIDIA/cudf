@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -268,8 +268,7 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
    */
   [[nodiscard]] __device__ T value() const noexcept
   {
-    return T{numeric::scaled_integer<rep_type>{
-      *_data, numeric::scale_type{this->type().scale()}}};
+    return T{numeric::scaled_integer<rep_type>{*_data, numeric::scale_type{this->type().scale()}}};
   }
 
   /**

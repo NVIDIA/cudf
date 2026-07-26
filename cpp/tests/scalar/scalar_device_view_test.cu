@@ -83,8 +83,7 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, Value)
 
   auto constexpr value = rep_type{12'345};
   auto constexpr scale = cudf::numeric::scale_type{-2};
-  auto const expected =
-    TypeParam{cudf::numeric::scaled_integer<rep_type>{value, scale}};
+  auto const expected  = TypeParam{cudf::numeric::scaled_integer<rep_type>{value, scale}};
   cudf::fixed_point_scalar<TypeParam> s{value, scale};
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
@@ -98,8 +97,8 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, Value)
 }
 
 template <typename ScalarDeviceViewType>
-CUDF_KERNEL void test_set_fixed_point_rep(
-  ScalarDeviceViewType s, typename ScalarDeviceViewType::rep_type value)
+CUDF_KERNEL void test_set_fixed_point_rep(ScalarDeviceViewType s,
+                                          typename ScalarDeviceViewType::rep_type value)
 {
   s.set_value(value);
 }
@@ -114,8 +113,8 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
   cudf::fixed_point_scalar<TypeParam> s{initial_value, scale};
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
-  test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().value()>>>(
-    scalar_device_view, value);
+  test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view,
+                                                                            value);
   CUDF_CHECK_CUDA(0);
 
   EXPECT_EQ(s.value(), value);
@@ -139,8 +138,8 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetValue)
   auto source_device_view            = cudf::get_scalar_device_view(source);
   auto same_scale_target_device_view = cudf::get_scalar_device_view(same_scale_target);
   auto target_device_view            = cudf::get_scalar_device_view(target);
-  test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(
-    source_device_view, same_scale_target_device_view);
+  test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(source_device_view,
+                                                                  same_scale_target_device_view);
   CUDF_CHECK_CUDA(0);
 
   test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(source_device_view,

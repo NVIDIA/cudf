@@ -273,9 +273,9 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   }
 
   /**
-   * @brief Stores the fixed-point representation in the scalar
+   * @brief Stores the value in scalar
    *
-   * @param value The representation to store in the scalar
+   * @param value The value to store in scalar
    */
   __device__ void set_value(rep_type value) { *_data = value; }
 

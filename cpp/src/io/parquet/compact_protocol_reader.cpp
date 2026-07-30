@@ -56,17 +56,6 @@ void assert_bool_field_type(int type)
                "expected bool field, got " + field_type_string(field_type) + " field instead");
 }
 
-// True if the wire type matches the schema type. On mismatch, strict mode throws; lenient mode
-// (`::NO`) skips the value (Thrift forward-compat) and returns false so the caller leaves it (and
-// any wrapping optional) unset.
-[[nodiscard]] bool check_match_type(CompactProtocolReader* cpr, int type, FieldType expected)
-{
-  if (type == static_cast<int>(expected)) { return true; }
-  if (cpr->should_throw_on_type_mismatch()) { assert_field_type(type, expected); }
-  cpr->skip_struct_field(type);
-  return false;
-}
-
 template <int index>
 struct FunctionSwitchImpl {
   template <typename... Operator>
@@ -152,7 +141,7 @@ class parquet_field_list : public parquet_field {
  public:
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::LIST)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::LIST)) { return false; }
     auto const [t, n] = cpr->get_listh();
     // An empty list has no elements, so its wire element-type nibble is immaterial (some writers,
     // e.g. fastparquet, stamp 0); accept without validating the element type, matching Thrift.
@@ -239,7 +228,7 @@ class parquet_field_int : public parquet_field {
 
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, EXPECTED_TYPE)) { return false; }
+    if (not cpr->check_field_type(field_type, EXPECTED_TYPE)) { return false; }
     if constexpr (is_byte) {
       val = cpr->getb();
     } else {
@@ -286,9 +275,9 @@ class parquet_field_string : public parquet_field {
 
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::BINARY)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::BINARY)) { return false; }
     auto const n = cpr->get_u32();
-    CUDF_EXPECTS(std::cmp_less(n, cpr->m_end - cpr->m_cur), "string length mismatch");
+    CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur), "string length mismatch");
 
     val.assign(reinterpret_cast<char const*>(cpr->m_cur), n);
     cpr->m_cur += n;
@@ -307,7 +296,7 @@ class parquet_field_string_list : public parquet_field_list<std::string, FieldTy
   {
     auto const read_value = [&val = v](uint32_t i, CompactProtocolReader* cpr) {
       auto const l = cpr->get_u32();
-      CUDF_EXPECTS(std::cmp_less(l, cpr->m_end - cpr->m_cur), "string length mismatch");
+      CUDF_EXPECTS(std::cmp_less_equal(l, cpr->m_end - cpr->m_cur), "string length mismatch");
       CUDF_EXPECTS(i < val.size(), "Index out of bounds");
 
       val[i].assign(reinterpret_cast<char const*>(cpr->m_cur), l);
@@ -330,7 +319,7 @@ class parquet_field_enum : public parquet_field {
   parquet_field_enum(int f, Enum& v) : parquet_field(f), val(v) {}
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::I32)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::I32)) { return false; }
     val = static_cast<Enum>(cpr->get_i32());
     return true;
   }
@@ -368,7 +357,7 @@ class parquet_field_struct : public parquet_field {
 
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::STRUCT)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
     cpr->read(&val);
     return true;
   }
@@ -443,7 +432,7 @@ class parquet_field_struct_list : public parquet_field {
 
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::LIST)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::LIST)) { return false; }
     auto const [t, n] = cpr->get_listh();
     // An empty list has no elements, so its wire element-type nibble is immaterial (some writers,
     // e.g. fastparquet, stamp 0); accept without validating the element type, matching Thrift.
@@ -470,8 +459,10 @@ class parquet_field_struct_list : public parquet_field {
       std::vector<std::future<void>> tasks;
       tasks.reserve(num_tasks);
 
+      // Size once up front, then fill by index below: workers read already-filled slots while the
+      // main thread fills later ones, so a size-mutating emplace_back would be a data race.
       std::vector<cudf::host_span<uint8_t const>> all_ranges;
-      all_ranges.reserve(n);
+      all_ranges.resize(n);
 
       // Wait for every task before all_ranges/val die on any exit path: a throw during collection
       // must not let a worker read freed memory (host-pool futures do not block on destruction).
@@ -488,7 +479,8 @@ class parquet_field_struct_list : public parquet_field {
           for (auto i = start_idx; i < end_idx; ++i) {
             uint8_t const* const start = cpr->m_cur;
             cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT));
-            all_ranges.emplace_back(start, static_cast<size_t>(cpr->m_cur - start));
+            all_ranges[i] =
+              cudf::host_span<uint8_t const>{start, static_cast<size_t>(cpr->m_cur - start)};
           }
 
           // Launch task immediately to parse the structs in parallel while the main thread collects
@@ -539,7 +531,7 @@ class parquet_field_binary : public parquet_field {
 
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::BINARY)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::BINARY)) { return false; }
     auto const n = cpr->get_u32();
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur), "binary length mismatch");
 
@@ -583,7 +575,7 @@ class parquet_field_struct_blob : public parquet_field {
   parquet_field_struct_blob(int f, std::vector<uint8_t>& v) : parquet_field(f), val(v) {}
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    if (not check_match_type(cpr, field_type, FieldType::STRUCT)) { return false; }
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
     uint8_t const* const start = cpr->m_cur;
     cpr->skip_struct_field(field_type);
     if (cpr->m_cur > start) { val.assign(start, cpr->m_cur - 1); }
@@ -687,6 +679,14 @@ void CompactProtocolReader::skip_struct_field(int t, int depth)
       break;
     default: CUDF_FAIL("Unsupported Parquet Thrift field type encountered while skipping");
   }
+}
+
+bool CompactProtocolReader::check_field_type(int type, FieldType expected)
+{
+  if (type == static_cast<int>(expected)) { return true; }
+  if (should_throw_on_type_mismatch()) { assert_field_type(type, expected); }
+  skip_struct_field(type);
+  return false;
 }
 
 void CompactProtocolReader::read(FileMetaData* f)

@@ -16,14 +16,67 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <future>
+#include <string>
+#include <string_view>
 
 namespace CUDF_EXPORT cudf {
 
+std::string jit_arch_name_for(std::int32_t compute_capability, std::string_view archs)
+{
+  auto const baseline = std::format("{}", compute_capability);
+  auto has_baseline = false, has_arch_specific = false, has_family_specific = false;
+  while (!archs.empty()) {
+    auto const comma = archs.find(',');
+    auto entry       = archs.substr(0, comma);
+    archs = comma == std::string_view::npos ? std::string_view{} : archs.substr(comma + 1);
+    // entries look like "120a-real", "100f-real", "120", or "90a-virtual"
+    if (auto const dash = entry.find('-'); dash != std::string_view::npos) {
+      entry = entry.substr(0, dash);
+    }
+    if (!entry.starts_with(baseline)) { continue; }
+    auto const suffix = entry.substr(baseline.size());
+    if (suffix.empty()) {
+      has_baseline = true;
+    } else if (suffix == "a") {
+      has_arch_specific = true;
+    } else if (suffix == "f") {
+      has_family_specific = true;
+    }
+  }
+  if (has_baseline || !(has_arch_specific || has_family_specific)) {
+    return std::format("sm_{}", compute_capability);
+  }
+  return std::format("sm_{}{}", compute_capability, has_arch_specific ? "a" : "f");
+}
+
 namespace {
+
+/**
+ * @brief Returns the architecture name to pass to NVRTC and nvJitLink for this device
+ *
+ * The precompiled JIT fragments only contain entries for the architectures this build
+ * targeted (CUDF_CUDA_ARCHITECTURES). A build compiled with a feature-set target only,
+ * e.g. CMAKE_CUDA_ARCHITECTURES=120a-real (or the 100f-real entry of the RAPIDS
+ * defaults), produces fatbins holding only sm_<cc>a / sm_<cc>f entries; the link name
+ * derived from the device's compute capability alone ("sm_120") carries no feature-set
+ * flag, so nvJitLink finds no compatible entry and fails with
+ * NVJITLINK_ERROR_INVALID_INPUT. The baseline name is kept whenever the build has a
+ * baseline entry for the compute capability; otherwise the feature-set variant the
+ * build was compiled with is used.
+ */
+std::string jit_arch_name(std::int32_t compute_capability)
+{
+#if defined(CUDF_CUDA_ARCHITECTURES)
+  return jit_arch_name_for(compute_capability, CUDF_CUDA_ARCHITECTURES);
+#else
+  return jit_arch_name_for(compute_capability, std::string_view{});
+#endif
+}
 
 void hash(XXH3_state_t* ctx, std::span<char const> input)
 {
@@ -228,7 +281,7 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
     options.emplace_back(std::format("-I{}", include_dir));
   }
 
-  options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
+  options.emplace_back(std::format("--gpu-architecture={}", jit_arch_name(sm)));
 
   options.emplace_back("--diag-suppress=47");
   options.emplace_back("--device-int128");
@@ -313,7 +366,7 @@ rtcx::blob compile_fragment(char const* name,
     options.emplace_back(std::format("-I{}", include_dir));
   }
 
-  options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
+  options.emplace_back(std::format("--gpu-architecture={}", jit_arch_name(sm)));
 
   options.emplace_back("--diag-suppress=47");
   options.emplace_back("--device-int128");
@@ -403,7 +456,7 @@ kernel_instance={}
                           name,
                           runtime,
                           driver,
-                          sm,
+                          jit_arch_name(sm),
                           bundle_hash,
                           source_file,
                           kernel_instance);
@@ -464,7 +517,7 @@ kernel_instance={}
                           name,
                           runtime,
                           driver,
-                          sm,
+                          jit_arch_name(sm),
                           bundle_hash,
                           source_file,
                           kernel_instance);
@@ -507,7 +560,7 @@ std::tuple<rtcx::library, rtcx::blob> link_library_uncached(
   std::vector<std::string> options;
 
   options.emplace_back("-lto");
-  options.emplace_back(std::format("-arch=sm_{}", sm));
+  options.emplace_back(std::format("-arch={}", jit_arch_name(sm)));
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
 
@@ -560,7 +613,7 @@ bundle={}
                           name,
                           runtime,
                           driver,
-                          sm,
+                          jit_arch_name(sm),
                           bundle_hash);
 
   XXH3_state_t state;

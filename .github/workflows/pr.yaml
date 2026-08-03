@@ -29,6 +29,7 @@ jobs:
       - java-tests
       - conda-notebook-tests
       - docs-build
+      - publish-api-docs
       - wheel-build-libcudf
       - wheel-build-libcudf-streaming
       - wheel-build-cudf-streaming
@@ -581,6 +582,26 @@ jobs:
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.08-latest"
       script: "ci/build_docs.sh"
+  publish-api-docs:
+    needs: [docs-build]
+    permissions:
+      contents: read
+      id-token: write
+    secrets:
+      akamai-access-token: ${{ secrets.NVIDIA_DOCS_AKAMAI_ACCESS_TOKEN }}
+      akamai-client-token: ${{ secrets.NVIDIA_DOCS_AKAMAI_CLIENT_TOKEN }}
+      akamai-client-secret: ${{ secrets.NVIDIA_DOCS_AKAMAI_CLIENT_SECRET }}
+      akamai-emails-to-notify: ${{ secrets.NVIDIA_DOCS_AKAMAI_EMAILS_TO_NOTIFY }}
+      akamai-host: ${{ secrets.NVIDIA_DOCS_AKAMAI_HOST }}
+      target-aws-access-key-id: ${{ secrets.NVIDIA_DOCS_AWS_ACCESS_KEY_ID }}
+      target-aws-region: ${{ secrets.NVIDIA_DOCS_AWS_REGION }}
+      target-aws-secret-access-key: ${{ secrets.NVIDIA_DOCS_AWS_SECRET_ACCESS_KEY }}
+      target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
+    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
+    with:
+      docs-projects: cudf,libcudf
+      dry-run: true
+      version-map: '{"26.04": "legacy", "26.06": "stable"}'
   wheel-build-libcudf:
     needs: checks
     permissions:

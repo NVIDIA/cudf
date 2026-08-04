@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,7 +60,7 @@ struct get_element_functor {
   {
     auto device_col = column_device_view::create(input, stream);
 
-    rmm::device_scalar<string_view> temp_data(stream, mr);
+    cudf::detail::device_scalar<string_view> temp_data(stream, mr);
     cudf::detail::device_scalar<bool> temp_valid(stream, mr);
 
     device_single_thread(

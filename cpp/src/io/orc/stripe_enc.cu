@@ -26,7 +26,6 @@
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <thrust/for_each.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf::io::orc::detail {

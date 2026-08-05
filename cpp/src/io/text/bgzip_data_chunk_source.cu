@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,9 +23,9 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 #include <fstream>
@@ -133,12 +133,12 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
       d_decompressed_spans.resize(num_blocks(), stream);
       d_decompression_results.resize(num_blocks(), stream);
 
-      auto offset_it = thrust::make_zip_iterator(d_compressed_offsets.begin(),
-                                                 d_compressed_offsets.begin() + 1,
-                                                 d_decompressed_offsets.begin(),
-                                                 d_decompressed_offsets.begin() + 1);
+      auto offset_it = cuda::make_zip_iterator(d_compressed_offsets.begin(),
+                                               d_compressed_offsets.begin() + 1,
+                                               d_decompressed_offsets.begin(),
+                                               d_decompressed_offsets.begin() + 1);
       auto span_it =
-        thrust::make_zip_iterator(d_compressed_spans.begin(), d_decompressed_spans.begin());
+        cuda::make_zip_iterator(d_compressed_spans.begin(), d_decompressed_spans.begin());
       thrust::transform(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         offset_it,

@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -127,7 +127,7 @@ function(find_and_configure_nvcomp)
   endif()
 endfunction()
 
-set(_nvcomp_args VERSION 5.2.0.10)
+set(_nvcomp_args VERSION 5.3.0.16)
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
   list(APPEND _nvcomp_args DOWNLOAD_ONLY)
 endif()

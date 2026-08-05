@@ -778,7 +778,7 @@ dependencies:
       - output_types: conda
         packages:
           # Align nvcomp version with rapids-cmake
-          - libnvcomp-dev==5.2.0.10
+          - libnvcomp-dev==5.3.0.16
     specific:
       - output_types: [requirements, pyproject]
         matrices:
@@ -789,16 +789,16 @@ dependencies:
               cuda: "12.*"
               use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp-cu12==5.2.0.13
+              - nvidia-libnvcomp-cu12==5.3.0.16
           - matrix:
               cuda: "13.*"
               use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp-cu13==5.2.0.13
+              - nvidia-libnvcomp-cu13==5.3.0.16
           - matrix:
               use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp==5.2.0.13
+              - nvidia-libnvcomp==5.3.0.16
   rapids_build_skbuild:
     common:
       - output_types: [conda, requirements, pyproject]

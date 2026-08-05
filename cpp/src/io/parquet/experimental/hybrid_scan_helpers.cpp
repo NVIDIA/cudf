@@ -14,7 +14,6 @@
 #include <cudf/logger.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <cstdint>
 #include <functional>

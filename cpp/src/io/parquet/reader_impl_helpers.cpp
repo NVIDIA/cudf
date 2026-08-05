@@ -23,7 +23,6 @@
 #include <cuda/iterator>
 #include <cuda/numeric>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <cmath>
 #include <cstdint>
@@ -1096,9 +1095,9 @@ void aggregate_reader_metadata::apply_arrow_schema()
       if (std::cmp_equal(pq_schema_elem.num_children, arrow_schema.children.size())) {
         // true if and only if true for all children as well
         return std::all_of(
-          thrust::make_zip_iterator(cuda::std::make_tuple(arrow_schema.children.begin(),
-                                                          pq_schema_elem.children_idx.begin())),
-          thrust::make_zip_iterator(
+          cuda::make_zip_iterator(cuda::std::make_tuple(arrow_schema.children.begin(),
+                                                        pq_schema_elem.children_idx.begin())),
+          cuda::make_zip_iterator(
             cuda::std::make_tuple(arrow_schema.children.end(), pq_schema_elem.children_idx.end())),
           [&](auto const& elem) {
             return validate_schemas(cuda::std::get<0>(elem), cuda::std::get<1>(elem));
@@ -1112,9 +1111,9 @@ void aggregate_reader_metadata::apply_arrow_schema()
   std::function<void(arrow_schema_data_types const&, int const)> co_walk_schemas =
     [&](arrow_schema_data_types const& arrow_schema, int const schema_idx) {
       auto& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
-      std::for_each(thrust::make_zip_iterator(cuda::std::make_tuple(
+      std::for_each(cuda::make_zip_iterator(cuda::std::make_tuple(
                       arrow_schema.children.begin(), pq_schema_elem.children_idx.begin())),
-                    thrust::make_zip_iterator(cuda::std::make_tuple(
+                    cuda::make_zip_iterator(cuda::std::make_tuple(
                       arrow_schema.children.end(), pq_schema_elem.children_idx.end())),
                     [&](auto const& elem) {
                       co_walk_schemas(cuda::std::get<0>(elem), cuda::std::get<1>(elem));
@@ -1137,7 +1136,7 @@ void aggregate_reader_metadata::apply_arrow_schema()
   }
 
   // zip iterator to validate and co-walk the two schemas
-  auto schemas = thrust::make_zip_iterator(
+  auto schemas = cuda::make_zip_iterator(
     cuda::std::make_tuple(arrow_schema_root.children.begin(), pq_schema_root.children_idx.begin()));
 
   // Verify equal number of children at all sub-levels

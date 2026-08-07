@@ -19,6 +19,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/interop.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -657,7 +658,6 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnNulls)
     cudf::test::detail::make_null_mask(list_validity.begin(), list_validity.end());
   auto expected_col = cudf::make_lists_column(
     num_rows, std::move(offsets), std::move(child), null_count, std::move(null_mask));
-  cudf::table_view expected_table_view({expected_col->view()});
 
   auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/true);
   auto input_array =
@@ -665,7 +665,16 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnNulls)
   auto input = as_host_device_array(input_array);
 
   auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
-  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_table_view, got_cudf_table->view());
+  auto const expected_lists = cudf::lists_column_view(expected_col->view());
+  auto const got_lists      = cudf::lists_column_view(got_cudf_table->get_column(0));
+
+  EXPECT_TRUE(cudf::has_nonempty_nulls(got_lists.parent()));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lists.offsets(), got_lists.offsets());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lists.child(), got_lists.child());
+
+  auto const expected_logical = cudf::purge_nonempty_nulls(expected_lists.parent());
+  auto const got_logical      = cudf::purge_nonempty_nulls(got_lists.parent());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_logical, *got_logical);
 }
 
 TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnSliced)

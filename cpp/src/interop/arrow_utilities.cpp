@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,8 @@
 #include <cudf/utilities/error.hpp>
 
 #include <nanoarrow/nanoarrow.h>
+
+#include <stdexcept>
 
 namespace cudf {
 namespace detail {
@@ -33,7 +35,8 @@ data_type arrow_to_cudf_type(ArrowSchemaView const* arrow_view)
     case NANOARROW_TYPE_STRING_VIEW:
     case NANOARROW_TYPE_LARGE_STRING: return data_type(type_id::STRING);
     case NANOARROW_TYPE_LIST:
-    case NANOARROW_TYPE_LARGE_LIST: return data_type(type_id::LIST);
+    case NANOARROW_TYPE_LARGE_LIST:
+    case NANOARROW_TYPE_FIXED_SIZE_LIST: return data_type(type_id::LIST);
     case NANOARROW_TYPE_DICTIONARY: return data_type(type_id::DICTIONARY32);
     case NANOARROW_TYPE_STRUCT: return data_type(type_id::STRUCT);
     case NANOARROW_TYPE_TIMESTAMP: {
@@ -60,6 +63,21 @@ data_type arrow_to_cudf_type(ArrowSchemaView const* arrow_view)
       return data_type{type_id::DECIMAL128, -arrow_view->decimal_scale};
     default: CUDF_FAIL("Unsupported type_id conversion to cudf", cudf::data_type_error);
   }
+}
+
+bool is_fixed_size_list(ArrowSchemaView const* arrow_view)
+{
+  return arrow_view->type == NANOARROW_TYPE_FIXED_SIZE_LIST;
+}
+
+size_type fixed_size_list_width(ArrowSchemaView const* arrow_view)
+{
+  CUDF_EXPECTS(
+    is_fixed_size_list(arrow_view), "Expected a fixed-size-list schema", cudf::data_type_error);
+  CUDF_EXPECTS(arrow_view->fixed_size >= 0,
+               "fixed-size-list width must be non-negative",
+               std::invalid_argument);
+  return static_cast<size_type>(arrow_view->fixed_size);
 }
 
 ArrowType id_to_arrow_type(cudf::type_id id)

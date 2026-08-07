@@ -21,6 +21,23 @@
 
 namespace cudf::interop {
 
+namespace {
+
+bool contains_fixed_size_list(ArrowSchema const& schema)
+{
+  ArrowSchemaView schema_view;
+  NANOARROW_THROW_NOT_OK(ArrowSchemaViewInit(&schema_view, &schema, nullptr));
+  if (schema_view.type == NANOARROW_TYPE_FIXED_SIZE_LIST) { return true; }
+
+  for (auto i = 0; i < schema.n_children; ++i) {
+    if (contains_fixed_size_list(*schema.children[i])) { return true; }
+  }
+
+  return schema.dictionary != nullptr && contains_fixed_size_list(*schema.dictionary);
+}
+
+}  // namespace
+
 /**
  * @brief A wrapper around ArrowDeviceArray data used for flexible lifetime management.
  *
@@ -66,6 +83,12 @@ struct arrow_array_container {
                         rmm::cuda_stream_view stream,
                         rmm::device_async_resource_ref mr)
   {
+    // TODO: Remove this guard when owning wrappers can export fixed-size-list with matching
+    // schema and buffers for every target device.
+    CUDF_EXPECTS(!contains_fixed_size_list(schema_),
+                 "Owning Arrow device wrappers do not support fixed-size-list input until "
+                 "fixed-size-list egress is implemented",
+                 cudf::data_type_error);
     switch (input_.device_type) {
       case ARROW_DEVICE_CUDA:
       case ARROW_DEVICE_CUDA_HOST:

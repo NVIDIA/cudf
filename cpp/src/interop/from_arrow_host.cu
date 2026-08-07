@@ -30,6 +30,8 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <thrust/sequence.h>
+
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
@@ -284,6 +286,37 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::struct_v
     input->length, std::move(child_columns), null_count, std::move(*out_mask), stream, mr);
 }
 
+/**
+ * @brief Synthesize the offsets column and child bounds for a fixed-size-list array
+ *
+ * Mirrors the (offsets, child-offset, child-length) contract of `get_offsets_column`.
+ * Fixed-size-list arrays carry no offsets buffer, so `buffers[fixed_width_data_buffer_idx]`
+ * is never read here. The returned offsets are normalized to start at zero, matching
+ * `copy_offsets_column`; the absolute start of the child range is returned separately.
+ */
+std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_fixed_size_list_offsets(
+  ArrowSchemaView const* schema,
+  ArrowArray const* input,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto const width  = static_cast<int64_t>(fixed_size_list_width(schema));
+  auto const offset = input->offset * width;
+  auto const length = input->length * width;
+
+  constexpr auto max_size = static_cast<int64_t>(std::numeric_limits<cudf::size_type>::max());
+  CUDF_EXPECTS(length <= max_size,
+               "Number of fixed-size-list child elements exceeds cuDF's maximum supported "
+               "row count (cudf::size_type).",
+               std::overflow_error);
+
+  return std::tuple{
+    make_fixed_size_list_offsets(
+      static_cast<size_type>(input->length) + 1, static_cast<size_type>(width), stream, mr),
+    offset,
+    length};
+}
+
 template <>
 std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_view>(
   ArrowSchemaView const* schema, ArrowArray const* input, data_type type, bool skip_mask)
@@ -293,7 +326,9 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
     "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
     std::overflow_error);
 
-  auto [offsets_column, offset, length] = get_offsets_column(schema, input, stream, mr);
+  auto [offsets_column, offset, length] = is_fixed_size_list(schema)
+                                            ? get_fixed_size_list_offsets(schema, input, stream, mr)
+                                            : get_offsets_column(schema, input, stream, mr);
 
   ArrowSchemaView view;
   NANOARROW_THROW_NOT_OK(ArrowSchemaViewInit(&view, schema->schema->children[0], nullptr));
@@ -394,9 +429,30 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> copy_offsets_column(
 
 }  // namespace
 
+std::unique_ptr<column> make_fixed_size_list_offsets(size_type size,
+                                                     size_type width,
+                                                     rmm::cuda_stream_view stream,
+                                                     rmm::device_async_resource_ref mr)
+{
+  auto offsets =
+    make_numeric_column(data_type{type_id::INT32}, size, mask_state::UNALLOCATED, stream, mr);
+  auto d_offsets = offsets->mutable_view().begin<size_type>();
+  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   d_offsets,
+                   d_offsets + size,
+                   size_type{0},
+                   width);
+  return offsets;
+}
+
 /**
  * @brief Utility to copy the offsets from the given input (strings or list) to a
  * cudf column
+ *
+ * @note This requires `input` to carry an offsets buffer at
+ * `fixed_width_data_buffer_idx`, which it reads before inspecting `schema->type`.
+ * Fixed-size-list arrays have no offsets buffer (`n_buffers == 1`), so they must be
+ * routed to `get_fixed_size_list_offsets` instead.
  */
 std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   ArrowSchemaView const* schema,

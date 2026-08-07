@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/nanoarrow_utils.hpp>
 #include <cudf_test/table_utilities.hpp>
 
@@ -117,4 +118,92 @@ TEST_F(FromArrowStreamTest, EmptyChunkedTest)
 
   auto result = cudf::from_arrow_stream_column(&stream);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected->view());
+}
+
+namespace {
+
+// Builds a struct schema with one fixed_size_list<int64>[width] child. ArrowSchemaInitFromType
+// does not support NANOARROW_TYPE_FIXED_SIZE_LIST, so ArrowSchemaSetTypeFixedSize is used and
+// the allocated "item" child gets its type set explicitly.
+nanoarrow::UniqueSchema make_fixed_size_list_stream_schema(int32_t width)
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetTypeFixedSize(schema->children[0], NANOARROW_TYPE_FIXED_SIZE_LIST, width));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
+  schema->children[0]->flags = 0;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetType(schema->children[0]->children[0], NANOARROW_TYPE_INT64));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0]->children[0], "element"));
+  schema->children[0]->children[0]->flags = 0;
+
+  return schema;
+}
+
+nanoarrow::UniqueArray make_fixed_size_list_chunk(ArrowSchema* schema,
+                                                  std::vector<int64_t> const& values,
+                                                  int64_t num_rows)
+{
+  nanoarrow::UniqueArray array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(array.get(), schema, nullptr));
+  array->length     = num_rows;
+  array->null_count = 0;
+
+  auto* list_array       = array->children[0];
+  list_array->length     = num_rows;
+  list_array->null_count = 0;
+
+  auto* values_array = list_array->children[0];
+  NANOARROW_THROW_NOT_OK(ArrowBufferAppend(ArrowArrayBuffer(values_array, 1),
+                                           reinterpret_cast<void const*>(values.data()),
+                                           values.size() * sizeof(int64_t)));
+  values_array->length     = values.size();
+  values_array->null_count = 0;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+  return array;
+}
+
+}  // namespace
+
+// exercises make_empty_column_from_schema, which builds the column from the schema alone
+TEST_F(FromArrowStreamTest, FixedSizeListEmptyTest)
+{
+  auto schema = make_fixed_size_list_stream_schema(3);
+
+  ArrowArrayStream stream;
+  makeStreamFromArrays({}, std::move(schema), &stream);
+
+  auto result = cudf::from_arrow_stream(&stream);
+  EXPECT_EQ(result->num_rows(), 0);
+  EXPECT_EQ(result->get_column(0).type(), cudf::data_type{cudf::type_id::LIST});
+}
+
+// exercises concatenate over columns whose offsets were synthesized rather than copied
+TEST_F(FromArrowStreamTest, FixedSizeListChunkedTest)
+{
+  constexpr int32_t width = 2;
+  auto schema             = make_fixed_size_list_stream_schema(width);
+
+  std::vector<nanoarrow::UniqueArray> arrays;
+  for (auto i = 0; i < 3; ++i) {
+    auto base = static_cast<int64_t>(i * 4);
+    arrays.push_back(make_fixed_size_list_chunk(
+      schema.get(), {base + 1, base + 2, base + 3, base + 4}, /*num_rows=*/2));
+  }
+
+  auto expected_col =
+    cudf::test::lists_column_wrapper<int64_t>{{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}, {11, 12}};
+  cudf::table_view expected_table_view({expected_col});
+
+  ArrowArrayStream stream;
+  makeStreamFromArrays(std::move(arrays), std::move(schema), &stream);
+
+  auto result = cudf::from_arrow_stream(&stream);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_table_view, result->view());
 }

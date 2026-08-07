@@ -107,6 +107,19 @@ def test_from_arrow_zero_column_preserves_num_rows():
     assert tbl.num_rows() == 5
 
 
+def test_from_arrow_fixed_size_list_normalizes_to_list():
+    fixed = pa.array(
+        [[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64(), list_size=3)
+    )
+    expected = pa.array([[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64()))
+
+    column = plc.Column.from_arrow(fixed)
+    assert column.to_arrow().equals(expected)
+
+    table = plc.Table.from_arrow(pa.table({"a": fixed}))
+    assert_table_eq(table.to_arrow(), pa.table({"a": expected}))
+
+
 def test_to_arrow_zero_column_preserves_num_rows():
     arrow = plc.Table([], num_rows=5).to_arrow()
     assert arrow.num_columns == 0

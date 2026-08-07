@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,33 @@
 #include <utility>
 
 struct ArrowColumnTest : public cudf::test::BaseFixture {};
+
+namespace {
+
+nanoarrow::UniqueSchema make_fixed_size_list_schema(bool wrap_in_struct)
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+
+  auto* list_schema = schema.get();
+  if (wrap_in_struct) {
+    NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
+    list_schema = schema->children[0];
+  }
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetTypeFixedSize(list_schema, NANOARROW_TYPE_FIXED_SIZE_LIST, 3));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(list_schema->children[0], NANOARROW_TYPE_INT64));
+  return schema;
+}
+
+ArrowDeviceArray make_empty_device_array()
+{
+  return ArrowDeviceArray{
+    .array = {}, .device_id = 0, .device_type = ARROW_DEVICE_CUDA, .sync_event = nullptr};
+}
+
+}  // namespace
 
 template <typename T>
 auto export_to_arrow(T& obj, ArrowDeviceType device_type = ARROW_DEVICE_CUDA)
@@ -166,6 +193,16 @@ TEST_F(ArrowColumnTest, ToFromHost)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(int_col, arrow_column_from_arrow_array.view());
 }
 
+TEST_F(ArrowColumnTest, FixedSizeListDeviceInputRejected)
+{
+  auto schema = make_fixed_size_list_schema(false);
+  auto array  = make_empty_device_array();
+
+  EXPECT_THROW(
+    { static_cast<void>(cudf::interop::arrow_column(std::move(*schema.get()), std::move(array))); },
+    cudf::data_type_error);
+}
+
 struct ArrowTableTest : public cudf::test::BaseFixture {};
 
 TEST_F(ArrowTableTest, TwoWayConversion)
@@ -283,4 +320,14 @@ TEST_F(ArrowTableTest, FromArrowArrayStream)
 
   auto result = cudf::interop::arrow_table(std::move(stream));
   CUDF_TEST_EXPECT_TABLES_EQUAL(tbl->view(), result.view());
+}
+
+TEST_F(ArrowTableTest, NestedFixedSizeListDeviceInputRejected)
+{
+  auto schema = make_fixed_size_list_schema(true);
+  auto array  = make_empty_device_array();
+
+  EXPECT_THROW(
+    { static_cast<void>(cudf::interop::arrow_table(std::move(*schema.get()), std::move(array))); },
+    cudf::data_type_error);
 }

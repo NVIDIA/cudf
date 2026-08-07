@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,6 +27,25 @@ static constexpr int fixed_width_data_buffer_idx = 1;
  * @return Column type id
  */
 data_type arrow_to_cudf_type(ArrowSchemaView const* arrow_view);
+
+/**
+ * @brief Check whether the given schema view describes an Arrow fixed-size-list
+ *
+ * @param arrow_view SchemaView to check
+ * @return True if the schema describes a fixed-size-list
+ */
+bool is_fixed_size_list(ArrowSchemaView const* arrow_view);
+
+/**
+ * @brief Return the number of child elements per row of a fixed-size-list schema
+ *
+ * @throw cudf::data_type_error if `arrow_view` is not a fixed-size-list
+ * @throw std::invalid_argument if the declared width is negative
+ *
+ * @param arrow_view SchemaView to pull the fixed size from
+ * @return Number of child elements per row
+ */
+size_type fixed_size_list_width(ArrowSchemaView const* arrow_view);
 
 /**
  * @brief Map cudf column type id to ArrowType id

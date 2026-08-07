@@ -638,9 +638,6 @@ def test_dynamic_planning_defaults() -> None:
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 2
-    assert config.executor.dynamic_planning.join_prefilter_threshold == 0.5
-    assert config.executor.dynamic_planning.join_prefilter_max_key_columns == 1
-    assert not config.executor.dynamic_planning.join_prefilter_trace
     assert config.executor.join_filter_pushdown is None
 
 
@@ -665,28 +662,6 @@ def test_dynamic_planning_sample_chunk_count_from_env(
     assert config.executor.dynamic_planning.sample_chunk_count == 3
 
 
-def test_join_prefilter_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "1")
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_THRESHOLD", "0.25"
-    )
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-        "none",
-    )
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_TRACE", "1"
-    )
-    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
-    assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.join_prefilter_threshold == 0.25
-    assert config.executor.dynamic_planning.join_prefilter_max_key_columns is None
-    assert config.executor.dynamic_planning.join_prefilter_trace
-    assert config.executor.join_filter_pushdown is not None
-    assert config.executor.join_filter_pushdown.threshold == 0.5
-    assert not config.executor.join_filter_pushdown.trace
-
-
 def test_join_filter_pushdown_options_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -708,98 +683,6 @@ def test_join_filter_pushdown_disabled_from_env(
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is None
-
-
-@pytest.mark.parametrize("value, expected", [("none", None), ("null", None), ("2", 2)])
-def test_join_prefilter_max_key_columns_from_env(
-    monkeypatch: pytest.MonkeyPatch, value: str, expected: int | None
-) -> None:
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-        value,
-    )
-    assert DynamicPlanningOptions().join_prefilter_max_key_columns == expected
-
-
-def test_validate_join_prefilter_threshold() -> None:
-    config = ConfigOptions.from_polars_engine(
-        pl.GPUEngine(
-            executor="streaming",
-            executor_options={"dynamic_planning": {"join_prefilter_threshold": 0}},
-        )
-    )
-    assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.join_prefilter_threshold == 0.0
-
-    with pytest.raises(TypeError, match="join_prefilter_threshold must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_threshold": "bad"}
-                },
-            )
-        )
-    with pytest.raises(TypeError, match="join_prefilter_threshold must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_threshold": True}
-                },
-            )
-        )
-    with pytest.raises(ValueError, match="join_prefilter_threshold must be between"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_threshold": 1.5}
-                },
-            )
-        )
-
-
-def test_validate_join_prefilter_max_key_columns() -> None:
-    with pytest.raises(TypeError, match="join_prefilter_max_key_columns must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_max_key_columns": "bad"}
-                },
-            )
-        )
-    with pytest.raises(TypeError, match="join_prefilter_max_key_columns must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_max_key_columns": True}
-                },
-            )
-        )
-    with pytest.raises(
-        ValueError, match="join_prefilter_max_key_columns must be at least 1"
-    ):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_max_key_columns": 0}
-                },
-            )
-        )
-
-
-def test_validate_join_prefilter_trace() -> None:
-    with pytest.raises(TypeError, match="join_prefilter_trace must be a bool"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"dynamic_planning": {"join_prefilter_trace": "bad"}},
-            )
-        )
 
 
 def test_validate_join_filter_pushdown_options() -> None:

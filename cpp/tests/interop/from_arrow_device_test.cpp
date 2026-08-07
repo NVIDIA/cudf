@@ -19,11 +19,16 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/interop.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
 #include <cuda/iterator>
+
+#include <limits>
+#include <numeric>
+#include <vector>
 
 struct FromArrowDeviceTest : public cudf::test::BaseFixture {};
 
@@ -286,7 +291,7 @@ void populate_fixed_size_list_from_col(ArrowArray* arr, cudf::lists_column_view 
 // ArrowSchemaInitFromType does not support NANOARROW_TYPE_FIXED_SIZE_LIST (no format
 // template, returns EINVAL); ArrowSchemaSetTypeFixedSize is the supported path and leaves
 // the allocated "item" child with a NULL format, so the child type is set explicitly.
-nanoarrow::UniqueSchema make_fixed_size_list_device_schema(int32_t width)
+nanoarrow::UniqueSchema make_fixed_size_list_device_schema(int32_t width, bool nullable = false)
 {
   nanoarrow::UniqueSchema schema;
   ArrowSchemaInit(schema.get());
@@ -295,7 +300,7 @@ nanoarrow::UniqueSchema make_fixed_size_list_device_schema(int32_t width)
   NANOARROW_THROW_NOT_OK(
     ArrowSchemaSetTypeFixedSize(schema->children[0], NANOARROW_TYPE_FIXED_SIZE_LIST, width));
   NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
-  schema->children[0]->flags = 0;
+  schema->children[0]->flags = nullable ? ARROW_FLAG_NULLABLE : 0;
 
   NANOARROW_THROW_NOT_OK(
     ArrowSchemaSetType(schema->children[0]->children[0], NANOARROW_TYPE_INT64));
@@ -343,6 +348,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumn)
   auto got_direct_col =
     cudf::from_arrow_device_column(input_schema->children[0], &direct_device_array);
   EXPECT_EQ(got_direct_col->type(), cudf::data_type{cudf::type_id::LIST});
+  EXPECT_EQ(got_direct_col.get_deleter().owned_mem_.size(), 1);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_table_view.column(0), *got_direct_col);
 
   auto got_cudf_col = cudf::from_arrow_device_column(input_schema.get(), &input_device_array);
@@ -385,6 +391,157 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnSliced)
 
   auto got_cudf_table_view = cudf::from_arrow_device(input_schema.get(), &input_device_array);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table_view, *got_cudf_table_view);
+}
+
+TEST_F(FromArrowDeviceTest, FixedSizeListColumnEmpty)
+{
+  auto expected     = cudf::test::lists_column_wrapper<int64_t>{};
+  auto input_schema = make_fixed_size_list_device_schema(3);
+
+  nanoarrow::UniqueArray input_array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
+  auto* list_array = input_array->children[0];
+  cudf::lists_column_view expected_view{expected};
+  populate_fixed_size_list_from_col(list_array, expected_view);
+  populate_from_col<int64_t>(list_array->children[0], expected_view.child());
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(input_array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, list_array, sizeof(ArrowArray));
+  input.device_id   = rmm::get_current_cuda_device().value();
+  input.device_type = ARROW_DEVICE_CUDA;
+  input.sync_event  = nullptr;
+
+  auto result = cudf::from_arrow_device_column(input_schema->children[0], &input);
+  EXPECT_EQ(result->type(), cudf::data_type{cudf::type_id::LIST});
+  EXPECT_EQ(result->size(), 0);
+  EXPECT_TRUE(result.get_deleter().owned_mem_.empty());
+}
+
+TEST_F(FromArrowDeviceTest, FixedSizeListColumnNulls)
+{
+  constexpr cudf::size_type num_rows = 4;
+  std::vector<uint8_t> validity{1, 0, 1, 0};
+  auto child   = cudf::test::fixed_width_column_wrapper<int64_t>{1, 2, 3, 4, 5, 6, 7, 8}.release();
+  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6, 8}.release();
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+  auto expected = cudf::make_lists_column(
+    num_rows, std::move(offsets), std::move(child), null_count, std::move(null_mask));
+
+  auto input_schema = make_fixed_size_list_device_schema(2, /*nullable=*/true);
+  nanoarrow::UniqueArray input_array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
+  auto* list_array = input_array->children[0];
+  cudf::lists_column_view expected_view{*expected};
+  populate_fixed_size_list_from_col(list_array, expected_view);
+  populate_from_col<int64_t>(list_array->children[0], expected_view.child());
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(input_array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, list_array, sizeof(ArrowArray));
+  input.device_id   = rmm::get_current_cuda_device().value();
+  input.device_type = ARROW_DEVICE_CUDA;
+  input.sync_event  = nullptr;
+
+  auto result       = cudf::from_arrow_device_column(input_schema->children[0], &input);
+  auto result_lists = cudf::lists_column_view{*result};
+  EXPECT_EQ(result.get_deleter().owned_mem_.size(), 1);
+  EXPECT_TRUE(cudf::has_nonempty_nulls(result_lists.parent()));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_view.offsets(), result_lists.offsets());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_view.child(), result_lists.child());
+
+  auto expected_logical = cudf::purge_nonempty_nulls(expected_view.parent());
+  auto result_logical   = cudf::purge_nonempty_nulls(result_lists.parent());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_logical, *result_logical);
+}
+
+TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
+{
+  constexpr cudf::size_type width = 2;
+
+  for (auto const num_rows : {cudf::size_type{1024}, cudf::size_type{1025}}) {
+    SCOPED_TRACE(num_rows);
+    std::vector<int64_t> values(num_rows * width);
+    std::iota(values.begin(), values.end(), int64_t{0});
+    std::vector<cudf::size_type> offsets(num_rows + 1);
+    for (cudf::size_type i = 0; i <= num_rows; ++i) {
+      offsets[i] = i * width;
+    }
+
+    auto child =
+      cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
+    auto offsets_col =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end())
+        .release();
+    auto expected = cudf::make_lists_column(
+      num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
+
+    auto input_schema = make_fixed_size_list_device_schema(width);
+    nanoarrow::UniqueArray input_array;
+    NANOARROW_THROW_NOT_OK(
+      ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
+    auto* list_array = input_array->children[0];
+    cudf::lists_column_view expected_view{*expected};
+    populate_fixed_size_list_from_col(list_array, expected_view);
+    populate_from_col<int64_t>(list_array->children[0], expected_view.child());
+    NANOARROW_THROW_NOT_OK(
+      ArrowArrayFinishBuilding(input_array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+
+    ArrowDeviceArray input;
+    memcpy(&input.array, list_array, sizeof(ArrowArray));
+    input.device_id   = rmm::get_current_cuda_device().value();
+    input.device_type = ARROW_DEVICE_CUDA;
+    input.sync_event  = nullptr;
+
+    auto result = cudf::from_arrow_device_column(input_schema->children[0], &input);
+    EXPECT_EQ(result.get_deleter().owned_mem_.size(), 1);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), *result);
+  }
+}
+
+TEST_F(FromArrowDeviceTest, FixedSizeListInvalidBounds)
+{
+  auto input_schema = make_fixed_size_list_device_schema(3);
+  nanoarrow::UniqueArray input_array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, input_array->children[0], sizeof(ArrowArray));
+  input.device_id   = rmm::get_current_cuda_device().value();
+  input.device_type = ARROW_DEVICE_CUDA;
+  input.sync_event  = nullptr;
+
+  input.array.offset = -1;
+  EXPECT_THROW(cudf::from_arrow_device_column(input_schema->children[0], &input),
+               std::invalid_argument);
+
+  input.array.offset = 0;
+  input.array.length = -1;
+  EXPECT_THROW(cudf::from_arrow_device_column(input_schema->children[0], &input),
+               std::invalid_argument);
+
+  input.array.length = std::numeric_limits<cudf::size_type>::max();
+  EXPECT_THROW(cudf::from_arrow_device_column(input_schema->children[0], &input),
+               std::overflow_error);
+
+  input.array.offset = std::numeric_limits<cudf::size_type>::max();
+  input.array.length = 1;
+  EXPECT_THROW(cudf::from_arrow_device_column(input_schema->children[0], &input),
+               std::overflow_error);
+
+  input.array.offset = std::numeric_limits<cudf::size_type>::max() / 2;
+  input.array.length = 1;
+  EXPECT_THROW(cudf::from_arrow_device_column(input_schema->children[0], &input),
+               std::overflow_error);
+
+  input.array.offset              = 0;
+  input.array.length              = 1;
+  input.array.children[0]->length = 2;
+  EXPECT_THROW(cudf::from_arrow_device_column(input_schema->children[0], &input),
+               std::invalid_argument);
 }
 
 TEST_F(FromArrowDeviceTest, StructColumn)

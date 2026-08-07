@@ -300,33 +300,28 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_fixed_size_list_offset
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {
-  auto const width  = static_cast<int64_t>(fixed_size_list_width(schema));
-  auto const offset = input->offset * width;
-  auto const length = input->length * width;
+  auto const layout = get_fixed_size_list_layout(schema, input);
+  CUDF_EXPECTS(input->children[0]->length >= layout.child_end,
+               "fixed-size-list child is shorter than its parent layout requires",
+               std::invalid_argument);
 
-  constexpr auto max_size = static_cast<int64_t>(std::numeric_limits<cudf::size_type>::max());
-  CUDF_EXPECTS(length <= max_size,
-               "Number of fixed-size-list child elements exceeds cuDF's maximum supported "
-               "row count (cudf::size_type).",
-               std::overflow_error);
-
-  return std::tuple{
-    make_fixed_size_list_offsets(
-      static_cast<size_type>(input->length) + 1, static_cast<size_type>(width), stream, mr),
-    offset,
-    length};
+  return std::tuple{make_fixed_size_list_offsets(layout.num_rows + 1, layout.width, stream, mr),
+                    layout.child_offset,
+                    layout.child_length};
 }
 
 template <>
 std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_view>(
   ArrowSchemaView const* schema, ArrowArray const* input, data_type type, bool skip_mask)
 {
+  CUDF_EXPECTS(input->length >= 0, "Number of rows must be non-negative.", std::invalid_argument);
   CUDF_EXPECTS(
-    input->length + 1 <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
+    input->length < static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
     "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
     std::overflow_error);
 
-  auto [offsets_column, offset, length] = is_fixed_size_list(schema)
+  auto const fixed_size                 = is_fixed_size_list(schema);
+  auto [offsets_column, offset, length] = fixed_size
                                             ? get_fixed_size_list_offsets(schema, input, stream, mr)
                                             : get_offsets_column(schema, input, stream, mr);
 
@@ -335,8 +330,16 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
   auto child_type = arrow_to_cudf_type(&view);
 
   ArrowArray child_array(*input->children[0]);
+  if (fixed_size) {
+    CUDF_EXPECTS(child_array.offset >= 0,
+                 "fixed-size-list child offset must be non-negative",
+                 std::invalid_argument);
+    CUDF_EXPECTS(offset <= std::numeric_limits<int64_t>::max() - child_array.offset,
+                 "fixed-size-list child offset overflows Arrow's int64 representation",
+                 std::overflow_error);
+  }
   child_array.offset += offset;
-  child_array.length = std::min(length, child_array.length);
+  child_array.length = fixed_size ? length : std::min(length, child_array.length);
 
   auto child_column = get_column_copy(&view, &child_array, child_type, skip_mask, stream, mr);
 
@@ -437,11 +440,8 @@ std::unique_ptr<column> make_fixed_size_list_offsets(size_type size,
   auto offsets =
     make_numeric_column(data_type{type_id::INT32}, size, mask_state::UNALLOCATED, stream, mr);
   auto d_offsets = offsets->mutable_view().begin<size_type>();
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   d_offsets,
-                   d_offsets + size,
-                   size_type{0},
-                   width);
+  thrust::sequence(
+    rmm::exec_policy_nosync(stream, mr), d_offsets, d_offsets + size, size_type{0}, width);
   return offsets;
 }
 

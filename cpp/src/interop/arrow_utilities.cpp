@@ -11,6 +11,7 @@
 
 #include <nanoarrow/nanoarrow.h>
 
+#include <limits>
 #include <stdexcept>
 
 namespace cudf {
@@ -77,7 +78,47 @@ size_type fixed_size_list_width(ArrowSchemaView const* arrow_view)
   CUDF_EXPECTS(arrow_view->fixed_size >= 0,
                "fixed-size-list width must be non-negative",
                std::invalid_argument);
+  CUDF_EXPECTS(arrow_view->fixed_size <= std::numeric_limits<size_type>::max(),
+               "fixed-size-list width exceeds cuDF's maximum supported row count (cudf::size_type)",
+               std::overflow_error);
   return static_cast<size_type>(arrow_view->fixed_size);
+}
+
+fixed_size_list_layout get_fixed_size_list_layout(ArrowSchemaView const* arrow_view,
+                                                  ArrowArray const* input)
+{
+  CUDF_EXPECTS(input->offset >= 0 && input->length >= 0,
+               "fixed-size-list offset and length must be non-negative",
+               std::invalid_argument);
+
+  constexpr auto max_size = static_cast<int64_t>(std::numeric_limits<size_type>::max());
+  CUDF_EXPECTS(input->length < max_size,
+               "fixed-size-list length exceeds cuDF's maximum supported row count "
+               "(cudf::size_type)",
+               std::overflow_error);
+  CUDF_EXPECTS(input->offset <= std::numeric_limits<int64_t>::max() - input->length,
+               "fixed-size-list row bounds overflow Arrow's int64 representation",
+               std::overflow_error);
+
+  auto const width    = fixed_size_list_width(arrow_view);
+  auto const num_rows = static_cast<size_type>(input->length);
+  auto const row_end  = input->offset + input->length;
+
+  // Width zero is valid for a foreign Arrow producer even though nanoarrow's schema builder
+  // rejects it. Its offsets and child bounds are all zero.
+  if (width == 0) { return {width, num_rows, input->offset, row_end, 0, 0, 0}; }
+
+  CUDF_EXPECTS(row_end <= std::numeric_limits<int64_t>::max() / width,
+               "fixed-size-list child bounds overflow Arrow's int64 representation",
+               std::overflow_error);
+  auto const child_length = input->length * width;
+  CUDF_EXPECTS(child_length <= max_size,
+               "Number of fixed-size-list child elements exceeds cuDF's maximum supported "
+               "row count (cudf::size_type)",
+               std::overflow_error);
+
+  return {
+    width, num_rows, input->offset, row_end, input->offset * width, child_length, row_end * width};
 }
 
 ArrowType id_to_arrow_type(cudf::type_id id)

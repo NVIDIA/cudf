@@ -107,17 +107,35 @@ def test_from_arrow_zero_column_preserves_num_rows():
     assert tbl.num_rows() == 5
 
 
-def test_from_arrow_fixed_size_list_normalizes_to_list():
-    fixed = pa.array(
-        [[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64(), list_size=3)
-    )
-    expected = pa.array([[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64()))
+@pytest.mark.parametrize(
+    "values",
+    [[], [None, None], [[1, 2, 3]], [[1, 2, 3], [4, 5, 6]]],
+)
+def test_from_arrow_fixed_size_list_normalizes_to_list(values):
+    fixed = pa.array(values, type=pa.list_(pa.int64(), list_size=3))
+    expected = pa.array(values, type=pa.list_(pa.int64()))
 
     column = plc.Column.from_arrow(fixed)
     assert column.to_arrow().equals(expected)
 
     table = plc.Table.from_arrow(pa.table({"a": fixed}))
     assert_table_eq(table.to_arrow(), pa.table({"a": expected}))
+
+
+def test_from_arrow_fixed_size_list_in_mixed_table():
+    fixed = pa.array(
+        [[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64(), list_size=3)
+    )
+    arrow_table = pa.table(
+        {"fixed": fixed, "integer": pa.array([7, 8]), "string": ["a", "b"]}
+    )
+    expected = arrow_table.set_column(
+        0,
+        "fixed",
+        pa.array([[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64())),
+    )
+
+    assert_table_eq(plc.Table.from_arrow(arrow_table).to_arrow(), expected)
 
 
 def test_to_arrow_zero_column_preserves_num_rows():

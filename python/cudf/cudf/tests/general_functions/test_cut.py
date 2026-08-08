@@ -230,6 +230,16 @@ def test_cut_drop_duplicates_raises(
         )
 
 
+def test_cut_unique_bins_larger_than_integer_cache():
+    x = [1, 2]
+    bins = list(range(257))
+
+    expected = pd.cut(x=x, bins=bins, labels=False)
+    actual = cut(x=x, bins=bins, labels=False)
+
+    assert_eq(expected, actual)
+
+
 @pytest.mark.parametrize(
     "x",
     [

@@ -240,6 +240,18 @@ def test_cut_unique_bins_larger_than_integer_cache():
     assert_eq(expected, actual)
 
 
+def test_cut_duplicate_bins_with_distinct_large_integers():
+    x = [1, 2]
+    duplicate_edge = int("257")
+    bins = [0, duplicate_edge, int("257"), 258]
+
+    assert bins[1] == bins[2]
+    assert bins[1] is not bins[2]
+
+    with pytest.raises(ValueError, match="Bin edges must be unique"):
+        cut(x=x, bins=bins, labels=False)
+
+
 @pytest.mark.parametrize(
     "x",
     [

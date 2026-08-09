@@ -1841,7 +1841,7 @@ aggregate_reader_metadata::select_row_groups(
 
 std::tuple<std::vector<input_column_info>,
            std::vector<cudf::io::detail::inline_column_buffer>,
-           std::vector<size_type>>
+           std::vector<int>>
 aggregate_reader_metadata::select_columns(
   std::optional<std::vector<std::string>> const& use_names,
   std::optional<std::vector<std::string>> const& filter_columns_names,

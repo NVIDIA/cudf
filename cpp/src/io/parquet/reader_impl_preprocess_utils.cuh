@@ -384,10 +384,12 @@ struct get_reduction_key {
  */
 struct chunk_row_output_iter {
   PageInfo* p;
-  using value_type        = size_type;
+  // chunk_row is chunk-relative, so it stays 32 bits even when size_type is 64 bits; a row group
+  // holding more than 2^31 rows is already unsupported.
+  using value_type        = int32_t;
   using difference_type   = size_type;
-  using pointer           = size_type*;
-  using reference         = size_type&;
+  using pointer           = int32_t*;
+  using reference         = int32_t&;
   using iterator_category = thrust::output_device_iterator_tag;
 
   CUDF_HOST_DEVICE constexpr inline chunk_row_output_iter operator+(int i) const { return {p + i}; }
@@ -411,11 +413,12 @@ struct start_offset_output_iterator {
   input_col_info const* input_cols;
   size_type max_depth;
   size_t num_pages;
-  int empty               = 0;
-  using value_type        = size_type;
+  int empty = 0;
+  // page_start_value is chunk-relative, so it stays 32 bits even when size_type is 64 bits.
+  using value_type        = int32_t;
   using difference_type   = size_type;
-  using pointer           = size_type*;
-  using reference         = size_type&;
+  using pointer           = int32_t*;
+  using reference         = int32_t&;
   using iterator_category = thrust::output_device_iterator_tag;
 
   CUDF_HOST_DEVICE constexpr inline void operator=(start_offset_output_iterator const& other)

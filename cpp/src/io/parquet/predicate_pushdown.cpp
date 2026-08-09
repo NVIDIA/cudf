@@ -298,7 +298,7 @@ aggregate_reader_metadata::filter_row_groups(
       .get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
-  std::vector<cudf::size_type> equality_col_schemas;
+  std::vector<int> equality_col_schemas;
   thrust::copy_if(thrust::host,
                   output_column_schemas.begin(),
                   output_column_schemas.end(),

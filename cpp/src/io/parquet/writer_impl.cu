@@ -1369,7 +1369,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
       // bitpacking bitsize we efficiently support
       if (nbits > MAX_DICT_BITS) { return {false, 0}; }
 
-      auto rle_byte_size = util::div_rounding_up_safe(ck.num_values * nbits, 8);
+      auto rle_byte_size = util::div_rounding_up_safe(ck.num_values * nbits, size_type{8});
       auto dict_enc_size = ck.uniq_data_size + rle_byte_size;
       if (ck.plain_data_size <= dict_enc_size) { return {false, 0}; }
 

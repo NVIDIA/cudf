@@ -267,7 +267,8 @@ class delta_binary_packer {
     // encoding happens here
     auto const warp_idx = _current_idx + warp_id * delta::values_per_mini_block;
     if (warp_idx < _num_values) {
-      auto const num_enc = min(delta::values_per_mini_block, _num_values - warp_idx);
+      auto const num_enc = min(size_type{delta::values_per_mini_block},
+                               static_cast<size_type>(_num_values) - warp_idx);
       if (_mb_bits[warp_id] > 32) {
         delta::bitpack_mini_block<unsigned long long>(
           mb_ptr, norm_delta, num_enc, _mb_bits[warp_id], _bitpack_tmp);
@@ -281,8 +282,9 @@ class delta_binary_packer {
     // Last warp updates global delta ptr.
     if (warp_id == delta::num_mini_blocks - 1 && lane_id == 0) {
       _dst              = mb_ptr + _mb_bits[warp_id] * delta::values_per_mini_block / 8;
-      _current_idx      = min(warp_idx + delta::values_per_mini_block, _num_values);
-      _values_in_buffer = max(_values_in_buffer - delta::block_size, 0U);
+      _current_idx      = min(warp_idx + size_type{delta::values_per_mini_block},
+                         static_cast<size_type>(_num_values));
+      _values_in_buffer = max(_values_in_buffer - delta::block_size, size_type{0});
     }
     __syncthreads();
 

@@ -406,7 +406,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   host_span<std::vector<ast::literal*> const> literals,
   size_type total_row_groups,
   host_span<data_type const> output_dtypes,
-  host_span<cudf::size_type const> bloom_filter_col_schemas,
+  host_span<int const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
   rmm::cuda_stream_view stream) const
 {
@@ -470,7 +470,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 equality_literals_collector::equality_literals_collector(
   ast::expression const& expr,
   cudf::host_span<cudf::data_type const> output_dtypes,
-  cudf::host_span<cudf::size_type const> output_column_schemas,
+  cudf::host_span<int const> output_column_schemas,
   cudf::host_span<SchemaElement const> schema_tree)
   : _output_dtypes{output_dtypes},
     _output_column_schemas{output_column_schemas},

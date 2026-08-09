@@ -306,7 +306,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                     c_info_sorted.begin(),
                     c_info_sorted.end(),
                     page_keys_by_split.begin(),
-                    cuda::proclaim_return_type<int>(
+                    cuda::proclaim_return_type<size_type>(
                       [] __device__(cumulative_page_info const& c) { return c.key; }));
 
   // generate key offsets (offsets to the start of each partition of keys). worst case is 1 page per

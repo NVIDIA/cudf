@@ -9,6 +9,7 @@
 
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -194,16 +195,17 @@ CUDF_KERNEL void infer_column_type_kernel(OptionsView options,
   auto const block_type_histogram =
     BlockReduce(temp_storage).Reduce(thread_type_histogram, custom_sum{});
   if (threadIdx.x == 0) {
-    atomicAdd(&column_info->null_count, block_type_histogram.null_count);
-    atomicAdd(&column_info->float_count, block_type_histogram.float_count);
-    atomicAdd(&column_info->datetime_count, block_type_histogram.datetime_count);
-    atomicAdd(&column_info->string_count, block_type_histogram.string_count);
-    atomicAdd(&column_info->negative_small_int_count,
-              block_type_histogram.negative_small_int_count);
-    atomicAdd(&column_info->positive_small_int_count,
-              block_type_histogram.positive_small_int_count);
-    atomicAdd(&column_info->big_int_count, block_type_histogram.big_int_count);
-    atomicAdd(&column_info->bool_count, block_type_histogram.bool_count);
+    using cudf::detail::atomic_add_relaxed;
+    atomic_add_relaxed(&column_info->null_count, block_type_histogram.null_count);
+    atomic_add_relaxed(&column_info->float_count, block_type_histogram.float_count);
+    atomic_add_relaxed(&column_info->datetime_count, block_type_histogram.datetime_count);
+    atomic_add_relaxed(&column_info->string_count, block_type_histogram.string_count);
+    atomic_add_relaxed(&column_info->negative_small_int_count,
+                       block_type_histogram.negative_small_int_count);
+    atomic_add_relaxed(&column_info->positive_small_int_count,
+                       block_type_histogram.positive_small_int_count);
+    atomic_add_relaxed(&column_info->big_int_count, block_type_histogram.big_int_count);
+    atomic_add_relaxed(&column_info->bool_count, block_type_histogram.bool_count);
   }
 }
 

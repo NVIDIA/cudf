@@ -237,9 +237,12 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
       }
 
       case type_id::LIST: {
-        // make offsets column
-        auto offsets = std::make_unique<column>(
-          data_type{type_id::INT32}, buffer.size, std::move(buffer._data), rmm::device_buffer{}, 0);
+        // make offsets column; the buffer was allocated at size_type width to match
+        auto offsets = std::make_unique<column>(data_type{type_to_id<size_type>()},
+                                                buffer.size,
+                                                std::move(buffer._data),
+                                                rmm::device_buffer{},
+                                                0);
 
         column_name_info* child_info = nullptr;
         if (schema_info != nullptr) {
@@ -322,7 +325,7 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
   switch (buffer.type.id()) {
     case type_id::STRING: {
       if (buffer.string_as_binary) {
-        auto offsets = cudf::make_empty_column(type_id::INT32);
+        auto offsets = cudf::make_empty_column(type_to_id<size_type>());
         auto child   = cudf::make_empty_column(type_id::UINT8);
         if (schema_info != nullptr) {
           // Mirror the binary path in `make_column` so that the schema_info for an empty
@@ -339,7 +342,7 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
 
     case type_id::LIST: {
       // make offsets column
-      auto offsets = cudf::make_empty_column(type_id::INT32);
+      auto offsets = cudf::make_empty_column(type_to_id<size_type>());
 
       column_name_info* child_info = nullptr;
       if (schema_info != nullptr) {

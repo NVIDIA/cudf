@@ -10,6 +10,7 @@
 #include "io/utilities/trie.cuh"
 
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -198,12 +199,12 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       // points to last character in the field
       auto const field_len = static_cast<size_t>(next_delimiter - field_start);
       if (serialized_trie_contains(opts.trie_na, {field_start, field_len})) {
-        atomicAdd(&d_column_data[actual_col].null_count, 1);
+        cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].null_count, size_type{1});
       } else if (serialized_trie_contains(opts.trie_true, {field_start, field_len}) ||
                  serialized_trie_contains(opts.trie_false, {field_start, field_len})) {
-        atomicAdd(&d_column_data[actual_col].bool_count, 1);
+        cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].bool_count, size_type{1});
       } else if (cudf::io::is_infinity(field_start, next_delimiter)) {
-        atomicAdd(&d_column_data[actual_col].float_count, 1);
+        cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].float_count, size_type{1});
       } else {
         long count_number    = 0;
         long count_decimal   = 0;
@@ -263,9 +264,11 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
           if (column_flags[col] & column_parse::as_datetime) {
             // PANDAS uses `object` dtype if the date is unparseable
             if (is_datetime(count_string, count_decimal, count_colon, count_dash, count_slash)) {
-              atomicAdd(&d_column_data[actual_col].datetime_count, 1);
+              cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].datetime_count,
+                                               size_type{1});
             } else {
-              atomicAdd(&d_column_data[actual_col].string_count, 1);
+              cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].string_count,
+                                               size_type{1});
             }
           } else if (count_number == int_req_number_cnt) {
             auto const is_negative = (*trimmed_field_range.first == '-');
@@ -273,16 +276,16 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
               trimmed_field_range.first + (is_negative || (*trimmed_field_range.first == '+'));
             cudf::size_type* ptr = cudf::io::gpu::infer_integral_field_counter(
               data_begin, data_begin + count_number, is_negative, d_column_data[actual_col]);
-            atomicAdd(ptr, 1);
+            cudf::detail::atomic_add_relaxed(ptr, size_type{1});
           } else if (is_floatingpoint(trimmed_field_len,
                                       count_number,
                                       count_decimal,
                                       count_thousands,
                                       count_dash + count_plus,
                                       count_exponent)) {
-            atomicAdd(&d_column_data[actual_col].float_count, 1);
+            cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].float_count, size_type{1});
           } else {
-            atomicAdd(&d_column_data[actual_col].string_count, 1);
+            cudf::detail::atomic_add_relaxed(&d_column_data[actual_col].string_count, size_type{1});
           }
         }
       }
@@ -399,7 +402,7 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
                                     column_flags[col] & column_parse::as_hexadecimal)) {
             // set the valid bitmap - all bits were set to 0 to start
             set_bit(valids[actual_col], rec_id);
-            atomicAdd(&valid_counts[actual_col], 1);
+            cudf::detail::atomic_add_relaxed(&valid_counts[actual_col], size_type{1});
           }
         }
       } else if (dtypes[actual_col].id() == cudf::type_id::STRING) {

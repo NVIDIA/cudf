@@ -147,7 +147,7 @@ __device__ constexpr size_t underflow_safe_subtract(size_t a, size_t b)
 
 void __device__ init_frag_state(frag_init_state_s* const s,
                                 uint32_t fragment_size,
-                                int part_end_row)
+                                size_type part_end_row)
 {
   // frag.num_rows = fragment_size except for the last fragment in partition which can be
   // smaller. num_rows is fixed but fragment size could be larger if the data is strings or
@@ -436,7 +436,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
       auto it =
         thrust::upper_bound(thrust::seq, part_frag_offset.begin(), part_frag_offset.end(), frag_y);
       int const p            = it - part_frag_offset.begin() - 1;
-      int const part_end_row = partitions[p].start_row + partitions[p].num_rows;
+      size_type const part_end_row = partitions[p].start_row + partitions[p].num_rows;
       s->frag.start_row = (frag_y - part_frag_offset[p]) * fragment_size + partitions[p].start_row;
       s->frag.chunk     = frag[blockIdx.x][frag_y].chunk;
       init_frag_state(s, fragment_size, part_end_row);
@@ -466,7 +466,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   __syncthreads();
 
   if (t == 0) {
-    int const part_end_row = ck_g->start_row + ck_g->num_rows;
+    size_type const part_end_row = ck_g->start_row + ck_g->num_rows;
     s->frag.start_row      = ck_g->start_row + (blockIdx.x - ck_g->first_fragment) * fragment_size;
     s->frag.chunk          = ck_g;
     init_frag_state(s, fragment_size, part_end_row);
@@ -894,7 +894,9 @@ CUDF_KERNEL void __launch_bounds__(128)
       max_stats_len = max(max_stats_len, minmax_len);
       page_size += fragment_data_size;
       // fragment_data_size includes the length indicator...remove it
-      var_bytes_size += frag_g.fragment_data_size - frag_g.num_valid * sizeof(size_type);
+      // Parquet BYTE_ARRAY values always use a 4-byte little-endian length prefix,
+      // independent of cuDF's configured size_type width.
+      var_bytes_size += frag_g.fragment_data_size - frag_g.num_valid * sizeof(int32_t);
       rows_in_page += frag_g.num_rows;
       values_in_page += frag_g.num_values;
       leaf_values_in_page += frag_g.num_leaf_values;

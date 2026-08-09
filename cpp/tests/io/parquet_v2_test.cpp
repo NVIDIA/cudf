@@ -1000,7 +1000,8 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexStruct)
     cudf::test::fixed_width_column_wrapper<int32_t>(listgen, listgen + 2 * num_ordered_rows);
   auto offgen = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 2; });
   auto offsets =
-    cudf::test::fixed_width_column_wrapper<int32_t>(offgen, offgen + num_ordered_rows + 1);
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offgen,
+                                                            offgen + num_ordered_rows + 1);
 
   auto c2 = cudf::make_lists_column(num_ordered_rows, offsets.release(), list.release(), 0, {});
 

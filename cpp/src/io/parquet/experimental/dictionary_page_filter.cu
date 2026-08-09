@@ -1026,8 +1026,10 @@ struct dictionary_caster {
         // Compute the number of hash set slots needed to target the desired occupancy factor
         host_set_offsets.push_back(
           host_set_offsets.back() +
-          static_cast<cudf::size_type>(cuco::make_valid_extent<probing_scheme_type, storage_type>(
-            num_input_values, OCCUPANCY_FACTOR)));
+          static_cast<cudf::size_type>(
+            cuco::make_valid_extent<probing_scheme_type, storage_type>(num_input_values,
+                                                                      OCCUPANCY_FACTOR)
+              .value()));
       });
 
     // Get the default device resource ref for temporary memory allocations

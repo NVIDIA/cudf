@@ -164,7 +164,8 @@ std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0
   std::vector<size_type> tree_level_offsets;
   tree_level_offsets.push_back(0);
 
-  cudf::size_type current_level_size = cudf::util::div_rounding_up_safe(level0_size, 2);
+  cudf::size_type current_level_size =
+    cudf::util::div_rounding_up_safe(level0_size, cudf::size_type{2});
   cudf::size_type current_level      = 1;
 
   while (current_level_size > 0) {
@@ -172,7 +173,9 @@ std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0
     if (std::cmp_greater(block_size, max_page_size)) { break; }
     tree_level_offsets.push_back(tree_level_offsets.back() + current_level_size);
     current_level_size =
-      current_level_size == 1 ? 0 : cudf::util::div_rounding_up_safe(current_level_size, 2);
+      current_level_size == 1
+        ? 0
+        : cudf::util::div_rounding_up_safe(current_level_size, cudf::size_type{2});
     current_level++;
   }
   return tree_level_offsets;

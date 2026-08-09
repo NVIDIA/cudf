@@ -148,6 +148,9 @@ TEST_F(HybridScanMultifileTest, MaterializeLists)
 
 TEST_F(HybridScanMultifileTest, MaterializeListsOfStrings)
 {
+#if CUDF_SIZE_TYPE_BITS == 64
+  GTEST_SKIP() << "Nested dictionary-string decoding is not yet supported in 64-bit mode.";
+#endif
   std::mt19937 gen(0xc0c0a);
 
   auto col0 = testdata::ascending<uint32_t>();

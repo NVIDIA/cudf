@@ -337,7 +337,7 @@ hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
   }
 
   // Collect schema indices of input columns with a non-empty (in)equality literal/operator vector
-  std::vector<cudf::size_type> dictionary_col_schemas;
+  std::vector<int> dictionary_col_schemas;
   thrust::copy_if(thrust::host,
                   _output_column_schemas.begin(),
                   _output_column_schemas.end(),

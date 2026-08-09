@@ -516,14 +516,15 @@ inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
 {
   auto build_list = [](std::vector<std::vector<uint8_t>> const& rows) {
     auto const n = static_cast<cudf::size_type>(rows.size());
-    std::vector<int32_t> offsets(n + 1, 0);
+    std::vector<cudf::size_type> offsets(n + 1, 0);
     std::vector<uint8_t> flat;
     for (cudf::size_type i = 0; i < n; ++i) {
       flat.insert(flat.end(), rows[i].begin(), rows[i].end());
-      offsets[i + 1] = static_cast<int32_t>(flat.size());
+      offsets[i + 1] = static_cast<cudf::size_type>(flat.size());
     }
-    auto offs =
-      cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
+    auto offs = cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(),
+                                                                        offsets.end())
+                  .release();
     auto data = cudf::test::fixed_width_column_wrapper<uint8_t>(flat.begin(), flat.end()).release();
     return cudf::make_lists_column(n, std::move(offs), std::move(data), 0, {});
   };

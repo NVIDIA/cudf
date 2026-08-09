@@ -698,6 +698,7 @@ struct search_fenwick_tree_functor {
     start |= start >> 4;
     start |= start >> 8;
     start |= start >> 16;
+    if constexpr (sizeof(size_type) == sizeof(int64_t)) { start |= start >> 32; }
     auto const result = start + 1;
     return result < end ? result : 0;
   }
@@ -713,8 +714,10 @@ struct search_fenwick_tree_functor {
   __device__ size_type inline constexpr largest_power_of_two_in_range(size_type start,
                                                                       size_type end) const noexcept
   {
-    auto constexpr nbits = cudf::detail::size_in_bits<size_type>() - 1;
-    auto const result    = size_type{1} << (nbits - cuda::std::countl_zero<uint32_t>(end));
+    using unsigned_size_type = cuda::std::make_unsigned_t<size_type>;
+    auto constexpr nbits     = cudf::detail::size_in_bits<size_type>() - 1;
+    auto const result =
+      size_type{1} << (nbits - cuda::std::countl_zero(static_cast<unsigned_size_type>(end)));
     return result > start ? result : 0;
   }
 
@@ -734,10 +737,12 @@ struct search_fenwick_tree_functor {
       if (start == 0 or is_power_of_two(start)) {
         auto const block_size =
           cuda::std::max<size_type>(start & -start, largest_power_of_two_in_range(start, end));
-        auto const tree_level = cuda::std::countr_zero<uint32_t>(block_size);
+        auto const tree_level =
+          cuda::std::countr_zero(static_cast<cuda::std::make_unsigned_t<size_type>>(block_size));
         return cuda::std::pair{tree_level, block_size};
       } else {
-        auto const tree_level = cuda::std::countr_zero<uint32_t>(start);
+        auto const tree_level =
+          cuda::std::countr_zero(static_cast<cuda::std::make_unsigned_t<size_type>>(start));
         return cuda::std::pair{tree_level, size_type{1} << tree_level};
       }
     } else {
@@ -747,7 +752,10 @@ struct search_fenwick_tree_functor {
                                                    largest_power_of_two_in_range(0, end - start));
         block_size                = end - next_alignment;
       }
-      return cuda::std::pair{cuda::std::countr_zero<uint32_t>(block_size), block_size};
+      return cuda::std::pair{
+        cuda::std::countr_zero(
+          static_cast<cuda::std::make_unsigned_t<size_type>>(block_size)),
+        block_size};
     }
   }
 
@@ -845,7 +853,7 @@ struct search_fenwick_tree_functor {
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_page_index_stats(
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<cudf::data_type const> output_dtypes,
-  std::span<cudf::size_type const> output_column_schemas,
+  std::span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr) const
@@ -1147,13 +1155,14 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   auto prev_level_size = static_cast<cudf::size_type>(total_rows);
   std::for_each(
     cuda::counting_iterator<cudf::size_type>{0},
-    cuda::counting_iterator{num_levels - 1},
+    cuda::counting_iterator<cudf::size_type>{num_levels - 1},
     [&](auto const prev_level) {
-      auto const current_level_size = cudf::util::div_rounding_up_safe(prev_level_size, 2);
+      auto const current_level_size =
+        cudf::util::div_rounding_up_safe(prev_level_size, cudf::size_type{2});
       thrust::for_each(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         cuda::counting_iterator<cudf::size_type>{0},
-        cuda::counting_iterator{current_level_size},
+        cuda::counting_iterator<cudf::size_type>{current_level_size},
         build_fenwick_tree_level_functor{
           fenwick_tree_level_ptrs.data(), prev_level, prev_level_size, current_level_size});
       prev_level_size = current_level_size;

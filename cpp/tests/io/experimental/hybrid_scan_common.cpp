@@ -118,7 +118,7 @@ std::unique_ptr<cudf::column> make_list_str_column(std::mt19937& gen,
     if (is_list_nullable) {
       return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
     } else {
-      return std::make_pair(rmm::device_buffer{}, 0);
+      return std::make_pair(rmm::device_buffer{}, cudf::size_type{0});
     }
   }();
   return cudf::make_lists_column(

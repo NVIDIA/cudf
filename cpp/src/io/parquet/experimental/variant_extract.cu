@@ -764,10 +764,10 @@ std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> ste
     host_offsets[i] = static_cast<size_type>(host_chars.size());
     host_chars.append(steps[i]);
   }
-  host_offsets[depth] = host_chars.size();
+  host_offsets[depth] = static_cast<size_type>(host_chars.size());
 
   auto d_offsets   = cudf::detail::make_device_uvector_async(host_offsets, stream, mr);
-  auto offsets_col = std::make_unique<column>(data_type{type_id::INT32},
+  auto offsets_col = std::make_unique<column>(data_type{type_to_id<size_type>()},
                                               static_cast<size_type>(host_offsets.size()),
                                               d_offsets.release(),
                                               rmm::device_buffer{},
@@ -804,7 +804,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   auto const num_rows = variant_column.size();
   if (num_rows == 0) {
     return cudf::make_lists_column(
-      0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
+      0, make_empty_column(type_to_id<size_type>()), make_empty_column(type_id::UINT8), 0, {});
   }
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
@@ -843,13 +843,17 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // Convert sizes to offsets
-  auto [offsets_column, total_bytes] =
-    cudf::strings::detail::make_offsets_child_column(d_sizes.begin(), d_sizes.end(), stream, mr);
-  CUDF_EXPECTS(total_bytes <= std::numeric_limits<size_type>::max(),
-               "VARIANT extracted bytes exceed cudf size_type limit",
-               std::overflow_error);
-  device_span<size_type const> d_offsets{offsets_column->view().data<size_type>(),
-                                         static_cast<std::size_t>(num_rows + 1)};
+  rmm::device_uvector<size_type> offsets(static_cast<std::size_t>(num_rows + 1), stream, mr);
+  CUDF_CUDA_TRY(cudaMemsetAsync(offsets.data(), 0, sizeof(size_type), stream.value()));
+  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                         d_sizes.begin(),
+                         d_sizes.end(),
+                         offsets.begin() + 1);
+  auto const total_bytes = offsets.back_element(stream);
+  auto offsets_column =
+    std::make_unique<column>(std::move(offsets), rmm::device_buffer{}, size_type{0});
+  auto const d_offsets =
+    cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // Copy values into the output buffer
   auto val_child = make_numeric_column(
@@ -866,7 +870,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
     auto dst_iter = cudf::detail::make_counting_transform_iterator(
       size_type{0},
       cuda::proclaim_return_type<uint8_t*>(
-        [out_base, d_off = d_offsets.data()] __device__(size_type row) -> uint8_t* {
+        [out_base, d_off = d_offsets] __device__(size_type row) -> uint8_t* {
           return out_base + d_off[row];
         }));
     cudf::detail::batched_memcpy_async(src_iter, dst_iter, d_sizes.begin(), num_rows, stream);

@@ -18,6 +18,7 @@
 
 #include <cuda/std/iterator>
 #include <thrust/adjacent_difference.h>
+#include <thrust/copy.h>
 
 #include <numeric>
 
@@ -129,4 +130,14 @@ rmm::device_uvector<cudf::size_type> string_offset_to_length(
   thrust::adjacent_difference(
     rmm::exec_policy_nosync(stream), itr + 1, itr + column.size() + 1, svs_length.begin());
   return svs_length;
+}
+
+rmm::device_uvector<cudf::size_type> string_offsets(cudf::strings_column_view const& column,
+                                                    rmm::cuda_stream_view stream)
+{
+  rmm::device_uvector<cudf::size_type> offsets(column.size() + 1, stream);
+  auto itr =
+    cudf::detail::offsetalator_factory::make_input_iterator(column.offsets(), column.offset());
+  thrust::copy_n(rmm::exec_policy_nosync(stream), itr, column.size() + 1, offsets.begin());
+  return offsets;
 }

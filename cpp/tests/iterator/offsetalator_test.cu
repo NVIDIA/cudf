@@ -118,8 +118,8 @@ TYPED_TEST(OffsetalatorTest, device_offsetalator)
   auto d_input = cudf::column_device_view::create(input, stream);
 
   thrust::transform(rmm::exec_policy_nosync(stream),
-                    cuda::counting_iterator<int>{0},
-                    cuda::counting_iterator<int>{input.size()},
+                    cuda::counting_iterator<cudf::size_type>{0},
+                    cuda::counting_iterator<cudf::size_type>{input.size()},
                     output.begin<int32_t>(),
                     device_functor_fn{*d_input});
 

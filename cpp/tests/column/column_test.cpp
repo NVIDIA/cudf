@@ -165,8 +165,8 @@ TYPED_TEST(TypedColumnTest, SetInvalidSizeNullMaskNonZeroNullCount)
 {
   cudf::column col{
     this->type(), this->num_elements(), std::move(this->data), rmm::device_buffer{}, 0};
-  auto invalid_size_null_mask =
-    create_null_mask(std::min(this->num_elements() - 50, 0), cudf::mask_state::ALL_VALID);
+  auto invalid_size_null_mask = create_null_mask(
+    std::min(this->num_elements() - 50, cudf::size_type{0}), cudf::mask_state::ALL_VALID);
   EXPECT_THROW(
     col.set_null_mask(invalid_size_null_mask, this->num_elements(), cudf::get_default_stream()),
     cudf::logic_error);

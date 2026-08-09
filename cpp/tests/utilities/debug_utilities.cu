@@ -139,7 +139,7 @@ template <typename NestedColumnView>
 std::string nested_offsets_to_string(NestedColumnView const& c, std::string const& delimiter = ", ")
 {
   column_view offsets = (c.parent()).child(NestedColumnView::offsets_column_index);
-  CUDF_EXPECTS(offsets.type().id() == type_id::INT32,
+  CUDF_EXPECTS(offsets.type().id() == type_to_id<size_type>(),
                "Column does not appear to be an offsets column");
   CUDF_EXPECTS(offsets.offset() == 0, "Offsets column has an internal offset!");
   size_type output_size = c.size() + 1;

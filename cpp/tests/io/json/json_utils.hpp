@@ -30,3 +30,10 @@ std::vector<cudf::io::table_with_metadata> split_byte_range_reading(
 /// Returns length of each string in the column
 rmm::device_uvector<cudf::size_type> string_offset_to_length(
   cudf::strings_column_view const& column, rmm::cuda_stream_view stream);
+
+/// Returns the column's offsets, widened to size_type
+///
+/// A strings column stores its offsets 32 bits wide until it is large enough to need 64, so the
+/// buffer cannot simply be read as size_type.
+rmm::device_uvector<cudf::size_type> string_offsets(cudf::strings_column_view const& column,
+                                                    rmm::cuda_stream_view stream);

@@ -275,7 +275,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
   {
     std::vector<bool> valids = {0, 0, 1, 0, 1, 0, 0};
 
-    cudf::test::fixed_width_column_wrapper<int> c0_offsets{0, 3, 6, 8, 11, 14, 16, 19};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> c0_offsets{0, 3, 6, 8, 11, 14, 16, 19};
     cudf::test::fixed_width_column_wrapper<int> c0_data{
       1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7, 7};
 
@@ -287,7 +287,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
       return cudf::purge_nonempty_nulls(tmp->view());
     }();
 
-    cudf::test::fixed_width_column_wrapper<int> c1_offsets{0, 0, 0, 2, 2, 5, 5, 5};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> c1_offsets{0, 0, 0, 2, 2, 5, 5, 5};
     cudf::test::fixed_width_column_wrapper<int> c1_data{3, 3, 5, 5, 5};
     auto c1 = [&] {
       auto tmp = make_lists_column(
@@ -310,8 +310,8 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
   {
     std::vector<bool> level1_valids = {0, 0, 1, 0, 1, 0, 0};
 
-    cudf::test::fixed_width_column_wrapper<int> c0_l1_offsets{0, 1, 2, 4, 4, 7, 7, 7};
-    cudf::test::fixed_width_column_wrapper<int> c0_l2_offsets{0, 1, 2, 5, 6, 7, 10, 14};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> c0_l1_offsets{0, 1, 2, 4, 4, 7, 7, 7};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> c0_l2_offsets{0, 1, 2, 5, 6, 7, 10, 14};
     cudf::test::fixed_width_column_wrapper<int> c0_l3_ints{
       1, 1, -1, -2, -3, 1, 1, -4, -5, -6, -7, -8, -9, -10};
     cudf::test::fixed_width_column_wrapper<float> c0_l3_floats{
@@ -335,8 +335,8 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
       return cudf::purge_nonempty_nulls(tmp->view());
     }();
 
-    cudf::test::fixed_width_column_wrapper<int> c1_l1_offsets{0, 0, 0, 2, 2, 5, 5, 5};
-    cudf::test::fixed_width_column_wrapper<int> c1_l2_offsets{0, 3, 3, 3, 6, 10};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> c1_l1_offsets{0, 0, 0, 2, 2, 5, 5, 5};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> c1_l2_offsets{0, 3, 3, 3, 6, 10};
     cudf::test::fixed_width_column_wrapper<int> c1_l3_ints{-1, -2, -3, -4, -5, -6, -7, -8, -9, -10};
     cudf::test::fixed_width_column_wrapper<float> c1_l3_floats{
       10, 20, 30, 40, 50, 60, 70, 80, 90, 100};

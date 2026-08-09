@@ -55,7 +55,7 @@ class primitive_keys_fn {
 
   __device__ __forceinline__ auto operator()(size_type i) const noexcept
   {
-    return cuco::pair{_hash(i), T{i}};
+    return join_key<T>{to_join_hash(_hash(i)), to_cuco_index<T>(i)};
   }
 
  private:
@@ -75,7 +75,7 @@ class build_keys_fn {
 
   __device__ __forceinline__ auto operator()(size_type i) const noexcept
   {
-    return cuco::pair{_hash(i), T{i}};
+    return join_key<T>{to_join_hash(_hash(i)), to_cuco_index<T>(i)};
   }
 
  private:
@@ -87,10 +87,9 @@ class build_keys_fn {
  * rhs_index_type>`
  */
 struct output_fn {
-  __device__ constexpr cudf::size_type operator()(
-    cuco::pair<hash_value_type, rhs_index_type> const& x) const
+  __device__ constexpr cudf::size_type operator()(join_key<join_rhs_index_type> const& x) const
   {
-    return static_cast<cudf::size_type>(x.second);
+    return from_cuco_index(x.second);
   }
 };
 
@@ -165,16 +164,17 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
     _nulls_equal{compare_nulls},
     _right{right},
     _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)},
-    _hash_table{cuco::extent{static_cast<std::size_t>(right.num_rows())},
-                checked_load_factor(load_factor),
-                cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(),
-                                           rhs_index_type{cudf::JoinNoMatch}}},
-                always_not_equal{},
-                {},
-                cuco::thread_scope_device,
-                cuco_storage_type{},
-                rmm::mr::polymorphic_allocator<char>{std::move(mr)},
-                stream.value()}
+    _hash_table{
+      cuco::extent{static_cast<std::size_t>(right.num_rows())},
+      checked_load_factor(load_factor),
+      cuco::empty_key{join_key<join_rhs_index_type>{std::numeric_limits<join_hash_type>::max(),
+                                                    join_no_match_index<join_rhs_index_type>}},
+      always_not_equal{},
+      {},
+      cuco::thread_scope_device,
+      cuco_storage_type{},
+      rmm::mr::polymorphic_allocator<char>{std::move(mr)},
+      stream.value()}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != this->_right.num_columns(), "Hash join right table is empty");
@@ -203,15 +203,15 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                                                    this->_preprocessed_right};
 
     auto const iter = cudf::detail::make_counting_transform_iterator(
-      0, primitive_keys_fn<rhs_index_type>{d_hasher});
+      0, primitive_keys_fn<join_rhs_index_type>{d_hasher});
 
     build_hash_table(iter);
   } else {
     auto const row_hasher = detail::row::hash::row_hasher{this->_preprocessed_right};
     auto const d_hasher   = row_hasher.device_hasher(nullate::DYNAMIC{has_nulls});
 
-    auto const iter =
-      cudf::detail::make_counting_transform_iterator(0, build_keys_fn<rhs_index_type>{d_hasher});
+    auto const iter = cudf::detail::make_counting_transform_iterator(
+      0, build_keys_fn<join_rhs_index_type>{d_hasher});
 
     build_hash_table(iter);
   }
@@ -248,7 +248,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
     auto const d_equal = cudf::detail::row::primitive::row_equality_comparator{
       nullate::DYNAMIC{has_nulls}, preprocessed_left, _preprocessed_right, _nulls_equal};
     auto const iter = cudf::detail::make_counting_transform_iterator(
-      0, primitive_keys_fn<lhs_index_type>{d_hasher});
+      0, primitive_keys_fn<join_lhs_index_type>{d_hasher});
 
     find_matches_in_hash_table(this->_hash_table,
                                iter,
@@ -265,7 +265,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
     auto const left_row_hasher = cudf::detail::row::hash::row_hasher{preprocessed_left};
     auto const d_left_hasher   = left_row_hasher.device_hasher(nullate::DYNAMIC{has_nulls});
     auto const iter            = cudf::detail::make_counting_transform_iterator(
-      0, build_keys_fn<lhs_index_type>{d_left_hasher});
+      0, build_keys_fn<join_lhs_index_type>{d_left_hasher});
 
     if (_has_nested_columns) {
       auto const device_comparator =
@@ -344,7 +344,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
       nullate::DYNAMIC{has_nulls}, preprocessed_left, _preprocessed_right, _nulls_equal};
 
     auto const iter = cudf::detail::make_counting_transform_iterator(
-      0, primitive_keys_fn<lhs_index_type>{d_hasher});
+      0, primitive_keys_fn<join_lhs_index_type>{d_hasher});
 
     find_matches_in_hash_table(this->_hash_table,
                                iter,
@@ -368,7 +368,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
       auto const left_row_hasher = cudf::detail::row::hash::row_hasher{preprocessed_left};
       auto const d_left_hasher   = left_row_hasher.device_hasher(nullate::DYNAMIC{has_nulls});
       auto const iter            = cudf::detail::make_counting_transform_iterator(
-        0, build_keys_fn<lhs_index_type>{d_left_hasher});
+        0, build_keys_fn<join_lhs_index_type>{d_left_hasher});
 
       if (_has_nested_columns) {
         auto const device_comparator =

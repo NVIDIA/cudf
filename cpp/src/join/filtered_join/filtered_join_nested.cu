@@ -41,7 +41,7 @@ void filtered_join::insert_right_table_nested(rmm::cuda_stream_view stream)
                                               cudf::get_current_device_resource_ref());
   auto const hasher = precomputed_hash{hashes->view().data<hash_value_type>()};
   auto const iter   = cudf::detail::make_counting_transform_iterator(
-    size_type{0}, key_pair_fn<lhs_index_type, decltype(hasher)>{hasher});
+    size_type{0}, key_pair_fn<join_lhs_index_type, decltype(hasher)>{hasher});
   insert_right_table<nested_probing_scheme::cg_size>(
     iter, set_ref.rebind_operators(cuco::insert), stream);
 }

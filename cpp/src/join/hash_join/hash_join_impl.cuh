@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/detail/join/hash_join.hpp>
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/types.hpp>
 
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -17,9 +18,7 @@ namespace cudf::detail {
 template <typename Hasher>
 struct hash_join<Hasher>::impl {
   struct always_not_equal {
-    __device__ constexpr bool operator()(
-      cuco::pair<hash_value_type, size_type> const&,
-      cuco::pair<hash_value_type, size_type> const&) const noexcept
+    __device__ constexpr bool operator()(join_key<> const&, join_key<> const&) const noexcept
     {
       // multiset always insert
       return false;
@@ -27,20 +26,18 @@ struct hash_join<Hasher>::impl {
   };
 
   struct hasher1 {
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, size_type> const& key) const noexcept
+    __device__ constexpr hash_value_type operator()(join_key<> const& key) const noexcept
     {
-      return key.first;
+      return from_join_hash(key.first);
     }
   };
 
   struct hasher2 {
     hasher2(hash_value_type seed) : _hash{seed} {}
 
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, size_type> const& key) const noexcept
+    __device__ constexpr hash_value_type operator()(join_key<> const& key) const noexcept
     {
-      return _hash(key.first);
+      return _hash(from_join_hash(key.first));
     }
 
    private:
@@ -48,7 +45,7 @@ struct hash_join<Hasher>::impl {
   };
 
   using hash_table_t =
-    cuco::static_multiset<cuco::pair<cudf::hash_value_type, cudf::size_type>,
+    cuco::static_multiset<join_key<>,
                           cuco::extent<std::size_t>,
                           cuda::thread_scope_device,
                           always_not_equal,

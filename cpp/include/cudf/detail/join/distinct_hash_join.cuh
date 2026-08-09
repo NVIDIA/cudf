@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -28,9 +29,8 @@ using cudf::detail::row::rhs_index_type;
  * @brief A custom comparator used for the right table insertion
  */
 struct always_not_equal {
-  __device__ constexpr bool operator()(
-    cuco::pair<hash_value_type, rhs_index_type> const&,
-    cuco::pair<hash_value_type, rhs_index_type> const&) const noexcept
+  __device__ constexpr bool operator()(join_key<join_rhs_index_type> const&,
+                                       join_key<join_rhs_index_type> const&) const noexcept
   {
     // All right table keys are distinct thus `false` no matter what
     return false;
@@ -44,12 +44,11 @@ template <typename Equal>
 struct comparator_adapter {
   comparator_adapter(Equal const& d_equal) : _d_equal{d_equal} {}
 
-  __device__ constexpr auto operator()(
-    cuco::pair<hash_value_type, lhs_index_type> const& lhs,
-    cuco::pair<hash_value_type, rhs_index_type> const& rhs) const noexcept
+  __device__ constexpr auto operator()(join_key<join_lhs_index_type> const& lhs,
+                                       join_key<join_rhs_index_type> const& rhs) const noexcept
   {
     if (lhs.first != rhs.first) { return false; }
-    return _d_equal(lhs.second, rhs.second);
+    return _d_equal(as_lhs_index(lhs.second), as_rhs_index(rhs.second));
   }
 
  private:
@@ -63,12 +62,11 @@ template <typename Equal>
 struct primitive_comparator_adapter {
   primitive_comparator_adapter(Equal const& d_equal) : _d_equal{d_equal} {}
 
-  __device__ constexpr auto operator()(
-    cuco::pair<hash_value_type, lhs_index_type> const& lhs,
-    cuco::pair<hash_value_type, rhs_index_type> const& rhs) const noexcept
+  __device__ constexpr auto operator()(join_key<join_lhs_index_type> const& lhs,
+                                       join_key<join_rhs_index_type> const& rhs) const noexcept
   {
     if (lhs.first != rhs.first) { return false; }
-    return _d_equal(static_cast<size_type>(lhs.second), static_cast<size_type>(rhs.second));
+    return _d_equal(from_cuco_index(lhs.second), from_cuco_index(rhs.second));
   }
 
  private:
@@ -96,10 +94,9 @@ class distinct_hash_join {
    */
   struct hasher {
     template <typename T>
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, T> const& key) const noexcept
+    __device__ constexpr hash_value_type operator()(join_key<T> const& key) const noexcept
     {
-      return key.first;
+      return from_join_hash(key.first);
     }
   };
 
@@ -152,7 +149,7 @@ class distinct_hash_join {
   using cuco_storage_type   = cuco::storage<1>;
 
   /// Hash table type
-  using hash_table_type = cuco::static_set<cuco::pair<hash_value_type, rhs_index_type>,
+  using hash_table_type = cuco::static_set<join_key<join_rhs_index_type>,
                                            cuco::extent<std::size_t>,
                                            cuda::thread_scope_device,
                                            always_not_equal,

@@ -7,6 +7,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
@@ -63,10 +64,9 @@ double constexpr LOAD_FACTOR = 0.5;
  */
 struct key_hasher {
   template <typename T>
-  __device__ constexpr hash_value_type operator()(
-    cuco::pair<hash_value_type, T> const& key) const noexcept
+  __device__ constexpr hash_value_type operator()(join_key<T> const& key) const noexcept
   {
-    return key.first;
+    return from_join_hash(key.first);
   }
 };
 
@@ -96,7 +96,7 @@ class make_key_pair {
 
   __device__ __forceinline__ auto operator()(cudf::size_type i) const noexcept
   {
-    return cuco::pair{_hash(i), T{i}};
+    return join_key<T>{to_join_hash(_hash(i)), to_cuco_index<T>(i)};
   }
 
  private:
@@ -107,10 +107,9 @@ class make_key_pair {
  * @brief Device output transform functor to extract row index from hash table result.
  */
 struct extract_index {
-  __device__ constexpr cudf::size_type operator()(
-    cuco::pair<hash_value_type, rhs_index_type> const& x) const
+  __device__ constexpr cudf::size_type operator()(join_key<join_rhs_index_type> const& x) const
   {
-    return static_cast<cudf::size_type>(x.second);
+    return from_cuco_index(x.second);
   }
 };
 
@@ -121,16 +120,14 @@ template <typename Equal, bool CastToSizeType = false>
 struct probe_comparator {
   probe_comparator(Equal const& d_equal) : _d_equal{d_equal} {}
 
-  __device__ constexpr auto operator()(
-    cuco::pair<hash_value_type, lhs_index_type> const& lhs,
-    cuco::pair<hash_value_type, rhs_index_type> const& rhs) const noexcept
+  __device__ constexpr auto operator()(join_key<join_lhs_index_type> const& lhs,
+                                       join_key<join_rhs_index_type> const& rhs) const noexcept
   {
     if (lhs.first != rhs.first) { return false; }
     if constexpr (CastToSizeType) {
-      return _d_equal(static_cast<cudf::size_type>(lhs.second),
-                      static_cast<cudf::size_type>(rhs.second));
+      return _d_equal(from_cuco_index(lhs.second), from_cuco_index(rhs.second));
     } else {
-      return _d_equal(lhs.second, rhs.second);
+      return _d_equal(as_lhs_index(lhs.second), as_rhs_index(rhs.second));
     }
   }
 
@@ -145,13 +142,11 @@ template <typename RowEqual>
 struct build_comparator {
   build_comparator(RowEqual const& d_equal) : _d_equal{d_equal} {}
 
-  __device__ constexpr auto operator()(
-    cuco::pair<hash_value_type, rhs_index_type> const& lhs,
-    cuco::pair<hash_value_type, rhs_index_type> const& rhs) const noexcept
+  __device__ constexpr auto operator()(join_key<join_rhs_index_type> const& lhs,
+                                       join_key<join_rhs_index_type> const& rhs) const noexcept
   {
     if (lhs.first != rhs.first) { return false; }
-    return _d_equal(static_cast<cudf::size_type>(lhs.second),
-                    static_cast<cudf::size_type>(rhs.second));
+    return _d_equal(from_cuco_index(lhs.second), from_cuco_index(rhs.second));
   }
 
  private:
@@ -255,7 +250,7 @@ template <typename Comparator>
 class key_remap_table : public key_remap_table_interface {
   using probing_scheme_type = cuco::linear_probing<1, key_hasher>;
   using cuco_storage_type   = cuco::storage<1>;
-  using hash_table_type     = cuco::static_set<cuco::pair<hash_value_type, rhs_index_type>,
+  using hash_table_type     = cuco::static_set<join_key<join_rhs_index_type>,
                                                cuco::extent<std::size_t>,
                                                cuda::thread_scope_device,
                                                Comparator,
@@ -285,16 +280,17 @@ class key_remap_table : public key_remap_table_interface {
       _compare_nulls{compare_nulls},
       _right{right},
       _preprocessed_right{std::move(preprocessed_right)},
-      _hash_table{cuco::extent{static_cast<std::size_t>(right.num_rows())},
-                  LOAD_FACTOR,
-                  cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(),
-                                             rhs_index_type{cudf::JoinNoMatch}}},
-                  comparator,
-                  {},
-                  cuco::thread_scope_device,
-                  cuco_storage_type{},
-                  rmm::mr::polymorphic_allocator<char>{std::move(mr)},
-                  stream.value()},
+      _hash_table{
+        cuco::extent{static_cast<std::size_t>(right.num_rows())},
+        LOAD_FACTOR,
+        cuco::empty_key{join_key<join_rhs_index_type>{std::numeric_limits<join_hash_type>::max(),
+                                                      join_no_match_index<join_rhs_index_type>}},
+        comparator,
+        {},
+        cuco::thread_scope_device,
+        cuco_storage_type{},
+        rmm::mr::polymorphic_allocator<char>{std::move(mr)},
+        stream.value()},
       _has_metrics{compute_metrics},
       _distinct_count{0},
       _max_duplicate_count{0}
@@ -306,7 +302,7 @@ class key_remap_table : public key_remap_table_interface {
     if (right_num_rows == 0) { return; }
 
     auto const key_iter = cudf::detail::make_counting_transform_iterator(
-      0, make_key_pair<rhs_index_type, RowHasher>{row_hasher});
+      0, make_key_pair<join_rhs_index_type, RowHasher>{row_hasher});
 
     bool const skip_nulls =
       (_compare_nulls == cudf::null_equality::UNEQUAL) && cudf::nullable(right);
@@ -404,7 +400,7 @@ class key_remap_table : public key_remap_table_interface {
         cudf::nullate::DYNAMIC{HAS_NULLS}, preprocessed_left, _preprocessed_right, _compare_nulls};
 
       auto const iter = cudf::detail::make_counting_transform_iterator(
-        0, make_key_pair<lhs_index_type, decltype(d_hasher)>{d_hasher});
+        0, make_key_pair<join_lhs_index_type, decltype(d_hasher)>{d_hasher});
 
       find_matches(
         iter, probe_comparator<decltype(d_equal), true>{d_equal}, left_keys, output_begin, stream);
@@ -415,7 +411,7 @@ class key_remap_table : public key_remap_table_interface {
       auto const left_row_hasher = cudf::detail::row::hash::row_hasher{preprocessed_left};
       auto const d_left_hasher   = left_row_hasher.device_hasher(cudf::nullate::DYNAMIC{HAS_NULLS});
       auto const iter            = cudf::detail::make_counting_transform_iterator(
-        0, make_key_pair<lhs_index_type, decltype(d_left_hasher)>{d_left_hasher});
+        0, make_key_pair<join_lhs_index_type, decltype(d_left_hasher)>{d_left_hasher});
 
       if (_right_has_nested_columns) {
         auto const device_comparator =

@@ -7,6 +7,7 @@
 #include "common.cuh"
 
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
@@ -26,15 +27,15 @@ class pair_equal {
  public:
   pair_equal(Equal check_row_equality) : _check_row_equality{std::move(check_row_equality)} {}
 
-  __device__ __forceinline__ bool operator()(
-    cuco::pair<hash_value_type, size_type> const& lhs,
-    cuco::pair<hash_value_type, size_type> const& rhs) const noexcept
+  __device__ __forceinline__ bool operator()(join_key<> const& lhs,
+                                             join_key<> const& rhs) const noexcept
   {
     using detail::row::lhs_index_type;
     using detail::row::rhs_index_type;
 
     return lhs.first == rhs.first and
-           _check_row_equality(lhs_index_type{lhs.second}, rhs_index_type{rhs.second});
+           _check_row_equality(lhs_index_type{from_cuco_index(lhs.second)},
+                               rhs_index_type{from_cuco_index(rhs.second)});
   }
 
  private:
@@ -45,10 +46,9 @@ class pair_equal {
  * @brief Extracts the right-side row index from a cuco hash table slot.
  */
 struct output_fn {
-  __device__ constexpr cudf::size_type operator()(
-    cuco::pair<hash_value_type, cudf::size_type> const& slot) const
+  __device__ constexpr cudf::size_type operator()(join_key<> const& slot) const
   {
-    return slot.second;
+    return from_cuco_index(slot.second);
   }
 };
 
@@ -62,11 +62,11 @@ class primitive_pair_equal {
   {
   }
 
-  __device__ __forceinline__ bool operator()(
-    cuco::pair<hash_value_type, size_type> const& lhs,
-    cuco::pair<hash_value_type, size_type> const& rhs) const noexcept
+  __device__ __forceinline__ bool operator()(join_key<> const& lhs,
+                                             join_key<> const& rhs) const noexcept
   {
-    return lhs.first == rhs.first and _check_row_equality(lhs.second, rhs.second);
+    return lhs.first == rhs.first and
+           _check_row_equality(from_cuco_index(lhs.second), from_cuco_index(rhs.second));
   }
 
  private:

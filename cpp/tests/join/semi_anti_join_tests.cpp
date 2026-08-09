@@ -432,7 +432,7 @@ TEST_P(SemiAntiJoinTest, AntiSemiJoinLargeExtentOverflowPrevention)
 
   // Compile-time validation
   constexpr auto expected_bucket_size = static_cast<size_t>(table_size / load_factor);
-  static_assert(expected_bucket_size > std::numeric_limits<cudf::size_type>::max(),
+  static_assert(expected_bucket_size > std::numeric_limits<int32_t>::max(),
                 "Bucket storage size should be significant");
 
   // Create test tables and validate semi join operations succeed

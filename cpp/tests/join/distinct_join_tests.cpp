@@ -745,7 +745,7 @@ TEST_F(DistinctJoinTest, DistinctLargeExtentOverflowPrevention)
 
   // Validate our test assumptions
   constexpr auto expected_hash_size = static_cast<size_t>(table_size / load_factor);
-  static_assert(expected_hash_size > std::numeric_limits<cudf::size_type>::max(),
+  static_assert(expected_hash_size > std::numeric_limits<int32_t>::max(),
                 "Hash table size should be significant");
 
   auto const init = cudf::numeric_scalar<cudf::size_type>{0};

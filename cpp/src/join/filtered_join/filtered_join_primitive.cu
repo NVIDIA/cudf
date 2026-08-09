@@ -44,7 +44,7 @@ void filtered_join::insert_right_table_primitive(rmm::cuda_stream_view stream)
                                _bucket_storage.ref()};
   auto const hasher = primitive_row_hasher{nullate::DYNAMIC{true}, _preprocessed_right};
   auto const iter   = cudf::detail::make_counting_transform_iterator(
-    size_type{0}, key_pair_fn<lhs_index_type, primitive_row_hasher>{hasher});
+    size_type{0}, key_pair_fn<join_lhs_index_type, primitive_row_hasher>{hasher});
   insert_right_table<single_probing_scheme::cg_size>(
     iter, set_ref.rebind_operators(cuco::insert), stream);
 }
@@ -64,7 +64,7 @@ void distinct_filtered_join::query_right_table_primitive(
                                _bucket_storage.ref()};
   auto const hasher = primitive_row_hasher{nullate::DYNAMIC{true}, preprocessed_left};
   auto const iter   = cudf::detail::make_counting_transform_iterator(
-    size_type{0}, key_pair_fn<rhs_index_type, primitive_row_hasher>{hasher});
+    size_type{0}, key_pair_fn<join_rhs_index_type, primitive_row_hasher>{hasher});
   query_right_table<single_probing_scheme::cg_size>(
     left, iter, set_ref.rebind_operators(cuco::op::contains), contains_map, stream);
 }

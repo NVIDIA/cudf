@@ -122,7 +122,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _impl{std::make_unique<impl>(impl{typename impl::hash_table_t{
       cuco::extent{static_cast<size_t>(right.num_rows())},
       checked_load_factor(load_factor),
-      cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(), cudf::JoinNoMatch}},
+      cuco::empty_key{join_key<>{std::numeric_limits<join_hash_type>::max(), join_no_match_key}},
       {},
       {},
       {},
@@ -134,6 +134,9 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
+  CUDF_EXPECTS(right.num_rows() <= cudf::detail::cuco_max_rows,
+               "Hash join build table has more rows than the hash table can address",
+               std::overflow_error);
   if (_is_empty) { return; }
 
   auto const row_bitmask =

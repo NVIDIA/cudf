@@ -7,6 +7,7 @@
 #include "join_common_utils.hpp"
 
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
@@ -21,9 +22,9 @@ template <typename Hasher>
 struct pair_fn {
   CUDF_HOST_DEVICE pair_fn(Hasher hash) : _hash{std::move(hash)} {}
 
-  __device__ cuco::pair<hash_value_type, size_type> operator()(size_type i) const noexcept
+  __device__ join_key<> operator()(size_type i) const noexcept
   {
-    return cuco::pair{_hash(i), i};
+    return join_key<>{to_join_hash(_hash(i)), to_cuco_index(i)};
   }
 
  private:

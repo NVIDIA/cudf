@@ -119,7 +119,7 @@ CUDF_KERNEL void __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE)
 
     if (active) {
       auto const probe_key  = keys[idx];
-      auto const left_index = probe_key.second + left_offset;
+      auto const left_index = from_cuco_index(probe_key.second) + left_offset;
 
       auto probing_iter = ref.probing_scheme().template make_iterator<bucket_size>(
         probing_tile, probe_key, ref.storage_ref().extent());
@@ -174,7 +174,7 @@ CUDF_KERNEL void __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE)
               if (equals[i]) {
                 auto const lane_offset = count_lower_set_bits(exists[i], lane_id);
                 buffers[flushing_tile_id][output_idx + matches_offset + lane_offset] = {
-                  left_index, bucket_slots[i].second};
+                  left_index, from_cuco_index(bucket_slots[i].second)};
               }
               matches_offset += num_matches[i];
             }

@@ -64,15 +64,21 @@ struct row_is_null {
   }
 };
 
-static constexpr int32_t mark_block_size = 1024;
+static constexpr int32_t mark_block_size = CUDF_SIZE_TYPE_BITS == 64 ? 512 : 1024;
 
 using slot_type = mark_key_type;
 
-static_assert(sizeof(slot_type) == sizeof(uint64_t));
+// A slot is compared as a single integer, which the key permits because it is free of padding.
+using slot_bits_type =
+  std::conditional_t<sizeof(slot_type) == sizeof(uint64_t), uint64_t, __uint128_t>;
+
+static_assert(sizeof(slot_type) == sizeof(slot_bits_type));
+static_assert(std::has_unique_object_representations_v<slot_type>);
 
 __device__ inline bool slot_is_empty(slot_type const& slot, slot_type const& sentinel)
 {
-  return *reinterpret_cast<uint64_t const*>(&slot) == *reinterpret_cast<uint64_t const*>(&sentinel);
+  return *reinterpret_cast<slot_bits_type const*>(&slot) ==
+         *reinterpret_cast<slot_bits_type const*>(&sentinel);
 }
 
 template <typename FilterType>
@@ -235,7 +241,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void mark_probe_kernel(
             auto expected = entry_value.first;
             if (!is_marked(expected)) {
               auto const desired = set_mark(expected);
-              cuda::atomic_ref<hash_value_type, cuda::thread_scope_device> key_ref{
+              cuda::atomic_ref<join_hash_type, cuda::thread_scope_device> key_ref{
                 mutable_slot_p->first};
               if (key_ref.compare_exchange_strong(expected, desired, cuda::memory_order_relaxed)) {
                 ++mark_counter;
@@ -365,7 +371,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void clear_marks_kernel(
     auto const entry_value = storage.data()[i];
     if (!slot_is_empty(entry_value, empty_sentinel)) {
       if (is_marked(entry_value.first)) {
-        cuda::atomic_ref<hash_value_type, cuda::thread_scope_device> key_ref{
+        cuda::atomic_ref<join_hash_type, cuda::thread_scope_device> key_ref{
           storage.data()[i].first};
         key_ref.store(unset_mark(entry_value.first), cuda::memory_order_relaxed);
       }
@@ -493,12 +499,13 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   rmm::device_uvector<right_key_type> right_rows(0, stream, temp_mr);
   if (is_primitive_row_op_compatible(_left)) {
     auto const d_right_hasher = primitive_row_hasher{nullate::DYNAMIC{true}, preprocessed_right};
-    right_rows =
-      materialize_right_rows(masked_key_fn<rhs_index_type, primitive_row_hasher>{d_right_hasher});
+    right_rows                = materialize_right_rows(
+      masked_key_fn<join_rhs_index_type, primitive_row_hasher>{d_right_hasher});
   } else {
     auto const d_right_hasher =
       cudf::detail::row::hash::row_hasher{preprocessed_right}.device_hasher(nullate::YES{});
-    right_rows = materialize_right_rows(masked_key_fn<rhs_index_type, row_hasher>{d_right_hasher});
+    right_rows =
+      materialize_right_rows(masked_key_fn<join_rhs_index_type, row_hasher>{d_right_hasher});
   }
 
   auto const storage_ref = _bucket_storage.ref();
@@ -681,7 +688,7 @@ mark_join::mark_join(cudf::table_view const& left,
         cuda::proclaim_return_type<hash_value_type>(masked_hash_value_fn{d_left_hasher}),
         stream.value());
       auto const left_iter = cudf::detail::make_counting_transform_iterator(
-        size_type{0}, hash_pair_fn<lhs_index_type>{left_hashes.data()});
+        size_type{0}, hash_pair_fn<join_lhs_index_type>{left_hashes.data()});
       cuco::static_multiset_ref set_ref{masked_empty_sentinel,
                                         insertion_adapter{d_left_comparator},
                                         masked_probing_scheme{},
@@ -692,7 +699,7 @@ mark_join::mark_join(cudf::table_view const& left,
     } else {
       auto const left_iter = cudf::detail::make_counting_transform_iterator(
         size_type{0},
-        masked_key_fn<lhs_index_type, std::decay_t<decltype(d_left_hasher)>>{d_left_hasher});
+        masked_key_fn<join_lhs_index_type, std::decay_t<decltype(d_left_hasher)>>{d_left_hasher});
       cuco::static_multiset_ref set_ref{masked_empty_sentinel,
                                         insertion_adapter{d_left_comparator},
                                         masked_probing_scheme{},

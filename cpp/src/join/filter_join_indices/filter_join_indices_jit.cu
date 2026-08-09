@@ -241,7 +241,7 @@ apply_join_semantics(cudf::table_view const& left,
                        rmm::mr::polymorphic_allocator<char>>;
     SetType filter_passing_indices{cuco::extent{static_cast<std::size_t>(left.num_rows())},
                                    cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                   cuco::empty_key{-1},
+                                   cuco::empty_key{size_type{-1}},
                                    {},
                                    {},
                                    {},

@@ -11,6 +11,7 @@
 #include "join/join_common_utils.hpp"
 
 #include <cudf/detail/join/join.hpp>
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/hashing.hpp>
 #include <cudf/types.hpp>
 
@@ -19,6 +20,6 @@
 namespace cudf::detail {
 
 /// The probe key type stored in the hash table: {hash_value, row_index}.
-using probe_key_type = cuco::pair<hash_value_type, size_type>;
+using probe_key_type = join_key<>;
 
 }  // namespace cudf::detail

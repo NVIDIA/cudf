@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/hashing.hpp>
 #include <cudf/join/join.hpp>
@@ -52,13 +53,12 @@ class filtered_join {
   template <typename T>
   struct insertion_adapter {
     insertion_adapter(T const& _c) : _comparator{_c} {}
-    __device__ constexpr bool operator()(
-      cuco::pair<hash_value_type, lhs_index_type> const& lhs,
-      cuco::pair<hash_value_type, lhs_index_type> const& rhs) const noexcept
+    __device__ constexpr bool operator()(join_key<join_lhs_index_type> const& lhs,
+                                         join_key<join_lhs_index_type> const& rhs) const noexcept
     {
       if (lhs.first != rhs.first) { return false; }
-      auto const lhs_index = static_cast<size_type>(lhs.second);
-      auto const rhs_index = static_cast<size_type>(rhs.second);
+      auto const lhs_index = from_cuco_index(lhs.second);
+      auto const rhs_index = from_cuco_index(rhs.second);
       return _comparator(lhs_index, rhs_index);
     }
 
@@ -71,10 +71,9 @@ class filtered_join {
    */
   struct hash_extract_fn {
     template <typename T>
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, T> const& key) const noexcept
+    __device__ constexpr hash_value_type operator()(join_key<T> const& key) const noexcept
     {
-      return key.first;
+      return from_join_hash(key.first);
     }
   };
 
@@ -90,7 +89,7 @@ class filtered_join {
 
     __device__ __forceinline__ auto operator()(size_type i) const noexcept
     {
-      return cuco::pair{_hasher(i), T{i}};
+      return join_key<T>{to_join_hash(_hasher(i)), to_cuco_index<T>(i)};
     }
 
    private:
@@ -108,12 +107,11 @@ class filtered_join {
   struct comparator_adapter {
     comparator_adapter(Equal const& d_equal) : _d_equal{d_equal} {}
 
-    __device__ constexpr auto operator()(
-      cuco::pair<hash_value_type, rhs_index_type> const& rhs,
-      cuco::pair<hash_value_type, lhs_index_type> const& lhs) const noexcept
+    __device__ constexpr auto operator()(join_key<join_rhs_index_type> const& rhs,
+                                         join_key<join_lhs_index_type> const& lhs) const noexcept
     {
       if (lhs.first != rhs.first) { return false; }
-      return _d_equal(lhs.second, rhs.second);
+      return _d_equal(as_lhs_index(lhs.second), as_rhs_index(rhs.second));
     }
 
    private:
@@ -162,7 +160,7 @@ class filtered_join {
   enum class row_operator_mode : uint8_t { PRIMITIVE, FLAT, NESTED };
 
   // Key type used in the hash table
-  using key = cuco::pair<hash_value_type, lhs_index_type>;
+  using key = join_key<join_lhs_index_type>;
 
   // Storage type for the hash table buckets
   using storage_type =
@@ -180,7 +178,7 @@ class filtered_join {
 
   // Empty sentinel key used to mark empty slots in the hash table
   static constexpr auto empty_sentinel_key = cuco::empty_key{
-    cuco::pair{std::numeric_limits<hash_value_type>::max(), lhs_index_type{cudf::JoinNoMatch}}};
+    key{std::numeric_limits<join_hash_type>::max(), join_no_match_index<join_lhs_index_type>}};
   cudf::table_view _right;                 ///< input table used to build the hash map
   cudf::null_equality const _nulls_equal;  ///< whether to consider nulls as equal
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table>

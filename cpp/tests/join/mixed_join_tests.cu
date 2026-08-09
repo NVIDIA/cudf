@@ -1751,10 +1751,10 @@ TYPED_TEST(MixedLeftSemiJoinTest, MixedLeftSemiJoinGatherMapLarge)
                                                             cudf::null_equality::UNEQUAL);
 
     // Copy data back to host for comparisons
-    auto expected_indices = cudf::detail::make_std_vector_async<int32_t>(
-      cudf::device_span<int32_t>(*expected_mixed_semi_join), cudf::get_default_stream());
-    auto result_indices = cudf::detail::make_std_vector<int32_t>(
-      cudf::device_span<int32_t>(*mixed_semi_join), cudf::get_default_stream());
+    auto expected_indices = cudf::detail::make_std_vector_async<cudf::size_type>(
+      cudf::device_span<cudf::size_type>(*expected_mixed_semi_join), cudf::get_default_stream());
+    auto result_indices = cudf::detail::make_std_vector<cudf::size_type>(
+      cudf::device_span<cudf::size_type>(*mixed_semi_join), cudf::get_default_stream());
 
     // Sort the indices for 1-1 comparison
     std::sort(expected_indices.begin(), expected_indices.end());
@@ -1790,10 +1790,10 @@ TYPED_TEST(MixedLeftSemiJoinTest, MixedLeftSemiJoinGatherMapLarge)
                                                             cudf::null_equality::UNEQUAL);
 
     // Copy data back to host for comparisons
-    auto expected_indices = cudf::detail::make_std_vector_async<int32_t>(
-      cudf::device_span<int32_t>(*expected_mixed_semi_join), cudf::get_default_stream());
-    auto result_indices = cudf::detail::make_std_vector<int32_t>(
-      cudf::device_span<int32_t>(*mixed_semi_join), cudf::get_default_stream());
+    auto expected_indices = cudf::detail::make_std_vector_async<cudf::size_type>(
+      cudf::device_span<cudf::size_type>(*expected_mixed_semi_join), cudf::get_default_stream());
+    auto result_indices = cudf::detail::make_std_vector<cudf::size_type>(
+      cudf::device_span<cudf::size_type>(*mixed_semi_join), cudf::get_default_stream());
 
     // Sort the indices for 1-1 comparison
     std::sort(expected_indices.begin(), expected_indices.end());

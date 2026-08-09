@@ -110,7 +110,8 @@ filter_join_indices(cudf::table_view const& left,
 
   auto const block_size =
     parser.shmem_per_thread != 0
-      ? std::min(MAX_BLOCK_SIZE, shmem_limit_per_block / parser.shmem_per_thread)
+      ? std::min(MAX_BLOCK_SIZE,
+                 static_cast<size_type>(shmem_limit_per_block / parser.shmem_per_thread))
       : MAX_BLOCK_SIZE;
 
   detail::grid_1d const config(left_indices.size(), block_size);
@@ -213,7 +214,7 @@ filter_join_indices(cudf::table_view const& left,
                        rmm::mr::polymorphic_allocator<char>>;
     SetType filter_passing_indices{cuco::extent{static_cast<std::size_t>(left.num_rows())},
                                    cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                   cuco::empty_key{-1},
+                                   cuco::empty_key{size_type{-1}},
                                    {},
                                    {},
                                    {},

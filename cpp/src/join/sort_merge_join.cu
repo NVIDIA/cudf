@@ -554,8 +554,8 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(rmm::cuda_stre
       auto offsets = lcv.offsets();
       auto child   = lcv.child();
 
-      rmm::device_uvector<int32_t> offsets_subset(offsets.size(), stream, temp_mr);
-      rmm::device_uvector<int32_t> child_positions(offsets.size(), stream, temp_mr);
+      rmm::device_uvector<size_type> offsets_subset(offsets.size(), stream, temp_mr);
+      rmm::device_uvector<size_type> child_positions(offsets.size(), stream, temp_mr);
       auto unique_end = thrust::unique_by_key_copy(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         cuda::std::reverse_iterator(lcv.offsets_end()),

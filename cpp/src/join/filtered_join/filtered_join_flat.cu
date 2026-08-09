@@ -40,7 +40,7 @@ void filtered_join::insert_right_table_flat(rmm::cuda_stream_view stream)
   auto hasher =
     cudf::detail::row::hash::row_hasher{_preprocessed_right}.device_hasher(nullate::YES{});
   auto const iter = cudf::detail::make_counting_transform_iterator(
-    size_type{0}, key_pair_fn<lhs_index_type, decltype(hasher)>{hasher});
+    size_type{0}, key_pair_fn<join_lhs_index_type, decltype(hasher)>{hasher});
   insert_right_table<single_probing_scheme::cg_size>(
     iter, set_ref.rebind_operators(cuco::insert), stream);
 }
@@ -64,7 +64,7 @@ void distinct_filtered_join::query_right_table_flat(
   auto hasher =
     cudf::detail::row::hash::row_hasher{preprocessed_left}.device_hasher(nullate::YES{});
   auto const iter = cudf::detail::make_counting_transform_iterator(
-    size_type{0}, key_pair_fn<rhs_index_type, decltype(hasher)>{hasher});
+    size_type{0}, key_pair_fn<join_rhs_index_type, decltype(hasher)>{hasher});
   query_right_table<single_probing_scheme::cg_size>(
     left, iter, set_ref.rebind_operators(cuco::op::contains), contains_map, stream);
 }

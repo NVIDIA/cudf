@@ -6,6 +6,7 @@
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/join/join.hpp>
+#include <cudf/detail/join/join_key.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
@@ -34,28 +35,29 @@ namespace cudf::detail {
 using cudf::detail::row::lhs_index_type;
 using cudf::detail::row::rhs_index_type;
 
-static constexpr hash_value_type mark_bit_mask = hash_value_type{1}
-                                                 << (sizeof(hash_value_type) * 8 - 1);
+// A matched build row is recorded by setting the top bit of the hash cached in its key, so the mask
+// follows whatever width the key stores that hash in.
+static constexpr join_hash_type mark_bit_mask = join_hash_type{1}
+                                                << (sizeof(join_hash_type) * 8 - 1);
 
-CUDF_HOST_DEVICE constexpr hash_value_type set_mark(hash_value_type value) noexcept
+CUDF_HOST_DEVICE constexpr join_hash_type set_mark(join_hash_type value) noexcept
 {
   return value | mark_bit_mask;
 }
 
-CUDF_HOST_DEVICE constexpr hash_value_type unset_mark(hash_value_type value) noexcept
+CUDF_HOST_DEVICE constexpr join_hash_type unset_mark(join_hash_type value) noexcept
 {
   return value & ~mark_bit_mask;
 }
 
-CUDF_HOST_DEVICE constexpr bool is_marked(hash_value_type value) noexcept
+CUDF_HOST_DEVICE constexpr bool is_marked(join_hash_type value) noexcept
 {
   return (value & mark_bit_mask) != 0;
 }
 
 struct masked_hash_fn {
   template <typename T>
-  CUDF_HOST_DEVICE constexpr hash_value_type operator()(
-    cuco::pair<hash_value_type, T> const& key) const noexcept
+  CUDF_HOST_DEVICE constexpr join_hash_type operator()(join_key<T> const& key) const noexcept
   {
     return unset_mark(key.first);
   }
@@ -68,9 +70,9 @@ struct secondary_hash_fn {
   CUDF_HOST_DEVICE secondary_hash_fn(uint32_t seed) : _seed{seed} {}
 
   template <typename T>
-  CUDF_HOST_DEVICE auto operator()(cuco::pair<hash_value_type, T> const& key) const noexcept
+  CUDF_HOST_DEVICE auto operator()(join_key<T> const& key) const noexcept
   {
-    return cuco::xxhash_32<hash_value_type>{_seed}(unset_mark(key.first));
+    return cuco::xxhash_32<hash_value_type>{_seed}(from_join_hash(unset_mark(key.first)));
   }
 };
 
@@ -80,7 +82,7 @@ struct masked_key_fn {
 
   __device__ __forceinline__ auto operator()(size_type i) const noexcept
   {
-    return cuco::pair{unset_mark(_hasher(i)), T{i}};
+    return join_key<T>{unset_mark(to_join_hash(_hasher(i))), to_cuco_index<T>(i)};
   }
 
  private:
@@ -93,7 +95,7 @@ struct masked_hash_value_fn {
 
   __device__ __forceinline__ hash_value_type operator()(size_type i) const noexcept
   {
-    return unset_mark(_hasher(i));
+    return from_join_hash(unset_mark(to_join_hash(_hasher(i))));
   }
 
  private:
@@ -106,7 +108,7 @@ struct hash_pair_fn {
 
   __device__ __forceinline__ auto operator()(size_type i) const noexcept
   {
-    return cuco::pair{_hashes[i], IndexType{i}};
+    return join_key<IndexType>{to_join_hash(_hashes[i]), to_cuco_index<IndexType>(i)};
   }
 
  private:
@@ -117,20 +119,18 @@ template <typename Equal>
 struct masked_comparator_fn {
   masked_comparator_fn(Equal const& d_equal) : _d_equal{d_equal} {}
 
-  __device__ constexpr auto operator()(
-    cuco::pair<hash_value_type, lhs_index_type> const& lhs,
-    cuco::pair<hash_value_type, lhs_index_type> const& rhs) const noexcept
+  __device__ constexpr auto operator()(join_key<join_lhs_index_type> const& lhs,
+                                       join_key<join_lhs_index_type> const& rhs) const noexcept
   {
     if (unset_mark(lhs.first) != unset_mark(rhs.first)) { return false; }
-    return _d_equal(lhs.second, rhs.second);
+    return _d_equal(as_lhs_index(lhs.second), as_lhs_index(rhs.second));
   }
 
-  __device__ constexpr auto operator()(
-    cuco::pair<hash_value_type, rhs_index_type> const& right,
-    cuco::pair<hash_value_type, lhs_index_type> const& left) const noexcept
+  __device__ constexpr auto operator()(join_key<join_rhs_index_type> const& right,
+                                       join_key<join_lhs_index_type> const& left) const noexcept
   {
     if (unset_mark(right.first) != unset_mark(left.first)) { return false; }
-    return _d_equal(left.second, right.second);
+    return _d_equal(as_lhs_index(left.second), as_rhs_index(right.second));
   }
 
  private:
@@ -140,9 +140,8 @@ struct masked_comparator_fn {
 template <typename T>
 struct insertion_adapter {
   insertion_adapter(T const&) {}
-  __device__ constexpr bool operator()(
-    cuco::pair<hash_value_type, lhs_index_type> const&,
-    cuco::pair<hash_value_type, lhs_index_type> const&) const noexcept
+  __device__ constexpr bool operator()(join_key<join_lhs_index_type> const&,
+                                       join_key<join_lhs_index_type> const&) const noexcept
   {
     return false;
   }
@@ -154,7 +153,7 @@ static constexpr uint32_t mark_join_bucket_size{1};
 using masked_probing_scheme =
   cuco::double_hashing<mark_join_cg_size, masked_hash_fn, secondary_hash_fn>;
 
-using mark_key_type = cuco::pair<hash_value_type, lhs_index_type>;
+using mark_key_type = join_key<join_lhs_index_type>;
 
 using mark_storage_type = cuco::bucket_storage<mark_key_type,
                                                mark_join_bucket_size,
@@ -163,7 +162,7 @@ using mark_storage_type = cuco::bucket_storage<mark_key_type,
 
 using storage_ref_type =
   cuco::bucket_storage_ref<mark_key_type, mark_join_bucket_size, cuco::extent<std::size_t>>;
-using right_key_type = cuco::pair<hash_value_type, rhs_index_type>;
+using right_key_type = join_key<join_rhs_index_type>;
 
 using bloom_filter_policy_type    = cuco::default_filter_policy<hash_value_type>;
 using bloom_filter_allocator_type = rmm::mr::polymorphic_allocator<cuda::std::byte>;
@@ -174,8 +173,8 @@ using bloom_filter_type           = cuco::bloom_filter<hash_value_type,
                                                        bloom_filter_allocator_type>;
 
 static constexpr auto masked_empty_sentinel =
-  cuco::empty_key{cuco::pair{unset_mark(cuda::std::numeric_limits<hash_value_type>::max()),
-                             lhs_index_type{cudf::JoinNoMatch}}};
+  cuco::empty_key{mark_key_type{unset_mark(cuda::std::numeric_limits<join_hash_type>::max()),
+                                join_no_match_index<join_lhs_index_type>}};
 
 class mark_join {
  public:

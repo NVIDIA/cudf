@@ -12,6 +12,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/cuco_row_index.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
@@ -40,7 +41,9 @@
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
 #include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/zip_iterator.h>
 #include <thrust/remove.h>
+#include <thrust/tuple.h>
 
 namespace nvtext {
 namespace detail {
@@ -49,13 +52,17 @@ namespace {
 using string_hasher_type = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
 using hash_value_type    = string_hasher_type::result_type;
 
+// Both maps hold a row index of the vocabulary column as key and value. A 64-bit build therefore
+// requires the 16-byte cuco key support enforced by cuco_row_index.cuh.
+using vocab_index_type = cudf::detail::cuco_row_type;
+
 /**
  * @brief Hasher used for vocabulary map
  */
 struct vocab_hasher {
   cudf::column_device_view const d_strings;
   string_hasher_type hasher{};
-  __device__ hash_value_type operator()(cudf::size_type index) const
+  __device__ hash_value_type operator()(vocab_index_type index) const
   {
     return hasher(d_strings.element<cudf::string_view>(index));
   }
@@ -66,20 +73,21 @@ struct vocab_hasher {
  */
 struct vocab_equal {
   cudf::column_device_view const d_strings;
-  __device__ bool operator()(cudf::size_type lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(vocab_index_type lhs, vocab_index_type rhs) const noexcept
   {
     return lhs == rhs;  // all rows are expected to be unique
   }
-  __device__ bool operator()(cudf::string_view const& lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(cudf::string_view const& lhs, vocab_index_type rhs) const noexcept
   {
     return d_strings.element<cudf::string_view>(rhs) == lhs;
   }
 };
 
-using cuco_storage        = cuco::storage<1>;
-using probe_scheme        = cuco::linear_probing<1, vocab_hasher>;
-using vocabulary_map_type = cuco::static_map<cudf::size_type,
-                                             cudf::size_type,
+using cuco_storage = cuco::storage<1>;
+using probe_scheme = cuco::linear_probing<1, vocab_hasher>;
+
+using vocabulary_map_type = cuco::static_map<vocab_index_type,
+                                             vocab_index_type,
                                              cuco::extent<std::size_t>,
                                              cuda::thread_scope_thread,
                                              vocab_equal,
@@ -93,7 +101,7 @@ using vocabulary_map_type = cuco::static_map<cudf::size_type,
 struct sub_vocab_hasher {
   cudf::column_device_view const d_strings;
   string_hasher_type hasher{};
-  __device__ hash_value_type operator()(cudf::size_type index) const
+  __device__ hash_value_type operator()(vocab_index_type index) const
   {
     auto const d_str = d_strings.element<cudf::string_view>(index);
     // skip over the '##' prefix
@@ -108,11 +116,11 @@ struct sub_vocab_hasher {
  */
 struct sub_vocab_equal {
   cudf::column_device_view const d_strings;
-  __device__ bool operator()(cudf::size_type lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(vocab_index_type lhs, vocab_index_type rhs) const noexcept
   {
     return lhs == rhs;  // all rows are expected to be unique
   }
-  __device__ bool operator()(cudf::string_view const& lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(cudf::string_view const& lhs, vocab_index_type rhs) const noexcept
   {
     auto const d_str = d_strings.element<cudf::string_view>(rhs);
     // skip over the '##' prefix
@@ -122,8 +130,8 @@ struct sub_vocab_equal {
 
 // This 2nd subword map helps avoid requiring temporary strings in device code
 using sub_probe_scheme        = cuco::linear_probing<1, sub_vocab_hasher>;
-using sub_vocabulary_map_type = cuco::static_map<cudf::size_type,
-                                                 cudf::size_type,
+using sub_vocabulary_map_type = cuco::static_map<vocab_index_type,
+                                                 vocab_index_type,
                                                  cuco::extent<std::size_t>,
                                                  cuda::thread_scope_thread,
                                                  sub_vocab_equal,
@@ -174,7 +182,8 @@ namespace {
 struct key_pair {
   __device__ auto operator()(cudf::size_type idx) const noexcept
   {
-    return cuco::make_pair(idx, idx);
+    auto const index = cudf::detail::to_cuco_index<detail::vocab_index_type>(idx);
+    return cuco::make_pair(index, index);
   }
 };
 
@@ -216,6 +225,9 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
 {
   CUDF_EXPECTS(not input.is_empty(), "vocabulary must not be empty", std::invalid_argument);
   CUDF_EXPECTS(not input.has_nulls(), "vocabulary must not have nulls", std::invalid_argument);
+  CUDF_EXPECTS(input.size() <= cudf::detail::cuco_max_rows,
+               "vocabulary is larger than the hash table can address",
+               std::overflow_error);
 
   // hold a copy of the input (not expected to be very large)
   auto vocabulary   = std::make_unique<cudf::column>(input.parent(), stream, mr);
@@ -224,8 +236,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
   // build the vocabulary map: each row is a single term and is the key for the map
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
     static_cast<size_t>(vocabulary->size() * 2),
-    cuco::empty_key{-1},
-    cuco::empty_value{-1},
+    cuco::empty_key{detail::vocab_index_type{-1}},
+    cuco::empty_value{detail::vocab_index_type{-1}},
     detail::vocab_equal{*d_vocabulary},
     detail::probe_scheme{detail::vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_thread,
@@ -250,8 +262,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
   // build a 2nd map with just the ## prefixed items
   auto vocab_sub_map = std::make_unique<detail::sub_vocabulary_map_type>(
     sub_map_indices.size() * 2,
-    cuco::empty_key{-1},
-    cuco::empty_value{-1},
+    cuco::empty_key{detail::vocab_index_type{-1}},
+    cuco::empty_value{detail::vocab_index_type{-1}},
     detail::sub_vocab_equal{*d_vocabulary},
     detail::sub_probe_scheme{detail::sub_vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_thread,
@@ -768,23 +780,34 @@ rmm::device_uvector<cudf::size_type> compute_some_tokens(
   auto max_word_offsets = rmm::device_uvector<int64_t>(input.size() + 1, stream);
 
   // compute max word counts for each row
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    cuda::counting_iterator<cudf::size_type>{0},
-                    cuda::counting_iterator<cudf::size_type>{input.size()},
-                    max_word_offsets.begin(),
-                    cuda::proclaim_return_type<cudf::size_type>(
-                      [d_strings = *d_strings, max_words_per_row] __device__(auto idx) {
-                        if (idx >= d_strings.size()) { return 0; }
-                        if (d_strings.is_null(idx)) { return 0; }
-                        auto const d_str = d_strings.element<cudf::string_view>(idx);
-                        return cuda::std::min(max_words_per_row, d_str.size_bytes() / 2);
-                      }));
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator<cudf::size_type>{input.size()},
+    max_word_offsets.begin(),
+    cuda::proclaim_return_type<cudf::size_type>(
+      [d_strings = *d_strings, max_words_per_row] __device__(auto idx) -> cudf::size_type {
+        if (idx >= d_strings.size()) { return 0; }
+        if (d_strings.is_null(idx)) { return 0; }
+        auto const d_str = d_strings.element<cudf::string_view>(idx);
+        return cuda::std::min(max_words_per_row, d_str.size_bytes() / 2);
+      }));
 
   auto const max_size = cudf::detail::sizes_to_offsets(
     max_word_offsets.begin(), max_word_offsets.end(), max_word_offsets.begin(), 0, stream);
 
   auto start_words = rmm::device_uvector<int64_t>(max_size, stream);
   auto word_sizes  = rmm::device_uvector<cudf::size_type>(max_size, stream);
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(
+                               stream, cudf::get_current_device_resource_ref()),
+                             start_words.begin(),
+                             start_words.end(),
+                             no_word64);
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(
+                               stream, cudf::get_current_device_resource_ref()),
+                             word_sizes.begin(),
+                             word_sizes.end(),
+                             no_word);
 
   // find start/end for each row up to max_words_per_row words;
   // store word positions in start_words and sizes in word_sizes
@@ -795,22 +818,20 @@ rmm::device_uvector<cudf::size_type> compute_some_tokens(
       *d_strings, d_input_chars, max_word_offsets.data(), start_words.data(), word_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  // remove the non-words
-  auto const end =
-    thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   start_words.begin(),
-                   start_words.end(),
-                   no_word64);
-  auto const check =
-    thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   word_sizes.begin(),
-                   word_sizes.end(),
-                   no_word);
+  // Remove unused entries as pairs so starts and sizes remain aligned.
+  auto const pairs_begin =
+    thrust::make_zip_iterator(thrust::make_tuple(start_words.begin(), word_sizes.begin()));
+  auto const pairs_end =
+    thrust::make_zip_iterator(thrust::make_tuple(start_words.end(), word_sizes.end()));
+  auto const valid_end = thrust::remove_if(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    pairs_begin,
+    pairs_end,
+    [] __device__(auto const& pair) {
+      return thrust::get<0>(pair) == no_word64 or thrust::get<1>(pair) == no_word;
+    });
 
-  auto const total_words = static_cast<int64_t>(cuda::std::distance(start_words.begin(), end));
-  // this should only trigger if there is a bug in the code above
-  CUDF_EXPECTS(total_words == static_cast<int64_t>(cuda::std::distance(word_sizes.begin(), check)),
-               "error resolving word locations from input column");
+  auto const total_words = static_cast<int64_t>(cuda::std::distance(pairs_begin, valid_end));
   start_words.resize(total_words, stream);  // always
   word_sizes.resize(total_words, stream);   // smaller
 

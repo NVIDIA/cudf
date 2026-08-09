@@ -417,7 +417,8 @@ rmm::device_uvector<cudf::size_type> compute_sizes(cudf::device_span<uint32_t co
       };
       auto const begin = d_data + (static_cast<int64_t>(idx) * MAX_NEW_CHARS);
       auto const end   = begin + MAX_NEW_CHARS;
-      return thrust::transform_reduce(thrust::seq, begin, end, tfn, 0, cuda::std::plus{});
+      return thrust::transform_reduce(
+        thrust::seq, begin, end, tfn, cudf::size_type{0}, cuda::std::plus{});
     }));
 
   // DeviceSegmentedReduce is used to compute the size of each output row

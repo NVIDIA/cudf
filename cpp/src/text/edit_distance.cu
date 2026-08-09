@@ -132,7 +132,7 @@ __device__ void compute_distance(Iterator input1,
     auto it1 = input1;
     auto it2 = input2;
 
-    auto tile_count = cudf::util::div_rounding_up_safe(n + 1, tile_size);
+    auto tile_count = cudf::util::div_rounding_up_safe(n + 1, cudf::size_type{tile_size});
     while (tile_count--) {
       auto const offset = (jdx - 1);
       // locate the 2 characters to compare along the diagonal
@@ -167,7 +167,7 @@ __device__ void compute_distance(Iterator input1,
     auto it1 = input1;
     auto it2 = input2;
 
-    auto tile_count = cudf::util::div_rounding_up_safe(n, tile_size);
+    auto tile_count = cudf::util::div_rounding_up_safe(n, cudf::size_type{tile_size});
     while (tile_count--) {
       auto const offset = (jdx - 1);
       // locate the 2 characters to compare along the diagonal

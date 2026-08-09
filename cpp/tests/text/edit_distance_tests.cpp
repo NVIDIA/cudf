@@ -30,14 +30,14 @@ TEST_F(TextEditDistanceTest, EditDistance)
     auto tv = cudf::strings_column_view(targets);
 
     auto results = nvtext::edit_distance(sv, tv);
-    cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 3, 2, 1, 3, 0, 0, 1});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({1, 3, 2, 1, 3, 0, 0, 1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
     cudf::test::strings_column_wrapper single({"pup"});
     auto tv      = cudf::strings_column_view(single);
     auto results = nvtext::edit_distance(sv, tv);
-    cudf::test::fixed_width_column_wrapper<int32_t> expected({3, 3, 3, 4, 0, 3, 2, 3});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({3, 3, 3, 4, 0, 3, 2, 3});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
@@ -48,7 +48,8 @@ TEST_F(TextEditDistanceTest, EditDistance)
     auto sv       = cudf::strings_column_view(input);
     auto results  = nvtext::edit_distance(sv, tv);
     auto begin    = cuda::constant_iterator<int32_t>(1);
-    auto expected = cudf::test::fixed_width_column_wrapper<int32_t>(begin, begin + h_input.size());
+    auto expected =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(begin, begin + h_input.size());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }
@@ -68,7 +69,8 @@ TEST_F(TextEditDistanceTest, EditDistanceLong)
   auto sv1 = cudf::strings_column_view(input1);
   auto sv2 = cudf::strings_column_view(input2);
 
-  auto expected = cudf::test::fixed_width_column_wrapper<int32_t>({12, 14, 13, 0, 4, 18, 40});
+  auto expected =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({12, 14, 13, 0, 4, 18, 40});
   auto results  = nvtext::edit_distance(sv1, sv2);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }

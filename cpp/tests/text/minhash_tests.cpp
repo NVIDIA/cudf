@@ -209,6 +209,7 @@ TEST_F(MinHashTest, ErrorsTest)
   EXPECT_THROW(nvtext::minhash_ngrams(lview, 4, 0, eview, eview), std::invalid_argument);
   EXPECT_THROW(nvtext::minhash64_ngrams(lview, 4, 0, eview64, eview64), std::invalid_argument);
 
+#if CUDF_SIZE_TYPE_BITS == 32
   std::vector<std::string> h_input(50000, "");
   input = cudf::test::strings_column_wrapper(h_input.begin(), h_input.end());
   view  = cudf::strings_column_view(input);
@@ -221,7 +222,7 @@ TEST_F(MinHashTest, ErrorsTest)
   auto pview64  = cudf::column_view(params64);
   EXPECT_THROW(nvtext::minhash64(view, 0, pview64, pview64, 4), std::overflow_error);
 
-  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>(
+  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{static_cast<cudf::size_type>(h_input.size() + 1)});
   auto input_ngrams =
@@ -229,6 +230,7 @@ TEST_F(MinHashTest, ErrorsTest)
   lview = cudf::lists_column_view(input_ngrams->view());
   EXPECT_THROW(nvtext::minhash_ngrams(lview, 4, 0, pview, pview), std::overflow_error);
   EXPECT_THROW(nvtext::minhash64_ngrams(lview, 4, 0, pview64, pview64), std::overflow_error);
+#endif
 }
 
 TEST_F(MinHashTest, Ngrams)
@@ -274,7 +276,8 @@ TEST_F(MinHashTest, NgramsWide)
   auto many     = std::vector<char const*>(1024, "hello");
   auto str_data = cudf::test::strings_column_wrapper(many.begin(), many.end());
   auto offsets =
-    cudf::test::fixed_width_column_wrapper<int32_t, uint64_t>({0ul, many.size() / 2, many.size()});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type, uint64_t>(
+      {0ul, many.size() / 2, many.size()});
   auto input = cudf::make_lists_column(2, offsets.release(), str_data.release(), 0, {});
 
   auto view = cudf::lists_column_view(input->view());

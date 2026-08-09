@@ -44,7 +44,7 @@ TEST_F(TextTokenizeTest, Tokenize)
   results = nvtext::tokenize(strings_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  cudf::test::fixed_width_column_wrapper<int32_t> expected_counts{6, 5, 5, 0, 0, 5};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_counts{6, 5, 5, 0, 0, 5};
   results = nvtext::count_tokens(strings_view, cudf::string_scalar(": #"));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_counts);
   results = nvtext::count_tokens(strings_view);
@@ -74,7 +74,7 @@ TEST_F(TextTokenizeTest, TokenizeMulti)
   cudf::test::strings_column_wrapper expected{
     "fox jumped ", "dog", "dog chased  ", "cat", "cat chased ", "mouse ", "mousé ate ", "cheese"};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
-  cudf::test::fixed_width_column_wrapper<int32_t> expected_counts{2, 2, 2, 0, 0, 0, 2};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_counts{2, 2, 2, 0, 0, 0, 2};
   results = nvtext::count_tokens(strings_view, delimiters_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_counts);
 }

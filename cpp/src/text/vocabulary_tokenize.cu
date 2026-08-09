@@ -15,6 +15,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/cuco_row_index.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
@@ -46,6 +47,10 @@ namespace {
 using string_hasher_type = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
 using hash_value_type    = string_hasher_type::result_type;
 
+// The map holds a row index of the vocabulary column as both key and value. A 64-bit build
+// therefore requires the 16-byte cuco key support enforced by cuco_row_index.cuh.
+using vocab_index_type = cudf::detail::cuco_row_type;
+
 /**
  * @brief Hasher function used for building and using the cuco static-map
  *
@@ -56,7 +61,7 @@ struct vocab_hasher {
   cudf::column_device_view const d_strings;
   string_hasher_type hasher{};
   // used by insert
-  __device__ hash_value_type operator()(cudf::size_type index) const
+  __device__ hash_value_type operator()(vocab_index_type index) const
   {
     return hasher(d_strings.element<cudf::string_view>(index));
   }
@@ -73,21 +78,22 @@ struct vocab_hasher {
 struct vocab_equal {
   cudf::column_device_view const d_strings;
   // used by insert
-  __device__ bool operator()(cudf::size_type lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(vocab_index_type lhs, vocab_index_type rhs) const noexcept
   {
     return lhs == rhs;  // all rows are expected to be unique
   }
   // used by find
-  __device__ bool operator()(cudf::string_view const& lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(cudf::string_view const& lhs, vocab_index_type rhs) const noexcept
   {
     return d_strings.element<cudf::string_view>(rhs) == lhs;
   }
 };
 
-using probe_scheme        = cuco::linear_probing<1, vocab_hasher>;
-using cuco_storage        = cuco::storage<1>;
-using vocabulary_map_type = cuco::static_map<cudf::size_type,
-                                             cudf::size_type,
+using probe_scheme = cuco::linear_probing<1, vocab_hasher>;
+using cuco_storage = cuco::storage<1>;
+
+using vocabulary_map_type = cuco::static_map<vocab_index_type,
+                                             vocab_index_type,
                                              cuco::extent<std::size_t>,
                                              cuda::thread_scope_device,
                                              vocab_equal,
@@ -122,7 +128,8 @@ struct tokenize_vocabulary::tokenize_vocabulary_impl {
 struct key_pair {
   __device__ auto operator()(cudf::size_type idx) const noexcept
   {
-    return cuco::make_pair(idx, idx);
+    auto const index = cudf::detail::to_cuco_index<detail::vocab_index_type>(idx);
+    return cuco::make_pair(index, index);
   }
 };
 
@@ -132,6 +139,9 @@ tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
 {
   CUDF_EXPECTS(not input.is_empty(), "vocabulary must not be empty");
   CUDF_EXPECTS(not input.has_nulls(), "vocabulary must not have nulls");
+  CUDF_EXPECTS(input.size() <= cudf::detail::cuco_max_rows,
+               "vocabulary is larger than the hash table can address",
+               std::overflow_error);
 
   // need to hold a copy of the input
   auto vocabulary   = std::make_unique<cudf::column>(input.parent(), stream, mr);
@@ -139,8 +149,8 @@ tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
 
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
     static_cast<size_t>(vocabulary->size() * 2),
-    cuco::empty_key{-1},
-    cuco::empty_value{-1},
+    cuco::empty_key{detail::vocab_index_type{-1}},
+    cuco::empty_value{detail::vocab_index_type{-1}},
     detail::vocab_equal{*d_vocabulary},
     detail::probe_scheme{detail::vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_device,

@@ -186,7 +186,7 @@ CUDF_KERNEL void count_char_ngrams_kernel(cudf::column_device_view const d_strin
 
   auto const d_str = d_strings.element<cudf::string_view>(str_idx);
   if (tile_size == 1) {
-    d_counts[str_idx] = cuda::std::max(0, (d_str.length() + 1 - ngrams));
+    d_counts[str_idx] = cuda::std::max(cudf::size_type{0}, (d_str.length() + 1 - ngrams));
     return;
   }
 
@@ -203,8 +203,10 @@ CUDF_KERNEL void count_char_ngrams_kernel(cudf::column_device_view const d_strin
       count += static_cast<cudf::size_type>(cudf::strings::detail::is_begin_utf8_char(*s));
     }
   }
-  auto const char_count = cg::reduce(warp, count, cg::plus<int>());
-  if (lane_idx == 0) { d_counts[str_idx] = cuda::std::max(0, char_count - ngrams + 1); }
+  auto const char_count = cg::reduce(warp, count, cg::plus<cudf::size_type>());
+  if (lane_idx == 0) {
+    d_counts[str_idx] = cuda::std::max(cudf::size_type{0}, char_count - ngrams + 1);
+  }
 }
 
 /**

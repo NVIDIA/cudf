@@ -38,7 +38,7 @@ TEST_F(TextStemmerTest, PorterStemmer)
     thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; });
   cudf::test::strings_column_wrapper strings(h_strings.begin(), h_strings.end(), validity);
 
-  cudf::test::fixed_width_column_wrapper<int32_t> expected(
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
     {3, 0, 2, 1, 1, 0, 1, 0, 0, 0, 1, 1, 2, 2}, validity);
   auto const results = nvtext::porter_stemmer_measure(cudf::strings_column_view(strings));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);

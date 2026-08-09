@@ -8,6 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/cuco_helpers.hpp>
+#include <cudf/detail/utilities/cuco_row_index.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -35,6 +36,10 @@ using hash_value_type    = string_hasher_type::result_type;
 using merge_pair_type    = cuda::std::pair<cudf::string_view, cudf::string_view>;
 using cuco_storage       = cuco::storage<1>;
 
+// Both maps hold a row index of the merge-pairs column as key and value. A 64-bit build therefore
+// requires the 16-byte cuco key support enforced by cuco_row_index.cuh.
+using bpe_index_type = cudf::detail::cuco_row_type;
+
 /**
  * @brief Hasher function used for building and using the cuco static-map
  *
@@ -48,7 +53,7 @@ struct bpe_hasher {
   cudf::column_device_view const d_strings;
   string_hasher_type hasher{};
   // used by insert
-  __device__ hash_value_type operator()(cudf::size_type index) const
+  __device__ hash_value_type operator()(bpe_index_type index) const
   {
     index *= 2;
     auto const lhs = d_strings.element<cudf::string_view>(index);
@@ -74,12 +79,12 @@ struct bpe_hasher {
 struct bpe_equal {
   cudf::column_device_view const d_strings;
   // used by insert
-  __device__ bool operator()(cudf::size_type lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(bpe_index_type lhs, bpe_index_type rhs) const noexcept
   {
     return lhs == rhs;  // all rows are unique
   }
   // used by find
-  __device__ bool operator()(merge_pair_type const& lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(merge_pair_type const& lhs, bpe_index_type rhs) const noexcept
   {
     rhs *= 2;
     auto const left  = d_strings.element<cudf::string_view>(rhs);
@@ -90,8 +95,8 @@ struct bpe_equal {
 
 using bpe_probe_scheme = cuco::linear_probing<1, bpe_hasher>;
 
-using merge_pairs_map_type = cuco::static_map<cudf::size_type,
-                                              cudf::size_type,
+using merge_pairs_map_type = cuco::static_map<bpe_index_type,
+                                              bpe_index_type,
                                               cuco::extent<std::size_t>,
                                               cuda::thread_scope_device,
                                               bpe_equal,
@@ -111,7 +116,7 @@ struct mp_hasher {
   cudf::column_device_view const d_strings;
   string_hasher_type hasher{};
   // used by insert
-  __device__ hash_value_type operator()(cudf::size_type index) const
+  __device__ hash_value_type operator()(bpe_index_type index) const
   {
     auto const d_str = d_strings.element<cudf::string_view>(index);
     return hasher(d_str);
@@ -132,14 +137,14 @@ struct mp_hasher {
 struct mp_equal {
   cudf::column_device_view const d_strings;
   // used by insert
-  __device__ bool operator()(cudf::size_type lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(bpe_index_type lhs, bpe_index_type rhs) const noexcept
   {
     auto const left  = d_strings.element<cudf::string_view>(lhs);
     auto const right = d_strings.element<cudf::string_view>(rhs);
     return left == right;
   }
   // used by find
-  __device__ bool operator()(cudf::string_view const& lhs, cudf::size_type rhs) const noexcept
+  __device__ bool operator()(cudf::string_view const& lhs, bpe_index_type rhs) const noexcept
   {
     auto const right = d_strings.element<cudf::string_view>(rhs);
     return lhs == right;
@@ -148,8 +153,8 @@ struct mp_equal {
 
 using mp_probe_scheme = cuco::linear_probing<1, mp_hasher>;
 
-using mp_table_map_type = cuco::static_map<cudf::size_type,
-                                           cudf::size_type,
+using mp_table_map_type = cuco::static_map<bpe_index_type,
+                                           bpe_index_type,
                                            cuco::extent<std::size_t>,
                                            cuda::thread_scope_device,
                                            mp_equal,

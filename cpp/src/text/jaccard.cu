@@ -237,7 +237,9 @@ CUDF_KERNEL void count_substrings_kernel(cudf::column_device_view const d_string
     }
   }
   auto const char_count = warp_reduce(temp_storage).Sum(count);
-  if (lane_idx == 0) { d_counts[str_idx] = cuda::std::max(1, char_count - width + 1); }
+  if (lane_idx == 0) {
+    d_counts[str_idx] = cuda::std::max(cudf::size_type{1}, char_count - width + 1);
+  }
 }
 
 /**

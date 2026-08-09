@@ -38,8 +38,8 @@ std::unique_ptr<detail::merge_pairs_map_type> initialize_merge_pairs_map(
   auto merge_pairs_map =
     std::make_unique<merge_pairs_map_type>(static_cast<size_t>(elements),
                                            cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                           cuco::empty_key{-1},
-                                           cuco::empty_value{-1},
+                                           cuco::empty_key{bpe_index_type{-1}},
+                                           cuco::empty_value{bpe_index_type{-1}},
                                            bpe_equal{input},
                                            bpe_probe_scheme{bpe_hasher{input}},
                                            cuco::thread_scope_device,
@@ -49,8 +49,11 @@ std::unique_ptr<detail::merge_pairs_map_type> initialize_merge_pairs_map(
 
   auto iter = cudf::detail::make_counting_transform_iterator(
     0,
-    cuda::proclaim_return_type<cuco::pair<cudf::size_type, cudf::size_type>>(
-      [] __device__(cudf::size_type idx) { return cuco::make_pair(idx, idx); }));
+    cuda::proclaim_return_type<cuco::pair<bpe_index_type, bpe_index_type>>(
+      [] __device__(cudf::size_type idx) {
+        auto const index = cudf::detail::to_cuco_index<bpe_index_type>(idx);
+        return cuco::make_pair(index, index);
+      }));
 
   merge_pairs_map->insert_async(iter, iter + elements, stream.value());
 
@@ -62,8 +65,8 @@ std::unique_ptr<detail::mp_table_map_type> initialize_mp_table_map(
 {
   auto mp_table_map = std::make_unique<mp_table_map_type>(static_cast<size_t>(input.size()),
                                                           cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                                          cuco::empty_key{-1},
-                                                          cuco::empty_value{-1},
+                                                          cuco::empty_key{bpe_index_type{-1}},
+                                                          cuco::empty_value{bpe_index_type{-1}},
                                                           mp_equal{input},
                                                           mp_probe_scheme{mp_hasher{input}},
                                                           cuco::thread_scope_device,
@@ -73,8 +76,11 @@ std::unique_ptr<detail::mp_table_map_type> initialize_mp_table_map(
 
   auto iter = cudf::detail::make_counting_transform_iterator(
     0,
-    cuda::proclaim_return_type<cuco::pair<cudf::size_type, cudf::size_type>>(
-      [] __device__(cudf::size_type idx) { return cuco::make_pair(idx, idx); }));
+    cuda::proclaim_return_type<cuco::pair<bpe_index_type, bpe_index_type>>(
+      [] __device__(cudf::size_type idx) {
+        auto const index = cudf::detail::to_cuco_index<bpe_index_type>(idx);
+        return cuco::make_pair(index, index);
+      }));
 
   mp_table_map->insert_async(iter, iter + input.size(), stream.value());
 
@@ -111,6 +117,9 @@ std::unique_ptr<bpe_merge_pairs> load_merge_pairs(cudf::strings_column_view cons
 {
   CUDF_EXPECTS(!merge_pairs.is_empty(), "Merge pairs must not be empty");
   CUDF_EXPECTS(!merge_pairs.has_nulls(), "Merge pairs may not contain nulls");
+  CUDF_EXPECTS(merge_pairs.size() <= cudf::detail::cuco_max_rows,
+               "Merge pairs are larger than the hash table can address",
+               std::overflow_error);
   return std::make_unique<bpe_merge_pairs>(merge_pairs, stream, mr);
 }
 

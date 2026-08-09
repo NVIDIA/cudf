@@ -545,7 +545,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   if (strip_delimiters) {
     auto it = cudf::detail::make_counting_transform_iterator(
       0,
-      cuda::proclaim_return_type<cuda::std::pair<char*, int32_t>>(
+      cuda::proclaim_return_type<cuda::std::pair<char*, size_type>>(
         [ofs        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view()),
          chars      = chars.data(),
          delim_size = static_cast<size_type>(delimiter.size()),

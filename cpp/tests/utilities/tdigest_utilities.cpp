@@ -76,7 +76,8 @@ std::unique_ptr<column> make_expected_tdigest_column(std::vector<expected_tdiges
     auto tdigests =
       cudf::make_structs_column(tdigest.mean.size(), std::move(inner_children), 0, {});
 
-    auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, tdigest.mean.size()});
+    auto offsets =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, tdigest.mean.size()});
     auto list    = cudf::make_lists_column(1, offsets.release(), std::move(tdigests), 0, {});
 
     auto min_col = cudf::test::fixed_width_column_wrapper<double>({tdigest.min});

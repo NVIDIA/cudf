@@ -453,7 +453,7 @@ struct QuantileDictionaryTest : public cudf::test::BaseFixture {};
 TEST_F(QuantileDictionaryTest, TestValid)
 {
   cudf::test::dictionary_column_wrapper<int32_t> col{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-  cudf::test::fixed_width_column_wrapper<int32_t> indices{0, 2, 4, 6, 8, 1, 3, 5, 7, 9};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 2, 4, 6, 8, 1, 3, 5, 7, 9};
 
   auto result = cudf::quantile(col, {0.5}, cudf::interpolation::LINEAR);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result->view(),

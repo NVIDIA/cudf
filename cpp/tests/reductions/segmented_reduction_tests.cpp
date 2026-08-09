@@ -1126,7 +1126,7 @@ TEST_F(SegmentedReductionTestUntyped, EmptyInputEmptyOffsets)
   result = cudf::segmented_reduce(int_empty,
                                   cudf::column_view{int_empty},
                                   *cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(),
-                                  cudf::data_type{cudf::type_id::INT32},
+                                  cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                   cudf::null_policy::INCLUDE);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, int_empty);
 }

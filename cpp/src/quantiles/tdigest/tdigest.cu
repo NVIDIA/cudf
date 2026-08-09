@@ -289,7 +289,7 @@ std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
                                                    rmm::device_async_resource_ref mr)
 {
   auto offsets = cudf::make_fixed_width_column(
-    data_type(type_id::INT32), num_rows + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type(type_to_id<size_type>()), num_rows + 1, mask_state::UNALLOCATED, stream, mr);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                offsets->mutable_view().begin<size_type>(),
                offsets->mutable_view().end<size_type>(),
@@ -349,7 +349,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
 
   // output is a list column with each row containing percentiles.size() percentile values
   auto offsets = cudf::make_fixed_width_column(
-    data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
   auto const all_empty_rows = cudf::detail::count_if(
                                 detail::size_begin(input),
                                 detail::size_begin(input) + input.size(),

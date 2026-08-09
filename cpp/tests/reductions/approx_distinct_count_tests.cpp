@@ -694,7 +694,7 @@ TEST_F(ApproxDistinctCount, ListColumn)
   }
 
   cudf::test::fixed_width_column_wrapper<int32_t> values_col(values.begin(), values.end());
-  cudf::test::fixed_width_column_wrapper<int32_t> offsets_col(offsets.begin(), offsets.end());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets_col(offsets.begin(), offsets.end());
   auto input_col = cudf::make_lists_column(
     num_rows, offsets_col.release(), values_col.release(), 0, rmm::device_buffer{});
   cudf::table_view input_table({*input_col});

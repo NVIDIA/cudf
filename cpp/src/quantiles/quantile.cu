@@ -164,7 +164,7 @@ std::unique_ptr<column> quantile(column_view const& input,
 
   } else {
     CUDF_EXPECTS(indices.type() == data_type{type_to_id<size_type>()},
-                 "`indices` type must be `INT32`.");
+                 "`indices` type must match size_type.");
     if (exact) {
       return quantile<true>(
         input, indices.begin<size_type>(), indices.size(), q, interp, exact, stream, mr);

@@ -253,15 +253,15 @@ TYPED_TEST(MinMaxReductionTest, ArgMinMaxReductions)
     {false, false, false, false, false, false, false, false, false, false});
   std::vector<T> v = convert_values<T>(int_values);
 
-  auto const argmin = [](std::vector<T> const& input) -> int {
+  auto const argmin = [](std::vector<T> const& input) -> cudf::size_type {
     if (input.empty()) { return -1; }
     auto const it = std::min_element(input.begin(), input.end());
-    return static_cast<int>(std::distance(input.begin(), it));
+    return static_cast<cudf::size_type>(std::distance(input.begin(), it));
   };
-  auto const argmax = [](std::vector<T> const& input) -> int {
+  auto const argmax = [](std::vector<T> const& input) -> cudf::size_type {
     if (input.empty()) { return -1; }
     auto const it = std::max_element(input.begin(), input.end());
-    return static_cast<int>(std::distance(input.begin(), it));
+    return static_cast<cudf::size_type>(std::distance(input.begin(), it));
   };
 
   // Test without nulls.
@@ -270,15 +270,17 @@ TYPED_TEST(MinMaxReductionTest, ArgMinMaxReductions)
     auto const expected_argmin = argmin(v);
     auto const expected_argmax = argmax(v);
     EXPECT_EQ(this
-                ->template reduction_test<int>(col,
-                                               *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                               cudf::data_type{cudf::type_id::INT32})
+                ->template reduction_test<cudf::size_type>(
+                  col,
+                  *cudf::make_argmin_aggregation<reduce_aggregation>(),
+                  cudf::data_type{cudf::type_to_id<cudf::size_type>()})
                 .first,
               expected_argmin);
     EXPECT_EQ(this
-                ->template reduction_test<int>(col,
-                                               *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                               cudf::data_type{cudf::type_id::INT32})
+                ->template reduction_test<cudf::size_type>(
+                  col,
+                  *cudf::make_argmax_aggregation<reduce_aggregation>(),
+                  cudf::data_type{cudf::type_to_id<cudf::size_type>()})
                 .first,
               expected_argmax);
   }
@@ -291,15 +293,17 @@ TYPED_TEST(MinMaxReductionTest, ArgMinMaxReductions)
     auto const expected_argmin = argmin(r_min);
     auto const expected_argmax = argmax(r_max);
     EXPECT_EQ(this
-                ->template reduction_test<int>(col_nulls,
-                                               *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                               cudf::data_type{cudf::type_id::INT32})
+                ->template reduction_test<cudf::size_type>(
+                  col_nulls,
+                  *cudf::make_argmin_aggregation<reduce_aggregation>(),
+                  cudf::data_type{cudf::type_to_id<cudf::size_type>()})
                 .first,
               expected_argmin);
     EXPECT_EQ(this
-                ->template reduction_test<int>(col_nulls,
-                                               *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                               cudf::data_type{cudf::type_id::INT32})
+                ->template reduction_test<cudf::size_type>(
+                  col_nulls,
+                  *cudf::make_argmax_aggregation<reduce_aggregation>(),
+                  cudf::data_type{cudf::type_to_id<cudf::size_type>()})
                 .first,
               expected_argmax);
   }
@@ -309,15 +313,17 @@ TYPED_TEST(MinMaxReductionTest, ArgMinMaxReductions)
     cudf::test::fixed_width_column_wrapper<T> col_all_nulls = construct_null_column(v, all_null);
     EXPECT_FALSE(
       this
-        ->template reduction_test<int>(col_all_nulls,
-                                       *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                       cudf::data_type{cudf::type_id::INT32})
+        ->template reduction_test<cudf::size_type>(
+          col_all_nulls,
+          *cudf::make_argmin_aggregation<reduce_aggregation>(),
+          cudf::data_type{cudf::type_to_id<cudf::size_type>()})
         .second);
     EXPECT_FALSE(
       this
-        ->template reduction_test<int>(col_all_nulls,
-                                       *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                       cudf::data_type{cudf::type_id::INT32})
+        ->template reduction_test<cudf::size_type>(
+          col_all_nulls,
+          *cudf::make_argmax_aggregation<reduce_aggregation>(),
+          cudf::data_type{cudf::type_to_id<cudf::size_type>()})
         .second);
   }
 }
@@ -1222,7 +1228,9 @@ TEST_F(ReductionEmptyTest, Errors)
 struct ReductionParamTest : public ReductionTest<double>,
                             public ::testing::WithParamInterface<cudf::size_type> {};
 
-INSTANTIATE_TEST_CASE_P(ddofParam, ReductionParamTest, ::testing::Range(1, 5));
+INSTANTIATE_TEST_CASE_P(ddofParam,
+                        ReductionParamTest,
+                        ::testing::Range(cudf::size_type{1}, cudf::size_type{5}));
 
 TEST_P(ReductionParamTest, std_var)
 {
@@ -1329,7 +1337,8 @@ struct StringReductionTest : public cudf::test::BaseFixture,
   void reduction_test(cudf::column_view const& underlying_column,
                       OutputType expected,
                       reduce_aggregation const& agg,
-                      cudf::data_type output_dtype = cudf::data_type{cudf::type_id::INT32})
+                      cudf::data_type output_dtype =
+                        cudf::data_type{cudf::type_to_id<OutputType>()})
   {
     std::unique_ptr<cudf::scalar> reduction = cudf::reduce(underlying_column, agg, output_dtype);
     using ScalarType                        = cudf::scalar_type_t<OutputType>;
@@ -1449,15 +1458,15 @@ TEST_P(StringReductionTest, ArgMinMax)
                    return host_bools[idx] ? host_strings[idx] : std::string{};
                  });
 
-  auto const argmin = [](std::vector<std::string> const& input) -> int {
+  auto const argmin = [](std::vector<std::string> const& input) -> cudf::size_type {
     if (input.empty()) { return -1; }
     auto const it = std::min_element(input.begin(), input.end());
-    return static_cast<int>(std::distance(input.begin(), it));
+    return static_cast<cudf::size_type>(std::distance(input.begin(), it));
   };
-  auto const argmax = [](std::vector<std::string> const& input) -> int {
+  auto const argmax = [](std::vector<std::string> const& input) -> cudf::size_type {
     if (input.empty()) { return -1; }
     auto const it = std::max_element(input.begin(), input.end());
-    return static_cast<int>(std::distance(input.begin(), it));
+    return static_cast<cudf::size_type>(std::distance(input.begin(), it));
   };
 
   // All valid string column.
@@ -1465,9 +1474,9 @@ TEST_P(StringReductionTest, ArgMinMax)
     cudf::test::strings_column_wrapper col(host_strings.begin(), host_strings.end());
     auto const expected_argmin = argmin(host_strings);
     auto const expected_argmax = argmax(host_strings);
-    this->reduction_test<int>(
+    this->reduction_test<cudf::size_type>(
       col, expected_argmin, *cudf::make_argmin_aggregation<reduce_aggregation>());
-    this->reduction_test<int>(
+    this->reduction_test<cudf::size_type>(
       col, expected_argmax, *cudf::make_argmax_aggregation<reduce_aggregation>());
   }
 
@@ -1497,9 +1506,9 @@ TEST_P(StringReductionTest, ArgMinMax)
 
     auto const expected_argmin = argmin(argmin_strings);
     auto const expected_argmax = argmax(argmax_strings);
-    this->reduction_test<int>(
+    this->reduction_test<cudf::size_type>(
       col_nulls, expected_argmin, *cudf::make_argmin_aggregation<reduce_aggregation>());
-    this->reduction_test<int>(
+    this->reduction_test<cudf::size_type>(
       col_nulls, expected_argmax, *cudf::make_argmax_aggregation<reduce_aggregation>());
   }
 }
@@ -1584,12 +1593,12 @@ TEST_F(StringReductionTest, AllNull)
   // ARGMIN
   result = cudf::reduce(col_nulls,
                         *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                        cudf::data_type{cudf::type_id::INT32});
+                        cudf::data_type{cudf::type_to_id<cudf::size_type>()});
   EXPECT_FALSE(result->is_valid());
   // ARGMAX
   result = cudf::reduce(col_nulls,
                         *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                        cudf::data_type{cudf::type_id::INT32});
+                        cudf::data_type{cudf::type_to_id<cudf::size_type>()});
   EXPECT_FALSE(result->is_valid());
 }
 
@@ -2064,10 +2073,11 @@ TYPED_TEST(FixedPointTestAllReps, FixedPointReductionMinAndArgMin)
 
     // Test ARGMIN
     {
-      auto const argmin_out_type = cudf::data_type{cudf::type_id::INT32};
+      auto const argmin_out_type =
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()};
       auto const result =
         cudf::reduce(column, *cudf::make_argmin_aggregation<reduce_aggregation>(), argmin_out_type);
-      auto const result_scalar = static_cast<cudf::scalar_type_t<int>*>(result.get());
+      auto const result_scalar = static_cast<cudf::scalar_type_t<cudf::size_type>*>(result.get());
       EXPECT_EQ(result_scalar->value(), 2);
     }
   }
@@ -2138,10 +2148,11 @@ TYPED_TEST(FixedPointTestAllReps, FixedPointReductionMaxAndArgMax)
 
     // Test ARGMAX
     {
-      auto const argmax_out_type = cudf::data_type{cudf::type_id::INT32};
+      auto const argmax_out_type =
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()};
       auto const result =
         cudf::reduce(column, *cudf::make_argmax_aggregation<reduce_aggregation>(), argmax_out_type);
-      auto const result_scalar = static_cast<cudf::scalar_type_t<int>*>(result.get());
+      auto const result_scalar = static_cast<cudf::scalar_type_t<cudf::size_type>*>(result.get());
       EXPECT_EQ(result_scalar->value(), 3);
     }
   }
@@ -2425,8 +2436,8 @@ TYPED_TEST(ReductionTest, NthElement)
   cudf::test::fixed_width_column_wrapper<T> col(v.begin(), v.end());
   cudf::test::fixed_width_column_wrapper<T> col_nulls = construct_null_column(v, host_bools);
   // without nulls
-  for (cudf::size_type n :
-       {-input_size, -input_size / 2, -2, -1, 0, 1, 2, input_size / 2, input_size - 1}) {
+  for (cudf::size_type n : std::initializer_list<cudf::size_type>{
+         -input_size, -input_size / 2, -2, -1, 0, 1, 2, input_size / 2, input_size - 1}) {
     auto const index         = mod(n, v.size());
     T expected_value_nonull  = v[index];
     bool const expected_null = host_bools[index];
@@ -2451,8 +2462,8 @@ TYPED_TEST(ReductionTest, NthElement)
     EXPECT_EQ(res.second, expected_null);
   }
   // valid only
-  for (cudf::size_type n :
-       {-valid_count, -valid_count / 2, -2, -1, 0, 1, 2, valid_count / 2, valid_count - 1}) {
+  for (cudf::size_type n : std::initializer_list<cudf::size_type>{
+         -valid_count, -valid_count / 2, -2, -1, 0, 1, 2, valid_count / 2, valid_count - 1}) {
     T expected_value_null = v_valid[mod(n, v_valid.size())];
     EXPECT_EQ(
       this
@@ -2538,12 +2549,14 @@ TEST_P(DictionaryStringReductionTest, MinMaxUnsortedDuplicateKeys)
     dict->view(), *max_it, true, *cudf::make_max_aggregation<reduce_aggregation>(), output_type);
 
   // ARGMIN/ARGMAX
-  this->reduction_test<int>(dict->view(),
-                            static_cast<int>(std::distance(host_strings.begin(), min_it)),
-                            *cudf::make_argmin_aggregation<reduce_aggregation>());
-  this->reduction_test<int>(dict->view(),
-                            static_cast<int>(std::distance(host_strings.begin(), max_it)),
-                            *cudf::make_argmax_aggregation<reduce_aggregation>());
+  this->reduction_test<cudf::size_type>(
+    dict->view(),
+    static_cast<cudf::size_type>(std::distance(host_strings.begin(), min_it)),
+    *cudf::make_argmin_aggregation<reduce_aggregation>());
+  this->reduction_test<cudf::size_type>(
+    dict->view(),
+    static_cast<cudf::size_type>(std::distance(host_strings.begin(), max_it)),
+    *cudf::make_argmax_aggregation<reduce_aggregation>());
 }
 
 TEST_P(DictionaryStringReductionTest, MinMaxUnsortedDuplicateKeysWithNulls)
@@ -2583,18 +2596,16 @@ TEST_P(DictionaryStringReductionTest, MinMaxUnsortedDuplicateKeysWithNulls)
                        output_type);
 
   // argmin/argmax: expect the first valid row index that holds the min/max value
-  auto first_valid_idx = [&](std::string const& target) {
+  auto first_valid_idx = [&](std::string const& target) -> cudf::size_type {
     for (size_t i = 0; i < host_strings.size(); ++i) {
-      if (valid[i] && host_strings[i] == target) { return static_cast<int>(i); }
+      if (valid[i] && host_strings[i] == target) { return static_cast<cudf::size_type>(i); }
     }
     return -1;
   };
-  this->reduction_test<int>(dict->view(),
-                            first_valid_idx(expected_min),
-                            *cudf::make_argmin_aggregation<reduce_aggregation>());
-  this->reduction_test<int>(dict->view(),
-                            first_valid_idx(expected_max),
-                            *cudf::make_argmax_aggregation<reduce_aggregation>());
+  this->reduction_test<cudf::size_type>(
+    dict->view(), first_valid_idx(expected_min), *cudf::make_argmin_aggregation<reduce_aggregation>());
+  this->reduction_test<cudf::size_type>(
+    dict->view(), first_valid_idx(expected_max), *cudf::make_argmax_aggregation<reduce_aggregation>());
 }
 
 template <typename T>
@@ -2723,18 +2734,20 @@ TYPED_TEST(DictionaryReductionTest, MinMaxUnsortedDuplicateKeys)
 
   EXPECT_EQ(
     this
-      ->template reduction_test<int32_t>(dict->view(),
-                                         *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                         cudf::data_type{cudf::type_id::INT32})
+      ->template reduction_test<cudf::size_type>(
+        dict->view(),
+        *cudf::make_argmin_aggregation<reduce_aggregation>(),
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()})
       .first,
-    static_cast<int32_t>(std::distance(v.begin(), min_it)));
+    static_cast<cudf::size_type>(std::distance(v.begin(), min_it)));
   EXPECT_EQ(
     this
-      ->template reduction_test<int32_t>(dict->view(),
-                                         *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                         cudf::data_type{cudf::type_id::INT32})
+      ->template reduction_test<cudf::size_type>(
+        dict->view(),
+        *cudf::make_argmax_aggregation<reduce_aggregation>(),
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()})
       .first,
-    static_cast<int32_t>(std::distance(v.begin(), max_it)));
+    static_cast<cudf::size_type>(std::distance(v.begin(), max_it)));
 }
 
 TYPED_TEST(DictionaryReductionTest, MinMaxAllNulls)
@@ -2811,15 +2824,17 @@ TYPED_TEST(DictionaryReductionTest, MinMaxUnsortedDuplicateKeysWithNulls)
   // argmin/argmax must also skip null rows
   auto const argmin_idx =
     this
-      ->template reduction_test<int32_t>(dict->view(),
-                                         *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                         cudf::data_type{cudf::type_id::INT32})
+      ->template reduction_test<cudf::size_type>(
+        dict->view(),
+        *cudf::make_argmin_aggregation<reduce_aggregation>(),
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()})
       .first;
   auto const argmax_idx =
     this
-      ->template reduction_test<int32_t>(dict->view(),
-                                         *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                         cudf::data_type{cudf::type_id::INT32})
+      ->template reduction_test<cudf::size_type>(
+        dict->view(),
+        *cudf::make_argmax_aggregation<reduce_aggregation>(),
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()})
       .first;
   EXPECT_EQ(v[argmin_idx], expected_min);
   EXPECT_EQ(v[argmax_idx], expected_max);
@@ -3228,13 +3243,13 @@ TEST_F(ListReductionTest, ReductionMinMaxAndArgMinMaxNoNull)
     this->reduction_test(
       input, INTS_CW{9, 10}, true, true, *cudf::make_max_aggregation<reduce_aggregation>());
 
-    using ScalarType  = cudf::scalar_type_t<int>;
+    using ScalarType  = cudf::scalar_type_t<cudf::size_type>;
     auto const argmin = cudf::reduce(input,
                                      *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     auto const argmax = cudf::reduce(input,
                                      *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     EXPECT_EQ(static_cast<ScalarType*>(argmin.get())->value(), 3);
     EXPECT_EQ(static_cast<ScalarType*>(argmax.get())->value(), 4);
   }
@@ -3250,13 +3265,13 @@ TEST_F(ListReductionTest, ReductionMinMaxAndArgMinMaxNoNull)
                          true,
                          *cudf::make_max_aggregation<reduce_aggregation>());
 
-    using ScalarType  = cudf::scalar_type_t<int>;
+    using ScalarType  = cudf::scalar_type_t<cudf::size_type>;
     auto const argmin = cudf::reduce(input,
                                      *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     auto const argmax = cudf::reduce(input,
                                      *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     EXPECT_EQ(static_cast<ScalarType*>(argmin.get())->value(), 3);
     EXPECT_EQ(static_cast<ScalarType*>(argmax.get())->value(), 2);
   }
@@ -3333,13 +3348,13 @@ TEST_F(ListReductionTest, ReductionMinMaxWithNulls)
                        true,
                        *cudf::make_max_aggregation<reduce_aggregation>());
 
-  using ScalarType  = cudf::scalar_type_t<int>;
+  using ScalarType  = cudf::scalar_type_t<cudf::size_type>;
   auto const argmin = cudf::reduce(input,
                                    *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                   cudf::data_type{cudf::type_id::INT32});
+                                   cudf::data_type{cudf::type_to_id<cudf::size_type>()});
   auto const argmax = cudf::reduce(input,
                                    *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                   cudf::data_type{cudf::type_id::INT32});
+                                   cudf::data_type{cudf::type_to_id<cudf::size_type>()});
   EXPECT_EQ(static_cast<ScalarType*>(argmin.get())->value(), 2);
   EXPECT_EQ(static_cast<ScalarType*>(argmax.get())->value(), 6);
 }
@@ -3539,13 +3554,13 @@ TEST_F(StructReductionTest, StructReductionMinMaxAndArgMinMaxNoNull)
   }
 
   {
-    using ScalarType  = cudf::scalar_type_t<int>;
+    using ScalarType  = cudf::scalar_type_t<cudf::size_type>;
     auto const argmin = cudf::reduce(input,
                                      *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     auto const argmax = cudf::reduce(input,
                                      *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     EXPECT_EQ(static_cast<ScalarType*>(argmin.get())->value(), 7);
     EXPECT_EQ(static_cast<ScalarType*>(argmax.get())->value(), 2);
   }
@@ -3599,13 +3614,13 @@ TEST_F(StructReductionTest, StructReductionMinMaxAndArgMinMaxSlicedInput)
   }
 
   {
-    using ScalarType  = cudf::scalar_type_t<int>;
+    using ScalarType  = cudf::scalar_type_t<cudf::size_type>;
     auto const argmin = cudf::reduce(input,
                                      *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     auto const argmax = cudf::reduce(input,
                                      *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     EXPECT_EQ(static_cast<ScalarType*>(argmin.get())->value(), 7);
     EXPECT_EQ(static_cast<ScalarType*>(argmax.get())->value(), 2);
   }
@@ -3667,13 +3682,13 @@ TEST_F(StructReductionTest, StructReductionMinMaxAndArgMinMaxWithNulls)
   }
 
   {
-    using ScalarType  = cudf::scalar_type_t<int>;
+    using ScalarType  = cudf::scalar_type_t<cudf::size_type>;
     auto const argmin = cudf::reduce(input,
                                      *cudf::make_argmin_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     auto const argmax = cudf::reduce(input,
                                      *cudf::make_argmax_aggregation<reduce_aggregation>(),
-                                     cudf::data_type{cudf::type_id::INT32});
+                                     cudf::data_type{cudf::type_to_id<cudf::size_type>()});
     EXPECT_EQ(static_cast<ScalarType*>(argmin.get())->value(), 2);
     EXPECT_EQ(static_cast<ScalarType*>(argmax.get())->value(), 4);
   }

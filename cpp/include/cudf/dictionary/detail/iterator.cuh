@@ -27,7 +27,8 @@ struct dictionary_access_fn {
   {
     if (d_dictionary.is_null(idx)) return KeyType{};
     auto keys = d_dictionary.child(dictionary_column_view::keys_column_index);
-    return keys.element<KeyType>(static_cast<size_type>(d_dictionary.element<dictionary32>(idx)));
+    return keys.element<KeyType>(
+      static_cast<size_type>(d_dictionary.element<dictionary32>(idx).value()));
   };
 
  private:
@@ -74,7 +75,8 @@ struct dictionary_access_pair_fn {
   {
     if (has_nulls && d_dictionary.is_null(idx)) return {KeyType{}, false};
     auto keys = d_dictionary.child(dictionary_column_view::keys_column_index);
-    return {keys.element<KeyType>(static_cast<size_type>(d_dictionary.element<dictionary32>(idx))),
+    return {keys.element<KeyType>(
+              static_cast<size_type>(d_dictionary.element<dictionary32>(idx).value())),
             true};
   };
 

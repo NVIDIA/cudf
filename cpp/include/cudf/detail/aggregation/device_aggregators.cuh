@@ -214,7 +214,7 @@ struct update_target_element<dictionary32, k> {
       target,
       target_index,
       source.child(cudf::dictionary_column_view::keys_column_index),
-      static_cast<cudf::size_type>(source.element<dictionary32>(source_index)));
+      static_cast<cudf::size_type>(source.element<dictionary32>(source_index).value()));
   }
 };
 

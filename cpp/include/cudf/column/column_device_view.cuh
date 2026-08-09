@@ -160,18 +160,19 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * The basic dictionary elements are the indices which can be any index type.
    */
+  // Returns the index as `dictionary32` stores it, which is 32 bits wide regardless of size_type.
   struct index_element_fn {
     template <typename IndexType,
               CUDF_ENABLE_IF(is_index_type<IndexType>() and cuda::std::is_signed_v<IndexType>)>
-    __device__ size_type operator()(column_device_view const& indices, size_type index)
+    __device__ int32_t operator()(column_device_view const& indices, size_type index)
     {
-      return static_cast<size_type>(indices.element<IndexType>(index));
+      return static_cast<int32_t>(indices.element<IndexType>(index));
     }
 
     template <typename IndexType,
               typename... Args,
               CUDF_ENABLE_IF(not(is_index_type<IndexType>() and cuda::std::is_signed_v<IndexType>))>
-    __device__ size_type operator()(Args&&... args)
+    __device__ int32_t operator()(Args&&... args)
     {
       CUDF_UNREACHABLE("dictionary indices must be a signed integral type");
     }

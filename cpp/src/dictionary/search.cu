@@ -43,7 +43,7 @@ struct find_index_fn {
   {
     auto const num_keys = input.keys_size();
     if (!key.is_valid(stream) || num_keys == 0) {
-      return std::make_unique<numeric_scalar<size_type>>(0, false, stream, mr);
+      return std::make_unique<numeric_scalar<int32_t>>(0, false, stream, mr);
     }
 
     CUDF_EXPECTS(cudf::have_same_types(input.parent(), key),
@@ -56,7 +56,7 @@ struct find_index_fn {
     auto keys_view  = column_device_view::create(input.keys(), stream);
     auto const keys = keys_view->begin<Element>();
 
-    auto result   = std::make_unique<numeric_scalar<size_type>>(-1, true, stream, mr);
+    auto result   = std::make_unique<numeric_scalar<int32_t>>(-1, true, stream, mr);
     auto find_fn  = [find_key] __device__(auto const& k) { return k == find_key.value(); };
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(

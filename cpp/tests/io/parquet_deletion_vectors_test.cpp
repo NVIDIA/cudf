@@ -118,13 +118,15 @@ auto build_expected_row_indices(cudf::host_span<std::size_t const> row_group_off
                   expected_row_indices.begin());
 
   // Inclusive scan to compute the rest of the row indices
-  std::for_each(cuda::counting_iterator(0), cuda::counting_iterator(num_row_groups), [&](auto i) {
-    auto start_row_index = row_group_span_offsets[i];
-    auto end_row_index   = row_group_span_offsets[i + 1];
-    std::inclusive_scan(expected_row_indices.begin() + start_row_index,
-                        expected_row_indices.begin() + end_row_index,
-                        expected_row_indices.begin() + start_row_index);
-  });
+  std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                cuda::counting_iterator<cudf::size_type>{num_row_groups},
+                [&](auto i) {
+                  auto start_row_index = row_group_span_offsets[i];
+                  auto end_row_index   = row_group_span_offsets[i + 1];
+                  std::inclusive_scan(expected_row_indices.begin() + start_row_index,
+                                      expected_row_indices.begin() + end_row_index,
+                                      expected_row_indices.begin() + start_row_index);
+                });
 
   return expected_row_indices;
 }
@@ -213,8 +215,8 @@ std::unique_ptr<cudf::table> build_expected_table(
   auto index_and_columns = std::vector<cudf::column_view>{};
   index_and_columns.reserve(input_table_view.num_columns() + 1);
   index_and_columns.push_back(expected_row_index_column);
-  std::transform(cuda::counting_iterator(0),
-                 cuda::counting_iterator(input_table_view.num_columns()),
+  std::transform(cuda::counting_iterator<cudf::size_type>{0},
+                 cuda::counting_iterator<cudf::size_type>{input_table_view.num_columns()},
                  std::back_inserter(index_and_columns),
                  [&](auto col_idx) { return input_table_view.column(col_idx); });
   return cudf::apply_boolean_mask(cudf::table_view{index_and_columns}, row_mask_column, stream, mr);
@@ -698,7 +700,8 @@ TEST_F(DeletionVectorsCountTests, CustomRowIndex)
     .row_group_num_rows         = row_group_num_rows};
 
   for (auto chunk_size :
-       {num_rows, static_cast<cudf::size_type>(std::llround(row_group_splits.front() * 1.2))}) {
+       {static_cast<cudf::size_type>(num_rows),
+        static_cast<cudf::size_type>(std::llround(row_group_splits.front() * 1.2))}) {
     auto const num_deleted_rows = cudf::io::parquet::experimental::compute_num_deleted_rows(
       deletion_vector_info, chunk_size, stream);
     EXPECT_EQ(num_deleted_rows, expected_deleted);
@@ -760,7 +763,8 @@ TEST_F(DeletionVectorsCountTests, MultipleDeletionVectors)
 
   // All rows in one chunk
   for (auto chunk_size :
-       {num_rows, static_cast<cudf::size_type>(std::llround(num_rows_per_dv * 1.2))}) {
+       {static_cast<cudf::size_type>(num_rows),
+        static_cast<cudf::size_type>(std::llround(num_rows_per_dv * 1.2))}) {
     auto const result = cudf::io::parquet::experimental::compute_num_deleted_rows(
       deletion_vector_info, chunk_size, stream);
     EXPECT_EQ(result, total_expected_deleted);

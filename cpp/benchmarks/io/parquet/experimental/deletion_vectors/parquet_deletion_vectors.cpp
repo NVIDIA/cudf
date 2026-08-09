@@ -164,9 +164,9 @@ auto setup_table_and_deletion_vector(nvbench::state& state)
   auto row_group_offsets = std::vector<std::size_t>(num_row_groups);
   row_group_offsets[0]   = static_cast<std::size_t>(std::llround(2e9));
   std::for_each(
-    cuda::counting_iterator<int>{1}, cuda::counting_iterator{num_row_groups}, [&](auto i) {
-      row_group_offsets[i] = std::llround(row_group_offsets[i - 1] + 0.5e9);
-    });
+    cuda::counting_iterator<cudf::size_type>{1},
+    cuda::counting_iterator<cudf::size_type>{num_row_groups},
+    [&](auto i) { row_group_offsets[i] = std::llround(row_group_offsets[i - 1] + 0.5e9); });
 
   // Row group splits
   auto row_group_splits = std::vector<cudf::size_type>(num_row_groups - 1);

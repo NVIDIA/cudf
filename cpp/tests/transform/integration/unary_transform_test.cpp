@@ -1006,7 +1006,7 @@ TEST_F(StringOperationTest, StringFind)
   }
   )***";
 
-  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 1};
+  auto expected = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 1};
   cudf::transform_input inputs[] = {a, b};
   auto result                    = std::move(
     cudf::transform(cuda,

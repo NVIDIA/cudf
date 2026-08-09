@@ -16,6 +16,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -24,6 +25,35 @@
 namespace CUDF_EXPORT cudf {
 
 namespace {
+
+void add_cuda_include_option(std::vector<std::string>& options)
+{
+  auto add_if_valid = [&](std::filesystem::path const& include_dir) {
+    if (std::filesystem::exists(include_dir / "cuda_runtime_api.h")) {
+      options.emplace_back(std::format("-I{}", include_dir.string()));
+      return true;
+    }
+    return false;
+  };
+
+  for (auto const* variable : {"CUDA_PATH", "CUDA_HOME"}) {
+    if (auto const* root = std::getenv(variable);
+        root != nullptr and add_if_valid(std::filesystem::path{root} / "include")) {
+      return;
+    }
+  }
+
+  if (auto const* prefix = std::getenv("CONDA_PREFIX"); prefix != nullptr) {
+    auto const prefix_path = std::filesystem::path{prefix};
+    if (add_if_valid(prefix_path / "include")) { return; }
+    auto const targets = prefix_path / "targets";
+    if (std::filesystem::exists(targets)) {
+      for (auto const& target : std::filesystem::directory_iterator{targets}) {
+        if (add_if_valid(target.path() / "include")) { return; }
+      }
+    }
+  }
+}
 
 void hash(XXH3_state_t* ctx, std::span<char const> input)
 {
@@ -227,11 +257,13 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
   for (auto const& include_dir : include_dirs) {
     options.emplace_back(std::format("-I{}", include_dir));
   }
+  add_cuda_include_option(options);
 
   options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
 
   options.emplace_back("--diag-suppress=47");
   options.emplace_back("--device-int128");
+  options.emplace_back(std::format("-DCUDF_SIZE_TYPE_BITS={}", CUDF_SIZE_TYPE_BITS));
 
   if (sm >= 100) { options.emplace_back("--device-float128"); }
 
@@ -312,11 +344,13 @@ rtcx::blob compile_fragment(char const* name,
   for (auto const& include_dir : include_dirs) {
     options.emplace_back(std::format("-I{}", include_dir));
   }
+  add_cuda_include_option(options);
 
   options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
 
   options.emplace_back("--diag-suppress=47");
   options.emplace_back("--device-int128");
+  options.emplace_back(std::format("-DCUDF_SIZE_TYPE_BITS={}", CUDF_SIZE_TYPE_BITS));
 
   if (sm >= 100) { options.emplace_back("--device-float128"); }
 

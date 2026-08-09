@@ -5,6 +5,15 @@
 
 #pragma once
 
+#ifdef __CUDACC_RTC__
+
+#include <cassert>
+
+#define CUDF_EXPECTS(condition, ...) assert(condition)
+#define CUDF_FAIL(...) assert(false)
+
+#else
+
 #include <cudf/errc.hpp>
 #include <cudf/utilities/export.hpp>
 
@@ -306,3 +315,5 @@ template <typename Exception, typename MsgFunc>
 #define CUDF_CHECK_CUDA(stream) CUDF_CUDA_TRY(cudaPeekAtLastError());
 #endif
 /** @} */
+
+#endif

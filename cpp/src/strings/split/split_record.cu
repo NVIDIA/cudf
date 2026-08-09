@@ -16,6 +16,7 @@
 #include <cudf/strings/split/split.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
@@ -42,7 +43,12 @@ std::unique_ptr<column> split_record_fn(strings_column_view const& input,
     return cudf::lists::detail::make_empty_lists_column(data_type{type_id::STRING});
   }
   if (input.size() == input.null_count()) {
-    auto offsets = std::make_unique<column>(input.offsets(), stream, mr);
+    auto offsets = make_numeric_column(
+      data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
+    CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<size_type>(),
+                                  0,
+                                  static_cast<std::size_t>(input.size() + 1) * sizeof(size_type),
+                                  stream.value()));
     auto results = make_empty_column(type_id::STRING);
     return make_lists_column(input.size(),
                              std::move(offsets),
@@ -76,7 +82,12 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
     return cudf::lists::detail::make_empty_lists_column(data_type{type_id::STRING});
   }
   if (input.size() == input.null_count()) {
-    auto offsets = std::make_unique<column>(input.offsets(), stream, mr);
+    auto offsets = make_numeric_column(
+      data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
+    CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<size_type>(),
+                                  0,
+                                  static_cast<std::size_t>(input.size() + 1) * sizeof(size_type),
+                                  stream.value()));
     auto results = make_empty_column(type_id::STRING);
     return make_lists_column(input.size(),
                              std::move(offsets),

@@ -55,7 +55,7 @@ struct substring_from_fn {
     if (d_column.is_null(idx)) { return string_index_pair{nullptr, 0}; }
     auto const d_str  = d_column.template element<string_view>(idx);
     auto const length = d_str.length();
-    auto const start  = cuda::std::max(starts[idx], 0);
+    auto const start  = cuda::std::max(starts[idx], size_type{0});
     if (start >= length) { return string_index_pair{"", 0}; }
 
     auto const stop    = stops[idx];
@@ -94,14 +94,14 @@ CUDF_KERNEL void substring_from_kernel(column_device_view const d_strings,
     return;
   }
 
-  auto const start = max(starts[str_idx], 0);
+  auto const start = cuda::std::max(starts[str_idx], size_type{0});
   auto stop        = [stop = stops[str_idx]] {
     return (stop < 0) ? cuda::std::numeric_limits<size_type>::max() : stop;
   }();
   auto const end = d_str.data() + d_str.size_bytes();
 
-  auto start_counts = cuda::std::make_pair(0, 0);
-  auto stop_counts  = cuda::std::make_pair(0, 0);
+  auto start_counts = cuda::std::make_pair(size_type{0}, size_type{0});
+  auto stop_counts  = cuda::std::make_pair(size_type{0}, size_type{0});
 
   auto itr = d_str.data() + warp.thread_rank();
 
@@ -116,8 +116,8 @@ CUDF_KERNEL void substring_from_kernel(column_device_view const d_strings,
     }
     size_type const cc = (itr < end) && is_begin_utf8_char(*itr);
     size_type const bc = (itr < end) ? bytes_in_utf8_byte(*itr) : 0;
-    char_count += cg::reduce(warp, cc, cg::plus<int>());
-    byte_count += cg::reduce(warp, bc, cg::plus<int>());
+    char_count += cg::reduce(warp, cc, cg::plus<size_type>());
+    byte_count += cg::reduce(warp, bc, cg::plus<size_type>());
     itr += cudf::detail::warp_size;
   }
 

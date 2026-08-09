@@ -75,7 +75,7 @@ std::unique_ptr<column> counts_fn(strings_column_view const& strings,
                                      strings.null_count(),
                                      stream,
                                      mr);
-  auto d_lengths = results->mutable_view().data<int32_t>();
+  auto d_lengths = results->mutable_view().data<size_type>();
   // input column device view
   auto strings_column = cudf::column_device_view::create(strings.parent(), stream);
   auto d_strings      = *strings_column;
@@ -84,10 +84,10 @@ std::unique_ptr<column> counts_fn(strings_column_view const& strings,
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{strings.size()},
                     d_lengths,
-                    cuda::proclaim_return_type<int32_t>([d_strings, ufn] __device__(size_type idx) {
+                    cuda::proclaim_return_type<size_type>([d_strings, ufn] __device__(size_type idx) {
                       return d_strings.is_null(idx)
-                               ? 0
-                               : static_cast<int32_t>(ufn(d_strings.element<string_view>(idx)));
+                               ? size_type{0}
+                               : static_cast<size_type>(ufn(d_strings.element<string_view>(idx)));
                     }));
   results->set_null_count(strings.null_count());  // reset null count
   return results;

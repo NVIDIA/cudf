@@ -148,8 +148,8 @@ __device__ inline string_view::const_iterator& string_view::const_iterator::oper
 {
   if (byte_pos < bytes) {
     // max is used to prevent an infinite loop on invalid UTF-8 data
-    byte_pos +=
-      cuda::std::max(1, strings::detail::bytes_in_utf8_byte(static_cast<uint8_t>(p[byte_pos])));
+    byte_pos += cuda::std::max(
+      size_type{1}, strings::detail::bytes_in_utf8_byte(static_cast<uint8_t>(p[byte_pos])));
   }
   ++char_pos;
   return *this;

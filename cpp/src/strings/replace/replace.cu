@@ -527,7 +527,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
       auto const views = std::vector<column_view>{input.parent(), targets.parent(), repls.parent()};
       return cudf::detail::bitmask_and(table_view{views}, stream, mr);
     } else {
-      return std::pair{rmm::device_buffer{}, 0};
+      return std::pair{rmm::device_buffer{}, size_type{0}};
     }
   }();
   auto const d_valid_mask =

@@ -262,7 +262,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
   CUDF_EXPECTS(num_strings == offsets_size - 1, "Invalid offsets column size for strings column.");
 
   auto offsets_column = std::make_unique<column>(  //
-    data_type{type_id::INT32},
+    data_type{type_to_id<size_type>()},
     offsets_size,
     offsets.release(),
     rmm::device_buffer(),

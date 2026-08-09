@@ -17,12 +17,12 @@ namespace strings::detail {
 
 /**
  * @copydoc cudf::strings::replace(strings_column_view const&, string_scalar const&,
- * string_scalar const&, int32_t, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * string_scalar const&, size_type, rmm::cuda_stream_view, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace(strings_column_view const& strings,
                                 string_scalar const& target,
                                 string_scalar const& repl,
-                                int32_t maxrepl,
+                                size_type maxrepl,
                                 rmm::cuda_stream_view stream,
                                 rmm::device_async_resource_ref mr);
 

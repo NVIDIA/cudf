@@ -24,13 +24,15 @@ TEST_F(ReplaceTest, ReplaceLong)
 {
   auto const expected = this->very_long_column();
   auto const view     = cudf::column_view(expected);
-  // force addressing (rows > max_size_type/sizeof(int64)) in a 64-bit offsets column
-  int constexpr max_size_type = std::numeric_limits<cudf::size_type>::max();
+  // force addressing (rows > max_offset/sizeof(int64)) in a 64-bit offsets column.
+  // The threshold is a property of the offsets, which are 32 bits wide until they are not,
+  // whatever size_type happens to be.
+  int constexpr max_offset = std::numeric_limits<int32_t>::max();
   // minimum number of duplicates to achieve large strings (64-bit offsets)
   int const min_size_multiplier =
-    (max_size_type / cudf::strings_column_view(view).chars_size(cudf::get_default_stream())) + 1;
-  // minimum row multiplier to create max_size_type/sizeof(int64) = 268,435,455 rows
-  int const min_row_multiplier = ((max_size_type / sizeof(int64_t)) / view.size()) + 1;
+    (max_offset / cudf::strings_column_view(view).chars_size(cudf::get_default_stream())) + 1;
+  // minimum row multiplier to create max_offset/sizeof(int64) = 268,435,455 rows
+  int const min_row_multiplier = ((max_offset / sizeof(int64_t)) / view.size()) + 1;
   int const multiplier         = std::max(min_size_multiplier, min_row_multiplier);
 
   std::vector<cudf::column_view> input_cols(multiplier, view);

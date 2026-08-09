@@ -79,7 +79,8 @@ TYPED_TEST(RepeatStringsTypedTest, ValidStringScalar)
 
   // Repeat too many times.
   {
-    EXPECT_THROW(cudf::strings::repeat_string(str, std::numeric_limits<int32_t>::max() / 2),
+    EXPECT_THROW(cudf::strings::repeat_string(str,
+                                              std::numeric_limits<cudf::size_type>::max() / 2),
                  std::overflow_error);
   }
 }

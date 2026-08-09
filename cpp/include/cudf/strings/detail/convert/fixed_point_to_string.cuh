@@ -24,7 +24,7 @@ __device__ inline int32_t fixed_point_string_size(__int128_t const& value, int32
   auto const abs_value = numeric::detail::abs(value);
   auto const exp_ten   = numeric::detail::exp10<__int128_t>(-scale);
   auto const fraction  = count_digits(abs_value % exp_ten);
-  auto const num_zeros = cuda::std::max(0, (-scale - fraction));
+  auto const num_zeros = cuda::std::max(0, static_cast<int>(-scale - fraction));
   return static_cast<int32_t>(value < 0) +    // sign if negative
          count_digits(abs_value / exp_ten) +  // integer
          1 +                                  // decimal point
@@ -57,7 +57,8 @@ __device__ inline void fixed_point_to_string(__int128_t const& value, int32_t sc
   if (value < 0) *out_ptr++ = '-';  // add sign
   auto const abs_value = numeric::detail::abs(value);
   auto const exp_ten   = numeric::detail::exp10<__int128_t>(-scale);
-  auto const num_zeros = cuda::std::max(0, (-scale - count_digits(abs_value % exp_ten)));
+  auto const num_zeros =
+    cuda::std::max(0, static_cast<int>(-scale - count_digits(abs_value % exp_ten)));
 
   out_ptr += integer_to_string(abs_value / exp_ten, out_ptr);  // add the integer part
   *out_ptr++ = '.';                                            // add decimal point

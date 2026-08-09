@@ -50,15 +50,19 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
   auto const total_count = static_cast<size_type>(total_elements);
 
   // create output column
-  auto results = make_numeric_column(
-    data_type{type_id::INT32}, total_count, rmm::device_buffer{0, stream, mr}, 0, stream, mr);
+  auto results = make_numeric_column(data_type{type_to_id<size_type>()},
+                                     total_count,
+                                     rmm::device_buffer{0, stream, mr},
+                                     0,
+                                     stream,
+                                     mr);
 
   // fill output column with position values
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{total_count},
-                    results->mutable_view().begin<int32_t>(),
-                    [d_strings, d_targets, targets_count] __device__(size_type idx) {
+                    results->mutable_view().begin<size_type>(),
+                    [d_strings, d_targets, targets_count] __device__(size_type idx) -> size_type {
                       size_type str_idx = idx / targets_count;
                       if (d_strings.is_null(str_idx)) return -1;
                       string_view d_str = d_strings.element<string_view>(str_idx);

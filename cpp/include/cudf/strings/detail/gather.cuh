@@ -165,8 +165,8 @@ CUDF_KERNEL void gather_chars_fn_char_parallel(StringIterator strings_begin,
   size_type begin_out_string_idx = blockIdx.x * strings_per_threadblock;
 
   // Number of strings to be processed by the current threadblock.
-  size_type strings_current_threadblock =
-    min(strings_per_threadblock, total_out_strings - begin_out_string_idx);
+  size_type strings_current_threadblock = cuda::std::min(
+    static_cast<size_type>(strings_per_threadblock), total_out_strings - begin_out_string_idx);
 
   if (strings_current_threadblock <= 0) return;
 
@@ -238,8 +238,8 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
     begin,
     cuda::proclaim_return_type<size_type>(
       [d_strings = *d_strings, d_in_offsets] __device__(size_type idx) {
-        if (NullifyOutOfBounds && (idx < 0 || idx >= d_strings.size())) { return 0; }
-        if (not d_strings.is_valid(idx)) { return 0; }
+        if (NullifyOutOfBounds && (idx < 0 || idx >= d_strings.size())) { return size_type{0}; }
+        if (not d_strings.is_valid(idx)) { return size_type{0}; }
         return static_cast<size_type>(d_in_offsets[idx + 1] - d_in_offsets[idx]);
       }));
 

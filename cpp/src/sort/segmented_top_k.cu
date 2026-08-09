@@ -88,7 +88,7 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
                std::invalid_argument);
 
   CUDF_EXPECTS(segment_offsets.type() == size_data_type,
-               "segment_offsets must be of type INT32",
+               "segment_offsets must be of type size_type",
                cudf::data_type_error);
   CUDF_EXPECTS(segment_offsets.null_count() == 0,
                "segment_offsets must not have nulls",

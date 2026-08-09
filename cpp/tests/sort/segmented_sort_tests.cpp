@@ -32,24 +32,27 @@ TEST_F(SegmentedSortInt, Empty)
 {
   using T = int;
   column_wrapper<T> col_empty{};
+  column_wrapper<cudf::size_type> segments_empty{};
   // clang-format off
   column_wrapper<T>       col1{{8, 9, 2, 3, 2, 2, 4, 1, 7, 5, 6}};
-  column_wrapper<int> segments{{0,    2,       5,       8,      11}};
+  column_wrapper<cudf::size_type> segments{{0,    2,       5,       8,      11}};
   // clang-format on
   cudf::table_view table_empty{{col_empty}};
   cudf::table_view table_valid{{col1}};
 
   CUDF_EXPECT_NO_THROW(cudf::segmented_sort_by_key(table_valid, table_valid, segments));
-  CUDF_EXPECT_NO_THROW(cudf::segmented_sort_by_key(table_valid, table_valid, col_empty));
+  CUDF_EXPECT_NO_THROW(cudf::segmented_sort_by_key(table_valid, table_valid, segments_empty));
   CUDF_EXPECT_NO_THROW(cudf::segmented_sort_by_key(table_empty, table_empty, segments));
-  CUDF_EXPECT_NO_THROW(cudf::segmented_sort_by_key(table_empty, table_empty, col_empty));
+  CUDF_EXPECT_NO_THROW(cudf::segmented_sort_by_key(table_empty, table_empty, segments_empty));
 
   // Swapping "empty" and "valid" tables is invalid because the keys and values will be of different
   // sizes.
   EXPECT_THROW(cudf::segmented_sort_by_key(table_empty, table_valid, segments), cudf::logic_error);
-  EXPECT_THROW(cudf::segmented_sort_by_key(table_empty, table_valid, col_empty), cudf::logic_error);
+  EXPECT_THROW(cudf::segmented_sort_by_key(table_empty, table_valid, segments_empty),
+               cudf::logic_error);
   EXPECT_THROW(cudf::segmented_sort_by_key(table_valid, table_empty, segments), cudf::logic_error);
-  EXPECT_THROW(cudf::segmented_sort_by_key(table_valid, table_empty, col_empty), cudf::logic_error);
+  EXPECT_THROW(cudf::segmented_sort_by_key(table_valid, table_empty, segments_empty),
+               cudf::logic_error);
 }
 
 TEST_F(SegmentedSortInt, Single)
@@ -57,8 +60,8 @@ TEST_F(SegmentedSortInt, Single)
   using T = int;
   column_wrapper<T> col1{{1}};
   column_wrapper<T> col3{{8, 9, 2}};
-  column_wrapper<int> segments1{{0}};
-  column_wrapper<int> segments2{{0, 3}};
+  column_wrapper<cudf::size_type> segments1{{0}};
+  column_wrapper<cudf::size_type> segments2{{0, 3}};
   cudf::table_view table_1elem{{col1}};
   cudf::table_view table_1segm{{col3}};
 
@@ -75,7 +78,7 @@ TYPED_TEST(SegmentedSort, NoNull)
   column_wrapper<T> col1{{10, 36, 14, 32, 49, 23, 10, 34, 12, 45, 12, 37, 43, 26, 21, 16}};
   column_wrapper<T> col2{{10, 63, 41, 23, 94, 32, 10, 43, 21, 54, 22, 73, 34, 62, 12, 61}};
   // segment sorted order {0   2   1} {3   4} {5}  {6   8  10   7  9}{11  12}{13}{15  16}
-  column_wrapper<int> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
+  column_wrapper<cudf::size_type> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
   cudf::table_view input1{{col1}};
   cudf::table_view input2{{col1, col2}};
 
@@ -113,7 +116,7 @@ TYPED_TEST(SegmentedSort, Null)
                          {1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1}};
   column_wrapper<T> col2{{0, 0, 0, 1, 1, 4, 5, 5, 21, 5, 22, 6, 6, 7, 8, 8},
                          {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1}};
-  column_wrapper<int> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
+  column_wrapper<cudf::size_type> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
   cudf::table_view input1{{col1}};
   cudf::table_view input2{{col1, col2}};
 
@@ -164,7 +167,7 @@ TYPED_TEST(SegmentedSort, StableNoNulls)
   column_wrapper<T> col1{{10, 36, 14, 32, 49, 23, 10, 34, 12, 45, 11, 37, 43, 26, 21, 16}};
   column_wrapper<T> col2{{10, 63, 10, 23, 94, 32, 10, 43, 22, 43, 22, 34, 34, 62, 62, 61}};
   // stable sorted order  {0   2   1} {3   4} {5} {6   8  10   7   9}{11  12}{13}{16  15}
-  column_wrapper<int> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
+  column_wrapper<cudf::size_type> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
   auto values = cudf::table_view{{col1}};
   auto keys   = cudf::table_view{{col2}};
 
@@ -189,7 +192,7 @@ TYPED_TEST(SegmentedSort, StableWithNulls)
   column_wrapper<T> col2{{10, 0, 10, 23, 94, 32, 0, 43, 0, 43, 0, 34, 34, 62, 62, 61},
                          {1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}};
   // stable sorted order  {0   2   1} {3   4} {5} {6   8  10   7   9}{11  12}{13}{16  15}
-  column_wrapper<int> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
+  column_wrapper<cudf::size_type> segments{0, 3, 5, 5, 5, 6, 11, 13, 14, 16};
   auto values = cudf::table_view{{col1}};
   auto keys   = cudf::table_view{{col2}};
 
@@ -212,16 +215,16 @@ TEST_F(SegmentedSortInt, NonZeroSegmentsStart)
   using T = int;
   // clang-format off
   column_wrapper<T>        col1{{8, 9, 2, 3, 2, 2, 4, 1, 7, 5, 6}};
-  column_wrapper<int> segments1{{0,    2,       5,       8,     11}};
-  column_wrapper<int> segments2{{      2,       5,       8,      11}};
-  column_wrapper<int> segments3{{                  6,    8,      11}};
-  column_wrapper<int> segments4{{                  6,    8}};
-  column_wrapper<int> segments5{{0,       3,       6}};
-  column_wrapper<int> expected1{{0, 1, 2, 4, 3, 7, 5, 6, 9, 10, 8}};
-  column_wrapper<int> expected2{{0, 1, 2, 4, 3, 7, 5, 6, 9, 10, 8}};
-  column_wrapper<int> expected3{{0, 1, 2, 3, 4, 5, 7, 6, 9, 10, 8}};
-  column_wrapper<int> expected4{{0, 1, 2, 3, 4, 5, 7, 6, 8, 9, 10}};
-  column_wrapper<int> expected5{{2, 0, 1, 4, 5, 3, 6, 7, 8, 9, 10}};
+  column_wrapper<cudf::size_type> segments1{{0,    2,       5,       8,     11}};
+  column_wrapper<cudf::size_type> segments2{{      2,       5,       8,      11}};
+  column_wrapper<cudf::size_type> segments3{{                  6,    8,      11}};
+  column_wrapper<cudf::size_type> segments4{{                  6,    8}};
+  column_wrapper<cudf::size_type> segments5{{0,       3,       6}};
+  column_wrapper<cudf::size_type> expected1{{0, 1, 2, 4, 3, 7, 5, 6, 9, 10, 8}};
+  column_wrapper<cudf::size_type> expected2{{0, 1, 2, 4, 3, 7, 5, 6, 9, 10, 8}};
+  column_wrapper<cudf::size_type> expected3{{0, 1, 2, 3, 4, 5, 7, 6, 9, 10, 8}};
+  column_wrapper<cudf::size_type> expected4{{0, 1, 2, 3, 4, 5, 7, 6, 8, 9, 10}};
+  column_wrapper<cudf::size_type> expected5{{2, 0, 1, 4, 5, 3, 6, 7, 8, 9, 10}};
   // clang-format on
   cudf::table_view input{{col1}};
   auto results = cudf::segmented_sorted_order(input, segments1);
@@ -256,12 +259,12 @@ TEST_F(SegmentedSortInt, Sliced)
   // clang-format off
   column_wrapper<T>        col1{{8, 9, 2, 3, 2, 2, 4, 1, 7, 5, 6}};
   // sliced                                  2, 2, 4, 1, 7, 5, 6
-  column_wrapper<int> segments1{{0,    2,       5}};
-  column_wrapper<int> segments2{{-4,   0,      2,       5}};
-  column_wrapper<int> segments3{{                 7}};
-  column_wrapper<int> expected1{{0, 1, 3, 2, 4, 5, 6}};
-  column_wrapper<int> expected2{{0, 1, 3, 2, 4, 5, 6}};
-  column_wrapper<int> expected3{{0, 1, 2, 3, 4, 5, 6}};
+  column_wrapper<cudf::size_type> segments1{{0,    2,       5}};
+  column_wrapper<cudf::size_type> segments2{{-4,   0,      2,       5}};
+  column_wrapper<cudf::size_type> segments3{{                 7}};
+  column_wrapper<cudf::size_type> expected1{{0, 1, 3, 2, 4, 5, 6}};
+  column_wrapper<cudf::size_type> expected2{{0, 1, 3, 2, 4, 5, 6}};
+  column_wrapper<cudf::size_type> expected3{{0, 1, 2, 3, 4, 5, 6}};
   // clang-format on
   auto slice = cudf::slice(col1, {4, 11})[0];  // 7 elements
   cudf::table_view input{{slice}};
@@ -288,7 +291,7 @@ TEST_F(SegmentedSortInt, ErrorsMismatchArgSizes)
 {
   using T = int;
   column_wrapper<T> col1{{5, 6, 7, 8, 9}};
-  column_wrapper<T> segments{{1, 2, 3, 4}};
+  column_wrapper<cudf::size_type> segments{{1, 2, 3, 4}};
   cudf::table_view input1{{col1}};
   std::vector<cudf::order> order{cudf::order::ASCENDING, cudf::order::ASCENDING};
   std::vector<cudf::null_order> null_order{cudf::null_order::AFTER, cudf::null_order::AFTER};
@@ -319,9 +322,9 @@ TEST_F(SegmentedSortInt, Bool)
      false, false, false, true, false, false, true, true, true,  true, true,  true, true, false,
      true,  false, true,  true, true,  true,  true, true, false, true, false, false}};
 
-  cudf::test::fixed_width_column_wrapper<int> segments{{0, 5, 10, 15, 20, 25, 30, 40}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> segments{{0, 5, 10, 15, 20, 25, 30, 40}};
 
-  cudf::test::fixed_width_column_wrapper<int> expected(
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
     {1,  2,  0,  3,  4,  5,  6,  7,  8,  9,  13, 14, 10, 11, 12, 15, 16, 18, 19, 17,
      20, 21, 22, 23, 24, 27, 29, 25, 26, 28, 36, 38, 39, 30, 31, 32, 33, 34, 35, 37});
 
@@ -343,7 +346,8 @@ TEST_F(SegmentedSortInt, UnbalancedOffsets)
   auto d_input = cudf::detail::make_device_uvector(
     h_input, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   auto input    = cudf::column_view(cudf::device_span<int64_t const>(d_input));
-  auto segments = cudf::test::fixed_width_column_wrapper<int32_t>({0, 4, 3533, 3535});
+  auto segments =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 4, 3533, 3535});
   // full sort should match handcrafted input data here
   auto expected = cudf::sort(cudf::table_view({input}));
 

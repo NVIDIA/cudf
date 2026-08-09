@@ -11,7 +11,7 @@
 #include <cudf/sorting.hpp>
 
 using int32s_lists = cudf::test::lists_column_wrapper<int32_t>;
-using int32s_col   = cudf::test::fixed_width_column_wrapper<int32_t>;
+using int32s_col   = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 using strings_col  = cudf::test::strings_column_wrapper;
 using structs_col  = cudf::test::structs_column_wrapper;
 

@@ -82,7 +82,7 @@ TEST_F(SortingTest, SegmentedSortedOrder)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> const keys_col{9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
   cudf::table_view const keys{{keys_col}};
-  cudf::test::fixed_width_column_wrapper<int32_t> const segment_offsets{3, 7};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> const segment_offsets{3, 7};
 
   cudf::segmented_sorted_order(keys, segment_offsets, {}, {}, cudf::test::get_default_stream());
 }
@@ -91,7 +91,7 @@ TEST_F(SortingTest, StableSegmentedSortedOrder)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> const keys_col{9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
   cudf::table_view const keys{{keys_col}};
-  cudf::test::fixed_width_column_wrapper<int32_t> const segment_offsets{3, 7};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> const segment_offsets{3, 7};
 
   cudf::stable_segmented_sorted_order(
     keys, segment_offsets, {}, {}, cudf::test::get_default_stream());
@@ -103,7 +103,7 @@ TEST_F(SortingTest, SegmentedSortByKey)
   cudf::table_view const keys{{keys_col}};
   cudf::test::fixed_width_column_wrapper<int32_t> const values_col{7, 6, 9, 3, 4, 5, 1, 2, 0, 4};
   cudf::table_view const values{{values_col}};
-  cudf::test::fixed_width_column_wrapper<int32_t> const segment_offsets{0, 3, 7, 10};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> const segment_offsets{0, 3, 7, 10};
 
   cudf::segmented_sort_by_key(
     values, keys, segment_offsets, {}, {}, cudf::test::get_default_stream());
@@ -115,7 +115,7 @@ TEST_F(SortingTest, StableSegmentedSortByKey)
   cudf::table_view const keys{{keys_col}};
   cudf::test::fixed_width_column_wrapper<int32_t> const values_col{7, 6, 9, 3, 4, 5, 1, 2, 0, 4};
   cudf::table_view const values{{values_col}};
-  cudf::test::fixed_width_column_wrapper<int32_t> const segment_offsets{0, 3, 7, 10};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> const segment_offsets{0, 3, 7, 10};
 
   cudf::stable_segmented_sort_by_key(
     values, keys, segment_offsets, {}, {}, cudf::test::get_default_stream());
@@ -127,7 +127,7 @@ TEST_F(SortingTest, TopK)
   cudf::test::fixed_width_column_wrapper<int32_t> const input{10, 20, 30, 40, 50};
   cudf::top_k(input, 2, cudf::order::ASCENDING, stream);
   cudf::top_k_order(input, 2, cudf::order::ASCENDING, stream);
-  cudf::test::fixed_width_column_wrapper<int32_t> const offsets{0, 5};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> const offsets{0, 5};
   cudf::segmented_top_k(input, offsets, 2, cudf::order::ASCENDING, stream);
   cudf::segmented_top_k_order(input, offsets, 2, cudf::order::ASCENDING, stream);
 }

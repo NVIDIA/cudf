@@ -342,7 +342,7 @@ std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& o
   }();
 
   // Define the current date as per clause 4.2.2.12 of the TPC-H specification
-  constexpr cudf::size_type current_date_days_since_epoch = 9'298;
+  constexpr cudf::timestamp_D::duration::rep current_date_days_since_epoch = 9'298;
   auto current_date =
     cudf::timestamp_scalar<cudf::timestamp_D>(current_date_days_since_epoch, true);
   auto current_date_literal = cudf::ast::literal(current_date);

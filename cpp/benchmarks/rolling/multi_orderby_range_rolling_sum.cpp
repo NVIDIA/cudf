@@ -75,7 +75,7 @@ void bench_multi_orderby_range_rolling_sum(nvbench::state& state)
         distribution_id::UNIFORM,
         0,
         // Decrease range as column index grows so trailing columns produce frequent ties.
-        std::max(num_rows / (1 << (i * 4)), 1));
+        std::max(num_rows / (1 << (i * 4)), cudf::size_type{1}));
       profile.set_null_probability(has_nulls ? std::optional<double>{200.0 / num_rows}
                                              : std::nullopt);
       cols.push_back(

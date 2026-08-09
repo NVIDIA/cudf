@@ -66,12 +66,12 @@ static void bench_scatter_lists(nvbench::state& state, nvbench::type_list<TypePa
   thrust::sequence(rmm::exec_policy_nosync(stream),
                    source_offsets->mutable_view().begin<cudf::size_type>(),
                    source_offsets->mutable_view().end<cudf::size_type>(),
-                   0,
+                   cudf::size_type{0},
                    num_elements_per_row);
   thrust::sequence(rmm::exec_policy_nosync(stream),
                    target_offsets->mutable_view().begin<cudf::size_type>(),
                    target_offsets->mutable_view().end<cudf::size_type>(),
-                   0,
+                   cudf::size_type{0},
                    num_elements_per_row);
 
   auto source = make_lists_column(num_rows,
@@ -95,7 +95,7 @@ static void bench_scatter_lists(nvbench::state& state, nvbench::type_list<TypePa
                    m_scatter_map.begin<cudf::size_type>(),
                    m_scatter_map.end<cudf::size_type>(),
                    num_rows - 1,
-                   -1);
+                   cudf::size_type{-1});
 
   if (not coalesce) {
     thrust::default_random_engine g;

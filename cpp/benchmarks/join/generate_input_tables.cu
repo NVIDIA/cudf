@@ -48,8 +48,10 @@ std::pair<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> generate_i
   auto unique_rows_build_table =
     create_random_table(key_types, row_count{total_unique_rows}, profile, 1);
 
-  auto build_table_gather_map = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, build_table_numrows, cudf::mask_state::ALL_VALID);
+  auto build_table_gather_map =
+    cudf::make_numeric_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                              build_table_numrows,
+                              cudf::mask_state::ALL_VALID);
   thrust::tabulate(thrust::device,
                    build_table_gather_map->mutable_view().begin<cudf::size_type>(),
                    build_table_gather_map->mutable_view().end<cudf::size_type>(),
@@ -58,9 +60,11 @@ std::pair<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> generate_i
                        return idx % unique_rows_build_table_numrows;
                      }));
 
-  auto const num_matching     = static_cast<cudf::size_type>(selectivity * probe_table_numrows);
-  auto probe_table_gather_map = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, probe_table_numrows, cudf::mask_state::ALL_VALID);
+  auto const num_matching = static_cast<cudf::size_type>(selectivity * probe_table_numrows);
+  auto probe_table_gather_map =
+    cudf::make_numeric_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                              probe_table_numrows,
+                              cudf::mask_state::ALL_VALID);
   thrust::uniform_int_distribution<cudf::size_type> non_matching_dist(
     unique_rows_build_table_numrows,
     unique_rows_build_table_numrows + num_extra_nonmatching_rows - 1);

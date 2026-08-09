@@ -40,10 +40,10 @@ static void BM_transform_polynomials_concurrent(nvbench::state& state)
 
   std::vector<std::unique_ptr<cudf::column>> constants;
   std::transform(
-    cuda::make_counting_iterator(0),
-    cuda::make_counting_iterator(order + 1),
+    cuda::make_counting_iterator<cudf::size_type>(0),
+    cuda::make_counting_iterator<cudf::size_type>(order + 1),
     std::back_inserter(constants),
-    [&](int) { return create_random_column(cudf::type_to_id<key_type>(), row_count{1}, profile); });
+    [&](auto) { return create_random_column(cudf::type_to_id<key_type>(), row_count{1}, profile); });
 
   std::vector<cudf::transform_input> inputs{cudf::transform_input{*column}};
   std::transform(

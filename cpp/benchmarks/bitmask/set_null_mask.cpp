@@ -59,7 +59,8 @@ void BM_setnullmask(nvbench::state& state)
 {
   auto const mask_size    = static_cast<cudf::size_type>(state.get_int64("mask_size"));
   rmm::device_buffer mask = cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
-  auto begin = 0, end = mask_size;
+  cudf::size_type const begin = 0;
+  auto const end              = mask_size;
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();

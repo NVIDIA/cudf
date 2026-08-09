@@ -297,7 +297,7 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
     }
   }
 
-  rmm::device_uvector<T> operator()(thrust::minstd_rand& engine, unsigned size)
+  rmm::device_uvector<T> operator()(thrust::minstd_rand& engine, size_t size)
   {
     auto const sec = seconds_gen(engine, size);
     auto const ns  = nanoseconds_gen(engine, size);
@@ -348,7 +348,7 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
     return scale.value_or(numeric::scale_type{0});
   }
 
-  rmm::device_uvector<DeviceType> operator()(thrust::minstd_rand& engine, unsigned size)
+  rmm::device_uvector<DeviceType> operator()(thrust::minstd_rand& engine, size_t size)
   {
     return dist(engine, size);
   }
@@ -370,7 +370,7 @@ struct random_value_fn<T, std::enable_if_t<!std::is_same_v<T, bool> && cudf::is_
   {
   }
 
-  auto operator()(thrust::minstd_rand& engine, unsigned size) { return dist(engine, size); }
+  auto operator()(thrust::minstd_rand& engine, size_t size) { return dist(engine, size); }
 };
 
 /**
@@ -391,7 +391,7 @@ struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>> {
       }}
   {
   }
-  auto operator()(thrust::minstd_rand& engine, unsigned size) { return dist(engine, size); }
+  auto operator()(thrust::minstd_rand& engine, size_t size) { return dist(engine, size); }
 };
 
 /**
@@ -412,12 +412,15 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
   auto sample_dist = random_value_fn<cudf::size_type>{
     distribution_params<cudf::size_type>{distribution_id::UNIFORM, 0, cardinality - 1}};
   if (avg_run_len > 1) {
-    auto avglen_dist =
-      random_value_fn<int>{distribution_params<int>{distribution_id::UNIFORM, 1, 2 * avg_run_len}};
+    auto avglen_dist = random_value_fn<cudf::size_type>{
+      distribution_params<cudf::size_type>{distribution_id::UNIFORM, 1, 2 * avg_run_len}};
     auto const approx_run_len = num_rows / avg_run_len + 1;
     auto run_lens             = avglen_dist(engine, approx_run_len);
-    thrust::inclusive_scan(
-      thrust::device, run_lens.begin(), run_lens.end(), run_lens.begin(), cuda::std::plus<int>{});
+    thrust::inclusive_scan(thrust::device,
+                           run_lens.begin(),
+                           run_lens.end(),
+                           run_lens.begin(),
+                           cuda::std::plus<cudf::size_type>{});
     auto const samples_indices = sample_dist(engine, approx_run_len + 1);
     // This is gather.
     auto avg_repeated_sample_indices_iterator = thrust::make_transform_iterator(
@@ -510,7 +513,7 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
     lengths.end(),
     null_mask.begin(),
     lengths.begin(),
-    cuda::proclaim_return_type<cudf::size_type>([] __device__(auto) { return 0; }),
+    cuda::proclaim_return_type<uint32_t>([] __device__(auto) { return uint32_t{0}; }),
     cuda::std::logical_not<bool>{});
   auto valid_lengths = thrust::make_transform_iterator(
     thrust::make_zip_iterator(cuda::std::make_tuple(lengths.begin(), null_mask.begin())),
@@ -530,7 +533,7 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
   auto [result_bitmask, null_count] =
     profile.get_null_probability().has_value()
       ? cudf::bools_to_mask(cudf::device_span<bool const>(null_mask), stream)
-      : std::pair{std::make_unique<rmm::device_buffer>(), 0};
+      : std::pair{std::make_unique<rmm::device_buffer>(), cudf::size_type{0}};
 
   return cudf::make_strings_column(num_rows,
                                    std::move(offsets),
@@ -635,7 +638,7 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
   auto [result_bitmask, null_count] =
     profile.get_null_probability().has_value()
       ? cudf::bools_to_mask(cudf::device_span<bool const>(null_mask))
-      : std::pair{std::make_unique<rmm::device_buffer>(), 0};
+      : std::pair{std::make_unique<rmm::device_buffer>(), cudf::size_type{0}};
 
   return std::make_unique<cudf::column>(
     dtype, num_rows, data.release(), std::move(*result_bitmask.release()), null_count);
@@ -714,7 +717,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
           return cudf::bools_to_mask(cudf::device_span<bool const>(valids),
                                      cudf::get_default_stream());
         }
-        return std::pair{std::make_unique<rmm::device_buffer>(), 0};
+        return std::pair{std::make_unique<rmm::device_buffer>(), cudf::size_type{0}};
       }();
 
       // Adopt remaining children as evenly as possible
@@ -774,8 +777,13 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
 
   auto leaf_column = cudf::type_dispatcher(
     cudf::data_type(dist_params.element_type), create_rand_col_fn{}, profile, engine, num_elements);
-  auto len_dist =
-    random_value_fn<uint32_t>{profile.get_distribution_params<cudf::list_view>().length_params};
+  // The offsets buffer these lengths are scanned into becomes the list column's offsets, so it has
+  // to be size_type wide, which means generating the lengths at that width too.
+  auto const len_params = profile.get_distribution_params<cudf::list_view>().length_params;
+  auto len_dist         = random_value_fn<cudf::size_type>{
+    distribution_params<cudf::size_type>{len_params.id,
+                                                 static_cast<cudf::size_type>(len_params.lower_bound),
+                                                 static_cast<cudf::size_type>(len_params.upper_bound)}};
   auto valid_dist = random_value_fn<bool>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
 
@@ -799,15 +807,17 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
     thrust::device_pointer_cast(offsets.end())[-1] =
       current_child_column->size();  // Always include all elements
 
-    auto offsets_column = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
-                                                         current_num_rows + 1,
-                                                         offsets.release(),
-                                                         rmm::device_buffer{},
-                                                         0);
+    auto offsets_column =
+      std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                                     current_num_rows + 1,
+                                     offsets.release(),
+                                     rmm::device_buffer{},
+                                     0);
 
-    auto [null_mask, null_count] = profile.get_null_probability().has_value()
-                                     ? cudf::bools_to_mask(cudf::device_span<bool const>(valids))
-                                     : std::pair{std::make_unique<rmm::device_buffer>(), 0};
+    auto [null_mask, null_count] =
+      profile.get_null_probability().has_value()
+        ? cudf::bools_to_mask(cudf::device_span<bool const>(valids))
+        : std::pair{std::make_unique<rmm::device_buffer>(), cudf::size_type{0}};
 
     list_column = cudf::make_lists_column(current_num_rows,
                                           std::move(offsets_column),

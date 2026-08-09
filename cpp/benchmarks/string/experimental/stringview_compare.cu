@@ -503,8 +503,9 @@ static void BM_sv_gather(nvbench::state& state)
   auto col_view     = column->view();
 
   data_profile map_profile = data_profile_builder().cardinality(0).no_validity().distribution(
-    cudf::type_id::INT32, distribution_id::UNIFORM, 0, num_rows - 1);
-  auto map      = create_random_column(cudf::type_id::INT32, row_count{map_rows}, map_profile);
+    cudf::type_to_id<cudf::size_type>(), distribution_id::UNIFORM, 0, num_rows - 1);
+  auto map =
+    create_random_column(cudf::type_to_id<cudf::size_type>(), row_count{map_rows}, map_profile);
   auto map_view = map->view();
 
   auto stream = cudf::get_default_stream();

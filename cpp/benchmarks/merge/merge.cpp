@@ -42,7 +42,7 @@ void bench_merge(nvbench::state& state)
   for (int i = 0; i < num_tables; ++i) {
     cudf::size_type const rows = std::round(table_size_dist(rand_gen));
     // Ensure size in range [0, avg_rows*2]
-    auto const clamped_rows = std::clamp(rows, 0, avg_rows * 2);
+    auto const clamped_rows = std::clamp(rows, cudf::size_type{0}, avg_rows * 2);
 
     int32_t prev_key  = 0;
     auto key_sequence = cudf::detail::make_counting_transform_iterator(0, [&](auto row) {

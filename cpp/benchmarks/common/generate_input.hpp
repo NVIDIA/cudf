@@ -268,13 +268,16 @@ class data_profile {
 
   // Users should pass integral values for bounds when setting the parameters for types that have
   // discrete distributions (integers, strings, lists). Otherwise the call with have no effect.
+  // The bounds are deduced independently because callers routinely pair a literal `0` with a
+  // size_type extent, and those are only the same type when size_type is 32 bits wide.
   template <typename T,
+            typename U,
             typename Type_enum,
-            std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
+            std::enable_if_t<cuda::std::is_integral_v<T> && cuda::std::is_integral_v<U>>* = nullptr>
   void set_distribution_params(Type_enum type_or_group,
                                distribution_id dist,
                                T lower_bound,
-                               T upper_bound)
+                               U upper_bound)
   {
     for (auto tid : get_type_or_group(static_cast<int32_t>(type_or_group))) {
       if (tid == cudf::type_id::STRING) {

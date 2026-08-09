@@ -103,10 +103,10 @@ void nvbench_join_heuristics(nvbench::state& state,
       cardinality = num_rows;  // All unique
       break;
     case cardinality_ratio::HIGH_UNIQUE:
-      cardinality = std::max(1, num_rows / 10);  // 10% unique
+      cardinality = std::max(cudf::size_type{1}, num_rows / 10);  // 10% unique
       break;
     case cardinality_ratio::LOW_UNIQUE:
-      cardinality = std::max(1, num_rows / 1000);  // 0.1% unique
+      cardinality = std::max(cudf::size_type{1}, num_rows / 1000);  // 0.1% unique
       break;
     case cardinality_ratio::SINGLE_KEY:
       cardinality = 1;  // Single key

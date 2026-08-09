@@ -24,7 +24,7 @@ static void bench_wordpiece_tokenizer(nvbench::state& state)
     num_rows,
     "This is a test This is a test This is a test This is a test This is a test This is a test "
     "This is a test This is a test ");
-  auto const num_words = 32;  // "This is a test" * 8
+  cudf::size_type const num_words = 32;  // "This is a test" * 8
   auto const d_strings = cudf::test::strings_column_wrapper(h_strings.begin(), h_strings.end());
   auto const input     = cudf::strings_column_view{d_strings};
 

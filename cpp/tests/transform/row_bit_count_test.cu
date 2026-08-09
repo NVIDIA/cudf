@@ -49,14 +49,15 @@ std::pair<std::unique_ptr<cudf::column>, std::unique_ptr<cudf::column>> build_li
   cudf::test::fixed_width_column_wrapper<cudf::size_type> outer_offsets{0, 2, 2, 3, 5, 7, 9};
   auto list = cudf::make_lists_column(6, outer_offsets.release(), std::move(inner_list), 0, {});
 
-  // expected size = (num rows at level 1 + num_rows at level 2) + # values in the leaf
+  // expected size = list offsets at levels 1 and 2 + values in the leaf
+  constexpr cudf::size_type offset_size = sizeof(cudf::size_type);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{
-    ((4 + 8) * CHAR_BIT) + (type_size * 5),
-    ((4 + 0) * CHAR_BIT) + (type_size * 0),
-    ((4 + 4) * CHAR_BIT) + (type_size * 1),
-    ((4 + 8) * CHAR_BIT) + (type_size * 4),
-    ((4 + 8) * CHAR_BIT) + (type_size * 4),
-    ((4 + 8) * CHAR_BIT) + (type_size * 5)};
+    ((offset_size + 2 * offset_size) * CHAR_BIT) + (type_size * 5),
+    ((offset_size + 0 * offset_size) * CHAR_BIT) + (type_size * 0),
+    ((offset_size + offset_size) * CHAR_BIT) + (type_size * 1),
+    ((offset_size + 2 * offset_size) * CHAR_BIT) + (type_size * 4),
+    ((offset_size + 2 * offset_size) * CHAR_BIT) + (type_size * 4),
+    ((offset_size + 2 * offset_size) * CHAR_BIT) + (type_size * 5)};
 
   return {std::move(list), expected.release()};
 }
@@ -114,7 +115,7 @@ std::unique_ptr<cudf::column> build_nested_column1(std::vector<bool> const& stru
 
   // wrap in a list
   std::vector<int> outer_offsets{0, 1, 1, 3, 6, 7, 8};
-  cudf::test::fixed_width_column_wrapper<int> outer_offsets_col(outer_offsets.begin(),
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> outer_offsets_col(outer_offsets.begin(),
                                                                 outer_offsets.end());
   auto const size = static_cast<cudf::column_view>(outer_offsets_col).size() - 1;
 
@@ -155,7 +156,7 @@ std::unique_ptr<cudf::column> build_nested_column2(std::vector<bool> const& stru
 
   // wrap in a list
   std::vector<int> outer_offsets{0, 1, 1, 3};
-  cudf::test::fixed_width_column_wrapper<int> outer_offsets_col(outer_offsets.begin(),
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> outer_offsets_col(outer_offsets.begin(),
                                                                 outer_offsets.end());
   auto const size = static_cast<cudf::column_view>(outer_offsets_col).size() - 1;
   return cudf::make_lists_column(static_cast<cudf::size_type>(size),
@@ -182,7 +183,8 @@ TYPED_TEST(RowBitCountTyped, SimpleTypes)
   auto result = cudf::row_bit_count(t);
 
   // expect size of the type per row
-  auto expected = make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, 16);
+  auto expected =
+    make_fixed_width_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()}, 16);
   cudf::mutable_column_view mcv(*expected);
   thrust::fill(rmm::exec_policy_nosync(cudf::get_default_stream()),
                mcv.begin<cudf::size_type>(),
@@ -204,7 +206,8 @@ TYPED_TEST(RowBitCountTyped, SimpleTypesWithNulls)
   auto result = cudf::row_bit_count(t);
 
   // expect size of the type + 1 bit per row
-  auto expected = make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, 16);
+  auto expected =
+    make_fixed_width_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()}, 16);
   cudf::mutable_column_view mcv(*expected);
   thrust::fill(rmm::exec_policy_nosync(cudf::get_default_stream()),
                mcv.begin<cudf::size_type>(),
@@ -252,13 +255,13 @@ TYPED_TEST(RowBitCountTyped, ListsWithNulls)
   cudf::table_view t({*list});
   auto result = cudf::row_bit_count(t);
 
-  // expected size = (num rows at level 1 + num_rows at level 2) + # values in the leaf + validity
-  // where applicable
+  // expected size = list offsets at levels 1 and 2 + leaf values + validity where applicable
+  constexpr cudf::size_type offset_size = sizeof(cudf::size_type);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{
-    ((4 + 8) * CHAR_BIT) + (type_size * 5) + 7,
-    ((4 + 0) * CHAR_BIT) + (type_size * 0),
-    ((4 + 4) * CHAR_BIT) + (type_size * 1) + 2,
-    ((4 + 8) * CHAR_BIT) + (type_size * 3) + 5};
+    ((offset_size + 2 * offset_size) * CHAR_BIT) + (type_size * 5) + 7,
+    ((offset_size + 0 * offset_size) * CHAR_BIT) + (type_size * 0),
+    ((offset_size + offset_size) * CHAR_BIT) + (type_size * 1) + 2,
+    ((offset_size + 2 * offset_size) * CHAR_BIT) + (type_size * 3) + 5};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 }
 
@@ -273,9 +276,9 @@ TEST_F(RowBitCount, Strings)
   cudf::table_view t({col});
   auto result = cudf::row_bit_count(t);
 
-  // expect 1 offset (4 bytes) + length of string per row
+  // expect one 32-bit string offset plus the string bytes per row
   auto size_iter = cudf::detail::make_counting_transform_iterator(0, [&strings](int i) {
-    return (static_cast<cudf::size_type>(strings[i].size()) + sizeof(cudf::size_type)) * CHAR_BIT;
+    return (static_cast<cudf::size_type>(strings[i].size()) + sizeof(int32_t)) * CHAR_BIT;
   });
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(size_iter,
                                                                    size_iter + strings.size());
@@ -295,10 +298,10 @@ TEST_F(RowBitCount, StringsWithNulls)
   cudf::table_view t({col});
   auto result = cudf::row_bit_count(t);
 
-  // expect 1 offset (4 bytes) + (length of string, or 0 if null) + 1 validity bit per row
+  // expect one 32-bit string offset + string bytes (or 0 if null) + one validity bit per row
   auto size_iter = cudf::detail::make_counting_transform_iterator(0, [&strings, &valids](int i) {
     return ((static_cast<cudf::size_type>(valids[i] ? strings[i].size() : 0) +
-             sizeof(cudf::size_type)) *
+             sizeof(int32_t)) *
             CHAR_BIT) +
            1;
   });
@@ -341,8 +344,8 @@ TEST_F(RowBitCount, StructsWithLists_RowsExceedingASingleBlock)
                    cuda::std::identity{});
 
   // List offsets = {0, 2, 4, 6, 8, ..., num_rows*2};
-  auto list_offsets =
-    cudf::make_numeric_column(cudf::data_type{cudf::type_id::INT32}, num_rows + 1);
+  auto list_offsets = cudf::make_numeric_column(
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()}, num_rows + 1);
   auto list_offsets_view = list_offsets->mutable_view();
   thrust::tabulate(rmm::exec_policy_nosync(cudf::get_default_stream()),
                    list_offsets_view.begin<cudf::size_type>(),
@@ -360,10 +363,10 @@ TEST_F(RowBitCount, StructsWithLists_RowsExceedingASingleBlock)
 
   // Compute row_bit_count, and compare.
   auto row_bit_counts = cudf::row_bit_count(cudf::table_view{{structs_column->view()}});
-  auto expected_row_bit_counts =
-    cudf::make_numeric_column(cudf::data_type{cudf::type_id::INT32}, num_rows);
+  auto expected_row_bit_counts = cudf::make_numeric_column(
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()}, num_rows);
   thrust::fill_n(rmm::exec_policy_nosync(cudf::get_default_stream()),
-                 expected_row_bit_counts->mutable_view().begin<int32_t>(),
+                 expected_row_bit_counts->mutable_view().begin<cudf::size_type>(),
                  num_rows,
                  CHAR_BIT * (2 * sizeof(int32_t) + sizeof(cudf::size_type)));
 
@@ -383,10 +386,10 @@ TEST_F(RowBitCount, StructsNoNulls)
   cudf::table_view t({struct_col});
   auto result = cudf::row_bit_count(t);
 
-  // expect 1 offset (4 bytes) + (length of string) + 1 float + 1 int16_t
+  // expect one 32-bit string offset + string bytes + one float + one int16_t
   auto size_iter = cudf::detail::make_counting_transform_iterator(0, [&strings](int i) {
     return ((sizeof(float) + sizeof(int16_t)) * CHAR_BIT) +
-           ((static_cast<cudf::size_type>(strings[i].size()) + sizeof(cudf::size_type)) * CHAR_BIT);
+           ((static_cast<cudf::size_type>(strings[i].size()) + sizeof(int32_t)) * CHAR_BIT);
   });
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(size_iter,
                                                                    size_iter + t.num_rows());
@@ -429,14 +432,14 @@ TEST_F(RowBitCount, NestedTypes)
   {
     auto const col_no_nulls = row_bit_count_test::build_nested_column1({1, 1, 1, 1, 1, 1, 1, 1});
     auto const expected_sizes_no_nulls =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{276, 32, 520, 572, 212, 212}
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{340, 64, 616, 700, 276, 276}
         .release();
     cudf::table_view no_nulls_t({*col_no_nulls});
     auto no_nulls_result = cudf::row_bit_count(no_nulls_t);
 
     auto const col_nulls = row_bit_count_test::build_nested_column1({0, 0, 1, 1, 1, 1, 1, 1});
     auto const expected_sizes_with_nulls =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{116, 32, 424, 572, 212, 212}
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{180, 64, 520, 700, 276, 276}
         .release();
     cudf::table_view nulls_t({*col_nulls});
     auto nulls_result = cudf::row_bit_count(nulls_t);
@@ -471,8 +474,8 @@ TEST_F(RowBitCount, NestedTypes)
     cudf::table_view nulls_t({*col_nulls});
     auto nulls_result = cudf::row_bit_count(nulls_t);
 
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_sizes_no_nuls{372, 32, 840};
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_sizes_with_nuls{372, 32, 616};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_sizes_no_nuls{500, 64, 1096};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_sizes_with_nuls{500, 64, 808};
 
     // same explanation as above
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sizes_no_nuls, *no_nulls_result);
@@ -498,7 +501,7 @@ TEST_F(RowBitCount, NestedTypes)
     // innermost List<Struct<List<int>>>
     auto innermost_struct = cudf::test::structs_column_wrapper({l3, c3});
     std::vector<int> l4_offsets{0, 1, 2, 3, 4};
-    cudf::test::fixed_width_column_wrapper<int> l4_offsets_col(l4_offsets.begin(),
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> l4_offsets_col(l4_offsets.begin(),
                                                                l4_offsets.end());
     auto const l4_size = l4_offsets.size() - 1;
     auto l4            = cudf::make_lists_column(static_cast<cudf::size_type>(l4_size),
@@ -519,7 +522,7 @@ TEST_F(RowBitCount, NestedTypes)
     cudf::table_view t({struct_col});
     auto result = cudf::row_bit_count(t);
 
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_sizes{648, 568, 664, 568};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_sizes{872, 792, 888, 824};
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sizes, *result);
   }
@@ -545,7 +548,7 @@ TEST_F(RowBitCount, NullsInStringsList)
     {});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::row_bit_count(cudf::table_view{{lists_col->view()}})->view(),
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{138, 106, 130, 130});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{170, 138, 162, 162});
 }
 
 TEST_F(RowBitCount, EmptyChildColumnInListOfStrings)
@@ -559,7 +562,7 @@ TEST_F(RowBitCount, EmptyChildColumnInListOfStrings)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::row_bit_count(cudf::table_view{{lists_col->view()}})->view(),
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{32, 32, 32, 32});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{64, 64, 64, 64});
 }
 
 TEST_F(RowBitCount, EmptyChildColumnInListOfLists)
@@ -577,7 +580,7 @@ TEST_F(RowBitCount, EmptyChildColumnInListOfLists)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::row_bit_count(cudf::table_view{{lists_col->view()}})->view(),
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{32, 32, 32, 32});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{64, 64, 64, 64});
 }
 
 namespace {
@@ -595,7 +598,7 @@ TEST_F(RowBitCount, Table)
   // complex nested column
   auto col0 = row_bit_count_test::build_nested_column1({1, 1, 1, 1, 1, 1, 1, 1});
   auto col0_sizes =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{276, 32, 520, 572, 212, 212}.release();
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{340, 64, 616, 700, 276, 276}.release();
 
   // struct column
   auto [col1, col1_sizes] = row_bit_count_test::build_struct_column();
@@ -610,8 +613,8 @@ TEST_F(RowBitCount, Table)
   cudf::column_view cv0 = static_cast<cudf::column_view>(*col0_sizes);
   cudf::column_view cv1 = static_cast<cudf::column_view>(*col1_sizes);
   cudf::column_view cv2 = static_cast<cudf::column_view>(*col2_sizes);
-  auto expected =
-    cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, t.num_rows());
+  auto expected = cudf::make_fixed_width_column(
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()}, t.num_rows());
   cudf::mutable_column_view mcv(*expected);
   thrust::transform(
     rmm::exec_policy_nosync(cudf::get_default_stream()),
@@ -686,9 +689,9 @@ TEST_F(RowBitCount, SlicedColumnsStrings)
   cudf::table_view t({c0});
   auto result = cudf::row_bit_count(t);
 
-  // expect 1 offset (4 bytes) + length of string per row
+  // expect one 32-bit string offset plus the string bytes per row
   auto size_iter = cudf::detail::make_counting_transform_iterator(0, [&strings](int i) {
-    return (static_cast<cudf::size_type>(strings[i].size()) + sizeof(cudf::size_type)) * CHAR_BIT;
+    return (static_cast<cudf::size_type>(strings[i].size()) + sizeof(int32_t)) * CHAR_BIT;
   });
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(size_iter + 3,
                                                                    size_iter + 3 + slice_size);
@@ -709,7 +712,7 @@ TEST_F(RowBitCount, SlicedColumnsLists)
   cudf::table_view t({c0});
   auto result = cudf::row_bit_count(t);
 
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{408, 320};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{536, 416};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 }
@@ -729,10 +732,9 @@ TEST_F(RowBitCount, SlicedColumnsStructs)
   cudf::table_view t({struct_col});
   auto result = cudf::row_bit_count(t);
 
-  // expect 1 offset (4 bytes) + length of string per row + 1 int16_t per row
+  // expect one 32-bit string offset + string bytes + one int16_t per row
   auto size_iter = cudf::detail::make_counting_transform_iterator(0, [&strings](int i) {
-    return (static_cast<cudf::size_type>(strings[i].size()) + sizeof(cudf::size_type) +
-            sizeof(int16_t)) *
+    return (static_cast<cudf::size_type>(strings[i].size()) + sizeof(int32_t) + sizeof(int16_t)) *
            CHAR_BIT;
   });
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(size_iter + 3,

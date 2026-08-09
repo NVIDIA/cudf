@@ -46,8 +46,8 @@ compute_segmented_row_bit_count(cudf::table_view const& input, cudf::size_type s
   // This should be fine as they are verified by their own unit tests in `row_bit_count_test.cu`.
   auto const row_sizes    = cudf::row_bit_count(input);
   auto const num_segments = cudf::util::div_rounding_up_safe(row_sizes->size(), segment_length);
-  auto expected =
-    cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, num_segments);
+  auto expected = cudf::make_fixed_width_column(
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()}, num_segments);
 
   thrust::transform(
     rmm::exec_policy_nosync(cudf::get_default_stream()),

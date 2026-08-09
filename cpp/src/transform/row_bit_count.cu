@@ -480,7 +480,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 rmm::device_async_resource_ref mr)
 {
   // If there is no rows, segment_length will not be checked.
-  if (t.num_rows() <= 0) { return cudf::make_empty_column(type_id::INT32); }
+  if (t.num_rows() <= 0) { return cudf::make_empty_column(type_to_id<size_type>()); }
 
   CUDF_EXPECTS(segment_length >= 1 && segment_length <= t.num_rows(),
                "Invalid segment length.",
@@ -496,7 +496,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
   // create output buffer and view
   auto const num_segments = cudf::util::div_rounding_up_safe(t.num_rows(), segment_length);
   auto output             = cudf::make_fixed_width_column(
-    data_type{type_id::INT32}, num_segments, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_to_id<size_type>()}, num_segments, mask_state::UNALLOCATED, stream, mr);
   mutable_column_view mcv = output->mutable_view();
 
   // simple case.  if we have no complex types (lists, strings, etc), the per-row size is already

@@ -61,7 +61,8 @@ std::unique_ptr<column> compute_column(table_view const& table,
     cudaDeviceGetAttribute(&shmem_limit_per_block, cudaDevAttrMaxSharedMemoryPerBlock, device_id));
   auto const block_size =
     parser.shmem_per_thread != 0
-      ? std::min(MAX_BLOCK_SIZE, shmem_limit_per_block / parser.shmem_per_thread)
+      ? std::min(MAX_BLOCK_SIZE,
+                 static_cast<size_type>(shmem_limit_per_block / parser.shmem_per_thread))
       : MAX_BLOCK_SIZE;
   auto const config          = cudf::detail::grid_1d{table.num_rows(), block_size};
   auto const shmem_per_block = parser.shmem_per_thread * config.num_threads_per_block;

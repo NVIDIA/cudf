@@ -73,7 +73,24 @@ class mutable_table_view;
  * @{
  */
 
-using size_type         = int32_t;   ///< Row index type for columns and tables
+/**
+ * @brief Width of `cudf::size_type` in bits, set by the `CUDF_SIZE_TYPE_BITS` build option
+ *
+ * A 64-bit `size_type` lifts the 2^31 row limit but is experimental and changes the ABI, so it
+ * cannot be mixed with a 32-bit libcudf. See rapidsai/cudf#13159.
+ */
+#ifndef CUDF_SIZE_TYPE_BITS
+#define CUDF_SIZE_TYPE_BITS 32
+#endif
+
+#if CUDF_SIZE_TYPE_BITS == 32
+using size_type = int32_t;  ///< Row index type for columns and tables
+#elif CUDF_SIZE_TYPE_BITS == 64
+using size_type = int64_t;  ///< Row index type for columns and tables
+#else
+#error "CUDF_SIZE_TYPE_BITS must be 32 or 64"
+#endif
+
 using bitmask_type      = uint32_t;  ///< Bitmask type stored as 32-bit unsigned integer
 using valid_type        = uint8_t;   ///< Valid type in host memory
 using thread_index_type = int64_t;   ///< Thread index type in kernels

@@ -42,6 +42,17 @@ option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in lib
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
 option(CUDF_LARGE_STRINGS_DISABLED "Build with large string support disabled" OFF)
 mark_as_advanced(CUDF_LARGE_STRINGS_DISABLED)
+set(CUDF_SIZE_TYPE_BITS
+    "32"
+    CACHE
+      STRING
+      "Width of cudf::size_type in bits. 64 is experimental, ABI-incompatible, and requires 16-byte cuco key support."
+)
+set_property(CACHE CUDF_SIZE_TYPE_BITS PROPERTY STRINGS 32 64)
+mark_as_advanced(CUDF_SIZE_TYPE_BITS)
+if(NOT CUDF_SIZE_TYPE_BITS MATCHES "^(32|64)$")
+  message(FATAL_ERROR "CUDF_SIZE_TYPE_BITS must be 32 or 64, got '${CUDF_SIZE_TYPE_BITS}'")
+endif()
 option(
   CUDF_USE_PER_THREAD_DEFAULT_STREAM
   "Build cuDF with per-thread default stream, including passing the per-thread default
@@ -1254,9 +1265,25 @@ target_compile_definitions(
 # Enable remote IO through KvikIO
 target_compile_definitions(cudf PRIVATE $<$<BOOL:${CUDF_KVIKIO_REMOTE_IO}>:CUDF_KVIKIO_REMOTE_IO>)
 
+# Select the size_type width. This must be PUBLIC: cudf/types.hpp is a public header, so tests,
+# benchmarks and downstream consumers have to agree with libcudf on the width.
+if(CUDF_SIZE_TYPE_BITS EQUAL 64)
+  target_compile_definitions(cudf PUBLIC CUDF_SIZE_TYPE_BITS=64)
+endif()
+
 # Remove this after upgrading to a CCCL that has a proper CMake option. See
 # https://github.com/NVIDIA/cccl/pull/2844
-target_compile_definitions(cudf PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1 CCCL_AVOID_SORT_UNROLL=1)
+#
+# Thrust dispatches on the static offset type rather than the input size. Forcing 32-bit keeps a
+# single instantiation (worth ~34MB of libcudf.so, see rapidsai/cudf#18235) at the cost of throwing
+# on >2^31 inputs, so a 64-bit size_type build has to force 64-bit instead -- also a single
+# instantiation, just a wider one.
+if(CUDF_SIZE_TYPE_BITS EQUAL 64)
+  target_compile_definitions(cudf PRIVATE THRUST_FORCE_64_BIT_OFFSET_TYPE=1)
+else()
+  target_compile_definitions(cudf PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1)
+endif()
+target_compile_definitions(cudf PRIVATE CCCL_AVOID_SORT_UNROLL=1)
 
 # When rmm is a static library being absorbed via whole-archive, strip nvtx3 from its public
 # interface. We bundle nvtx3 headers directly into cudf's install tree, so consumers get them from

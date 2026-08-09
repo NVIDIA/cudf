@@ -52,8 +52,14 @@ function(ConfigureTest CMAKE_TEST_NAME)
                CUDA_STANDARD_REQUIRED ON
   )
 
+  # Test code must agree with libcudf on the Thrust offset width, see cpp/CMakeLists.txt.
+  if(CUDF_SIZE_TYPE_BITS EQUAL 64)
+    set(_cudf_test_thrust_offset THRUST_FORCE_64_BIT_OFFSET_TYPE=1)
+  else()
+    set(_cudf_test_thrust_offset THRUST_FORCE_32_BIT_OFFSET_TYPE=1)
+  endif()
   target_compile_definitions(
-    ${CMAKE_TEST_NAME} PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1 CCCL_AVOID_SORT_UNROLL=1
+    ${CMAKE_TEST_NAME} PRIVATE ${_cudf_test_thrust_offset} CCCL_AVOID_SORT_UNROLL=1
                                ${_CUDF_TEST_EXTRA_COMPILE_DEFINITIONS}
   )
 

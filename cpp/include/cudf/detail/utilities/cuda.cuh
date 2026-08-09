@@ -24,7 +24,7 @@ namespace detail {
 /**
  * @brief Size of a warp in a CUDA kernel.
  */
-static constexpr size_type warp_size{32};
+static constexpr int32_t warp_size{32};
 
 #ifndef __CUDACC_RTC__
 

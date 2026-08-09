@@ -8,6 +8,7 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
@@ -56,7 +57,7 @@ CUDF_KERNEL void valid_if_kernel(
   }
 
   size_type block_count = single_lane_block_sum_reduce<block_size, leader_lane>(warp_valid_count);
-  if (threadIdx.x == 0) { atomicAdd(valid_count, block_count); }
+  if (threadIdx.x == 0) { cudf::detail::atomic_add_relaxed(valid_count, block_count); }
 }
 
 /**
@@ -155,7 +156,8 @@ CUDF_KERNEL void valid_if_n_kernel(InputIterator1 begin1,
     auto const mask = masks[mask_idx];
     if (mask == nullptr) { continue; }
 
-    auto block_offset     = blockIdx.x * blockDim.x;
+    auto block_offset =
+      static_cast<size_type>(blockIdx.x) * static_cast<size_type>(blockDim.x);
     auto warp_valid_count = static_cast<size_type>(0);
 
     while (block_offset < mask_num_bits) {
@@ -170,12 +172,15 @@ CUDF_KERNEL void valid_if_n_kernel(InputIterator1 begin1,
       if (thread_active && threadIdx.x % warp_size == 0) { mask[mask_idx] = warp_validity; }
 
       warp_valid_count += __popc(warp_validity);
-      block_offset += blockDim.x * gridDim.x;
+      block_offset +=
+        static_cast<size_type>(blockDim.x) * static_cast<size_type>(gridDim.x);
     }
 
     auto block_valid_count = single_lane_block_sum_reduce<block_size, 0>(warp_valid_count);
 
-    if (threadIdx.x == 0) { atomicAdd(valid_counts + mask_idx, block_valid_count); }
+    if (threadIdx.x == 0) {
+      cudf::detail::atomic_add_relaxed(valid_counts + mask_idx, block_valid_count);
+    }
   }
 }
 

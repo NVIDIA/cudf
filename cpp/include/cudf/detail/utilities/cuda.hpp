@@ -46,8 +46,9 @@ cudf::size_type elements_per_thread(Kernel kernel,
   int max_blocks = 0;
   CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks, kernel, block_size, 0));
 
-  int per_thread = total_size / (max_blocks * num_multiprocessors() * block_size);
-  return std::clamp(per_thread, 1, max_per_thread);
+  auto const per_thread =
+    total_size / (static_cast<cudf::size_type>(max_blocks) * num_multiprocessors() * block_size);
+  return std::clamp(per_thread, cudf::size_type{1}, max_per_thread);
 }
 
 }  // namespace detail

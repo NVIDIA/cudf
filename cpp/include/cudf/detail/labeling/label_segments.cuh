@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/detail/algorithms/reduce.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -96,7 +97,9 @@ void label_segments(InputIterator offsets_begin,
                      // (i.e., we have empty segments), this `atomicAdd` call will make sure the
                      // label values corresponding to these empty segments will be skipped in the
                      // output.
-                     if (dst_idx < num_labels) { atomicAdd(&output[dst_idx], OutputType{1}); }
+                     if (dst_idx < num_labels) {
+                       cudf::detail::atomic_add_relaxed(&output[dst_idx], OutputType{1});
+                     }
                    });
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          label_begin,

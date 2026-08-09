@@ -230,6 +230,24 @@ __forceinline__ __device__ T atomic_add(T* address, T val)
 }
 
 /**
+ * @brief Relaxed atomic add on a counter at the given thread scope
+ *
+ * Prefer this over the `atomicAdd` intrinsic for counters typed as `cudf::size_type`: CUDA
+ * provides no signed 64-bit `atomicAdd` overload, so an intrinsic call fails to compile if
+ * `size_type` is widened. Pass `cuda::thread_scope_block` for shared memory counters.
+ *
+ * @param address The address of the counter in global or shared memory
+ * @param val The value to be added
+ *
+ * @returns The old value at `address`
+ */
+template <cuda::thread_scope Scope = cuda::thread_scope_device, typename T>
+__forceinline__ __device__ T atomic_add_relaxed(T* address, T val)
+{
+  return cuda::atomic_ref<T, Scope>{*address}.fetch_add(val, cuda::memory_order_relaxed);
+}
+
+/**
  * @brief Overloads for `atomic_mul`
  *
  * Reads the `old` located at the `address` in global or shared memory,

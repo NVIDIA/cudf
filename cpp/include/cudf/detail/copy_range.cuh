@@ -9,6 +9,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/types.hpp>
@@ -91,7 +92,7 @@ CUDF_KERNEL void copy_range_kernel(SourceValueIterator source_value_begin,
     auto block_null_change =
       cudf::detail::single_lane_block_sum_reduce<block_size, leader_lane>(warp_null_change);
     if (threadIdx.x == 0) {  // if the first thread in a block
-      atomicAdd(null_count, block_null_change);
+      cudf::detail::atomic_add_relaxed(null_count, block_null_change);
     }
   }
 }
@@ -132,9 +133,10 @@ void copy_range(SourceValueIterator source_value_begin,
   // this code assumes that source and target have the same type.
   CUDF_EXPECTS(type_id_matches_device_storage_type<T>(target.type().id()), "data type mismatch");
 
-  auto warp_aligned_begin_lower_bound = cudf::util::round_down_safe(target_begin, warp_size);
-  auto warp_aligned_end_upper_bound   = cudf::util::round_up_safe<int64_t>(target_end, warp_size);
-  auto num_items = warp_aligned_end_upper_bound - warp_aligned_begin_lower_bound;
+  auto warp_aligned_begin_lower_bound =
+    cudf::util::round_down_safe(target_begin, size_type{warp_size});
+  auto warp_aligned_end_upper_bound = cudf::util::round_up_safe<int64_t>(target_end, warp_size);
+  auto num_items                    = warp_aligned_end_upper_bound - warp_aligned_begin_lower_bound;
 
   constexpr size_type block_size{256};
 

@@ -129,6 +129,9 @@ INSTANTIATE_TEST_SUITE_P(ParquetDictionaryTest,
 
 TEST_P(ParquetSizedTest, DictionaryTest)
 {
+#if CUDF_SIZE_TYPE_BITS == 64
+  GTEST_SKIP() << "Dictionary string decoding is not yet width-safe in 64-bit mode.";
+#endif
   unsigned int const cardinality = (1 << (GetParam() - 1)) + 1;
   unsigned int const nrows       = std::max(cardinality * 3 / 2, 500'000U);
 

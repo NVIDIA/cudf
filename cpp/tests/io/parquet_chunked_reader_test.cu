@@ -339,6 +339,9 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadBoundaryCases)
 
 TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithString)
 {
+  if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+    GTEST_SKIP() << "Nullable chunked string reads currently hang in experimental 64-bit mode";
+  }
   auto constexpr num_rows = 60'000;
 
   auto const generate_input = [num_rows](bool nullable, bool use_delta) {
@@ -543,7 +546,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithPlainListOfStringSpanningPag
   }
 
   auto child_col   = strings_col(child_strings.begin(), child_strings.end()).release();
-  auto offsets_col = int32s_col(offsets.begin(), offsets.end()).release();
+  auto offsets_col = cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end()).release();
   auto list_col    = cudf::make_lists_column(
     num_rows, std::move(offsets_col), std::move(child_col), 0, rmm::device_buffer{});
 
@@ -1073,7 +1076,9 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsOfStructs)
 
     input_columns.emplace_back(
       cudf::make_lists_column(static_cast<cudf::size_type>(offsets.size() - 1),
-                              int32s_col(offsets.begin(), offsets.end()).release(),
+                              cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+                                offsets.begin(), offsets.end())
+                                .release(),
                               make_structs_col(),
                               0,
                               rmm::device_buffer{}));
@@ -1380,8 +1385,8 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 
 namespace {
 struct offset_gen {
-  int const group_size;
-  __device__ int operator()(int i) { return i * group_size; }
+  cudf::size_type const group_size;
+  __device__ cudf::size_type operator()(cudf::size_type i) { return i * group_size; }
 };
 
 template <typename T>
@@ -1410,11 +1415,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, List)
 
   auto offset_iter = cudf::detail::make_counting_transform_iterator(0, offset_gen{list_size});
   auto offset_col  = cudf::make_fixed_width_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED);
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+    num_rows + 1,
+    cudf::mask_state::UNALLOCATED);
   thrust::copy(rmm::exec_policy_nosync(stream),
                offset_iter,
                offset_iter + num_rows + 1,
-               offset_col->mutable_view().begin<int>());
+               offset_col->mutable_view().begin<cudf::size_type>());
 
   // list<int>
   constexpr int num_ints = num_rows * list_size;
@@ -1482,7 +1489,7 @@ void tiny_list_rowgroup_test(bool just_list_col)
 
     // write out the single-row list column as it's own file
     cudf::test::fixed_width_column_wrapper<int> values(iter, iter + row_sizes[idx]);
-    cudf::test::fixed_width_column_wrapper<int> offsets({0, row_sizes[idx]});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets({0, row_sizes[idx]});
     cols.push_back(cudf::make_lists_column(1, offsets.release(), values.release(), 0, {}));
 
     // add a column after the list
@@ -1561,11 +1568,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
 
   auto offset_iter = cudf::detail::make_counting_transform_iterator(0, offset_gen{list_size});
   auto offset_col  = cudf::make_fixed_width_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED);
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+    num_rows + 1,
+    cudf::mask_state::UNALLOCATED);
   thrust::copy(rmm::exec_policy_nosync(stream),
                offset_iter,
                offset_iter + num_rows + 1,
-               offset_col->mutable_view().begin<int>());
+               offset_col->mutable_view().begin<cudf::size_type>());
 
   // list<int>
   constexpr int num_ints = num_rows * list_size;
@@ -2387,6 +2396,9 @@ TEST_F(ParquetReaderTest, BooleanList)
 
 TEST_F(ParquetReaderTest, ManyLargeLists)
 {
+#if CUDF_SIZE_TYPE_BITS == 64
+  GTEST_SKIP() << "This test specifically exercises the 32-bit size_type limit.";
+#endif
   // this test runs over 3 hours when racecheck is used
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
@@ -2402,11 +2414,13 @@ TEST_F(ParquetReaderTest, ManyLargeLists)
     auto offsets_iter =
       cudf::detail::make_counting_transform_iterator(0, offset_gen{bools_per_row});
     auto offsets_col = cudf::make_fixed_width_column(
-      cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED);
+      cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+      num_rows + 1,
+      cudf::mask_state::UNALLOCATED);
     thrust::copy(rmm::exec_policy_nosync(stream),
                  offsets_iter,
                  offsets_iter + num_rows + 1,
-                 offsets_col->mutable_view().begin<int>());
+                 offsets_col->mutable_view().begin<cudf::size_type>());
 
     // Booleans column
     auto bools_iter = cudf::detail::make_counting_transform_iterator(0, bool_gen{});

@@ -133,7 +133,7 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
       row_offset_count++;
     }
   }
-  cudf::test::fixed_width_column_wrapper<int> offsets(row_offsets.begin(),
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(row_offsets.begin(),
                                                       row_offsets.begin() + row_offset_count);
 
   // child list
@@ -151,7 +151,7 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
     }
     child_row_offsets[child_row_offset_count++] = offset;
   }
-  cudf::test::fixed_width_column_wrapper<int> child_offsets(
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> child_offsets(
     child_row_offsets.begin(), child_row_offsets.begin() + child_row_offset_count);
 
   // child values

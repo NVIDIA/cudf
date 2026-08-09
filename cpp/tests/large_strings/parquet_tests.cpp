@@ -174,7 +174,9 @@ TEST_F(ParquetStringsTest, ChunkedReadNestedLargeStrings)
 
   input_columns.emplace_back(
     cudf::make_lists_column(static_cast<cudf::size_type>(offsets.size() - 1),
-                            int32s_col(offsets.begin(), offsets.end()).release(),
+                            cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+                              offsets.begin(), offsets.end())
+                              .release(),
                             make_structs_col(),
                             0,
                             rmm::device_buffer{}));

@@ -449,12 +449,11 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                          d_page_offset_counts.end(),
                          subpass.page_string_offset_indices.begin());
 
-  // Compute the total number of offsets needed
-  auto const total_num_offsets = cudf::detail::reduce(d_page_offset_counts.begin(),
-                                                      d_page_offset_counts.end(),
-                                                      size_t{0},
-                                                      cuda::std::plus<size_t>{},
-                                                      _stream);
+  // The final exclusive-scan value plus the final count is the total number of offsets.
+  auto const total_num_offsets =
+    num_pages == 0 ? size_t{0}
+                   : subpass.page_string_offset_indices.back_element(_stream) +
+                       d_page_offset_counts.back_element(_stream);
 
   // Allocate the string offset buffer
   subpass.string_offset_buffer = rmm::device_uvector<uint32_t>(total_num_offsets, _stream, _mr);

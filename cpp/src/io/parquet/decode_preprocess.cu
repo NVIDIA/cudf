@@ -401,6 +401,8 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
 
   // Return early if this page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }
+  // Dictionary pages contain no repetition or definition level streams.
+  if (pp->flags & PAGEINFO_FLAGS_DICTIONARY) { return; }
 
   // setup page info - use all_types_filter since we need to preprocess levels for all page types
   if (!setup_local_page_info(
@@ -432,7 +434,6 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   using rle_stream_t = rle_stream<level_t, level_decode_block_size, max_output_values>;
   __shared__ __align__(16) uint8_t stage[rle_stream_t::smem_stage_size];
   __shared__ cuda::barrier<cuda::thread_scope_block> copy_barrier;
-
   // Get the level decode buffers for this page
   auto* const def = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::DEFINITION]);
   auto* const rep = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::REPETITION]);

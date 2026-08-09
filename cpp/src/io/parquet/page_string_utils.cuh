@@ -265,8 +265,8 @@ __device__ size_t decode_strings(page_state_s* s,
       }
     }();
     if (in_range) {
-      int32_t* str_len_ptr = reinterpret_cast<int32_t*>(ni.data_out) + dst_pos;
-      *str_len_ptr         = string_length;
+      size_type* str_len_ptr = reinterpret_cast<size_type*>(ni.data_out) + dst_pos;
+      *str_len_ptr           = static_cast<size_type>(string_length);
     }
 
     // compute output string offsets

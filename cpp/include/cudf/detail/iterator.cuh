@@ -36,8 +36,11 @@ namespace cudf {
 namespace detail {
 /**
  * @brief Convenience wrapper for creating a `thrust::transform_iterator` over a
- * `cuda::counting_iterator` within the range [0, INT_MAX].
+ * `cuda::counting_iterator` within the range [0, max of `size_type`].
  *
+ * The counter is always `size_type` wide, whatever integral type `start` is. Nearly every call
+ * site passes a literal `0`, which would otherwise give an `int` counter that wraps at `INT_MAX`
+ * and silently caps the iteration well short of what a 64-bit `size_type` allows.
  *
  * Example:
  * @code{.cpp}
@@ -65,7 +68,8 @@ CUDF_HOST_DEVICE inline auto make_counting_transform_iterator(CountingIterType s
         cuda::std::numeric_limits<cudf::size_type>::digits,
     "The `start` for the counting_transform_iterator must be size_type or smaller type");
 
-  return thrust::make_transform_iterator(cuda::counting_iterator{start}, f);
+  return thrust::make_transform_iterator(
+    cuda::counting_iterator{static_cast<cudf::size_type>(start)}, f);
 }
 
 /**

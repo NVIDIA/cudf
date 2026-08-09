@@ -33,12 +33,13 @@ TYPED_TEST(MergeStringTest, Merge1StringKeyColumns)
   strings_column_wrapper leftColWrap1({"ab", "bc", "cd", "de", "ef", "fg", "gh", "hi"});
   cudf::size_type inputRows1 = static_cast<cudf::column_view const&>(leftColWrap1).size();
 
-  auto sequence0 = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 0;
-    else
-      return row;
-  });
+  auto sequence0 =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 0;
+      else
+        return row;
+    });
 
   fixed_width_column_wrapper<TypeParam, typename decltype(sequence0)::value_type> leftColWrap2(
     sequence0, sequence0 + inputRows1);
@@ -80,12 +81,13 @@ TYPED_TEST(MergeStringTest, Merge1StringKeyColumns)
                                             "hi",
                                             "hj"});
 
-  auto seq_out2 = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 0;
-    else
-      return row / 2;
-  });
+  auto seq_out2 =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 0;
+      else
+        return row / 2;
+    });
   fixed_width_column_wrapper<TypeParam, typename decltype(seq_out2)::value_type> expectedDataWrap2(
     seq_out2, seq_out2 + outputRows);
 
@@ -111,12 +113,13 @@ TYPED_TEST(MergeStringTest, Merge2StringKeyColumns)
 
   EXPECT_EQ(inputRows, static_cast<cudf::column_view const&>(leftColWrap3).size());
 
-  auto sequence_l = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 1;
-    else
-      return 2 * row;
-  });
+  auto sequence_l =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 1;
+      else
+        return 2 * row;
+    });
 
   fixed_width_column_wrapper<TypeParam, typename decltype(sequence_l)::value_type> leftColWrap2(
     sequence_l, sequence_l + inputRows);
@@ -127,12 +130,13 @@ TYPED_TEST(MergeStringTest, Merge2StringKeyColumns)
 
   EXPECT_EQ(inputRows, static_cast<cudf::column_view const&>(rightColWrap1).size());
 
-  auto sequence_r = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 0;
-    else
-      return 2 * row + 1;
-  });
+  auto sequence_r =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 0;
+      else
+        return 2 * row + 1;
+    });
   fixed_width_column_wrapper<TypeParam, typename decltype(sequence_r)::value_type> rightColWrap2(
     sequence_r, sequence_r + inputRows);
 
@@ -215,12 +219,13 @@ TYPED_TEST(MergeStringTest, Merge1StringKeyNullColumns)
 
   cudf::size_type inputRows = static_cast<cudf::column_view const&>(leftColWrap1).size();
 
-  auto sequence0 = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 0;
-    else
-      return row;
-  });
+  auto sequence0 =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 0;
+      else
+        return row;
+    });
 
   fixed_width_column_wrapper<TypeParam, typename decltype(sequence0)::value_type> leftColWrap2(
     sequence0, sequence0 + inputRows);
@@ -279,12 +284,13 @@ TYPED_TEST(MergeStringTest, Merge1StringKeyNullColumns)
                                             true,
                                             false,
                                             false});
-  auto seq_out2 = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 0;
-    else
-      return row / 2;
-  });
+  auto seq_out2 =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 0;
+      else
+        return row / 2;
+    });
   fixed_width_column_wrapper<TypeParam, typename decltype(seq_out2)::value_type> expectedDataWrap2(
     seq_out2, seq_out2 + outputRows);
 
@@ -309,12 +315,13 @@ TYPED_TEST(MergeStringTest, Merge2StringKeyNullColumns)
 
   EXPECT_EQ(inputRows, static_cast<cudf::column_view const&>(leftColWrap3).size());
 
-  auto sequence_l = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 1;
-    else
-      return 2 * row;
-  });
+  auto sequence_l =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 1;
+      else
+        return 2 * row;
+    });
 
   fixed_width_column_wrapper<TypeParam, typename decltype(sequence_l)::value_type> leftColWrap2(
     sequence_l, sequence_l + inputRows);
@@ -326,12 +333,13 @@ TYPED_TEST(MergeStringTest, Merge2StringKeyNullColumns)
 
   EXPECT_EQ(inputRows, static_cast<cudf::column_view const&>(rightColWrap1).size());
 
-  auto sequence_r = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
-      return 0;
-    else
-      return 2 * row + 1;
-  });
+  auto sequence_r =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8)
+        return 0;
+      else
+        return 2 * row + 1;
+    });
   fixed_width_column_wrapper<TypeParam, typename decltype(sequence_r)::value_type> rightColWrap2(
     sequence_r, sequence_r + inputRows);
 

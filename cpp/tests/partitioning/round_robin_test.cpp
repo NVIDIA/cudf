@@ -709,12 +709,13 @@ TYPED_TEST(RoundRobinTest, RoundRobinIncorrectNumPartitions)
 
   cudf::size_type inputRows = static_cast<cudf::column_view const&>(rrColWrap1).size();
 
-  auto sequence_l = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {
-      return (row % 2 == 0) ? 1 : 0;
-    } else
-      return row;
-  });
+  auto sequence_l =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {
+        return (row % 2 == 0) ? 1 : 0;
+      } else
+        return row;
+    });
 
   cudf::test::fixed_width_column_wrapper<TypeParam, typename decltype(sequence_l)::value_type>
     rrColWrap2(sequence_l, sequence_l + inputRows);
@@ -736,12 +737,13 @@ TYPED_TEST(RoundRobinTest, RoundRobinIncorrectStartPartition)
 
   cudf::size_type inputRows = static_cast<cudf::column_view const&>(rrColWrap1).size();
 
-  auto sequence_l = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
-    if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {
-      return (row % 2 == 0) ? 1 : 0;
-    } else
-      return row;
-  });
+  auto sequence_l =
+    cudf::detail::make_counting_transform_iterator(0, [](auto row) -> cudf::size_type {
+      if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {
+        return (row % 2 == 0) ? 1 : 0;
+      } else
+        return row;
+    });
 
   cudf::test::fixed_width_column_wrapper<TypeParam, typename decltype(sequence_l)::value_type>
     rrColWrap2(sequence_l, sequence_l + inputRows);

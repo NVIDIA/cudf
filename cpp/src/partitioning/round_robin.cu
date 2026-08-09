@@ -127,7 +127,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
     auto nedges_iter_begin = thrust::make_transform_iterator(
       rotated_iter_begin,
       cuda::proclaim_return_type<cudf::size_type>(
-        [nrows] __device__(auto index) { return (index < nrows ? 1 : 0); }));
+        [nrows] __device__(auto index) -> cudf::size_type { return index < nrows ? 1 : 0; }));
 
     // offsets (part 2: compute partition offsets):
     rmm::device_uvector<cudf::size_type> partition_offsets(num_partitions + 1, stream);

@@ -439,7 +439,7 @@ void run_fixed_width_test(size_t cols,
   });
 
   // Make a table view of the partition numbers
-  constexpr cudf::data_type dtype{cudf::type_id::INT32};
+  constexpr cudf::data_type dtype{cudf::type_to_id<cudf::size_type>()};
   auto d_partitions = cudf::detail::make_device_uvector(
     partitions, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   cudf::column_view partitions_col(dtype, rows, d_partitions.data(), nullptr, 0);

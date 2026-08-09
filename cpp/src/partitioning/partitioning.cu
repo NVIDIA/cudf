@@ -11,6 +11,7 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -29,6 +30,7 @@
 #include <cuda/atomic>
 #include <cuda/devices>
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -45,6 +47,16 @@ constexpr size_type THRESHOLD_FOR_OPTIMIZED_PARTITION_KERNEL = 1024;
 // Launch configuration for fallback hash partition
 constexpr size_type FALLBACK_BLOCK_SIZE      = 256;
 constexpr size_type FALLBACK_ROWS_PER_THREAD = 1;
+
+// Type of a bin in the row-count histograms below.
+//
+// cub::DeviceHistogram increments its bins with atomicAdd and atomicAdd_block, and CUDA declares
+// those only for `unsigned long long` among the 64-bit integers: not for the signed type, and not
+// for `unsigned long`, which is a distinct type of the same width. So the bin type has to be named
+// exactly, rather than derived from size_type. Counting rows in an unsigned bin is safe because
+// the counts are never negative.
+using histogram_bin_type = cuda::std::
+  conditional_t<sizeof(size_type) == sizeof(unsigned int), unsigned int, unsigned long long>;
 
 /**
  * @brief  Functor to map a hash value to a particular 'bin' or partition number
@@ -152,8 +164,8 @@ CUDF_KERNEL void compute_row_partition_numbers(row_hasher_t the_hasher,
 
     row_partition_numbers[row_number] = partition_number;
 
-    row_partition_offset[row_number] =
-      atomicAdd(&(shared_partition_sizes[partition_number]), size_type(1));
+    row_partition_offset[row_number] = cudf::detail::atomic_add_relaxed<cuda::thread_scope_block>(
+      &shared_partition_sizes[partition_number], size_type{1});
 
     tid += stride;
   }
@@ -166,7 +178,8 @@ CUDF_KERNEL void compute_row_partition_numbers(row_hasher_t the_hasher,
     size_type const block_partition_size = shared_partition_sizes[partition_number];
 
     // Update global size of each partition
-    atomicAdd(&global_partition_sizes[partition_number], block_partition_size);
+    cudf::detail::atomic_add_relaxed(&global_partition_sizes[partition_number],
+                                     block_partition_size);
 
     // Record the size of this partition in this block
     size_type const write_location        = partition_number * gridDim.x + blockIdx.x;
@@ -224,7 +237,8 @@ CUDF_KERNEL void compute_row_output_locations(size_type* __restrict__ row_partit
     // Get output location based on partition number by incrementing the
     // corresponding partition offset for this block
     size_type const row_output_location =
-      atomicAdd(&(shared_partition_offsets[partition_number]), size_type(1));
+      cudf::detail::atomic_add_relaxed<cuda::thread_scope_block>(
+        &shared_partition_offsets[partition_number], size_type{1});
 
     // Store the row's output location in-place
     row_partition_numbers[row_number] = row_output_location;
@@ -502,7 +516,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   // Build histogram via cub::DeviceHistogram::HistogramEven.
   // HistogramEven writes num_partitions bins; the extra element is used by the exclusive scan
   // below to produce the total row count as the last offset. Zero-initialize to avoid UB.
-  auto histogram = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto histogram = cudf::detail::make_zeroed_device_uvector_async<histogram_bin_type>(
     num_partitions + 1, stream, cudf::get_current_device_resource_ref());
   {
     auto const num_levels  = num_partitions + 1;
@@ -543,15 +557,15 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
 
   // Build scatter map: atomically increment partition offsets
   rmm::device_uvector<size_type> scatter_map(num_rows, stream);
-  thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    row_partition_numbers.begin(),
-    row_partition_numbers.end(),
-    scatter_map.begin(),
-    [offsets = histogram.data()] __device__(auto partition_number) {
-      cuda::atomic_ref<size_type, cuda::thread_scope_device> ref(offsets[partition_number]);
-      return ref.fetch_add(1, cuda::memory_order_relaxed);
-    });
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    row_partition_numbers.begin(),
+                    row_partition_numbers.end(),
+                    scatter_map.begin(),
+                    [offsets = histogram.data()] __device__(auto partition_number) {
+                      cuda::atomic_ref<histogram_bin_type, cuda::thread_scope_device> ref(
+                        offsets[partition_number]);
+                      return static_cast<size_type>(ref.fetch_add(1, cuda::memory_order_relaxed));
+                    });
 
   // Scatter input rows into partitioned output
   auto output = detail::scatter(input, scatter_map, input, stream, mr);
@@ -777,7 +791,7 @@ struct dispatch_map_type {
     requires(is_index_type<MapType>())
   {
     // Build a histogram of the number of rows in each partition
-    rmm::device_uvector<size_type> histogram(num_partitions + 1, stream);
+    rmm::device_uvector<histogram_bin_type> histogram(num_partitions + 1, stream);
     std::size_t temp_storage_bytes{};
     std::size_t const num_levels = num_partitions + 1;
     size_type const lower_level  = 0;
@@ -812,7 +826,8 @@ struct dispatch_map_type {
                            histogram.begin());
 
     // Copy offsets to host before the transform below modifies the histogram
-    auto const partition_offsets = cudf::detail::make_std_vector(histogram, stream);
+    auto const bin_offsets       = cudf::detail::make_std_vector(histogram, stream);
+    auto const partition_offsets = std::vector<size_type>(bin_offsets.begin(), bin_offsets.end());
 
     // Unfortunately need to materialize the scatter map because
     // `detail::scatter` requires multiple passes through the iterator
@@ -825,7 +840,8 @@ struct dispatch_map_type {
                       partition_map.end<MapType>(),
                       scatter_map.begin(),
                       [offsets = histogram.data()] __device__(auto partition_number) {
-                        return atomicAdd(&offsets[partition_number], 1);
+                        return static_cast<size_type>(cudf::detail::atomic_add_relaxed(
+                          &offsets[partition_number], histogram_bin_type{1}));
                       });
 
     // Scatter the rows into their partitions

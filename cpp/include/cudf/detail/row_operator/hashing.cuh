@@ -171,7 +171,7 @@ class device_row_hasher {
         keys.type(),
         _element_hasher,
         keys,
-        static_cast<size_type>(col.element<dictionary32>(row_index)));
+        static_cast<size_type>(col.element<dictionary32>(row_index).value()));
     }
 
     template <typename T>
@@ -198,7 +198,11 @@ class device_row_hasher {
           auto list_sizes = make_list_size_iterator(list_col);
           hash            = detail::accumulate(
             list_sizes, list_sizes + list_col.size(), hash, [](auto hash, auto size) {
-              return cudf::hashing::detail::hash_combine(hash, hash_function<size_type>{}(size));
+              auto const size_hash =
+                size <= cuda::std::numeric_limits<int32_t>::max()
+                  ? hash_function<int32_t>{}(static_cast<int32_t>(size))
+                  : hash_function<size_type>{}(size);
+              return cudf::hashing::detail::hash_combine(hash, size_hash);
             });
           curr_col = list_col.get_sliced_child();
         }

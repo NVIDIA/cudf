@@ -98,7 +98,7 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
 TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
 {
   using data_col   = cudf::test::fixed_width_column_wrapper<TypeParam>;
-  using int32s_col = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using int32s_col = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 
   auto const col1      = data_col{5, 2, 7, 1, 3};
   auto const col2      = data_col{};  // empty
@@ -157,7 +157,7 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
 TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
 {
   using data_col    = cudf::test::fixed_width_column_wrapper<TypeParam>;
-  using int32s_col  = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using int32s_col  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
   using strings_col = cudf::test::strings_column_wrapper;
   using structs_col = cudf::test::structs_column_wrapper;
 

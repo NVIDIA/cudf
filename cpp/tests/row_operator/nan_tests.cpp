@@ -38,7 +38,7 @@ TEST_F(RowOperatorTestForNAN, NANSorting)
      1.,
      -1 * std::numeric_limits<double>::infinity()},
     {true, true, true, false, true, true, true, true}};
-  cudf::test::fixed_width_column_wrapper<int32_t> expected1{{3, 6, 2, 0, 5, 4, 1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected1{{3, 6, 2, 0, 5, 4, 1}};
   std::vector<cudf::order> column_order{cudf::order::ASCENDING};
   std::vector<cudf::null_order> null_precedence_1{cudf::null_order::BEFORE};
   cudf::table_view input_table{{input}};
@@ -50,7 +50,7 @@ TEST_F(RowOperatorTestForNAN, NANSorting)
   // NULL After
 
   std::vector<cudf::null_order> null_precedence_2{cudf::null_order::AFTER};
-  cudf::test::fixed_width_column_wrapper<int32_t> expected2{{6, 2, 0, 5, 4, 1, 3}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected2{{6, 2, 0, 5, 4, 1, 3}};
 
   auto got2 = cudf::sorted_order(input_table, column_order, null_precedence_2);
 
@@ -71,7 +71,7 @@ TEST_F(RowOperatorTestForNAN, NANSortingNonNull)
   cudf::table_view input_table{{input}};
 
   auto result = cudf::sorted_order(input_table, {cudf::order::ASCENDING});
-  cudf::test::fixed_width_column_wrapper<int32_t> expected_asc{{6, 2, 0, 5, 3, 4, 1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_asc{{6, 2, 0, 5, 3, 4, 1}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_asc, result->view());
   auto sorted_result = cudf::sort(input_table, {cudf::order::ASCENDING});
   auto gather_result = cudf::gather(input_table, result->view());
@@ -79,7 +79,7 @@ TEST_F(RowOperatorTestForNAN, NANSortingNonNull)
                                       gather_result->view().column(0));
 
   result = cudf::sorted_order(input_table, {cudf::order::DESCENDING});
-  cudf::test::fixed_width_column_wrapper<int32_t> expected_desc{{1, 4, 3, 5, 0, 2, 6}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_desc{{1, 4, 3, 5, 0, 2, 6}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_desc, result->view());
   sorted_result = cudf::sort(input_table, {cudf::order::DESCENDING});
   gather_result = cudf::gather(input_table, result->view());

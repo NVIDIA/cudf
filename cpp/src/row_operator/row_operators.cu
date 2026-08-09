@@ -795,7 +795,7 @@ preprocessed_table::preprocessed_table(
   table_device_view_owner&& table,
   rmm::device_uvector<order>&& column_order,
   rmm::device_uvector<null_order>&& null_precedence,
-  rmm::device_uvector<size_type>&& depths,
+  rmm::device_uvector<int>&& depths,
   std::vector<detail::dremel_data>&& dremel_data,
   rmm::device_uvector<detail::dremel_device_view>&& dremel_device_views,
   std::vector<std::unique_ptr<column>>&& transformed_columns,
@@ -814,7 +814,7 @@ preprocessed_table::preprocessed_table(
 preprocessed_table::preprocessed_table(table_device_view_owner&& table,
                                        rmm::device_uvector<order>&& column_order,
                                        rmm::device_uvector<null_order>&& null_precedence,
-                                       rmm::device_uvector<size_type>&& depths,
+                                       rmm::device_uvector<int>&& depths,
                                        std::vector<std::unique_ptr<column>>&& transformed_columns,
                                        bool has_ranked_children)
   : _t(std::move(table)),

@@ -237,14 +237,17 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
 
     for (cudf::size_type i = 0; i < num_rows; i++) {
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
       auto group_end_index   = std::upper_bound(group_offsets.begin(), group_offsets.end(), i);
       auto group_start_index = group_end_index - 1;
 
-      cudf::size_type start       = std::min(num_rows, std::max(0, i - preceding_window + 1));
-      cudf::size_type end         = std::min(num_rows, std::max(0, i + following_window + 1));
+      cudf::size_type start =
+        std::min(num_rows, std::max(cudf::size_type{0}, i - preceding_window + 1));
+      cudf::size_type end =
+        std::min(num_rows, std::max(cudf::size_type{0}, i + following_window + 1));
       cudf::size_type start_index = std::max(*group_start_index, std::min(start, end));
       cudf::size_type end_index   = std::min(*group_end_index, std::max(start, end));
 
@@ -280,14 +283,17 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
 
     for (cudf::size_type i = 0; i < num_rows; i++) {
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
       auto group_end_index   = std::upper_bound(group_offsets.begin(), group_offsets.end(), i);
       auto group_start_index = group_end_index - 1;
 
-      cudf::size_type start       = std::min(num_rows, std::max(0, i - preceding_window + 1));
-      cudf::size_type end         = std::min(num_rows, std::max(0, i + following_window + 1));
+      cudf::size_type start =
+        std::min(num_rows, std::max(cudf::size_type{0}, i - preceding_window + 1));
+      cudf::size_type end =
+        std::min(num_rows, std::max(cudf::size_type{0}, i + following_window + 1));
       cudf::size_type start_index = std::max(*group_start_index, std::min(start, end));
       cudf::size_type end_index   = std::min(*group_end_index, std::max(start, end));
 
@@ -326,15 +332,19 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
       auto val = agg_op::template identity<OutputType>();
 
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
       auto group_end_index   = std::upper_bound(group_offsets.begin(), group_offsets.end(), i);
       auto group_start_index = group_end_index - 1;
 
-      cudf::size_type start = std::min(
-        num_rows, std::max(0, i - preceding_window + 1));  // Preceding window includes current row.
-      cudf::size_type end         = std::min(num_rows, std::max(0, i + following_window + 1));
+      cudf::size_type start =
+        std::min(num_rows,
+                 std::max(cudf::size_type{0},
+                          i - preceding_window + 1));  // Preceding window includes current row.
+      cudf::size_type end =
+        std::min(num_rows, std::max(cudf::size_type{0}, i + following_window + 1));
       cudf::size_type start_index = std::max(*group_start_index, std::min(start, end));
       cudf::size_type end_index   = std::min(*group_end_index, std::max(start, end));
 
@@ -868,7 +878,8 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
 
     for (cudf::size_type i = 0; i < num_rows; i++) {
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
       auto group_end_index   = std::upper_bound(group_offsets.begin(), group_offsets.end(), i);
@@ -939,7 +950,8 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
 
     for (cudf::size_type i = 0; i < num_rows; i++) {
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
       auto group_end_index   = std::upper_bound(group_offsets.begin(), group_offsets.end(), i);
@@ -1013,7 +1025,8 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
       auto val = agg_op::template identity<OutputType>();
 
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
       auto group_end_index   = std::upper_bound(group_offsets.begin(), group_offsets.end(), i);

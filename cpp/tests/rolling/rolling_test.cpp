@@ -144,6 +144,7 @@ TEST_F(RollingStructTest, NoNullStructsMinMaxCount)
 {
   using strings_col = cudf::test::strings_column_wrapper;
   using ints_col    = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using counts_col  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
   using structs_col = cudf::test::structs_column_wrapper;
 
   auto const do_test = [](auto const& input) {
@@ -162,7 +163,7 @@ TEST_F(RollingStructTest, NoNullStructsMinMaxCount)
     }();
 
     auto const expected_count =
-      ints_col{{3, 4, 4, 4, 4, 4, 4, 3, 2}, cudf::test::iterators::no_nulls()};
+      counts_col{{3, 4, 4, 4, 4, 4, 4, 3, 2}, cudf::test::iterators::no_nulls()};
     auto constexpr preceding  = 2;
     auto constexpr following  = 2;
     auto constexpr min_period = 1;
@@ -236,6 +237,7 @@ TEST_F(RollingStructTest, NullChildrenMinMaxCount)
 {
   using strings_col = cudf::test::strings_column_wrapper;
   using ints_col    = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using counts_col  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
   using structs_col = cudf::test::structs_column_wrapper;
 
   auto const input = [] {
@@ -269,7 +271,7 @@ TEST_F(RollingStructTest, NullChildrenMinMaxCount)
   }();
 
   auto const expected_count =
-    ints_col{{3, 4, 4, 4, 4, 4, 4, 3, 2}, cudf::test::iterators::no_nulls()};
+    counts_col{{3, 4, 4, 4, 4, 4, 4, 3, 2}, cudf::test::iterators::no_nulls()};
   auto constexpr preceding  = 2;
   auto constexpr following  = 2;
   auto constexpr min_period = 1;
@@ -311,6 +313,7 @@ TEST_F(RollingStructTest, NullParentMinMaxCount)
 {
   using strings_col = cudf::test::strings_column_wrapper;
   using ints_col    = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using counts_col  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
   using structs_col = cudf::test::structs_column_wrapper;
 
   auto constexpr null{0};
@@ -342,9 +345,9 @@ TEST_F(RollingStructTest, NullParentMinMaxCount)
   }();
 
   auto const expected_count_valid =
-    ints_col{{1, 2, 1, 2, 3, 3, 3, 2, 1}, cudf::test::iterators::no_nulls()};
+    counts_col{{1, 2, 1, 2, 3, 3, 3, 2, 1}, cudf::test::iterators::no_nulls()};
   auto const expected_count_all =
-    ints_col{{3, 4, 4, 4, 4, 4, 4, 3, 2}, cudf::test::iterators::no_nulls()};
+    counts_col{{3, 4, 4, 4, 4, 4, 4, 3, 2}, cudf::test::iterators::no_nulls()};
   auto constexpr preceding  = 2;
   auto constexpr following  = 2;
   auto constexpr min_period = 1;
@@ -481,13 +484,16 @@ class RollingTest : public cudf::test::BaseFixture {
 
     for (cudf::size_type i = 0; i < num_rows; i++) {
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
-      auto preceding_window       = preceding_window_col[i % preceding_window_col.size()];
-      auto following_window       = following_window_col[i % following_window_col.size()];
-      cudf::size_type start       = std::min(num_rows, std::max(0, i - preceding_window + 1));
-      cudf::size_type end         = std::min(num_rows, std::max(0, i + following_window + 1));
+      auto preceding_window = preceding_window_col[i % preceding_window_col.size()];
+      auto following_window = following_window_col[i % following_window_col.size()];
+      cudf::size_type start =
+        std::min(num_rows, std::max(cudf::size_type{0}, i - preceding_window + 1));
+      cudf::size_type end =
+        std::min(num_rows, std::max(cudf::size_type{0}, i + following_window + 1));
       cudf::size_type start_index = std::min(start, end);
       cudf::size_type end_index   = std::max(start, end);
 
@@ -527,13 +533,16 @@ class RollingTest : public cudf::test::BaseFixture {
       auto val = agg_op::template identity<OutputType>();
 
       // load sizes
-      min_periods = std::max(min_periods, 1);  // at least one observation is required
+      min_periods =
+        std::max(min_periods, cudf::size_type{1});  // at least one observation is required
 
       // compute bounds
-      auto preceding_window       = preceding_window_col[i % preceding_window_col.size()];
-      auto following_window       = following_window_col[i % following_window_col.size()];
-      cudf::size_type start       = std::min(num_rows, std::max(0, i - preceding_window + 1));
-      cudf::size_type end         = std::min(num_rows, std::max(0, i + following_window + 1));
+      auto preceding_window = preceding_window_col[i % preceding_window_col.size()];
+      auto following_window = following_window_col[i % following_window_col.size()];
+      cudf::size_type start =
+        std::min(num_rows, std::max(cudf::size_type{0}, i - preceding_window + 1));
+      cudf::size_type end =
+        std::min(num_rows, std::max(cudf::size_type{0}, i + following_window + 1));
       cudf::size_type start_index = std::min(start, end);
       cudf::size_type end_index   = std::max(start, end);
 
@@ -1320,14 +1329,14 @@ TEST_F(RollingTestUdf, StaticWindow)
 {
   cudf::size_type size = 1000;
 
-  cudf::test::fixed_width_column_wrapper<int32_t> input(cuda::counting_iterator<int32_t>{0},
+  cudf::test::fixed_width_column_wrapper<int32_t> input(cuda::counting_iterator<cudf::size_type>{0},
                                                         cuda::counting_iterator{size},
                                                         cuda::make_constant_iterator(true));
 
   std::unique_ptr<cudf::column> output;
 
   auto start = cudf::detail::make_counting_transform_iterator(0, [size](cudf::size_type row) {
-    return std::accumulate(cuda::counting_iterator{std::max(0, row - 2 + 1)},
+    return std::accumulate(cuda::counting_iterator{std::max(cudf::size_type{0}, row - 2 + 1)},
                            cuda::counting_iterator{std::min(size, row + 2 + 1)},
                            0);
   });
@@ -1358,7 +1367,7 @@ TEST_F(RollingTestUdf, DynamicWindow)
 {
   cudf::size_type size = 1000;
 
-  cudf::test::fixed_width_column_wrapper<int32_t> input(cuda::counting_iterator<int32_t>{0},
+  cudf::test::fixed_width_column_wrapper<int32_t> input(cuda::counting_iterator<cudf::size_type>{0},
                                                         cuda::counting_iterator{size},
                                                         cuda::make_constant_iterator(true));
 
@@ -1368,15 +1377,16 @@ TEST_F(RollingTestUdf, DynamicWindow)
   auto follow = cudf::detail::make_counting_transform_iterator(
     0, [] __device__(cudf::size_type row) { return row % 2; });
 
-  cudf::test::fixed_width_column_wrapper<int32_t> preceding(prec, prec + size);
-  cudf::test::fixed_width_column_wrapper<int32_t> following(follow, follow + size);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> preceding(prec, prec + size);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> following(follow, follow + size);
   std::unique_ptr<cudf::column> output;
 
   auto start =
     cudf::detail::make_counting_transform_iterator(0, [size] __device__(cudf::size_type row) {
-      return std::accumulate(cuda::counting_iterator{std::max(0, row - (row % 2 + 2) + 1)},
-                             cuda::counting_iterator{std::min(size, row + (row % 2) + 1)},
-                             0);
+      return std::accumulate(
+        cuda::counting_iterator{std::max(cudf::size_type{0}, row - (row % 2 + 2) + 1)},
+        cuda::counting_iterator{std::min(size, row + (row % 2) + 1)},
+        0);
     });
 
   auto valid = cudf::detail::make_counting_transform_iterator(

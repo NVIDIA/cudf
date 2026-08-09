@@ -28,9 +28,9 @@ std::unique_ptr<column> rolling_window(column_view const& input,
     return cudf::detail::empty_output_for_rolling_aggregation(input, agg);
   }
 
-  CUDF_EXPECTS(preceding_window.type().id() == type_id::INT32 &&
-                 following_window.type().id() == type_id::INT32,
-               "preceding_window/following_window must have type_id::INT32 type");
+  CUDF_EXPECTS(preceding_window.type().id() == type_to_id<size_type>() &&
+                 following_window.type().id() == type_to_id<size_type>(),
+               "preceding_window/following_window types must match size_type");
 
   CUDF_EXPECTS(preceding_window.size() == input.size() && following_window.size() == input.size(),
                "preceding_window/following_window size must match input size");

@@ -18,6 +18,7 @@ template <typename T>
 using decimals_column = cudf::test::fixed_point_column_wrapper<T>;
 using ints_column     = fwcw<int32_t>;
 using bigints_column  = fwcw<int64_t>;
+using counts_column   = fwcw<cudf::size_type>;
 using strings_column  = cudf::test::strings_column_wrapper;
 using lists_column    = cudf::test::lists_column_wrapper<int32_t>;
 using column_ptr      = std::unique_ptr<cudf::column>;
@@ -90,10 +91,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Grouped_3_to_Minus_1)
   run_rolling.min_periods(1).grouped(true);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, nulls_at({0, 6})});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, nulls_at({0, 6})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, nulls_at({0, 6})});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, nulls_at({0, 6})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_MIN), ints_column{{null, 0, 0, 1, 2, 3, null, 6, 6, 7}, nulls_at({0, 6})});
@@ -113,10 +114,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Grouped_3_to_Minus_1)
   run_rolling.min_periods(0);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, no_nulls()});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, no_nulls()});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 0, 1, 2, 2}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_COLLECT_LIST),
@@ -131,10 +132,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Ungrouped_3_to_Minus_1)
   run_rolling.min_periods(1).grouped(false);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, nulls_at({0})});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, nulls_at({0})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, nulls_at({0})});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, nulls_at({0})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_MIN),
                                  ints_column{{null, 0, 0, 1, 2, 3, 4, 5, 6, 7}, nulls_at({0})});
@@ -153,10 +154,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Ungrouped_3_to_Minus_1)
   run_rolling.min_periods(0);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, no_nulls()});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, no_nulls()});
+                                 counts_column{{0, 1, 2, 2, 2, 2, 2, 2, 2, 2}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_COLLECT_LIST),
@@ -173,11 +174,11 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Grouped_0_to_2)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_COUNT_NON_NULL),
-    ints_column{{2, 2, 2, 2, 1, null, 2, 2, 1, null}, nulls_at({5, 9})});
+    counts_column{{2, 2, 2, 2, 1, null, 2, 2, 1, null}, nulls_at({5, 9})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_COUNT_ALL),
-    ints_column{{2, 2, 2, 2, 1, null, 2, 2, 1, null}, nulls_at({5, 9})});
+    counts_column{{2, 2, 2, 2, 1, null, 2, 2, 1, null}, nulls_at({5, 9})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_MIN), ints_column{{1, 2, 3, 4, 5, null, 7, 8, 9, null}, nulls_at({5, 9})});
@@ -197,10 +198,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Grouped_0_to_2)
   run_rolling.min_periods(0);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{2, 2, 2, 2, 1, 0, 2, 2, 1, 0}, no_nulls()});
+                                 counts_column{{2, 2, 2, 2, 1, 0, 2, 2, 1, 0}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{2, 2, 2, 2, 1, 0, 2, 2, 1, 0}, no_nulls()});
+                                 counts_column{{2, 2, 2, 2, 1, 0, 2, 2, 1, 0}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_COLLECT_LIST),
@@ -216,10 +217,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Ungrouped_0_to_2)
   run_rolling.min_periods(1).grouped(false);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, null}, nulls_at({9})});
+                                 counts_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, null}, nulls_at({9})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, null}, nulls_at({9})});
+                                 counts_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, null}, nulls_at({9})});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_MIN),
                                  ints_column{{1, 2, 3, 4, 5, 6, 7, 8, 9, null}, nulls_at({9})});
@@ -238,10 +239,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Ungrouped_0_to_2)
   run_rolling.min_periods(0);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_NON_NULL),
-                                 ints_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, 0}, no_nulls()});
+                                 counts_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, 0}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*run_rolling(*AGG_COUNT_ALL),
-                                 ints_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, 0}, no_nulls()});
+                                 counts_column{{2, 2, 2, 2, 2, 2, 2, 2, 1, 0}, no_nulls()});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *run_rolling(*AGG_COLLECT_LIST),
@@ -273,7 +274,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
     auto const expected_fun = [&](auto const& i) {
       assert(preceding < 1);
       auto const index_in_group = i % 10;
-      auto const start          = std::min(-(preceding - 1) + index_in_group, 10);
+      auto const start          = std::min(-(preceding - 1) + index_in_group, cudf::size_type{10});
       return int64_t{10 - start};
     };
     auto const expected_iter =
@@ -288,7 +289,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
     auto const expected_fun = [&](auto const& i) {
       assert(following < 0);
       auto const index_in_group = i % 10;
-      auto const end            = std::max(index_in_group + following, -1);
+      auto const end            = std::max(index_in_group + following, cudf::size_type{-1});
       return int64_t{end + 1};
     };
     auto const expected_iter =

@@ -837,19 +837,20 @@ struct LeadLagNonFixedWidthTest : cudf::test::BaseFixture {};
 TEST_F(LeadLagNonFixedWidthTest, StringsNoDefaults)
 {
   auto input_col =
-    cudf::test::strings_column_wrapper{{"",
-                                        "A_1",
-                                        "A_22",
-                                        "A_333",
-                                        "A_4444",
-                                        "A_55555",
-                                        "B_0",
-                                        "",
-                                        "B_22",
-                                        "B_333",
-                                        "B_4444",
-                                        "B_55555"},
-                                       cudf::test::iterators::nulls_at(std::vector{0, 7})}
+    cudf::test::strings_column_wrapper{
+      {"",
+       "A_1",
+       "A_22",
+       "A_333",
+       "A_4444",
+       "A_55555",
+       "B_0",
+       "",
+       "B_22",
+       "B_333",
+       "B_4444",
+       "B_55555"},
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{0, 7})}
       .release();
 
   auto const grouping_key =
@@ -870,7 +871,7 @@ TEST_F(LeadLagNonFixedWidthTest, StringsNoDefaults)
     lead_2->view(),
     cudf::test::strings_column_wrapper{
       {"A_22", "A_333", "A_4444", "A_55555", "", "", "B_22", "B_333", "B_4444", "B_55555", "", ""},
-      cudf::test::iterators::nulls_at(std::vector{4, 5, 10, 11})});
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{4, 5, 10, 11})});
 
   auto lag_1 = grouped_rolling_window(grouping_keys,
                                       input_col->view(),
@@ -883,25 +884,26 @@ TEST_F(LeadLagNonFixedWidthTest, StringsNoDefaults)
     lag_1->view(),
     cudf::test::strings_column_wrapper{
       {"", "", "A_1", "A_22", "A_333", "A_4444", "", "B_0", "", "B_22", "B_333", "B_4444"},
-      cudf::test::iterators::nulls_at(std::vector{0, 1, 6, 8})});
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{0, 1, 6, 8})});
 }
 
 TEST_F(LeadLagNonFixedWidthTest, StringsWithDefaults)
 {
   auto input_col =
-    cudf::test::strings_column_wrapper{{"",
-                                        "A_1",
-                                        "A_22",
-                                        "A_333",
-                                        "A_4444",
-                                        "A_55555",
-                                        "B_0",
-                                        "",
-                                        "B_22",
-                                        "B_333",
-                                        "B_4444",
-                                        "B_55555"},
-                                       cudf::test::iterators::nulls_at(std::vector{0, 7})}
+    cudf::test::strings_column_wrapper{
+      {"",
+       "A_1",
+       "A_22",
+       "A_333",
+       "A_4444",
+       "A_55555",
+       "B_0",
+       "",
+       "B_22",
+       "B_333",
+       "B_4444",
+       "B_55555"},
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{0, 7})}
       .release();
 
   auto defaults_col = cudf::test::strings_column_wrapper{"9999",
@@ -959,25 +961,26 @@ TEST_F(LeadLagNonFixedWidthTest, StringsWithDefaults)
     lag_1->view(),
     cudf::test::strings_column_wrapper{
       {"9999", "", "A_1", "A_22", "A_333", "A_4444", "9999", "B_0", "", "B_22", "B_333", "B_4444"},
-      cudf::test::iterators::nulls_at(std::vector{1, 8})});
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{1, 8})});
 }
 
 TEST_F(LeadLagNonFixedWidthTest, StringsWithDefaultsNoGroups)
 {
   auto input_col =
-    cudf::test::strings_column_wrapper{{"",
-                                        "A_1",
-                                        "A_22",
-                                        "A_333",
-                                        "A_4444",
-                                        "A_55555",
-                                        "B_0",
-                                        "",
-                                        "B_22",
-                                        "B_333",
-                                        "B_4444",
-                                        "B_55555"},
-                                       cudf::test::iterators::nulls_at(std::vector{0, 7})}
+    cudf::test::strings_column_wrapper{
+      {"",
+       "A_1",
+       "A_22",
+       "A_333",
+       "A_4444",
+       "A_55555",
+       "B_0",
+       "",
+       "B_22",
+       "B_333",
+       "B_4444",
+       "B_55555"},
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{0, 7})}
       .release();
 
   auto defaults_col = cudf::test::strings_column_wrapper{"9999",
@@ -1035,19 +1038,20 @@ TEST_F(LeadLagNonFixedWidthTest, StringsWithDefaultsNoGroups)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     lag_1->view(),
-    cudf::test::strings_column_wrapper{{"9999",
-                                        "",
-                                        "A_1",
-                                        "A_22",
-                                        "A_333",
-                                        "A_4444",
-                                        "A_55555",
-                                        "B_0",
-                                        "",
-                                        "B_22",
-                                        "B_333",
-                                        "B_4444"},
-                                       cudf::test::iterators::nulls_at(std::vector{1, 8})});
+    cudf::test::strings_column_wrapper{
+      {"9999",
+       "",
+       "A_1",
+       "A_22",
+       "A_333",
+       "A_4444",
+       "A_55555",
+       "B_0",
+       "",
+       "B_22",
+       "B_333",
+       "B_4444"},
+      cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{1, 8})});
 }
 
 TEST_F(LeadLagNonFixedWidthTest, Dictionary)

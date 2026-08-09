@@ -30,6 +30,7 @@ template <typename T>
 using decimals_column = cudf::test::fixed_point_column_wrapper<T>;
 using ints_column     = fwcw<int32_t>;
 using bigints_column  = fwcw<int64_t>;
+using counts_column   = fwcw<cudf::size_type>;
 using strings_column  = cudf::test::strings_column_wrapper;
 using column_ptr      = std::unique_ptr<cudf::column>;
 
@@ -621,7 +622,7 @@ struct GroupedRollingRangeOrderByStringTest : public cudf::test::BaseFixture {
 
   [[nodiscard]] static auto nullable_ints_column(std::initializer_list<int> const& ints)
   {
-    return ints_column{ints, cudf::test::iterators::no_nulls()};
+    return counts_column{ints, cudf::test::iterators::no_nulls()};
   }
 
   [[nodiscard]] auto get_count_over_partitioned_window(
@@ -806,8 +807,8 @@ TEST(GroupedRollingRangeMultiOrderByTest, UnpartitionedUnboundedPrecedingCurrent
                                        cudf::host_span<cudf::rolling_request const>{requests});
   auto columns = result->release();
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*columns[0],
-                                 ints_column{{2, 2, 3, 5, 5}, cudf::test::iterators::no_nulls()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    *columns[0], counts_column{{2, 2, 3, 5, 5}, cudf::test::iterators::no_nulls()});
 }
 
 TEST_F(GroupedRollingRangeOrderByStringTest, Ascending_Partitioned_NoNulls)
@@ -835,7 +836,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Ascending_Partitioned_NoNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(
       *orderby, cudf::order::ASCENDING, unbounded_preceding, unbounded_following),
-    ints_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
+    counts_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(*orderby, cudf::order::ASCENDING, current_row, current_row),
@@ -867,7 +868,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Ascending_NoParts_NoNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_unpartitioned_window(
       *orderby, cudf::order::ASCENDING, unbounded_preceding, unbounded_following),
-    ints_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
+    counts_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*get_count_over_unpartitioned_window(
                                    *orderby, cudf::order::ASCENDING, current_row, current_row),
@@ -902,7 +903,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Ascending_Partitioned_WithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(
       *orderby, cudf::order::ASCENDING, unbounded_preceding, unbounded_following),
-    ints_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
+    counts_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(*orderby, cudf::order::ASCENDING, current_row, current_row),
@@ -937,7 +938,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Ascending_NoParts_WithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_unpartitioned_window(
       *orderby, cudf::order::ASCENDING, unbounded_preceding, unbounded_following),
-    ints_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
+    counts_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*get_count_over_unpartitioned_window(
                                    *orderby, cudf::order::ASCENDING, current_row, current_row),
@@ -969,7 +970,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Descending_Partitioned_NoNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(
       *orderby, cudf::order::DESCENDING, unbounded_preceding, unbounded_following),
-    ints_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
+    counts_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(*orderby, cudf::order::DESCENDING, current_row, current_row),
@@ -1001,7 +1002,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Descending_NoParts_NoNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_unpartitioned_window(
       *orderby, cudf::order::DESCENDING, unbounded_preceding, unbounded_following),
-    ints_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
+    counts_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*get_count_over_unpartitioned_window(
                                    *orderby, cudf::order::DESCENDING, current_row, current_row),
@@ -1035,7 +1036,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Descending_Partitioned_WithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(
       *orderby, cudf::order::DESCENDING, unbounded_preceding, unbounded_following),
-    ints_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
+    counts_column{6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_partitioned_window(*orderby, cudf::order::DESCENDING, current_row, current_row),
@@ -1070,7 +1071,7 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Descending_NoParts_WithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *get_count_over_unpartitioned_window(
       *orderby, cudf::order::DESCENDING, unbounded_preceding, unbounded_following),
-    ints_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
+    counts_column{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*get_count_over_unpartitioned_window(
                                    *orderby, cudf::order::DESCENDING, current_row, current_row),

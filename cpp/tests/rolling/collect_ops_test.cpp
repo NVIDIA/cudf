@@ -613,7 +613,8 @@ TYPED_TEST(TypedCollectListTest, BasicGroupedRollingWindowWithNulls)
       {1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1}};
 
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 8, 11, 13, 15, 18, 21, 23};
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+        0, 2, 5, 8, 11, 13, 15, 18, 21, 23};
 
     auto expected_result =
       cudf::make_lists_column(static_cast<cudf::column_view>(group_column).size(),
@@ -639,7 +640,8 @@ TYPED_TEST(TypedCollectListTest, BasicGroupedRollingWindowWithNulls)
       10, 10, 12, 12, 13, 12, 13, 14, 13, 14, 20, 20, 22, 22, 23, 22, 23};
 
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 3, 5, 8, 10, 11, 13, 15, 17};
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+        0, 1, 3, 5, 8, 10, 11, 13, 15, 17};
 
     auto expected_result =
       cudf::make_lists_column(static_cast<cudf::column_view>(group_column).size(),
@@ -1752,7 +1754,8 @@ TYPED_TEST(TypedCollectSetTest, BasicGroupedRollingWindowWithNulls)
                                                                                1, 0      // row 9
                                                                              }};
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 9, 11, 14, 16, 18, 20};
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+        0, 2, 4, 6, 8, 9, 11, 14, 16, 18, 20};
 
     auto expected_result =
       cudf::make_lists_column(static_cast<cudf::column_view>(group_column).size(),
@@ -1800,7 +1803,8 @@ TYPED_TEST(TypedCollectSetTest, BasicGroupedRollingWindowWithNulls)
                                                                                1, 0      // row 9
                                                                              }};
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 8, 10, 11, 13, 16, 19, 22, 24};
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+        0, 2, 5, 8, 10, 11, 13, 16, 19, 22, 24};
 
     auto expected_result =
       cudf::make_lists_column(static_cast<cudf::column_view>(group_column).size(),
@@ -1838,7 +1842,8 @@ TYPED_TEST(TypedCollectSetTest, BasicGroupedRollingWindowWithNulls)
     };
 
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 12};
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+        0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 12};
 
     auto expected_result =
       cudf::make_lists_column(static_cast<cudf::column_view>(group_column).size(),
@@ -2259,7 +2264,7 @@ TEST_F(CollectSetTest, ListTypeRollingWindow)
   auto const expected = [] {
     auto data = cudf::test::fixed_width_column_wrapper<int32_t>{
       1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 4, 5, 6, 7, 8, 9, 6, 7, 8, 9, 10, 7, 8, 9, 10};
-    auto inner_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{
+    auto inner_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
       0, 3, 5, 8, 10, 11, 13, 14, 17, 18, 21, 22, 25, 26};
     auto outer_offsets =
       cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 8, 11, 13};

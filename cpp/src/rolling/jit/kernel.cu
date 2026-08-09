@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
@@ -106,7 +107,9 @@ __device__ void rolling_window_kernel(cudf::size_type nrows,
 
   // TODO: likely faster to do a single_lane_block_reduce and a single
   // atomic per block but that requires jit-compiling single_lane_block_reduce...
-  if (0 == cudf::intra_word_index(threadIdx.x)) { atomicAdd(output_valid_count, warp_valid_count); }
+  if (0 == cudf::intra_word_index(threadIdx.x)) {
+    cudf::detail::atomic_add_relaxed(output_valid_count, warp_valid_count);
+  }
 }
 
 }  // namespace jit

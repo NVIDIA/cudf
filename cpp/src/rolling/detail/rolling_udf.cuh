@@ -59,7 +59,7 @@ inline std::unique_ptr<column> rolling_window_udf_impl(
     CUDF_FAIL("Currently the UDF version of rolling window does NOT support inputs with nulls.");
   }
 
-  min_periods = std::max(min_periods, 0);
+  min_periods = std::max(min_periods, size_type{0});
 
   auto& udf_agg = dynamic_cast<udf_aggregation const&>(agg);
 

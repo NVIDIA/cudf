@@ -35,6 +35,20 @@ struct KeyRemappingTest : public cudf::test::BaseFixture {
   template <typename T>
   std::vector<T> to_host(cudf::column_view const& col)
   {
+    if constexpr (CUDF_SIZE_TYPE_BITS == 64 && std::is_same_v<T, int32_t>) {
+      if (col.type().id() == cudf::type_to_id<cudf::size_type>()) {
+        auto const wide_values = cudf::detail::make_std_vector<cudf::size_type>(
+          cudf::device_span<cudf::size_type const>{
+            col.data<cudf::size_type>(), static_cast<std::size_t>(col.size())},
+          cudf::get_default_stream());
+        std::vector<T> values(wide_values.size());
+        std::transform(
+          wide_values.begin(), wide_values.end(), values.begin(), [](auto value) {
+            return static_cast<T>(value);
+          });
+        return values;
+      }
+    }
     return cudf::detail::make_std_vector<T>(
       cudf::device_span<T const>{col.data<T>(), static_cast<std::size_t>(col.size())},
       cudf::get_default_stream());

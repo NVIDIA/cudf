@@ -652,7 +652,9 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
 {
   auto indices = impl.probe(keys, stream, mr);
 
-  if (indices->size() == 0) { return cudf::make_empty_column(cudf::type_id::INT32); }
+  if (indices->size() == 0) {
+    return cudf::make_empty_column(cudf::type_to_id<cudf::size_type>());
+  }
 
   thrust::replace(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                   indices->begin(),
@@ -662,7 +664,11 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
 
   auto const row_count = static_cast<cudf::size_type>(indices->size());
   return std::make_unique<cudf::column>(
-    cudf::data_type{cudf::type_id::INT32}, row_count, indices->release(), rmm::device_buffer{}, 0);
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+    row_count,
+    indices->release(),
+    rmm::device_buffer{},
+    0);
 }
 }  // namespace
 

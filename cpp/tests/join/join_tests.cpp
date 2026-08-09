@@ -322,12 +322,12 @@ struct JoinTest : public cudf::test::BaseFixture {
               std::unique_ptr<rmm::device_uvector<cudf::size_type>>> const& result)
   {
     auto result_table =
-      cudf::table_view({cudf::column_view{cudf::data_type{cudf::type_id::INT32},
+      cudf::table_view({cudf::column_view{cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                           static_cast<cudf::size_type>(result.first->size()),
                                           result.first->data(),
                                           nullptr,
                                           0},
-                        cudf::column_view{cudf::data_type{cudf::type_id::INT32},
+                        cudf::column_view{cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                           static_cast<cudf::size_type>(result.second->size()),
                                           result.second->data(),
                                           nullptr,
@@ -1749,8 +1749,8 @@ TEST_P(JoinParameterizedTest, EmptyRightTableInnerJoin)
     EXPECT_EQ(output_size, size_gold);
 
     auto result = hash_join.inner_join(t0, optional_size);
-    column_wrapper<int32_t> col_gold_0{};
-    column_wrapper<int32_t> col_gold_1{};
+    column_wrapper<cudf::size_type> col_gold_0{};
+    column_wrapper<cudf::size_type> col_gold_1{};
     auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
   }
@@ -1789,8 +1789,9 @@ TEST_P(JoinParameterizedTest, EmptyRightTableLeftJoin)
     EXPECT_EQ(output_size, size_gold);
 
     auto result = hash_join.left_join(t0, optional_size);
-    column_wrapper<int32_t> col_gold_0{{0, 1, 2, 3, 4}};
-    column_wrapper<int32_t> col_gold_1{{NoneValue, NoneValue, NoneValue, NoneValue, NoneValue}};
+    column_wrapper<cudf::size_type> col_gold_0{{0, 1, 2, 3, 4}};
+    column_wrapper<cudf::size_type> col_gold_1{
+      NoneValue, NoneValue, NoneValue, NoneValue, NoneValue};
     auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
   }
@@ -1828,8 +1829,9 @@ TEST_F(JoinTest, EmptyRightTableFullJoin)
     EXPECT_EQ(output_size, size_gold);
 
     auto result = hash_join.full_join(t0, optional_size);
-    column_wrapper<int32_t> col_gold_0{{0, 1, 2, 3, 4}};
-    column_wrapper<int32_t> col_gold_1{{NoneValue, NoneValue, NoneValue, NoneValue, NoneValue}};
+    column_wrapper<cudf::size_type> col_gold_0{{0, 1, 2, 3, 4}};
+    column_wrapper<cudf::size_type> col_gold_1{
+      NoneValue, NoneValue, NoneValue, NoneValue, NoneValue};
     auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
   }
@@ -2067,10 +2069,10 @@ TEST_F(JoinTest, HashJoinSequentialProbes)
       EXPECT_EQ(output_size, size_gold);
 
       auto result = hash_join.full_join(t0, optional_size);
-      column_wrapper<int32_t> col_gold_0{
-        {NoneValue, NoneValue, NoneValue, NoneValue, 4, 0, 1, 2, 3}};
-      column_wrapper<int32_t> col_gold_1{
-        {0, 1, 2, 3, 4, NoneValue, NoneValue, NoneValue, NoneValue}};
+      column_wrapper<cudf::size_type> col_gold_0{
+        NoneValue, NoneValue, NoneValue, NoneValue, 4, 0, 1, 2, 3};
+      column_wrapper<cudf::size_type> col_gold_1{
+        0, 1, 2, 3, 4, NoneValue, NoneValue, NoneValue, NoneValue};
       auto const [sorted_gold, sorted_result] =
         gather_maps_as_tables(col_gold_0, col_gold_1, result);
       CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
@@ -2091,8 +2093,8 @@ TEST_F(JoinTest, HashJoinSequentialProbes)
       EXPECT_EQ(output_size, size_gold);
 
       auto result = hash_join.left_join(t0, optional_size);
-      column_wrapper<int32_t> col_gold_0{{0, 1, 2, 3, 4}};
-      column_wrapper<int32_t> col_gold_1{{NoneValue, NoneValue, NoneValue, NoneValue, 4}};
+      column_wrapper<cudf::size_type> col_gold_0{{0, 1, 2, 3, 4}};
+      column_wrapper<cudf::size_type> col_gold_1{NoneValue, NoneValue, NoneValue, NoneValue, 4};
       auto const [sorted_gold, sorted_result] =
         gather_maps_as_tables(col_gold_0, col_gold_1, result);
       CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
@@ -2113,8 +2115,8 @@ TEST_F(JoinTest, HashJoinSequentialProbes)
       EXPECT_EQ(output_size, size_gold);
 
       auto result = hash_join.inner_join(t0, optional_size);
-      column_wrapper<int32_t> col_gold_0{{2, 4, 0}};
-      column_wrapper<int32_t> col_gold_1{{1, 1, 4}};
+      column_wrapper<cudf::size_type> col_gold_0{{2, 4, 0}};
+      column_wrapper<cudf::size_type> col_gold_1{{1, 1, 4}};
       auto const [sorted_gold, sorted_result] =
         gather_maps_as_tables(col_gold_0, col_gold_1, result);
       CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
@@ -2161,8 +2163,8 @@ TEST_F(JoinTest, HashJoinWithStructsAndNulls)
     auto output_size = hash_join.left_join_size(t0);
     EXPECT_EQ(5, output_size);
     auto result = hash_join.left_join(t0, output_size);
-    column_wrapper<int32_t> col_gold_0{{0, 1, 2, 3, 4}};
-    column_wrapper<int32_t> col_gold_1{{0, NoneValue, 2, NoneValue, NoneValue}};
+    column_wrapper<cudf::size_type> col_gold_0{{0, 1, 2, 3, 4}};
+    column_wrapper<cudf::size_type> col_gold_1{0, NoneValue, 2, NoneValue, NoneValue};
     auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
   }
@@ -2171,8 +2173,8 @@ TEST_F(JoinTest, HashJoinWithStructsAndNulls)
     auto output_size = hash_join.inner_join_size(t0);
     EXPECT_EQ(2, output_size);
     auto result = hash_join.inner_join(t0, output_size);
-    column_wrapper<int32_t> col_gold_0{{0, 2}};
-    column_wrapper<int32_t> col_gold_1{{0, 2}};
+    column_wrapper<cudf::size_type> col_gold_0{{0, 2}};
+    column_wrapper<cudf::size_type> col_gold_1{{0, 2}};
     auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
   }
@@ -2181,8 +2183,8 @@ TEST_F(JoinTest, HashJoinWithStructsAndNulls)
     auto output_size = hash_join.full_join_size(t0);
     EXPECT_EQ(8, output_size);
     auto result = hash_join.full_join(t0, output_size);
-    column_wrapper<int32_t> col_gold_0{{NoneValue, NoneValue, NoneValue, 0, 1, 2, 3, 4}};
-    column_wrapper<int32_t> col_gold_1{{1, 3, 4, 0, NoneValue, 2, NoneValue, NoneValue}};
+    column_wrapper<cudf::size_type> col_gold_0{NoneValue, NoneValue, NoneValue, 0, 1, 2, 3, 4};
+    column_wrapper<cudf::size_type> col_gold_1{1, 3, 4, 0, NoneValue, 2, NoneValue, NoneValue};
     auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
   }
@@ -2210,15 +2212,15 @@ TEST_F(JoinTest, HashJoinWithNullsOneSide)
   }();
 
   auto const hash_join   = cudf::hash_join(t0, cudf::null_equality::EQUAL);
-  auto constexpr invalid = std::numeric_limits<int32_t>::min();  // invalid index sentinel
+  auto constexpr invalid = std::numeric_limits<cudf::size_type>::min();  // invalid index sentinel
 
   auto const sort_result = [](auto const& result) {
-    auto const left_cv  = cudf::column_view{cudf::data_type{cudf::type_id::INT32},
+    auto const left_cv  = cudf::column_view{cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                            static_cast<cudf::size_type>(result.first->size()),
                                            result.first->data(),
                                            nullptr,
                                            0};
-    auto const right_cv = cudf::column_view{cudf::data_type{cudf::type_id::INT32},
+    auto const right_cv = cudf::column_view{cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                             static_cast<cudf::size_type>(result.second->size()),
                                             result.second->data(),
                                             nullptr,
@@ -2234,22 +2236,22 @@ TEST_F(JoinTest, HashJoinWithNullsOneSide)
     auto const [sorted_left_indices, sorted_right_indices] = sort_result(result);
 
     auto const expected_left_indices =
-      column_wrapper<int32_t>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-    auto const expected_right_indices = column_wrapper<int32_t>{invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                0,
-                                                                2,
-                                                                3,
-                                                                4};
+      column_wrapper<cudf::size_type>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+    auto const expected_right_indices = column_wrapper<cudf::size_type>{invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        0,
+                                                                        2,
+                                                                        3,
+                                                                        4};
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left_indices, sorted_left_indices->get_column(0));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right_indices, sorted_right_indices->get_column(0));
@@ -2260,8 +2262,8 @@ TEST_F(JoinTest, HashJoinWithNullsOneSide)
     auto const result      = hash_join.inner_join(t1, std::optional<std::size_t>{output_size});
     auto const [sorted_left_indices, sorted_right_indices] = sort_result(result);
 
-    auto const expected_left_indices  = column_wrapper<int32_t>{5, 7, 8, 9};
-    auto const expected_right_indices = column_wrapper<int32_t>{0, 2, 3, 4};
+    auto const expected_left_indices  = column_wrapper<cudf::size_type>{5, 7, 8, 9};
+    auto const expected_right_indices = column_wrapper<cudf::size_type>{0, 2, 3, 4};
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left_indices, sorted_left_indices->get_column(0));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right_indices, sorted_right_indices->get_column(0));
@@ -2273,23 +2275,23 @@ TEST_F(JoinTest, HashJoinWithNullsOneSide)
     auto const [sorted_left_indices, sorted_right_indices] = sort_result(result);
 
     auto const expected_left_indices =
-      column_wrapper<int32_t>{invalid, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-    auto const expected_right_indices = column_wrapper<int32_t>{invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                invalid,
-                                                                0,
-                                                                1,
-                                                                2,
-                                                                3,
-                                                                4};
+      column_wrapper<cudf::size_type>{invalid, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+    auto const expected_right_indices = column_wrapper<cudf::size_type>{invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        invalid,
+                                                                        0,
+                                                                        1,
+                                                                        2,
+                                                                        3,
+                                                                        4};
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left_indices, sorted_left_indices->get_column(0));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right_indices, sorted_right_indices->get_column(0));
@@ -2330,8 +2332,8 @@ TEST_F(JoinTest, HashJoinMemoryResource)
   EXPECT_GT(mr.get_bytes_counter().peak, 0);
 
   auto result = hash_join.inner_join(t0);
-  column_wrapper<int32_t> col_gold_0{{0, 2, 2, 3, 4, 4}};
-  column_wrapper<int32_t> col_gold_1{{4, 0, 1, 2, 0, 1}};
+  column_wrapper<cudf::size_type> col_gold_0{{0, 2, 2, 3, 4, 4}};
+  column_wrapper<cudf::size_type> col_gold_1{{4, 0, 1, 2, 0, 1}};
   auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
@@ -3088,49 +3090,52 @@ INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTestLists,
 TEST_P(JoinParameterizedTestLists, ListWithNullsEqualInnerJoin)
 {
   auto algo                 = GetParam();
-  auto const left_gold_map  = column_wrapper<int32_t>({0, 1, 2, 3});
-  auto const right_gold_map = column_wrapper<int32_t>({0, 2, 3, 4});
+  auto const left_gold_map  = column_wrapper<cudf::size_type>({0, 1, 2, 3});
+  auto const right_gold_map = column_wrapper<cudf::size_type>({0, 2, 3, 4});
   this->inner_join(left_gold_map, right_gold_map, cudf::null_equality::EQUAL, algo);
 }
 
 TEST_P(JoinParameterizedTestLists, ListWithNullsUnequalInnerJoin)
 {
   auto algo                 = GetParam();
-  auto const left_gold_map  = column_wrapper<int32_t>({1, 3});
-  auto const right_gold_map = column_wrapper<int32_t>({0, 3});
+  auto const left_gold_map  = column_wrapper<cudf::size_type>({1, 3});
+  auto const right_gold_map = column_wrapper<cudf::size_type>({0, 3});
   this->inner_join(left_gold_map, right_gold_map, cudf::null_equality::UNEQUAL, algo);
 }
 
 TEST_F(JoinTestLists, ListWithNullsEqualFullJoin)
 {
   auto const left_gold_map =
-    column_wrapper<int32_t>({0, 1, 2, 3, 4, NoneValue, NoneValue, NoneValue});
-  auto const right_gold_map = column_wrapper<int32_t>({2, 0, 4, 3, NoneValue, 1, 5, 6});
+    column_wrapper<cudf::size_type>({0, 1, 2, 3, 4, NoneValue, NoneValue, NoneValue});
+  auto const right_gold_map =
+    column_wrapper<cudf::size_type>({2, 0, 4, 3, NoneValue, 1, 5, 6});
   this->full_join(left_gold_map, right_gold_map, cudf::null_equality::EQUAL);
 }
 
 TEST_F(JoinTestLists, ListWithNullsUnequalFullJoin)
 {
   auto const left_gold_map =
-    column_wrapper<int32_t>({0, 1, 2, 3, 4, NoneValue, NoneValue, NoneValue, NoneValue, NoneValue});
+    column_wrapper<cudf::size_type>(
+      {0, 1, 2, 3, 4, NoneValue, NoneValue, NoneValue, NoneValue, NoneValue});
   auto const right_gold_map =
-    column_wrapper<int32_t>({NoneValue, 0, NoneValue, 3, NoneValue, 1, 5, 6, 2, 4});
+    column_wrapper<cudf::size_type>({NoneValue, 0, NoneValue, 3, NoneValue, 1, 5, 6, 2, 4});
   this->full_join(left_gold_map, right_gold_map, cudf::null_equality::UNEQUAL);
 }
 
 TEST_P(JoinParameterizedTestLists, ListWithNullsEqualLeftJoin)
 {
   auto algo                 = GetParam();
-  auto const left_gold_map  = column_wrapper<int32_t>({0, 1, 2, 3, 4});
-  auto const right_gold_map = column_wrapper<int32_t>({2, 0, 4, 3, NoneValue});
+  auto const left_gold_map  = column_wrapper<cudf::size_type>({0, 1, 2, 3, 4});
+  auto const right_gold_map = column_wrapper<cudf::size_type>({2, 0, 4, 3, NoneValue});
   this->left_join(left_gold_map, right_gold_map, cudf::null_equality::EQUAL, algo);
 }
 
 TEST_P(JoinParameterizedTestLists, ListWithNullsUnequalLeftJoin)
 {
   auto algo                 = GetParam();
-  auto const left_gold_map  = column_wrapper<int32_t>({0, 1, 2, 3, 4});
-  auto const right_gold_map = column_wrapper<int32_t>({NoneValue, 0, NoneValue, 3, NoneValue});
+  auto const left_gold_map  = column_wrapper<cudf::size_type>({0, 1, 2, 3, 4});
+  auto const right_gold_map =
+    column_wrapper<cudf::size_type>({NoneValue, 0, NoneValue, 3, NoneValue});
   this->left_join(left_gold_map, right_gold_map, cudf::null_equality::UNEQUAL, algo);
 }
 

@@ -153,7 +153,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsNoNulls)
   auto const input_original = [] {
     auto child =
       lists_col{{1, 2, 3}, {4, 5, 6}, {7}, {4, 5}, {}, {4, 5, 6}, {}, {6, 7, 8}, {}, {9}}.release();
-    auto offsets = ints_col{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
     return cudf::make_lists_column(8, std::move(offsets), std::move(child), 0, {});
   }();
 
@@ -162,7 +162,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsNoNulls)
       auto child =
         lists_col{{7}, {4, 5, 6}, {1, 2, 3}, {4, 5, 6}, {}, {4, 5}, {}, {6, 7, 8}, {}, {9}}
           .release();
-      auto offsets = ints_col{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
       return cudf::make_lists_column(8, std::move(offsets), std::move(child), 0, {});
     }();
     auto const results = cudf::lists::reverse(cudf::lists_column_view(*input_original));
@@ -172,7 +172,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsNoNulls)
   {
     auto const expected = [] {
       auto child   = lists_col{{7}, {4, 5, 6}, {1, 2, 3}, {4, 5, 6}, {}, {4, 5}}.release();
-      auto offsets = ints_col{0, 3, 3, 6}.release();
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 3, 6}.release();
       return cudf::make_lists_column(3, std::move(offsets), std::move(child), 0, {});
     }();
     auto const input   = cudf::slice(*input_original, {1, 4})[0];
@@ -189,7 +189,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsNoNulls)
   {
     auto const expected = [] {
       auto child   = lists_col{{4, 5, 6}, {}, {4, 5}}.release();
-      auto offsets = ints_col{0, 0, 3}.release();
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3}.release();
       return cudf::make_lists_column(2, std::move(offsets), std::move(child), 0, {});
     }();
     auto const input   = cudf::slice(*input_original, {2, 4})[0];
@@ -214,7 +214,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
                             {9}},
                            nulls_at({4, 8})}
                    .release();
-    auto offsets   = ints_col{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
+    auto offsets   = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
     auto null_mask = cudf::create_null_mask(8, cudf::mask_state::ALL_VALID);
     cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 2, 3, false);
 
@@ -236,7 +236,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
                               {9}},
                              nulls_at({4, 6})}
                      .release();
-      auto offsets   = ints_col{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
+      auto offsets   = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
       auto null_mask = cudf::create_null_mask(8, cudf::mask_state::ALL_VALID);
       cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 2, 3, false);
 
@@ -250,7 +250,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
   {
     auto const expected = [] {
       auto child   = lists_col{{7}, {4, 5, 6}, {1, 2, 3}}.release();
-      auto offsets = ints_col{0, 3}.release();
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3}.release();
       return cudf::make_lists_column(1, std::move(offsets), std::move(child), 0, {});
     }();
     auto const input   = cudf::slice(*input_original, {0, 1})[0];
@@ -263,7 +263,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
       auto child =
         lists_col{{{7}, {4, 5, 6}, {1, 2, 3}, {4, 5, 6}, {} /*null*/, {4, 5}}, null_at(4)}
           .release();
-      auto offsets   = ints_col{0, 3, 3, 6}.release();
+      auto offsets   = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 3, 6}.release();
       auto null_mask = cudf::create_null_mask(3, cudf::mask_state::ALL_VALID);
       cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
 
@@ -278,7 +278,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
   {
     auto const expected = [] {
       auto child     = lists_col{{{4, 5, 6}, {} /*null*/, {4, 5}}, null_at(1)}.release();
-      auto offsets   = ints_col{0, 0, 3}.release();
+      auto offsets   = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3}.release();
       auto null_mask = cudf::create_null_mask(2, cudf::mask_state::ALL_VALID);
       cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 0, 1, false);
 
@@ -336,7 +336,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfStructsWithNulls)
                                      nulls_at({14, 20})};
       return structs_col{{grandchild1, grandchild2}, nulls_at({1, 3, 4})}.release();
     }();
-    auto offsets   = ints_col{0, 0, 8, 16, 16, 16, 24}.release();
+    auto offsets   = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 8, 16, 16, 16, 24}.release();
     auto null_mask = cudf::create_null_mask(6, cudf::mask_state::ALL_VALID);
     cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 0, 1, false);
     cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 4, 5, false);
@@ -386,7 +386,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfStructsWithNulls)
                                        nulls_at({3, 4, 6, 9, 19})};
         return structs_col{{grandchild1, grandchild2}, nulls_at({3, 4, 6})}.release();
       }();
-      auto offsets   = ints_col{0, 0, 8, 16, 16, 16, 24}.release();
+      auto offsets   = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 8, 16, 16, 16, 24}.release();
       auto null_mask = cudf::create_null_mask(6, cudf::mask_state::ALL_VALID);
       cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 0, 1, false);
       cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 4, 5, false);
@@ -444,7 +444,7 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfStructsWithNulls)
         return structs_col{{grandchild1, grandchild2}, nulls_at({3, 4, 6})}.release();
       }();
 
-      auto offsets = ints_col{0, 8, 16, 16}.release();
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 8, 16, 16}.release();
       return cudf::make_lists_column(3, std::move(offsets), std::move(child), 0, {});
     }();
     auto const input   = cudf::slice(*input_original, {1, 4})[0];

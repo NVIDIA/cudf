@@ -424,7 +424,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
     auto [new_child_mask, null_count] = [&] {
       if (not child.nullable()) {
         // Adopt parent STRUCT's null mask.
-        return std::pair{structs_view.null_mask(), 0};
+        return std::pair{structs_view.null_mask(), size_type{0}};
       }
 
       // Both STRUCT and child are nullable. AND() for the child's new null mask.

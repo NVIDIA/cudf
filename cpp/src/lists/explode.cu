@@ -204,7 +204,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   auto null_or_empty = thrust::make_transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::proclaim_return_type<size_type>(
-      [offsets, offsets_size = explode_col.size() - 1] __device__(int idx) {
+      [offsets, offsets_size = explode_col.size() - 1] __device__(size_type idx) -> size_type {
         return (idx > offsets_size || (offsets[idx + 1] != offsets[idx])) ? 0 : 1;
       }));
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

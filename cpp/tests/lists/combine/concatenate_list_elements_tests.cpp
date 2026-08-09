@@ -498,11 +498,11 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsNoNull)
       auto child2  = int32s_col{11, 12, 13, 14, 15, 16, 17, 18, 19, 110};
       auto child3  = strings_col{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
       auto structs = structs_col{{child1, child2, child3}};
-      auto offsets = int32s_col{0, 2, 3, 6, 6, 8, 10};
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 6, 6, 8, 10};
       return cudf::make_lists_column(6, offsets.release(), structs.release(), 0, {});
     }();
 
-    auto offsets = int32s_col{0, 3, 4, 6};
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 4, 6};
     return cudf::make_lists_column(3, offsets.release(), std::move(child), 0, {});
   }();
 
@@ -515,7 +515,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsNoNull)
     auto child2  = int32s_col{11, 12, 13, 14, 15, 16, 17, 18, 19, 110};
     auto child3  = strings_col{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
     auto structs = structs_col{{child1, child2, child3}};
-    auto offsets = int32s_col{0, 6, 6, 10};
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 6, 6, 10};
     return cudf::make_lists_column(3, offsets.release(), structs.release(), 0, {});
   }();
 
@@ -539,14 +539,14 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child2                  = int32s_col{11, null, 13, 14, 15, null, 17, null, 19, 110};
       auto child3                  = strings_col{"1", "", "3", "4", "5", "", "7", "", "9", "10"};
       auto structs                 = structs_col{{child1, child2, child3}, nulls_at({1, 5, 7})};
-      auto offsets                 = int32s_col{0, 2, 3, 3, 6, 8, 10};
+      auto offsets                 = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 6, 8, 10};
       auto const null_it           = null_at(2);  // null list
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 6);
       return cudf::make_lists_column(
         6, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
 
-    auto offsets = int32s_col{0, 3, 4, 6};
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 4, 6};
     return cudf::make_lists_column(3, offsets.release(), std::move(child), 0, {});
   }();
 
@@ -561,7 +561,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child2  = int32s_col{11, null, 13, 14, 15, null, 17, null, 19, 110};
       auto child3  = strings_col{"1", "", "3", "4", "5", "", "7", "", "9", "10"};
       auto structs = structs_col{{child1, child2, child3}, nulls_at({1, 5, 7})};
-      auto offsets = int32s_col{0, 3, 6, 10};
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 6, 10};
       return cudf::make_lists_column(3, offsets.release(), structs.release(), 0, {});
     }();
 
@@ -578,7 +578,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child2  = int32s_col{14, 15, null};
       auto child3  = strings_col{"4", "5", ""};
       auto structs = structs_col{{child1, child2, child3}, null_at(2)};
-      auto offsets = int32s_col{0, 3};
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3};
       return cudf::make_lists_column(1, offsets.release(), structs.release(), 0, {});
     }();
 
@@ -598,7 +598,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child2                  = int32s_col{14, 15, null, 17, null, 19, 110};
       auto child3                  = strings_col{"4", "5", "", "7", "", "9", "10"};
       auto structs                 = structs_col{{child1, child2, child3}, nulls_at({2, 4})};
-      auto offsets                 = int32s_col{0, 0, 3, 7};
+      auto offsets                 = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 7};
       auto const null_it           = null_at(0);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 3);
       return cudf::make_lists_column(
@@ -620,7 +620,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child2                  = int32s_col{14, 15, null};
       auto child3                  = strings_col{"4", "5", ""};
       auto structs                 = structs_col{{child1, child2, child3}, null_at(2)};
-      auto offsets                 = int32s_col{0, 0, 3};
+      auto offsets                 = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3};
       auto const null_it           = null_at(0);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
       return cudf::make_lists_column(
@@ -653,11 +653,11 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsNoNull)
       auto child3 =
         lists_col{{1, 1}, {2}, {3, 3}, {}, {5, 5, 5}, {6, 6}, {7}, {8}, {9, 9}, {10, 10, 10, 10}};
       auto structs = structs_col{{child1, child2, child3}};
-      auto offsets = int32s_col{0, 2, 3, 6, 6, 8, 10};
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 6, 6, 8, 10};
       return cudf::make_lists_column(6, offsets.release(), structs.release(), 0, {});
     }();
 
-    auto offsets = int32s_col{0, 3, 4, 6};
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 4, 6};
     return cudf::make_lists_column(3, offsets.release(), std::move(child), 0, {});
   }();
 
@@ -673,7 +673,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsNoNull)
     auto child3 =
       lists_col{{1, 1}, {2}, {3, 3}, {}, {5, 5, 5}, {6, 6}, {7}, {8}, {9, 9}, {10, 10, 10, 10}};
     auto structs = structs_col{{child1, child2, child3}};
-    auto offsets = int32s_col{0, 6, 6, 10};
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 6, 6, 10};
     return cudf::make_lists_column(3, offsets.release(), structs.release(), 0, {});
   }();
 
@@ -699,14 +699,14 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
         lists_col{{{1, 1}, {2}, {3, 3}, {}, {5, 5, 5}, {6, 6}, {7}, {8}, {9, 9}, {10, 10, 10, 10}},
                   null_at(3)};
       auto structs                 = structs_col{{child1, child2, child3}};
-      auto offsets                 = int32s_col{0, 2, 3, 6, 6, 8, 10};
+      auto offsets                 = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 6, 6, 8, 10};
       auto const null_it           = null_at(3);  // null list
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 6);
       return cudf::make_lists_column(
         6, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
 
-    auto offsets = int32s_col{0, 2, 4, 6};
+    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6};
     return cudf::make_lists_column(3, offsets.release(), std::move(child), 0, {});
   }();
 
@@ -723,7 +723,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
         lists_col{{{1, 1}, {2}, {3, 3}, {}, {5, 5, 5}, {6, 6}, {7}, {8}, {9, 9}, {10, 10, 10, 10}},
                   null_at(3)};
       auto structs = structs_col{{child1, child2, child3}};
-      auto offsets = int32s_col{0, 3, 6, 10};
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 6, 10};
       return cudf::make_lists_column(3, offsets.release(), structs.release(), 0, {});
     }();
 
@@ -740,7 +740,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
       auto child2  = int32s_col{14, 15, 16};
       auto child3  = lists_col{{{}, {5, 5, 5}, {6, 6}}, null_at(0)};
       auto structs = structs_col{{child1, child2, child3}};
-      auto offsets = int32s_col{0, 3};
+      auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3};
       return cudf::make_lists_column(1, offsets.release(), structs.release(), 0, {});
     }();
 
@@ -761,7 +761,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
       auto child3 =
         lists_col{{{1, 1}, {2}, {3, 3}, {7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
       auto structs                 = structs_col{{child1, child2, child3}};
-      auto offsets                 = int32s_col{0, 3, 3, 7};
+      auto offsets                 = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 3, 7};
       auto const null_it           = null_at(1);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 3);
       return cudf::make_lists_column(
@@ -783,7 +783,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
       auto child2                  = int32s_col{17, 18, 19, 110};
       auto child3                  = lists_col{{{7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
       auto structs                 = structs_col{{child1, child2, child3}};
-      auto offsets                 = int32s_col{0, 0, 4};
+      auto offsets                 = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 4};
       auto const null_it           = null_at(0);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
       return cudf::make_lists_column(
@@ -819,8 +819,8 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnChildSizeZero)
 {
   // list<list<int32>> with 1 outer row that is an empty list-of-lists (0 inner lists).
   // Outer offsets: {0, 0}, inner column: list<int32> with 0 rows.
-  auto offsets        = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0};
-  auto inner_offsets  = cudf::test::fixed_width_column_wrapper<int32_t>{0};
+  auto offsets        = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0};
+  auto inner_offsets  = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0};
   auto inner_elements = cudf::test::fixed_width_column_wrapper<int32_t>{};
   auto inner_col =
     cudf::make_lists_column(0, inner_offsets.release(), inner_elements.release(), 0, {});
@@ -836,8 +836,8 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnWithNullRow)
 {
   // list<list<int32>> with 2 outer rows: row 0 is null, row 1 is a valid empty list.
   // child.size() == 0; the null mask must be copied to the output.
-  auto offsets        = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0};
-  auto inner_offsets  = cudf::test::fixed_width_column_wrapper<int32_t>{0};
+  auto offsets        = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0};
+  auto inner_offsets  = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0};
   auto inner_elements = cudf::test::fixed_width_column_wrapper<int32_t>{};
   auto inner_col =
     cudf::make_lists_column(0, inner_offsets.release(), inner_elements.release(), 0, {});
@@ -850,7 +850,7 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnWithNullRow)
 
   // Expected: list<int32> with 2 rows — null row 0, empty row 1.
   // concatenate_list_elements reduces list<list<int32>> → list<int32>.
-  auto exp_offsets                     = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0};
+  auto exp_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0};
   auto exp_elements                    = cudf::test::fixed_width_column_wrapper<int32_t>{};
   auto [exp_null_mask, exp_null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
   auto const expected                  = cudf::make_lists_column(
@@ -875,13 +875,13 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnChildSizeZeroWithStructG
     auto s_child1      = int32s_col{};
     auto s_child2      = int32s_col{};
     auto grandchild    = structs_col{{s_child1, s_child2}};  // struct<int32,int32>, 0 rows
-    auto inner_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0};
+    auto inner_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0};
     auto inner_col     = cudf::make_lists_column(0,
                                              inner_offsets.release(),
                                              grandchild.release(),
                                              0,
                                                  {});  // list<struct<int32,int32>>, 0 rows
-    auto outer_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0};
+    auto outer_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0};
     return cudf::make_lists_column(1, outer_offsets.release(), std::move(inner_col), 0, {});
   }();
 
@@ -890,7 +890,7 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnChildSizeZeroWithStructG
     auto s_child1   = int32s_col{};
     auto s_child2   = int32s_col{};
     auto grandchild = structs_col{{s_child1, s_child2}};
-    auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0};
+    auto offsets    = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0};
     return cudf::make_lists_column(1, offsets.release(), grandchild.release(), 0, {});
   }();
 

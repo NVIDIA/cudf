@@ -54,7 +54,7 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
   // Replace null indices with MAX_SIZE_TYPE, so that gather() returns null for them.
   auto const null_replaced_iter_begin =
     cudf::detail::make_null_replacement_iterator(*d_indices, std::numeric_limits<size_type>::max());
-  auto index_child = make_numeric_column(data_type{type_id::INT32},
+  auto index_child = make_numeric_column(data_type{type_to_id<size_type>()},
                                          indices.size(),
                                          mask_state::UNALLOCATED,
                                          stream,
@@ -80,7 +80,7 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
                                                rmm::cuda_stream_view stream)
 {
   auto index_child =  // [index, index, index, ..., index]
-    make_numeric_column(data_type{type_id::INT32},
+    make_numeric_column(data_type{type_to_id<size_type>()},
                         num_rows,
                         mask_state::UNALLOCATED,
                         stream,

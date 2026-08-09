@@ -865,7 +865,7 @@ TEST_F(DistinctKeepAny, ListsOfStructs)
     return structs_col{{child1, child2}, nulls_at({0, 1, 2, 3, 4})};
   }();
 
-  auto const offsets = int32s_col{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
+  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
   auto const null_it = nulls_at({2, 3});
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 17);
@@ -951,7 +951,7 @@ TEST_F(DistinctKeepFirstLastNone, ListsOfStructs)
     return structs_col{{child1, child2}, nulls_at({0, 1, 2, 3, 4})};
   }();
 
-  auto const offsets = int32s_col{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
+  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
   auto const null_it = nulls_at({2, 3});
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 17);
@@ -1047,7 +1047,7 @@ TEST_F(DistinctKeepAny, SlicedListsOfStructs)
     return structs_col{{child1, child2}, nulls_at({0, 1, 2, 3, 4})};
   }();
 
-  auto const offsets = int32s_col{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
+  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
   auto const null_it = nulls_at({2, 3});
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 17);
@@ -1112,7 +1112,7 @@ TEST_F(DistinctKeepAny, ListsOfEmptyStructs)
                       static_cast<cudf::bitmask_type const*>(structs_null_mask.data()),
                       structs_null_count);
 
-  auto const offsets       = int32s_col{0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
+  auto const offsets       = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
   auto const lists_null_it = nulls_at({2, 3});
   auto [lists_null_mask, lists_null_count] =
     cudf::test::detail::make_null_mask(lists_null_it, lists_null_it + 13);

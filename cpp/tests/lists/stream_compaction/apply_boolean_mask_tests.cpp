@@ -23,7 +23,7 @@ using filter_t = lists_column_wrapper<bool, int32_t>;
 
 template <typename T>
 using fwcw    = fixed_width_column_wrapper<T, int32_t>;
-using offsets = fwcw<int32_t>;
+using offsets = fwcw<cudf::size_type>;
 using strings = strings_column_wrapper;
 
 auto constexpr X = int32_t{0};  // Placeholder for NULL.

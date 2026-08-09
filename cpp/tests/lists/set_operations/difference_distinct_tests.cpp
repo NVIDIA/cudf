@@ -33,6 +33,7 @@ auto constexpr NAN_UNEQUAL  = cudf::nan_equality::UNEQUAL;
 
 using bools_col     = cudf::test::fixed_width_column_wrapper<bool>;
 using int32s_col    = cudf::test::fixed_width_column_wrapper<int32_t>;
+using offsets_col   = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 using floats_lists  = cudf::test::lists_column_wrapper<float_type>;
 using strings_lists = cudf::test::lists_column_wrapper<cudf::string_view>;
 using strings_col   = cudf::test::strings_column_wrapper;
@@ -537,11 +538,11 @@ TEST_F(SetDifferenceTest, InputListsOfNestedStructsHaveNull)
     };
 
     auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
     auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
     auto const expected = cudf::make_lists_column(
-      3, int32s_col{0, 3, 8, 14}.release(), get_structs_expected().release(), 0, {});
+      3, offsets_col{0, 3, 8, 14}.release(), get_structs_expected().release(), 0, {});
 
     auto const results_sorted = set_difference_sorted(*lhs, *rhs, NULL_EQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *results_sorted);
@@ -571,11 +572,11 @@ TEST_F(SetDifferenceTest, InputListsOfNestedStructsHaveNull)
     };
 
     auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
     auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
     auto const expected = cudf::make_lists_column(
-      3, int32s_col{0, 7, 13, 21}.release(), get_structs_expected().release(), 0, {});
+      3, offsets_col{0, 7, 13, 21}.release(), get_structs_expected().release(), 0, {});
 
     auto const results_sorted = set_difference_sorted(*lhs, *rhs, NULL_UNEQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, *results_sorted);
@@ -610,7 +611,7 @@ TEST_F(SetDifferenceTest, InputListsOfStructsOfLists)
     };
 
     return cudf::make_lists_column(
-      3, int32s_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
+      3, offsets_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
   }();
 
   auto const rhs = [] {
@@ -639,7 +640,7 @@ TEST_F(SetDifferenceTest, InputListsOfStructsOfLists)
     };
 
     return cudf::make_lists_column(
-      3, int32s_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
+      3, offsets_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
   }();
 
   auto const expected = [] {
@@ -651,7 +652,7 @@ TEST_F(SetDifferenceTest, InputListsOfStructsOfLists)
     };
 
     return cudf::make_lists_column(
-      3, int32s_col{0, 2, 2, 4}.release(), get_structs().release(), 0, {});
+      3, offsets_col{0, 2, 2, 4}.release(), get_structs().release(), 0, {});
   }();
 
   auto const results = cudf::lists::difference_distinct(lists_cv{*lhs}, lists_cv{*rhs});

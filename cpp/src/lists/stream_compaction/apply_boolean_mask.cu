@@ -36,7 +36,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
   if (num_rows == 0) { return cudf::empty_like(input.parent()); }
 
-  auto constexpr offset_data_type = data_type{type_id::INT32};
+  auto const offset_data_type = data_type{type_to_id<size_type>()};
 
   auto const mask_sliced_child = boolean_mask.get_sliced_child(stream);
 

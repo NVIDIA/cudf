@@ -87,8 +87,10 @@ auto create_null_search_key()
 
 }  // namespace
 
-auto constexpr X          = int32_t{0};           // Placeholder for nulls.
-auto constexpr ABSENT     = cudf::size_type{-1};  // Index when key is not found in a list.
+// These two appear in the same literal lists as bare integers, so they have to be the type a bare
+// integer already is; the column wrapper widens the list to size_type on its way in.
+auto constexpr X          = int32_t{0};   // Placeholder for nulls.
+auto constexpr ABSENT     = int32_t{-1};  // Index when key is not found in a list.
 auto constexpr FIND_FIRST = cudf::lists::duplicate_find_option::FIND_FIRST;
 auto constexpr FIND_LAST  = cudf::lists::duplicate_find_option::FIND_LAST;
 

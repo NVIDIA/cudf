@@ -312,7 +312,8 @@ TEST_F(ApplyBooleanMask, ListOfStructsFiltering)
 
   auto list_of_structs_column =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6, 8, 10}
+                              .release(),
                             struct_column.release(),
                             0,
                             {});
@@ -334,7 +335,7 @@ TEST_F(ApplyBooleanMask, ListOfStructsFiltering)
 
   auto expected_list_of_structs_column =
     cudf::make_lists_column(3,
-                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(),
+                            fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6}.release(),
                             expected_struct_column.release(),
                             0,
                             {});

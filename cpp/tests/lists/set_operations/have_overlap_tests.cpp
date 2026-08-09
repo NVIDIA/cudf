@@ -31,6 +31,7 @@ auto constexpr NAN_UNEQUAL  = cudf::nan_equality::UNEQUAL;
 
 using bools_col     = cudf::test::fixed_width_column_wrapper<bool>;
 using int32s_col    = cudf::test::fixed_width_column_wrapper<int32_t>;
+using offsets_col   = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 using floats_lists  = cudf::test::lists_column_wrapper<float_type>;
 using strings_lists = cudf::test::lists_column_wrapper<cudf::string_view>;
 using strings_col   = cudf::test::strings_column_wrapper;
@@ -451,9 +452,9 @@ TEST_F(ListOverlapTest, InputListsOfNestedStructsHaveNull)
   // Nulls are equal.
   {
     auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
     auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
     auto const expected = bools_col{1, 1, 1};
 
     auto const results = cudf::lists::have_overlap(lists_cv{*lhs}, lists_cv{*rhs}, NULL_EQUAL);
@@ -463,9 +464,9 @@ TEST_F(ListOverlapTest, InputListsOfNestedStructsHaveNull)
   // Nulls are unequal.
   {
     auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
     auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
+      3, offsets_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
     auto const expected = bools_col{0, 0, 0};
 
     auto const results = cudf::lists::have_overlap(lists_cv{*lhs}, lists_cv{*rhs}, NULL_UNEQUAL);
@@ -501,7 +502,7 @@ TEST_F(ListOverlapTest, InputListsOfStructsOfLists)
     };
 
     return cudf::make_lists_column(
-      3, int32s_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
+      3, offsets_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
   }();
 
   auto const rhs = [] {
@@ -530,7 +531,7 @@ TEST_F(ListOverlapTest, InputListsOfStructsOfLists)
     };
 
     return cudf::make_lists_column(
-      3, int32s_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
+      3, offsets_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
   }();
 
   auto const expected = bools_col{0, 1, 1};

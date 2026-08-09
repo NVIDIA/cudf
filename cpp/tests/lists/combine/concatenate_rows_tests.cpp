@@ -686,7 +686,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   s0_children.push_back(s0_0.release());
   s0_children.push_back(s0_1.release());
   cudf::test::structs_column_wrapper s0(std::move(s0_children));
-  cudf::test::fixed_width_column_wrapper<int> l0_offsets{0, 2, 2, 5, 6, 8};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> l0_offsets{0, 2, 2, 5, 6, 8};
   auto const l0_size = static_cast<cudf::column_view>(l0_offsets).size() - 1;
   auto l0            = cudf::make_lists_column(l0_size, l0_offsets.release(), s0.release(), 0, {});
 
@@ -712,7 +712,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   s1_children.push_back(s1_0.release());
   s1_children.push_back(s1_1.release());
   cudf::test::structs_column_wrapper s1(std::move(s1_children));
-  cudf::test::fixed_width_column_wrapper<int> l1_offsets{0, 0, 4, 7, 15, 15};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> l1_offsets{0, 0, 4, 7, 15, 15};
   auto const l1_size = static_cast<cudf::column_view>(l1_offsets).size() - 1;
   auto l1            = cudf::make_lists_column(l1_size, l1_offsets.release(), s1.release(), 0, {});
 
@@ -731,7 +731,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   se_children.push_back(se_0.release());
   se_children.push_back(se_1.release());
   cudf::test::structs_column_wrapper se(std::move(se_children));
-  cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 2, 6, 12, 21, 23};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> le_offsets{0, 2, 6, 12, 21, 23};
   auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
   auto expected      = cudf::make_lists_column(le_size, le_offsets.release(), se.release(), 0, {});
 
@@ -750,7 +750,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNulls)
   s0_children.push_back(s0_0.release());
   s0_children.push_back(s0_1.release());
   cudf::test::structs_column_wrapper s0(std::move(s0_children));
-  cudf::test::fixed_width_column_wrapper<int> l0_offsets{0, 2, 2, 5, 6, 8};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> l0_offsets{0, 2, 2, 5, 6, 8};
   auto const l0_size = static_cast<cudf::column_view>(l0_offsets).size() - 1;
   std::vector<bool> l0_validity{false, true, true, false, true};
   auto [null_mask, null_count] =
@@ -781,7 +781,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNulls)
   s1_children.push_back(s1_0.release());
   s1_children.push_back(s1_1.release());
   cudf::test::structs_column_wrapper s1(std::move(s1_children));
-  cudf::test::fixed_width_column_wrapper<int> l1_offsets{0, 0, 4, 7, 15, 15};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> l1_offsets{0, 0, 4, 7, 15, 15};
   auto const l1_size = static_cast<cudf::column_view>(l1_offsets).size() - 1;
   std::vector<bool> l1_validity{false, true, true, true, true};
   std::tie(null_mask, null_count) =
@@ -806,7 +806,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNulls)
     se_children.push_back(se_0.release());
     se_children.push_back(se_1.release());
     cudf::test::structs_column_wrapper se(std::move(se_children));
-    cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 0, 4, 10, 18, 20};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> le_offsets{0, 0, 4, 10, 18, 20};
     auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
     std::vector<bool> le_validity{false, true, true, true, true};
     std::tie(null_mask, null_count) =
@@ -834,7 +834,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNulls)
     se_children.push_back(se_0.release());
     se_children.push_back(se_1.release());
     cudf::test::structs_column_wrapper se(std::move(se_children));
-    cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 0, 4, 10, 10, 12};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> le_offsets{0, 0, 4, 10, 10, 12};
     auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
     std::vector<bool> le_validity{false, true, true, false, true};
     std::tie(null_mask, null_count) =
@@ -858,7 +858,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNullsSliced)
   s0_children.push_back(s0_0.release());
   s0_children.push_back(s0_1.release());
   cudf::test::structs_column_wrapper s0(std::move(s0_children));
-  cudf::test::fixed_width_column_wrapper<int> l0_offsets{0, 2, 2, 5, 6, 8};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> l0_offsets{0, 2, 2, 5, 6, 8};
   auto const l0_size = static_cast<cudf::column_view>(l0_offsets).size() - 1;
   std::vector<bool> l0_validity{false, true, false, false, true};
   auto [null_mask, null_count] =
@@ -890,7 +890,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNullsSliced)
   s1_children.push_back(s1_0.release());
   s1_children.push_back(s1_1.release());
   cudf::test::structs_column_wrapper s1(std::move(s1_children));
-  cudf::test::fixed_width_column_wrapper<int> l1_offsets{0, 0, 4, 7, 15, 15};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> l1_offsets{0, 0, 4, 7, 15, 15};
   auto const l1_size = static_cast<cudf::column_view>(l1_offsets).size() - 1;
   std::vector<bool> l1_validity{false, true, false, true, true};
   std::tie(null_mask, null_count) =
@@ -915,7 +915,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNullsSliced)
     se_children.push_back(se_0.release());
     se_children.push_back(se_1.release());
     cudf::test::structs_column_wrapper se(std::move(se_children));
-    cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 0, 8, 10};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> le_offsets{0, 0, 8, 10};
     auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
     std::vector<bool> le_validity{false, true, true};
     std::tie(null_mask, null_count) =
@@ -940,7 +940,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, StructWithNullsSliced)
     se_children.push_back(se_0.release());
     se_children.push_back(se_1.release());
     cudf::test::structs_column_wrapper se(std::move(se_children));
-    cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 0, 0, 2};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> le_offsets{0, 0, 0, 2};
     auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
     std::vector<bool> le_validity{false, false, true};
     std::tie(null_mask, null_count) =

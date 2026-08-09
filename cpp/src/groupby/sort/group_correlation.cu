@@ -73,8 +73,8 @@ struct covariance_transform {
   __device__ static ResultType value(column_device_view const& view, size_type i)
   {
     bool const is_dict = view.type().id() == type_id::DICTIONARY32;
-    i                  = is_dict ? static_cast<size_type>(view.element<dictionary32>(i)) : i;
-    auto values_col    = is_dict ? view.child(dictionary_column_view::keys_column_index) : view;
+    i               = is_dict ? static_cast<size_type>(view.element<dictionary32>(i).value()) : i;
+    auto values_col = is_dict ? view.child(dictionary_column_view::keys_column_index) : view;
     return type_dispatcher(values_col.type(), type_casted_accessor<ResultType>{}, i, values_col);
   }
 

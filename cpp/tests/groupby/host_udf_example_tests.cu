@@ -103,7 +103,7 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
       thrust::transform(
         rmm::exec_policy_nosync(stream),
         cuda::counting_iterator<cudf::size_type>{0},
-        cuda::counting_iterator{num_groups},
+        cuda::counting_iterator<cudf::size_type>{num_groups},
         thrust::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),
         transform_fn{*values_dv_ptr,
                      offsets,
@@ -112,7 +112,11 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
                      group_sum.begin<InputType>()});
 
       auto const valid_idx_cv = cudf::column_view{
-        cudf::data_type{cudf::type_id::INT32}, num_groups, valid_idx.begin(), nullptr, 0};
+        cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+        num_groups,
+        valid_idx.begin(),
+        nullptr,
+        0};
       return std::move(cudf::gather(cudf::table_view{{output->view()}},
                                     valid_idx_cv,
                                     cudf::out_of_bounds_policy::NULLIFY,

@@ -202,7 +202,7 @@ TYPED_TEST(groupby_collect_list_test, dictionary)
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{1, 2};
   cudf::test::lists_column_wrapper<V, int32_t> expect_vals_w{{1, 2, 3}, {4, 5, 6}};
 
-  cudf::test::fixed_width_column_wrapper<int32_t> offsets({0, 3, 6});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets({0, 3, 6});
   auto expect_vals = cudf::make_lists_column(cudf::column_view(offsets).size() - 1,
                                              std::make_unique<cudf::column>(offsets),
                                              std::make_unique<cudf::column>(vals),

@@ -186,7 +186,8 @@ CUDF_KERNEL void single_pass_shmem_aggs_kernel(cudf::size_type num_rows,
 
   auto constexpr min_shmem_agg_locations = 32;
   auto const multiplication_factor       = min_shmem_agg_locations / cardinality;
-  auto const num_agg_locations           = cuda::std::max(multiplication_factor, 1) * cardinality;
+  auto const num_agg_locations =
+    cuda::std::max(multiplication_factor, decltype(multiplication_factor){1}) * cardinality;
   auto const agg_location_offset =
     multiplication_factor > 1 ? (block.thread_rank() % multiplication_factor) * cardinality : 0;
 

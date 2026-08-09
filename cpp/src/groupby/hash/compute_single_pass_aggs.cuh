@@ -64,8 +64,9 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
     // We launch the same grid size for both kernels, thus we need to take the minimum of the two.
     auto const max_blocks    = std::min(max_blocks_mapping, max_blocks_aggs);
     auto const max_grid_size = max_blocks * cudf::detail::num_multiprocessors();
-    auto const num_blocks    = cudf::util::div_rounding_up_safe(num_rows, GROUPBY_BLOCK_SIZE);
-    return std::min(max_grid_size, num_blocks);
+    auto const num_blocks =
+      cudf::util::div_rounding_up_safe(num_rows, static_cast<size_type>(GROUPBY_BLOCK_SIZE));
+    return std::min(static_cast<size_type>(max_grid_size), num_blocks);
   }();
 
   // grid_size is zero means the shared memory kernel cannot be launched, since input cannot be

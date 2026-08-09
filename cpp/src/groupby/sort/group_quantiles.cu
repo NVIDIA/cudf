@@ -11,6 +11,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -63,7 +64,7 @@ struct calculate_quantile_fn {
                        [d_result = d_result, segment_size, offset, this](size_type j) {
                          if (segment_size == 0) {
                            d_result.set_null(offset + j);
-                           atomicAdd(this->null_count, 1);
+                           cudf::detail::atomic_add_relaxed(this->null_count, size_type{1});
                          } else {
                            d_result.set_valid(offset + j);
                          }

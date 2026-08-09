@@ -182,7 +182,7 @@ TEST_F(groupby_argmax_struct_test, basic)
   }();
 
   auto const expect_keys    = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
-  auto const expect_indices = cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 2};
+  auto const expect_indices = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 2};
 
   auto agg = cudf::make_argmax_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_indices, std::move(agg));
@@ -215,7 +215,7 @@ TEST_F(groupby_argmax_struct_test, slice_input)
   auto const keys           = cudf::slice(keys_original, {2, 12})[0];
   auto const vals           = cudf::slice(vals_original, {2, 12})[0];
   auto const expect_keys    = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
-  auto const expect_indices = cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 2};
+  auto const expect_indices = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 2};
 
   auto agg = cudf::make_argmax_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_indices, std::move(agg));
@@ -237,7 +237,7 @@ TEST_F(groupby_argmax_struct_test, null_keys_and_values)
 
   auto const expect_keys = cudf::test::fixed_width_column_wrapper<int32_t>{
     {1, 2, 3, 4}, cudf::test::iterators::no_nulls()};
-  auto const expect_indices = cudf::test::fixed_width_column_wrapper<int32_t>{
+  auto const expect_indices = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
     {0, 4, 2, null}, cudf::test::iterators::null_at(3)};
 
   auto agg = cudf::make_argmax_aggregation<cudf::groupby_aggregation>();

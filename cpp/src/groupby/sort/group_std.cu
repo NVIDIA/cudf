@@ -11,6 +11,7 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -144,7 +145,7 @@ struct var_functor {
           // fact. (1) is more work than it's worth without benchmarking, and
           // this approach should outperform (2) unless large amounts of the
           // data is null.
-          atomicAdd(d_null_count, 1);
+          cudf::detail::atomic_add_relaxed(d_null_count, size_type{1});
         } else {
           d_result.set_valid(i);
         }

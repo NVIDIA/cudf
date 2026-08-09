@@ -107,7 +107,7 @@ namespace {
 using M2Type       = double;
 using VarianceType = double;
 using StdType      = double;
-using CountType    = int32_t;
+using CountType    = size_type;
 
 void check_input_types(column_view const& m2, column_view const& count)
 {
@@ -115,7 +115,7 @@ void check_input_types(column_view const& m2, column_view const& count)
                "Data type of M2 aggregation must be FLOAT64.",
                std::invalid_argument);
   CUDF_EXPECTS(count.type().id() == type_to_id<CountType>(),
-               "Data type of COUNT_VALID aggregation must be INT32.",
+               "Data type of COUNT_VALID aggregation must match size_type.",
                std::invalid_argument);
 }
 

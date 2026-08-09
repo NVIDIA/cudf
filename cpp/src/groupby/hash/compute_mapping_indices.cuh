@@ -47,14 +47,16 @@ __device__ void find_local_mapping(cooperative_groups::thread_block const& block
         // `shared_set_index == GROUPBY_CARDINALITY_THRESHOLD` the value of cardinality
         // will be at least `GROUPBY_CARDINALITY_THRESHOLD + 1`.
         // This will trigger fallback to global memory.
-        if (shared_set_index >= GROUPBY_CARDINALITY_THRESHOLD) { return cuda::std::pair{0, true}; }
+        if (shared_set_index >= GROUPBY_CARDINALITY_THRESHOLD) {
+          return cuda::std::pair{size_type{0}, true};
+        }
 
         shared_set_indices[shared_set_index] = idx;
         local_mapping_indices[idx]           = shared_set_index;
       }
       return cuda::std::pair{matched_idx, inserted};
     }
-    return cuda::std::pair{0, false};  // dummy values
+    return cuda::std::pair{size_type{0}, false};  // dummy values
   }();
   // Syncing the thread block is needed so that updates in `local_mapping_indices` are visible to
   // all threads in the thread block.

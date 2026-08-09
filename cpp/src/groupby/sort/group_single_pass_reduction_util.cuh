@@ -51,7 +51,7 @@ struct value_accessor {
   {
     if (is_dict) {
       auto keys = col.child(dictionary_column_view::keys_column_index);
-      return keys.element<T>(static_cast<size_type>(col.element<dictionary32>(i)));
+      return keys.element<T>(static_cast<size_type>(col.element<dictionary32>(i).value()));
     } else {
       return col.element<T>(i);
     }

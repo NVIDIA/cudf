@@ -28,7 +28,7 @@ std::unique_ptr<column> count_scan(column_view const& values,
                                    rmm::device_async_resource_ref mr)
 {
   std::unique_ptr<column> result = make_fixed_width_column(
-    data_type{type_id::INT32}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
+    data_type{type_to_id<size_type>()}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
 
   if (group_labels.empty()) { return result; }
 

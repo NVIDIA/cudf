@@ -325,7 +325,7 @@ std::vector<std::unique_ptr<cudf::column>> generate_list_of_struct()
   // 3. List column
   std::vector<bool> list_validity{true, true, true, true, true, false, true, false, true};
 
-  cudf::test::fixed_width_column_wrapper<int> offsets{0, 1, 4, 5, 7, 7, 10, 13, 14, 16};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 1, 4, 5, 7, 7, 10, 13, 14, 16};
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(list_validity.begin(), list_validity.begin() + 9);
   auto list = [&] {
@@ -444,7 +444,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
   // nested inside a list
   {
     auto empty_string = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
-    auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets      = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0});
     auto list         = cudf::make_lists_column(
       1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
 
@@ -457,7 +457,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
   {
     cudf::test::strings_column_wrapper str{"abc"};
     auto empty_string = cudf::empty_like(str);
-    auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets      = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0});
     auto list         = cudf::make_lists_column(
       1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
 
@@ -470,7 +470,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
   {
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
-    auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets    = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0});
     auto list =
       cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
 
@@ -483,7 +483,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
   {
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
-    auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets    = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0});
     auto list =
       cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
 
@@ -498,7 +498,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::fixed_width_column_wrapper<float> floats{4, 3, 2, 1, 0};
     auto struct_column = cudf::test::structs_column_wrapper({ints, floats});
     auto empty_struct  = cudf::empty_like(struct_column);
-    auto offsets       = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets       = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0});
     auto list          = cudf::make_lists_column(
       1, offsets.release(), std::move(empty_struct), 0, rmm::device_buffer{});
 
@@ -693,16 +693,23 @@ TEST_F(PackUnpackTest, MetadataViewRejectsCorruptedChildCount)
   // something larger so the tree claims more entries than exist.
   auto corrupted = *packed.metadata;
 
-  // The num_children field is the
-  // second-to-last 4-byte value in each entry (before the trailing pad).
   auto const entry_size = (corrupted.size() - metadata_header_size) / 3;  // 3 column entries
   auto const num_children_offset = metadata_header_size                   // skip table header
-                                   + entry_size - 2 * sizeof(int32_t);    // num_children in struct
+                                   + entry_size - 2 * sizeof(cudf::size_type);
   cudf::size_type bad_children = 10;
   std::memcpy(corrupted.data() + num_children_offset, &bad_children, sizeof(bad_children));
 
   EXPECT_THROW(cudf::packed_metadata_view{corrupted}, cudf::logic_error);
 }
+
+// num_columns follows the leading version field and any alignment padding.
+auto constexpr num_columns_offset = sizeof(std::int32_t)
+#if CUDF_SIZE_TYPE_BITS == 64
+                                    + sizeof(std::int32_t)
+#endif
+  ;
+// num_rows follows num_columns in the header.
+auto constexpr num_rows_offset = num_columns_offset + sizeof(cudf::size_type);
 
 TEST_F(PackUnpackTest, MetadataRejectsNegativeColumnCount)
 {
@@ -710,8 +717,6 @@ TEST_F(PackUnpackTest, MetadataRejectsNegativeColumnCount)
   auto packed = cudf::pack(cudf::table_view({col}));
 
   auto corrupted = *packed.metadata;
-  // num_columns follows the leading version field in the header.
-  auto constexpr num_columns_offset = sizeof(std::int32_t);
   cudf::size_type const negative    = -1;
   std::memcpy(corrupted.data() + num_columns_offset, &negative, sizeof(negative));
 
@@ -720,9 +725,6 @@ TEST_F(PackUnpackTest, MetadataRejectsNegativeColumnCount)
     cudf::unpack(corrupted.data(), reinterpret_cast<uint8_t const*>(packed.gpu_data->data())),
     cudf::logic_error);
 }
-
-// num_rows follows the leading version and num_columns fields in the header.
-auto constexpr num_rows_offset = 2 * sizeof(std::int32_t);
 
 TEST_F(PackUnpackTest, MetadataRejectsNegativeRowCount)
 {
@@ -801,7 +803,8 @@ TEST_F(PackUnpackTest, MetadataRejectsNegativeChildCount)
 
   auto corrupted        = *packed.metadata;
   auto const entry_size = (corrupted.size() - metadata_header_size) / 3;  // 3 column entries
-  auto const num_children_offset = metadata_header_size + entry_size - 2 * sizeof(int32_t);
+  auto const num_children_offset =
+    metadata_header_size + entry_size - 2 * sizeof(cudf::size_type);
   cudf::size_type const negative = -1;
   std::memcpy(corrupted.data() + num_children_offset, &negative, sizeof(negative));
 

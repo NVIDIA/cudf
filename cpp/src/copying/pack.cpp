@@ -43,26 +43,31 @@ struct serialized_column {
                     int64_t _data_offset,
                     int64_t _null_mask_offset,
                     size_type _num_children)
-    : type(_type),
-      size(_size),
-      null_count(_null_count),
-      data_offset(_data_offset),
-      null_mask_offset(_null_mask_offset),
-      num_children(_num_children)
-
   {
+    // This object is serialized with memcpy. Clear every byte first so any padding in this
+    // ABI-dependent layout is deterministic.
+    std::fill_n(reinterpret_cast<unsigned char*>(this), sizeof(*this), 0);
+    type             = _type;
+    size             = _size;
+    null_count       = _null_count;
+    data_offset      = _data_offset;
+    null_mask_offset = _null_mask_offset;
+    num_children     = _num_children;
   }
 
-  data_type type;
+  data_type type{};
   size_type size{};
   size_type null_count{};
   int64_t data_offset{};       // offset into contiguous data buffer, or -1 if column data is null
   int64_t null_mask_offset{};  // offset into contiguous data buffer, or -1 if column data is null
   size_type num_children{};
-  // Explicitly pad to avoid uninitialized padding bits, allowing `serialized_column` to be bit-wise
-  // comparable
-  int pad{};
+  int32_t pad{};
+#if CUDF_SIZE_TYPE_BITS == 64
+  int32_t pad_tail{};
+#endif
 };
+
+static_assert(std::is_trivially_copyable_v<serialized_column>);
 
 /**
  * @brief Table-level metadata stored before the serialized column entries.
@@ -79,9 +84,18 @@ struct alignas(8) serialized_table_header {
   }
 
   int32_t version{packed_metadata_version};
+#if CUDF_SIZE_TYPE_BITS == 64
+  // The size_type fields below are 8-byte aligned when size_type is 64 bits, so the padding
+  // has to be named to keep it initialized. See packed_metadata_version for why the resulting
+  // format is deliberately incompatible with a 32-bit build.
+  int32_t pad_after_version{};
+#endif
   size_type num_columns{};
   size_type num_rows{};
   int32_t pad{};  // Explicitly pad to avoid uninitialized padding bits
+#if CUDF_SIZE_TYPE_BITS == 64
+  int32_t pad_tail{};
+#endif
 };
 
 // The header is serialized with memcpy, so it must not contain padding bytes

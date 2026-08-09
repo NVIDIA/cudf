@@ -123,8 +123,12 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 
 /**
  * @brief Version of the packed metadata layout produced by `pack`/`pack_metadata`.
+ *
+ * The layout embeds `cudf::size_type` fields, so a 64-bit build produces a format a 32-bit
+ * build cannot read. The version is offset accordingly so the mismatch is rejected by the
+ * version check on unpack rather than silently misparsed.
  */
-constexpr std::int32_t packed_metadata_version = 2;
+constexpr std::int32_t packed_metadata_version = CUDF_SIZE_TYPE_BITS == 64 ? 1002 : 2;
 
 }  // namespace detail
 }  // namespace cudf

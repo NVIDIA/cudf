@@ -14,6 +14,7 @@
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -56,6 +57,15 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
       cudf::detail::slice(
         boolean_mask.offsets(), {boolean_mask.offset(), boolean_mask.size() + 1}, stream)
         .front();
+    auto reducer_offsets =
+      mask_sliced_offsets.type() == offset_data_type
+        ? std::unique_ptr<column>{}
+        : cudf::cast(mask_sliced_offsets,
+                     offset_data_type,
+                     stream,
+                     cudf::get_current_device_resource_ref());
+    auto const reducer_offsets_view =
+      reducer_offsets == nullptr ? mask_sliced_offsets : reducer_offsets->view();
 
     auto const sizes = [&] {
       // For DELETION, invert the `mask_sliced_child` so segmented_sum only counts `non-null` and
@@ -71,7 +81,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                                  ? mask_sliced_child
                                                  : inverted_mask_child->view();
       return cudf::reduction::detail::segmented_sum(effective_mask_sliced_child,
-                                                    mask_sliced_offsets,
+                                                    reducer_offsets_view,
                                                     offset_data_type,
                                                     null_policy::EXCLUDE,
                                                     std::nullopt,

@@ -209,6 +209,9 @@ TEST(TableToDeviceArrayTest, NoColumns)
 
 TEST(TableToDeviceArrayTest, FlatSizeExceedsSizeTypeLimit)
 {
+#if CUDF_SIZE_TYPE_BITS == 64
+  GTEST_SKIP() << "This test specifically exercises the 32-bit size_type limit.";
+#endif
   auto stream      = cudf::get_default_stream();
   auto size_limit  = static_cast<size_t>(std::numeric_limits<cudf::size_type>::max());
   auto num_rows    = size_limit * 0.6;

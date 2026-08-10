@@ -72,7 +72,9 @@
 
 #include <jni.h>
 
+#include <array>
 #include <numeric>
+#include <utility>
 
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
@@ -1556,11 +1558,18 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
     cudf::jni::native_jstring n_j_udf(env, j_udf);
     std::string n_udf              = n_j_udf;
     cudf::transform_input inputs[] = {*column};
-    return release_as_jlong(cudf::transform_extended(
-      inputs,
-      n_udf,
-      cudf::data_type(cudf::type_id::INT32),
-      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA));
+    return release_as_jlong(std::move(
+      cudf::transform(n_udf,
+                      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      inputs,
+                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                                                        cudf::output_nullability::PRESERVE}},
+                      {},
+                      std::nullopt)
+        ->release()
+        .front()));
   }
   JNI_CATCH(env, 0);
 }

@@ -69,11 +69,11 @@ __device__ void update_page_sizes(page_state_s* s,
   } temp_storage;
 
   // how many input level values we've processed in the page so far
-  int value_count = s->input_value_count;
+  int value_count = s->progress.input_value_count;
   // how many rows we've processed in the page so far
-  int row_count = s->input_row_count;
+  int row_count = s->progress.input_row_count;
   // how many leaf values we've processed in the page so far
-  int leaf_count = s->input_leaf_count;
+  int leaf_count = s->progress.input_leaf_count;
   // whether or not we need to continue checking for the first row
   bool skipped_values_set = s->setup.page.skipped_values >= 0;
 
@@ -108,7 +108,7 @@ __device__ void update_page_sizes(page_state_s* s,
 
       // if this thread is in row bounds
       int const row_index = (thread_row_count + row_count) - 1;
-      in_row_bounds       = (row_index >= s->row_index_lower_bound) &&
+      in_row_bounds       = (row_index >= s->progress.row_index_lower_bound) &&
                       (row_index < (s->setup.first_row + s->setup.num_rows));
 
       // if we have not set skipped values yet, see if we found the first in-bounds row
@@ -150,11 +150,11 @@ __device__ void update_page_sizes(page_state_s* s,
 
   // update final outputs
   if (!t) {
-    s->input_value_count = value_count;
+    s->progress.input_value_count = value_count;
 
     // only used in the skip_rows/num_rows case
-    s->input_leaf_count = leaf_count;
-    s->input_row_count  = row_count;
+    s->progress.input_leaf_count = leaf_count;
+    s->progress.input_row_count  = row_count;
   }
 
   block.sync();
@@ -288,8 +288,7 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
 
   // in the trim pass, for anything with lists, we only need to fully process bounding pages (those
   // at the beginning or the end of the row bounds)
-  if (!is_base_pass &&
-      !is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition)) {
+  if (!is_base_pass && !is_bounds_page(s, min_row, num_rows, has_repetition)) {
     int depth = 0;
     while (depth < s->setup.page.num_output_nesting_levels) {
       auto const thread_depth = depth + t;
@@ -297,8 +296,7 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
         // if we are not a bounding page (as checked above) then we are either
         // returning all rows/values from this page, or 0 of them
         pp->nesting[thread_depth].batch_size =
-          (s->setup.num_rows == 0 &&
-           !is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows))
+          (s->setup.num_rows == 0 && !is_page_contained(s, min_row, num_rows))
             ? 0
             : pp->nesting[thread_depth].size;
       }
@@ -326,15 +324,15 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
   if (!t) {
     s->setup.page.skipped_values      = -1;
     s->setup.page.skipped_leaf_values = 0;
-    s->input_row_count                = 0;
-    s->input_value_count              = 0;
+    s->progress.input_row_count       = 0;
+    s->progress.input_value_count     = 0;
 
     // in the base pass, we're computing the number of rows, make sure we visit absolutely
     // everything
     if (is_base_pass) {
-      s->setup.first_row       = 0;
-      s->setup.num_rows        = cuda::std::numeric_limits<int32_t>::max();
-      s->row_index_lower_bound = -1;
+      s->setup.first_row                = 0;
+      s->setup.num_rows                 = cuda::std::numeric_limits<int32_t>::max();
+      s->progress.row_index_lower_bound = -1;
     }
   }
 

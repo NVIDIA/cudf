@@ -439,24 +439,6 @@ class StringFunction(Expr):
                 col_width = self.children[1].evaluate(df, context=context)
                 assert isinstance(col_width, Column)
                 widths = col_width.obj
-                if widths.null_count() > 0:
-                    # zfill_by_widths cannot handle null widths, so substitute
-                    # a placeholder width and null out those rows afterwards.
-                    # https://github.com/rapidsai/cudf/issues/23207
-                    filled = plc.replace.replace_nulls(
-                        widths,
-                        plc.Scalar.from_py(0, widths.type(), stream=df.stream),
-                        stream=df.stream,
-                    )
-                    result = plc.strings.padding.zfill_by_widths(
-                        column.obj, filled, stream=df.stream
-                    )
-                    combined_mask, null_count = plc.null_mask.bitmask_and(
-                        [result, widths], stream=df.stream
-                    )
-                    return Column(
-                        result.with_mask(combined_mask, null_count), self.dtype
-                    )
                 return Column(
                     plc.strings.padding.zfill_by_widths(
                         column.obj, widths, stream=df.stream

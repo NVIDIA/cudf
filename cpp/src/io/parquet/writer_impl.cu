@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,6 +41,7 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuda/iterator>
+#include <cuda/numeric>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 
@@ -1369,7 +1370,8 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
       // bitpacking bitsize we efficiently support
       if (nbits > MAX_DICT_BITS) { return {false, 0}; }
 
-      auto rle_byte_size = util::div_rounding_up_safe(ck.num_values * nbits, 8);
+      auto rle_byte_size =
+        util::div_rounding_up_safe<size_t>(static_cast<size_t>(ck.num_values) * nbits, 8);
       auto dict_enc_size = ck.uniq_data_size + rle_byte_size;
       if (ck.plain_data_size <= dict_enc_size) { return {false, 0}; }
 
@@ -1912,8 +1914,14 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
             return l + r.num_values;
           });
         ck.plain_data_size = std::accumulate(
-          chunk_fragments.begin(), chunk_fragments.end(), 0, [](int sum, PageFragment frag) {
-            return sum + frag.fragment_data_size;
+          chunk_fragments.begin(),
+          chunk_fragments.end(),
+          size_t{0},
+          [](auto sum, PageFragment const& frag) {
+            auto const [result, overflow] =
+              cuda::add_overflow<size_t>(sum, frag.fragment_data_size);
+            CUDF_EXPECTS(not overflow, "Page fragments data size overflow", std::overflow_error);
+            return result;
           });
         auto& column_chunk_meta          = row_group.columns[c].meta_data;
         column_chunk_meta.type           = parquet_columns[c].physical_type();

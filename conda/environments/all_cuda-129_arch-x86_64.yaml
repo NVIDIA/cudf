@@ -46,7 +46,7 @@ dependencies:
 - libcufile-dev
 - libcurand-dev
 - libkvikio==26.10.*,>=0.0.0a0
-- libnvcomp-dev==5.2.0.10
+- libnvcomp-dev==5.3.0.16
 - libnvjitlink-dev
 - librapidsmpf==26.10.*,>=0.0.0a0
 - librdkafka<2.15.0a0
@@ -96,7 +96,7 @@ dependencies:
 - pyxlsb
 - rapids-build-backend>=0.4.0,<0.5.0
 - rapids-dask-dependency==26.10.*,>=0.0.0a0
-- rapids-logger==0.2.*,>=0.0.0a0
+- rapids-logger==0.3.*
 - rapidsmpf==26.10.*,>=0.0.0a0
 - ray-default>=2.55.1
 - rich

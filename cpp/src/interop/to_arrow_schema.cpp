@@ -162,7 +162,10 @@ int dispatch_to_arrow_type::operator()<cudf::list_view>(column_view input,
                                                         column_metadata const& metadata,
                                                         ArrowSchema* out)
 {
-  NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(out, NANOARROW_TYPE_LIST));
+  auto const offsets_type = cudf::lists_column_view{input}.offsets().type().id();
+  NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(
+    out,
+    offsets_type == cudf::type_id::INT64 ? NANOARROW_TYPE_LARGE_LIST : NANOARROW_TYPE_LIST));
   auto child = input.child(cudf::lists_column_view::child_column_index);
   ArrowSchemaInit(out->children[0]);
   auto child_meta = metadata.children_meta.empty()

@@ -221,9 +221,9 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::string_v
     std::overflow_error);
 
   if (input->length == 0) { return make_empty_column(type_id::STRING); }
-  auto [mask, null_count] = !skip_mask
-                              ? get_mask_buffer(input, stream, mr)
-                              : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+  auto [mask, null_count] =
+    !skip_mask ? get_mask_buffer(input, stream, mr)
+               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), size_type{0}};
   return string_column_from_arrow_host(schema, input, std::move(mask), null_count, stream, mr);
 }
 
@@ -278,7 +278,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::struct_v
 
   auto [out_mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), size_type{0}};
 
   return make_structs_column(
     input->length, std::move(child_columns), null_count, std::move(*out_mask), stream, mr);
@@ -307,7 +307,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
 
   auto [out_mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), size_type{0}};
 
   return make_lists_column(static_cast<size_type>(input->length),
                            std::move(offsets_column),
@@ -415,8 +415,23 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
           .buffers    = offsets_buffers,
   };
 
-  if (schema->type == NANOARROW_TYPE_STRING || schema->type == NANOARROW_TYPE_LIST) {
+  if (schema->type == NANOARROW_TYPE_STRING) {
     return copy_offsets_column<int32_t>(schema, &offsets_array, stream, mr);
+  }
+  if (schema->type == NANOARROW_TYPE_LIST) {
+    auto const input_offsets = static_cast<int32_t const*>(offsets_buffer);
+    auto const offset        = input_offsets[input->offset];
+    auto const length        = input_offsets[input->offset + input->length] - offset;
+    std::vector<int32_t> normalized_offsets(input->length + 1);
+    std::transform(input_offsets + input->offset,
+                   input_offsets + input->offset + input->length + 1,
+                   normalized_offsets.begin(),
+                   [offset](auto value) { return static_cast<int32_t>(value - offset); });
+    offsets_buffers[fixed_width_data_buffer_idx] = normalized_offsets.data();
+    offsets_array.offset                         = 0;
+    auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int32_t>(
+      schema, &offsets_array, data_type{type_id::INT32}, true);
+    return std::tuple{std::move(result), offset, length};
   }
   if (schema->type == NANOARROW_TYPE_LARGE_STRING) {
     return copy_offsets_column<int64_t>(schema, &offsets_array, stream, mr);
@@ -424,27 +439,25 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
 
   CUDF_EXPECTS(schema->type == NANOARROW_TYPE_LARGE_LIST, "Unknown offsets parent type");
 
-  // Large-lists must be copied to int32 column
-  auto int32_offsets = std::vector<int32_t>();
-  int32_offsets.reserve(input->length + 1);
+  auto normalized_offsets = std::vector<int64_t>();
+  normalized_offsets.reserve(input->length + 1);
   auto int64_offsets = static_cast<int64_t const*>(offsets_buffer);
   auto const offset  = int64_offsets[input->offset];
   auto const length  = int64_offsets[input->offset + input->length] - offset;
 
-  constexpr auto max_offset = static_cast<int64_t>(std::numeric_limits<int32_t>::max());
+  constexpr auto max_offset = static_cast<int64_t>(std::numeric_limits<size_type>::max());
   CUDF_EXPECTS(
-    length <= max_offset, "large list offsets exceed 32-bit integer bounds", std::overflow_error);
+    length <= max_offset, "large list offsets exceed cudf::size_type bounds", std::overflow_error);
 
-  // normalize the offsets while copying from int64 to int32
   std::transform(int64_offsets + input->offset,
                  int64_offsets + input->offset + input->length + 1,
-                 std::back_inserter(int32_offsets),
-                 [offset](int64_t o) { return static_cast<int32_t>(o - offset); });
+                 std::back_inserter(normalized_offsets),
+                 [offset](int64_t o) { return o - offset; });
 
-  offsets_buffers[fixed_width_data_buffer_idx] = int32_offsets.data();
+  offsets_buffers[fixed_width_data_buffer_idx] = normalized_offsets.data();
   offsets_array.offset                         = 0;  // already accounted for by the above transform
-  auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int32_t>(
-    schema, &offsets_array, data_type(type_id::INT32), true);
+  auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int64_t>(
+    schema, &offsets_array, data_type{type_id::INT64}, true);
   return std::tuple{std::move(result), offset, length};
 }
 

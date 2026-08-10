@@ -29,6 +29,7 @@
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
@@ -36,6 +37,7 @@
 #include <cuda/std/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/for_each.h>
+#include <thrust/transform.h>
 
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
@@ -102,6 +104,19 @@ struct dispatch_to_arrow_host {
     CUDF_CUDA_TRY(
       cudf::detail::memcpy_async(buffer->data, input.data(), input.size_bytes(), stream));
     return NANOARROW_OK;
+  }
+
+  int populate_list_offsets(lists_column_view const& lcv, size_type size, ArrowBuffer* buffer) const
+  {
+    return lcv.offsets().type().id() == type_id::INT32
+             ? populate_data_buffer(
+                 device_span<int32_t const>{
+                   lcv.offsets().data<int32_t>() + lcv.offset(), static_cast<std::size_t>(size + 1)},
+                 buffer)
+             : populate_data_buffer(
+                 device_span<int64_t const>{
+                   lcv.offsets().data<int64_t>() + lcv.offset(), static_cast<std::size_t>(size + 1)},
+                 buffer);
   }
 
   template <typename T,
@@ -205,20 +220,27 @@ template <>
 int dispatch_to_arrow_host::operator()<cudf::list_view>(ArrowArray* out) const
 {
   nanoarrow::UniqueArray tmp;
-  NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), NANOARROW_TYPE_LIST, column));
+  auto const lcv        = cudf::lists_column_view(column);
+  auto const arrow_type = lcv.offsets().type().id() == type_id::INT64
+                            ? NANOARROW_TYPE_LARGE_LIST
+                            : NANOARROW_TYPE_LIST;
+  NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), arrow_type, column));
   NANOARROW_RETURN_NOT_OK(ArrowArrayAllocateChildren(tmp.get(), 1));
 
   NANOARROW_RETURN_NOT_OK(populate_validity_bitmap(ArrowArrayValidityBitmap(tmp.get())));
-  auto const lcv = cudf::lists_column_view(column);
 
   if (column.size() == 0) {
     // initialize the offsets buffer with a single zero by convention for 0 length
-    NANOARROW_RETURN_NOT_OK(
-      ArrowBufferAppendInt32(ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx), 0));
+    if (arrow_type == NANOARROW_TYPE_LARGE_LIST) {
+      NANOARROW_RETURN_NOT_OK(
+        ArrowBufferAppendInt64(ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx), 0));
+    } else {
+      NANOARROW_RETURN_NOT_OK(
+        ArrowBufferAppendInt32(ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx), 0));
+    }
   } else {
-    NANOARROW_RETURN_NOT_OK(
-      populate_data_buffer(device_span<int32_t const>(lcv.offsets_begin(), (column.size() + 1)),
-                           ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx)));
+    NANOARROW_RETURN_NOT_OK(populate_list_offsets(
+      lcv, column.size(), ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx)));
   }
 
   NANOARROW_RETURN_NOT_OK(get_column(lcv.child(), stream, mr, tmp->children[0]));

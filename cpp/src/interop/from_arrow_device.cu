@@ -14,6 +14,7 @@
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/unary.hpp>
 #include <cudf/interop.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -318,18 +319,30 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(schema->type != NANOARROW_TYPE_LARGE_LIST,
-               "Large list types are not supported",
-               cudf::data_type_error);
   size_type const num_rows   = input->length;
   size_type const offset     = input->offset;
   size_type const null_count = input->null_count;
-  auto offsets_view          = column_view{data_type(type_id::INT32),
-                                  (num_rows == 0) ? 0 : (offset + num_rows + 1),
-                                  input->buffers[fixed_width_data_buffer_idx],
-                                  nullptr,
-                                  0,
-                                  0};
+  auto const offsets_size    = (num_rows == 0) ? size_type{0} : (offset + num_rows + 1);
+  column_view offsets_view;
+  if (schema->type == NANOARROW_TYPE_LARGE_LIST) {
+#if CUDF_SIZE_TYPE_BITS == 32
+    CUDF_FAIL("Large list types are not supported", cudf::data_type_error);
+#else
+    offsets_view = column_view{data_type{type_id::INT64},
+                               offsets_size,
+                               input->buffers[fixed_width_data_buffer_idx],
+                               nullptr,
+                               0,
+                               0};
+#endif
+  } else {
+    offsets_view = column_view{data_type{type_id::INT32},
+                               offsets_size,
+                               input->buffers[fixed_width_data_buffer_idx],
+                               nullptr,
+                               0,
+                               0};
+  }
 
   ArrowSchemaView child_schema_view;
   NANOARROW_THROW_NOT_OK(
@@ -342,7 +355,10 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
   // than can be referenced by the sliced offsets, we need to slice the child_view
   // so that when `get_sliced_child` is called, we still produce the right result
   auto max_child_offset =
-    num_rows == 0 ? 0 : cudf::detail::get_value<int32_t>(offsets_view, offset + num_rows, stream);
+    num_rows == 0
+      ? 0
+      : static_cast<size_type>(cudf::lists::detail::get_offset_value(
+          offsets_view, offset + num_rows, stream));
   child_view = cudf::slice(child_view, {0, max_child_offset}, stream).front();
 
   return std::make_tuple<column_view, owned_columns_t>(

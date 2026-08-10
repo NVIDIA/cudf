@@ -20,6 +20,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -32,6 +33,8 @@
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
+
+#include <limits>
 
 namespace cudf {
 namespace detail {
@@ -242,7 +245,12 @@ int dispatch_to_arrow_device::operator()<cudf::list_view>(cudf::column&& column,
                                                           ArrowArray* out)
 {
   nanoarrow::UniqueArray tmp;
-  NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), NANOARROW_TYPE_LIST, column));
+  auto const offsets_type = cudf::lists_column_view{column.view()}.offsets().type().id();
+  NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(),
+                                          offsets_type == type_id::INT64
+                                            ? NANOARROW_TYPE_LARGE_LIST
+                                            : NANOARROW_TYPE_LIST,
+                                          column));
   NANOARROW_RETURN_NOT_OK(ArrowArrayAllocateChildren(tmp.get(), 1));
 
   auto contents = column.release();
@@ -444,11 +452,15 @@ int dispatch_to_arrow_device_view::operator()<cudf::list_view>(ArrowArray* out) 
 {
   nanoarrow::UniqueArray tmp;
 
-  NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), NANOARROW_TYPE_LIST, column));
+  auto const lcv = cudf::lists_column_view(column);
+  NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(),
+                                          lcv.offsets().type().id() == type_id::INT64
+                                            ? NANOARROW_TYPE_LARGE_LIST
+                                            : NANOARROW_TYPE_LIST,
+                                          column));
   NANOARROW_RETURN_NOT_OK(ArrowArrayAllocateChildren(tmp.get(), 1));
   NANOARROW_RETURN_NOT_OK(set_null_mask(column, tmp.get()));
 
-  auto const lcv = cudf::lists_column_view(column);
   NANOARROW_RETURN_NOT_OK(set_view_to_buffer(lcv.offsets(), tmp.get()));
 
   auto child = lcv.child();

@@ -10,6 +10,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
@@ -80,19 +81,8 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
     auto const d_sizes     = column_device_view::create(*sizes, stream);
     auto const sizes_begin = cudf::detail::make_null_replacement_iterator(*d_sizes, size_type{0});
     auto const sizes_end   = sizes_begin + sizes->size();
-    auto output_offsets    = cudf::make_numeric_column(
-      offset_data_type, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
-    auto output_offsets_view = output_offsets->mutable_view();
-
-    // Could have attempted an exclusive_scan(), but it would not compute the last entry.
-    // Instead, inclusive_scan(), followed by writing `0` to the head of the offsets column.
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                           sizes_begin,
-                           sizes_end,
-                           output_offsets_view.begin<size_type>() + 1);
-    CUDF_CUDA_TRY(cudaMemsetAsync(
-      output_offsets_view.begin<size_type>(), 0, sizeof(size_type), stream.value()));
-    return output_offsets;
+    return std::get<0>(cudf::lists::detail::make_offsets_child_column(
+      sizes_begin, sizes_end, input.offsets().type(), stream, mr));
   };
 
   return cudf::make_lists_column(input.size(),

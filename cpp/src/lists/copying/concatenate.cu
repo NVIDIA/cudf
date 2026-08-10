@@ -4,15 +4,14 @@
  */
 
 #include <cudf/column/column.hpp>
-#include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/concatenate.hpp>
 #include <cudf/detail/concatenate_masks.hpp>
-#include <cudf/detail/get_value.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/lists/detail/concatenate.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -46,13 +45,15 @@ namespace {
  */
 std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns,
                                       size_type total_list_count,
+                                      data_type output_type,
                                       rmm::cuda_stream_view stream,
                                       rmm::device_async_resource_ref mr)
 {
   // outgoing offsets
   auto merged_offsets = cudf::make_fixed_width_column(
-    data_type{type_id::INT32}, total_list_count + 1, mask_state::UNALLOCATED, stream, mr);
-  mutable_column_device_view d_merged_offsets(*merged_offsets, 0, 0);
+    output_type, total_list_count + 1, mask_state::UNALLOCATED, stream, mr);
+  auto d_merged_offsets =
+    cudf::detail::offsetalator_factory::make_output_iterator(merged_offsets->mutable_view());
 
   // merge offsets
   // TODO : this could probably be done as a single gpu operation if done as a kernel.
@@ -61,16 +62,18 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
   std::for_each(columns.begin(), columns.end(), [&](lists_column_view const& c) {
     if (c.size() > 0) {
       // handle sliced columns
-      int const local_shift =
-        shift -
-        (c.offset() > 0 ? cudf::detail::get_value<size_type>(c.offsets(), c.offset(), stream) : 0);
-      column_device_view offsets(c.offsets(), nullptr, nullptr);
+      auto const local_shift =
+        static_cast<int64_t>(shift) -
+        (c.offset() > 0 ? cudf::lists::detail::get_offset_value(
+                            c.offsets(), c.offset(), stream)
+                        : 0);
+      auto const offsets = c.offsets_begin();
       thrust::transform(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        offsets.begin<size_type>() + c.offset(),
-        offsets.begin<size_type>() + c.offset() + c.size() + 1,
-        d_merged_offsets.begin<size_type>() + count,
-        [local_shift] __device__(size_type offset) { return offset + local_shift; });
+        offsets,
+        offsets + c.size() + 1,
+        d_merged_offsets + count,
+        [local_shift] __device__(int64_t offset) { return offset + local_shift; });
 
       shift += c.get_sliced_child(stream).size();
       count += c.size();
@@ -110,7 +113,18 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto data = cudf::detail::concatenate(children, stream, mr);
 
   // merge offsets
-  auto offsets = merge_offsets(lists_columns, total_list_count, stream, mr);
+  auto output_offsets_type = std::accumulate(
+    lists_columns.begin(),
+    lists_columns.end(),
+    data_type{type_id::INT32},
+    [](data_type type, lists_column_view const& input) {
+      return cudf::lists::detail::promoted_offsets_type(type, input.offsets().type());
+    });
+  if (data->size() > std::numeric_limits<int32_t>::max()) {
+    output_offsets_type = data_type{type_id::INT64};
+  }
+  auto offsets =
+    merge_offsets(lists_columns, total_list_count, output_offsets_type, stream, mr);
 
   // if any of the input columns have nulls, construct the output mask
   bool const has_nulls =

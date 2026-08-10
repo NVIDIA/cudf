@@ -7,7 +7,8 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/lists/filling.hpp>
 #include <cudf/types.hpp>
@@ -39,7 +40,7 @@ struct tabulator {
 
   T const* const starts;
   T const* const steps;
-  size_type const* const offsets;
+  cudf::detail::input_offsetalator const offsets;
 
   template <typename U>
   static T __device__ multiply(U x, size_type times)
@@ -80,7 +81,7 @@ struct sequences_dispatcher {
                                      size_type n_elements,
                                      column_view const& starts,
                                      std::optional<column_view> const& steps,
-                                     size_type const* offsets,
+                                     cudf::detail::input_offsetalator offsets,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
   {
@@ -100,7 +101,7 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
                                         size_type n_elements,
                                         column_view const& starts,
                                         std::optional<column_view> const& steps,
-                                        size_type const* offsets,
+                                        cudf::detail::input_offsetalator offsets,
                                         rmm::cuda_stream_view stream,
                                         rmm::device_async_resource_ref mr)
   {
@@ -154,9 +155,10 @@ std::unique_ptr<column> sequences(column_view const& starts,
 
   auto const sizes_input_it = cudf::detail::indexalator_factory::make_input_iterator(sizes);
   // Generate list offsets for the output.
-  auto [list_offsets, n_elements] = cudf::detail::make_offsets_child_column(
+  auto [list_offsets, n_elements] = cudf::lists::detail::make_offsets_child_column(
     sizes_input_it, sizes_input_it + sizes.size(), stream, mr);
-  auto const offsets_begin = list_offsets->view().template begin<size_type>();
+  auto const offsets_begin =
+    cudf::detail::offsetalator_factory::make_input_iterator(list_offsets->view());
 
   auto child = type_dispatcher(starts.type(),
                                sequences_dispatcher{},

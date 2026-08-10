@@ -11,6 +11,7 @@
 #include <cudf/detail/sorting.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/lists/sorting.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -40,7 +41,8 @@ std::unique_ptr<column> build_output_offsets(lists_column_view const& input,
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     input.offsets_begin(),
                     input.offsets_end(),
-                    output_offset->mutable_view().begin<size_type>(),
+                    cudf::detail::offsetalator_factory::make_output_iterator(
+                      output_offset->mutable_view()),
                     [first = input.offsets_begin()] __device__(auto offset_index) {
                       return offset_index - *first;
                     });
@@ -59,10 +61,16 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
 
   auto output_offset = build_output_offsets(input, stream, mr);
   auto const child   = input.get_sliced_child(stream);
+  auto segment_offsets =
+    output_offset->type() == data_type{type_to_id<size_type>()}
+      ? std::unique_ptr<column>{}
+      : cudf::cast(output_offset->view(), data_type{type_to_id<size_type>()}, stream, mr);
+  auto const segment_offsets_view =
+    segment_offsets ? segment_offsets->view() : output_offset->view();
 
   auto const sorted_child_table = cudf::detail::segmented_sort_by_key(table_view{{child}},
                                                                       table_view{{child}},
-                                                                      output_offset->view(),
+                                                                      segment_offsets_view,
                                                                       {column_order},
                                                                       {null_precedence},
                                                                       stream,
@@ -85,10 +93,16 @@ std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
 
   auto output_offset = build_output_offsets(input, stream, mr);
   auto const child   = input.get_sliced_child(stream);
+  auto segment_offsets =
+    output_offset->type() == data_type{type_to_id<size_type>()}
+      ? std::unique_ptr<column>{}
+      : cudf::cast(output_offset->view(), data_type{type_to_id<size_type>()}, stream, mr);
+  auto const segment_offsets_view =
+    segment_offsets ? segment_offsets->view() : output_offset->view();
 
   auto const sorted_child_table = cudf::detail::stable_segmented_sort_by_key(table_view{{child}},
                                                                              table_view{{child}},
-                                                                             output_offset->view(),
+                                                                             segment_offsets_view,
                                                                              {column_order},
                                                                              {null_precedence},
                                                                              stream,

@@ -10,7 +10,9 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/detail/scatter_helper.cuh>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/list_device_view.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/types.hpp>
@@ -107,8 +109,10 @@ std::unique_ptr<column> scatter_impl(rmm::device_uvector<unbound_list_view> cons
   auto list_size_begin = thrust::make_transform_iterator(
     target_vector.begin(),
     cuda::proclaim_return_type<size_type>([] __device__(unbound_list_view l) { return l.size(); }));
-  auto offsets_column = std::get<0>(cudf::detail::make_offsets_child_column(
-    list_size_begin, list_size_begin + target.size(), stream, mr));
+  auto const output_offsets_type = cudf::lists::detail::promoted_offsets_type(
+    source_lists_column_view.offsets().type(), target_lists_column_view.offsets().type());
+  auto offsets_column = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    list_size_begin, list_size_begin + target.size(), output_offsets_type, stream, mr));
 
   auto child_column = build_lists_child_column_recursive(child_column_type,
                                                          target_vector,
@@ -230,13 +234,14 @@ std::unique_ptr<column> scatter(scalar const& slr,
   rmm::device_buffer null_mask = slr_valid
                                    ? cudf::create_null_mask(1, mask_state::UNALLOCATED, stream, mr)
                                    : cudf::create_null_mask(1, mask_state::ALL_NULL, stream, mr);
-  auto offset_column =
-    make_numeric_column(data_type{type_to_id<size_type>()}, 2, mask_state::UNALLOCATED, stream, mr);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   offset_column->mutable_view().begin<size_type>(),
-                   offset_column->mutable_view().end<size_type>(),
-                   size_type{0},
-                   lv->view().size());
+  auto const list_size = lv->view().size();
+  auto offsets_data = cudf::lists::detail::make_offsets_child_column(
+    cuda::constant_iterator<size_type>{list_size},
+    cuda::constant_iterator<size_type>{list_size} + 1,
+    lists_column_view(target).offsets().type(),
+    stream,
+    mr);
+  auto offset_column = std::move(offsets_data.first);
   auto wrapped = column_view(data_type{type_id::LIST},
                              1,
                              nullptr,

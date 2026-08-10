@@ -7,12 +7,12 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.hpp>
-#include <cudf/detail/get_value.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/combine.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
@@ -46,12 +46,14 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
 {
   auto const num_rows = input.size();
 
-  auto out_offsets = make_numeric_column(
-    data_type{type_to_id<size_type>()}, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
+  auto const child_lists = lists_column_view(lists_column_view(input).child());
+  auto out_offsets       = make_numeric_column(
+    child_lists.offsets().type(), num_rows + 1, mask_state::UNALLOCATED, stream, mr);
 
-  auto const d_out_offsets  = out_offsets->mutable_view().template begin<size_type>();
+  auto const d_out_offsets =
+    cudf::detail::offsetalator_factory::make_output_iterator(out_offsets->mutable_view());
   auto const d_row_offsets  = lists_column_view(input).offsets_begin();
-  auto const d_list_offsets = lists_column_view(lists_column_view(input).child()).offsets_begin();
+  auto const d_list_offsets = child_lists.offsets_begin();
 
   // Concatenating the lists at the same row by converting the entry offsets from the child column
   // into row offsets of the root column. Those entry offsets are subtracted by the first entry
@@ -146,8 +148,12 @@ generate_list_offsets_and_validities(column_view const& input,
       return d_list_offsets[d_row_offsets[idx + 1]] - d_list_offsets[d_row_offsets[idx]];
     }));
   // Compute offsets from sizes.
-  auto out_offsets = std::get<0>(
-    cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + num_rows, stream, mr));
+  auto out_offsets = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    sizes_itr,
+    sizes_itr + num_rows,
+    lists_column_view(lists_column_view(input).child()).offsets().type(),
+    stream,
+    mr));
 
   return {std::move(out_offsets), std::move(validities)};
 }
@@ -178,8 +184,8 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
     [d_row_offsets,
      d_list_offsets,
      d_indices = gather_map.begin(),
-     d_out_list_offsets =
-       output_list_offsets.template begin<size_type>()] __device__(size_type const idx) {
+     d_out_list_offsets = cudf::detail::offsetalator_factory::make_input_iterator(
+       output_list_offsets)] __device__(size_type const idx) {
       // The output row has been identified as a null/empty list during list size computation.
       if (d_out_list_offsets[idx + 1] == d_out_list_offsets[idx]) { return; }
 
@@ -208,8 +214,8 @@ std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& inp
   auto const offsets_view              = list_offsets->view();
 
   auto const num_rows = input.size();
-  auto const num_output_entries =
-    cudf::detail::get_value<size_type>(offsets_view, num_rows, stream);
+  auto const num_output_entries = static_cast<size_type>(
+    cudf::lists::detail::get_offset_value(offsets_view, num_rows, stream));
 
   auto list_entries =
     gather_list_entries(input, offsets_view, num_rows, num_output_entries, stream, mr);

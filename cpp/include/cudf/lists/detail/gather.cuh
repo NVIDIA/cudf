@@ -5,8 +5,8 @@
 #pragma once
 
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/get_value.cuh>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -66,7 +66,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
   size_type output_count = gather_map_size;
 
   // offsets of the source column
-  size_type const* src_offsets{source_column.offsets().data<size_type>() + source_column.offset()};
+  auto const src_offsets = source_column.offsets_begin();
   size_type const src_size = source_column.size();
 
   auto const source_column_nullmask = source_column.null_mask();
@@ -94,13 +94,18 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
       return src_offsets[offset_index + 1] - src_offsets[offset_index];
     }));
 
-  auto [dst_offsets_c, map_size] =
-    cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + output_count, stream, mr);
+  auto [dst_offsets_c, map_size] = cudf::lists::detail::make_offsets_child_column(
+    sizes_itr,
+    sizes_itr + output_count,
+    source_column.offsets().type(),
+    stream,
+    mr);
 
   // handle sliced columns
   size_type const shift =
     source_column.offset() > 0
-      ? cudf::detail::get_value<size_type>(source_column.offsets(), source_column.offset(), stream)
+      ? static_cast<size_type>(cudf::lists::detail::get_offset_value(
+          source_column.offsets(), source_column.offset(), stream))
       : 0;
 
   // generate the base offsets

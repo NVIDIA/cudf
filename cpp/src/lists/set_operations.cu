@@ -16,6 +16,7 @@
 #include <cudf/lists/detail/combine.hpp>
 #include <cudf/lists/detail/set_operations.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/set_operations.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
@@ -165,7 +166,12 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                                  mr);
 
   auto const num_rows = lhs.size();
-  auto out_offsets    = reconstruct_offsets(out_table->get_column(0).view(), num_rows, stream, mr);
+  auto out_offsets    = reconstruct_offsets(
+    out_table->get_column(0).view(),
+    num_rows,
+    stream,
+    mr,
+    cudf::lists::detail::promoted_offsets_type(lhs.offsets().type(), rhs.offsets().type()));
   auto [null_mask, null_count] =
     cudf::detail::bitmask_and(table_view{{lhs.parent(), rhs.parent()}}, stream, mr);
   auto output = make_lists_column(num_rows,
@@ -250,7 +256,12 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                                  mr);
 
   auto const num_rows = lhs.size();
-  auto out_offsets    = reconstruct_offsets(out_table->get_column(0).view(), num_rows, stream, mr);
+  auto out_offsets    = reconstruct_offsets(
+    out_table->get_column(0).view(),
+    num_rows,
+    stream,
+    mr,
+    cudf::lists::detail::promoted_offsets_type(lhs.offsets().type(), rhs.offsets().type()));
   auto [null_mask, null_count] =
     cudf::detail::bitmask_and(table_view{{lhs.parent(), rhs.parent()}}, stream, mr);
 

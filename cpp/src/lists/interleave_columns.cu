@@ -10,6 +10,8 @@
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_device_view.cuh>
@@ -27,6 +29,8 @@
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
+
+#include <numeric>
 
 namespace cudf {
 namespace lists {
@@ -47,10 +51,7 @@ generate_list_offsets_and_validities(table_view const& input,
   auto const num_output_lists = num_rows * num_cols;
   auto const table_dv_ptr     = table_device_view::create(input, stream);
 
-  // The output offsets column.
-  auto list_offsets = make_numeric_column(
-    data_type{type_to_id<size_type>()}, num_output_lists + 1, mask_state::UNALLOCATED, stream, mr);
-  auto const d_offsets = list_offsets->mutable_view().template begin<size_type>();
+  auto sizes = rmm::device_uvector<size_type>(num_output_lists, stream);
 
   // The array of int8_t to store validities for list elements.
   auto validities = rmm::device_uvector<int8_t>(has_null_mask ? num_output_lists : 0, stream);
@@ -60,7 +61,7 @@ generate_list_offsets_and_validities(table_view const& input,
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_output_lists},
-    d_offsets,
+    sizes.begin(),
     cuda::proclaim_return_type<size_type>([num_cols,
                                            table_dv     = *table_dv_ptr,
                                            d_validities = validities.begin(),
@@ -69,17 +70,23 @@ generate_list_offsets_and_validities(table_view const& input,
       auto const list_id    = idx / num_cols;
       auto const& lists_col = table_dv.column(col_id);
       if (has_null_mask) { d_validities[idx] = static_cast<int8_t>(lists_col.is_valid(list_id)); }
-      auto const list_offsets =
-        lists_col.child(lists_column_view::offsets_column_index).template data<size_type>() +
-        lists_col.offset();
+      auto const offsets_column =
+        lists_col.child(lists_column_view::offsets_column_index);
+      auto const list_offsets = cudf::detail::input_offsetalator{
+        offsets_column.head(), offsets_column.type(), lists_col.offset()};
       return list_offsets[list_id + 1] - list_offsets[list_id];
     }));
 
-  // Compute offsets from sizes.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         d_offsets,
-                         d_offsets + num_output_lists + 1,
-                         d_offsets);
+  auto const preferred_offsets_type = std::accumulate(
+    input.begin(),
+    input.end(),
+    data_type{type_id::INT32},
+    [](data_type type, column_view const& col) {
+      return cudf::lists::detail::promoted_offsets_type(
+        type, lists_column_view(col).offsets().type());
+    });
+  auto list_offsets = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    sizes.begin(), sizes.end(), preferred_offsets_type, stream, mr));
 
   return {std::move(list_offsets), std::move(validities)};
 }
@@ -138,7 +145,7 @@ struct compute_string_sizes_and_interleave_lists_fn {
   table_device_view const table_dv;
 
   // Store list offsets of the output lists column.
-  size_type const* const dst_list_offsets;
+  cudf::detail::input_offsetalator const dst_list_offsets;
 
   using string_index_pair = cudf::strings::detail::string_index_pair;
   string_index_pair* indices;  // output
@@ -153,9 +160,10 @@ struct compute_string_sizes_and_interleave_lists_fn {
     auto const& lists_col = table_dv.column(col_id);
     if (lists_col.is_null(list_id)) { return; }
 
-    auto const list_offsets =
-      lists_col.child(lists_column_view::offsets_column_index).template data<size_type>() +
-      lists_col.offset();
+    auto const offsets_column =
+      lists_col.child(lists_column_view::offsets_column_index);
+    auto const list_offsets = cudf::detail::input_offsetalator{
+      offsets_column.head(), offsets_column.type(), lists_col.offset()};
     auto const& str_col = lists_col.child(lists_column_view::child_column_index);
 
     // The range of indices of the strings within the source list.
@@ -192,7 +200,8 @@ struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::
                                      rmm::device_async_resource_ref mr) const noexcept
   {
     auto const table_dv_ptr   = table_device_view::create(input, stream);
-    auto const d_list_offsets = output_list_offsets.template begin<size_type>();
+    auto const d_list_offsets =
+      cudf::detail::offsetalator_factory::make_input_iterator(output_list_offsets);
 
     rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(num_output_entries,
                                                                           stream);
@@ -238,15 +247,17 @@ struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>(
       [num_cols,
        table_dv     = *table_dv_ptr,
        d_validities = validities.begin(),
-       d_offsets    = output_list_offsets.template begin<size_type>(),
+       d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(
+         output_list_offsets),
        d_output     = output_dv_ptr->template begin<T>(),
        data_has_null_mask] __device__(size_type const idx) {
         auto const col_id     = idx % num_cols;
         auto const list_id    = idx / num_cols;
         auto const& lists_col = table_dv.column(col_id);
-        auto const list_offsets =
-          lists_col.child(lists_column_view::offsets_column_index).template data<size_type>() +
-          lists_col.offset();
+        auto const offsets_column =
+          lists_col.child(lists_column_view::offsets_column_index);
+        auto const list_offsets = cudf::detail::input_offsetalator{
+          offsets_column.head(), offsets_column.type(), lists_col.offset()};
         auto const& data_col = lists_col.child(lists_column_view::child_column_index);
 
         // The range of indices of the entries within the source list.
@@ -345,8 +356,8 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
   // Copy entries from the input lists columns to the output lists column - this needed to be
   // specialized for different types.
   auto const num_output_lists = input.num_rows() * input.num_columns();
-  auto const num_output_entries =
-    cudf::detail::get_value<size_type>(offsets_view, num_output_lists, stream);
+  auto const num_output_entries = static_cast<size_type>(
+    cudf::lists::detail::get_offset_value(offsets_view, num_output_lists, stream));
   auto const data_has_null_mask =
     std::any_of(std::cbegin(input), std::cend(input), [](auto const& col) {
       return col.child(lists_column_view::child_column_index).nullable();

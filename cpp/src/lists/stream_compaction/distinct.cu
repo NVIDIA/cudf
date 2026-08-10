@@ -52,8 +52,8 @@ std::unique_ptr<column> distinct(lists_column_view const& input,
                                   stream,
                                   mr);
 
-  auto out_offsets =
-    reconstruct_offsets(distinct_table->get_column(0).view(), input.size(), stream, mr);
+  auto out_offsets = reconstruct_offsets(
+    distinct_table->get_column(0).view(), input.size(), stream, mr, input.offsets().type());
 
   return make_lists_column(input.size(),
                            std::move(out_offsets),

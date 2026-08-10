@@ -46,7 +46,8 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      cuda::counting_iterator<size_type>{0},
                      child.size(),
-                     [list_offsets = out_offsets->view().begin<size_type>(),
+                     [list_offsets = cudf::detail::offsetalator_factory::make_input_iterator(
+                        out_offsets->view()),
                       list_indices = labels->view().begin<size_type>(),
                       gather_map   = gather_map.begin()] __device__(auto const idx) {
                        auto const list_idx     = list_indices[idx];

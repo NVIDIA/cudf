@@ -11,6 +11,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/lists/combine.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -64,12 +65,15 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          bool build_null_mask,
                                          concatenate_null_policy null_policy,
                                          device_span<size_type const> row_null_counts,
+                                         data_type preferred_offsets_type,
                                          rmm::cuda_stream_view stream,
                                          rmm::device_async_resource_ref mr)
 {
-  // outgoing offsets.
-  auto offsets = cudf::make_fixed_width_column(
-    data_type{type_to_id<size_type>()}, input.num_rows() + 1, mask_state::UNALLOCATED, stream, mr);
+  auto sizes = cudf::make_fixed_width_column(data_type{type_to_id<size_type>()},
+                                             input.num_rows(),
+                                             mask_state::UNALLOCATED,
+                                             stream,
+                                             mr);
 
   auto keys =
     thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -95,9 +99,11 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
           return 0;
         }
       }
-      auto offsets =
-        input.column(col_index).child(lists_column_view::offsets_column_index).data<size_type>() +
-        input.column(col_index).offset();
+      auto const lists_column = input.column(col_index);
+      auto const offsets_column =
+        lists_column.child(lists_column_view::offsets_column_index);
+      auto const offsets = cudf::detail::input_offsetalator{
+        offsets_column.head(), offsets_column.type(), lists_column.offset()};
       return offsets[row_index + 1] - offsets[row_index];
     }));
 
@@ -105,16 +111,16 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     keys + (input.num_rows() * input.num_columns()),
                                     values,
                                     cuda::make_discard_iterator(),
-                                    offsets->mutable_view().begin<size_type>(),
+                                    sizes->mutable_view().begin<size_type>(),
                                     cuda::std::plus<size_type>(),
                                     stream);
 
-  // convert to offsets
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         offsets->view().begin<size_type>(),
-                         offsets->view().begin<size_type>() + input.num_rows() + 1,
-                         offsets->mutable_view().begin<size_type>(),
-                         0);
+  auto offsets = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    sizes->view().begin<size_type>(),
+    sizes->view().end<size_type>(),
+    preferred_offsets_type,
+    stream,
+    mr));
 
   // generate appropriate null mask
   auto [null_mask, null_count] = [&]() {
@@ -284,7 +290,13 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
 
   // generate regrouped offsets and null mask
   auto [offsets, null_mask, null_count] = generate_regrouped_offsets_and_null_mask(
-    *input_dv, build_null_mask, null_policy, row_null_counts, stream, mr);
+    *input_dv,
+    build_null_mask,
+    null_policy,
+    row_null_counts,
+    lists_column_view(gathered->view().column(0)).offsets().type(),
+    stream,
+    mr);
 
   // reassemble the underlying child data with the regrouped offsets and null mask
   column& col   = gathered->get_column(0);

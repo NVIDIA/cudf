@@ -12,6 +12,7 @@
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/lists/detail/extract.hpp>
 #include <cudf/lists/detail/gather.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/extract.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -101,11 +102,9 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
  */
 std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists, rmm::cuda_stream_view stream)
 {
-  return cudf::detail::sequence(
-    num_lists + 1,
-    cudf::scalar_type_t<size_type>(0, true, stream, cudf::get_current_device_resource_ref()),
-    stream,
-    cudf::get_current_device_resource_ref());
+  auto sizes = cuda::constant_iterator<size_type>{1};
+  return std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    sizes, sizes + num_lists, stream, cudf::get_current_device_resource_ref()));
 }
 
 }  // namespace

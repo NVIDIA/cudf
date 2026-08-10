@@ -39,7 +39,8 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
 std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
                                             size_type n_lists,
                                             rmm::cuda_stream_view stream,
-                                            rmm::device_async_resource_ref mr);
+                                            rmm::device_async_resource_ref mr,
+                                            data_type preferred_type = data_type{type_id::INT32});
 
 /**
  * @brief Generate 0-based list offsets from the offsets of the input lists column.

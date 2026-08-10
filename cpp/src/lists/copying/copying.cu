@@ -5,8 +5,8 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/copy_range.cuh>
-#include <cudf/detail/get_value.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -40,24 +40,24 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
   end += lists.offset();
 
   // Offsets at the beginning and end of the slice:
-  auto offsets_data = lists.offsets().data<cudf::size_type>();
-  auto start_offset = cudf::detail::get_value<size_type>(lists.offsets(), start, stream);
-  auto end_offset   = cudf::detail::get_value<size_type>(lists.offsets(), end, stream);
+  auto offsets_data = cudf::detail::offsetalator_factory::make_input_iterator(lists.offsets());
+  auto start_offset = static_cast<size_type>(
+    cudf::lists::detail::get_offset_value(lists.offsets(), start, stream));
+  auto end_offset = static_cast<size_type>(
+    cudf::lists::detail::get_offset_value(lists.offsets(), end, stream));
 
-  rmm::device_uvector<cudf::size_type> out_offsets(offsets_count, stream);
+  auto offsets = cudf::make_numeric_column(
+    lists.offsets().type(), offsets_count, mask_state::UNALLOCATED, stream, mr);
+  auto out_offsets =
+    cudf::detail::offsetalator_factory::make_output_iterator(offsets->mutable_view());
 
   // Compute the offsets column of the result:
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     offsets_data + start,
     offsets_data + end + 1,  // size of offsets column is 1 greater than slice length
-    out_offsets.data(),
-    [start_offset] __device__(cudf::size_type i) { return i - start_offset; });
-  auto offsets = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
-                                                offsets_count,
-                                                out_offsets.release(),
-                                                rmm::device_buffer{},
-                                                0);
+    out_offsets,
+    [start_offset] __device__(int64_t i) { return i - start_offset; });
 
   // Compute the child column of the result.
   // If the child of this lists column is itself a lists column, we call copy_slice() on it.

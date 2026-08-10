@@ -51,19 +51,19 @@ struct list_gatherer {
 
   size_t offset_count;
   size_type const* base_offsets;
-  size_type const* offsets;
+  cudf::detail::input_offsetalator offsets;
 
   list_gatherer(gather_data const& gd)
     : offset_count{gd.base_offsets.size()},
       base_offsets{gd.base_offsets.data()},
-      offsets{gd.offsets->mutable_view().data<size_type>()}
+      offsets{cudf::detail::offsetalator_factory::make_input_iterator(gd.offsets->view())}
   {
   }
 
   __device__ result_type operator()(argument_type index)
   {
     // the "upper bound" of the span for a given offset is always offsets+1;
-    size_type const* upper_bound_start = offsets + 1;
+    auto const upper_bound_start = offsets + 1;
     // "step 1" from above
     auto const bound =
       thrust::upper_bound(thrust::seq, upper_bound_start, upper_bound_start + offset_count, index);

@@ -32,6 +32,17 @@ struct level_scan_state {
   CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
 };
 
+// Shared memory state struct used by the preprocess_string_offsets kernel.
+// Includes setup (page metadata + error), stream (page bytes + dictionary), and
+// progress (input counters) because this pass scans flat string payloads while tracking counts.
+struct string_offset_scan_state {
+  page_decode_setup_state setup;
+  page_decode_stream_state stream;
+  page_decode_progress_state progress;
+  CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
+};
+static_assert(sizeof(string_offset_scan_state) < sizeof(page_state_s),
+              "string_offset_scan_state did not shrink after removing output conversion state");
 #undef CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
 
 }  // namespace cudf::io::parquet::detail

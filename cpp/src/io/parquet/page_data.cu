@@ -107,16 +107,17 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
-  while (s->setup.error == 0 &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (s->setup.error == 0 && (s->progress.input_value_count < s->setup.num_input_values ||
+                                 s->progress.src_pos < s->progress.nz_count)) {
     int target_pos;
-    int src_pos = s->src_pos;
+    int src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() == 0) {
       target_pos = cuda::std::min(src_pos + 2 * (decode_block_size - warp.size()),
-                                  s->nz_count + (decode_block_size - warp.size()));
+                                  s->progress.nz_count + (decode_block_size - warp.size()));
     } else {
-      target_pos = cuda::std::min<int32_t>(s->nz_count, src_pos + decode_block_size - warp.size());
+      target_pos =
+        cuda::std::min<int32_t>(s->progress.nz_count, src_pos + decode_block_size - warp.size());
     }
     // This needs to be here to prevent warp 1 modifying src_pos before all threads have read it
     block.sync();
@@ -212,7 +213,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         }
       }
       // Only the first thread in the warp 1 updates src_pos
-      if (warp.meta_group_rank() == 1 and warp.thread_rank() == 0) { s->src_pos = target_pos; }
+      if (warp.meta_group_rank() == 1 and warp.thread_rank() == 0) {
+        s->progress.src_pos = target_pos;
+      }
     }
     block.sync();
   }
@@ -320,18 +323,21 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const first_out_thread_id = out_warp_id * warp.size();
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
-  while (s->setup.error == 0 &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (s->setup.error == 0 && (s->progress.input_value_count < s->setup.num_input_values ||
+                                 s->progress.src_pos < s->progress.nz_count)) {
     int target_pos;
-    int src_pos = s->src_pos;
+    int src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() < out_warp_id) {
-      target_pos = cuda::std::min<int32_t>(src_pos + 2 * (decode_block_size - first_out_thread_id),
-                                           s->nz_count + (decode_block_size - first_out_thread_id));
-    } else {
       target_pos =
-        cuda::std::min<int32_t>(s->nz_count, src_pos + decode_block_size - first_out_thread_id);
-      if (out_warp_id > 1) { target_pos = cuda::std::min<int32_t>(target_pos, s->dict_pos); }
+        cuda::std::min<int32_t>(src_pos + 2 * (decode_block_size - first_out_thread_id),
+                                s->progress.nz_count + (decode_block_size - first_out_thread_id));
+    } else {
+      target_pos = cuda::std::min<int32_t>(s->progress.nz_count,
+                                           src_pos + decode_block_size - first_out_thread_id);
+      if (out_warp_id > 1) {
+        target_pos = cuda::std::min<int32_t>(target_pos, s->progress.dict_pos);
+      }
     }
     // this needs to be here to prevent warp 3 modifying src_pos before all threads have read it
     block.sync();
@@ -346,10 +352,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       uint32_t src_target_pos = target_pos + skipped_leaf_values;
 
       // WARP1: Decode dictionary indices, booleans or string positions
-      // NOTE: racecheck complains of a RAW error involving the s->dict_pos assignment below.
-      // This is likely a false positive in practice, but could be solved by wrapping the next
-      // 9 lines in `if (s->dict_pos < src_target_pos) {}`. If that change is made here, it will
-      // be needed in the other DecodeXXX kernels.
+      // NOTE: racecheck complains of a RAW error involving the s->progress.dict_pos assignment
+      // below. This is likely a false positive in practice, but could be solved by wrapping the
+      // next 9 lines in `if (s->progress.dict_pos < src_target_pos) {}`. If that change is made
+      // here, it will be needed in the other DecodeXXX kernels.
       if (s->stream.dict_base) {
         src_target_pos =
           decode_dictionary_indices<is_calc_sizes_only::NO>(s, sb, src_target_pos, warp).first;
@@ -359,7 +365,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                  s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
         initialize_string_descriptors<is_calc_sizes_only::NO>(s, sb, src_target_pos, warp);
       }
-      if (warp.thread_rank() == 0) { s->dict_pos = src_target_pos; }
+      if (warp.thread_rank() == 0) { s->progress.dict_pos = src_target_pos; }
     } else {
       // WARP1..WARP3: Decode values
       src_pos += block.thread_rank() - first_out_thread_id;
@@ -456,7 +462,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         }
       }
 
-      if (block.thread_rank() == first_out_thread_id) { s->src_pos = target_pos; }
+      if (block.thread_rank() == first_out_thread_id) { s->progress.src_pos = target_pos; }
     }
     __syncthreads();
   }

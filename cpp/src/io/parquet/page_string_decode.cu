@@ -6,6 +6,7 @@
 #include "delta_binary.cuh"
 #include "error.hpp"
 #include "page_decode.cuh"
+#include "page_state_composed.cuh"
 #include "page_string_utils.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
@@ -549,8 +550,7 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     return;
   }
 
-  bool const is_bounds_pg =
-    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) { return; }
@@ -642,13 +642,12 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
       }
     }
   } else {
-    bool const is_bounds_pg =
-      is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+    bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
 
     // if we have size info, then we only need to do this for bounds pages
     if (pp->has_value_info && !is_bounds_pg) {
       // check if we need to store values from the index
-      if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
+      if (t == 0 && is_page_contained(s, min_row, num_rows)) {
         pp->str_bytes = pp->str_bytes_from_index;
       }
       return;
@@ -724,13 +723,12 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
     return;
   }
 
-  bool const is_bounds_pg =
-    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) {
     // check if we need to store values from the index
-    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
+    if (t == 0 && is_page_contained(s, min_row, num_rows)) {
       pp->str_bytes = pp->str_bytes_from_index;
     }
     return;
@@ -839,13 +837,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     return;
   }
 
-  bool const is_bounds_pg =
-    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) {
     // check if we need to store values from the index
-    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
+    if (t == 0 && is_page_contained(s, min_row, num_rows)) {
       pp->str_bytes = pp->str_bytes_from_index;
     }
     return;
@@ -1104,7 +1101,7 @@ inline __device__ bool prefetch_string_data(int t,
  * @param error_code Error code to set if a string length overruns the page
  */
 template <int32_t block_size, size_t prefetch_size>
-inline __device__ void read_string_offsets_buffered(page_state_s* s,
+inline __device__ void read_string_offsets_buffered(auto* s,
                                                     size_t num_values_to_process,
                                                     uint32_t* str_offsets,
                                                     kernel_error::pointer error_code)
@@ -1197,7 +1194,7 @@ inline __device__ void read_string_offsets_buffered(page_state_s* s,
  * @param error_code Error code to set if a string length overruns the page
  */
 template <int32_t block_size>
-inline __device__ void read_string_offsets_sequential(page_state_s* s,
+inline __device__ void read_string_offsets_sequential(auto* s,
                                                       size_t num_values_to_process,
                                                       uint32_t* str_offsets,
                                                       kernel_error::pointer error_code)
@@ -1304,8 +1301,8 @@ CUDF_KERNEL void preprocess_string_offsets_kernel(
           decode_kernel_mask::STRING_STREAM_SPLIT_NESTED,
           decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
 
-  __shared__ __align__(16) page_state_s state_g;
-  page_state_s* const s = &state_g;
+  __shared__ __align__(16) string_offset_scan_state state_g;
+  auto* const s = &state_g;
   if (!setup_local_page_info(s,
                              pp,
                              chunks,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -322,14 +322,12 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ListsWithStructs)
   using bools   = cudf::test::fixed_width_column_wrapper<bool, int32_t>;
   using offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type, int32_t>;
 
-  auto const null_at_0_values = null_at(0);
-  auto const null_at_0        = null_at_0_values.begin();
-  auto const null_at_3        = null_at(3);
-  auto const null_at_4_values = null_at(4);
-  auto const null_at_4        = null_at_4_values.begin();
-  auto const null_at_6        = null_at(6);
-  auto const null_at_7        = null_at(7);
-  auto const null_at_8        = null_at(8);
+  auto const null_at_0 = null_at(0);
+  auto const null_at_3 = null_at(3);
+  auto const null_at_4 = null_at(4);
+  auto const null_at_6 = null_at(6);
+  auto const null_at_7 = null_at(7);
+  auto const null_at_8 = null_at(8);
 
   auto lhs_ints    = ints{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, null_at_3};
   auto lhs_strings = strings{{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}, null_at_4};

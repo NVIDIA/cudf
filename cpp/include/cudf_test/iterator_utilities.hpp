@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <memory>
 #include <vector>
 
 namespace CUDF_EXPORT cudf {
@@ -45,10 +46,10 @@ template <typename Iter>
 {
   using index_type = typename std::iterator_traits<Iter>::value_type;
 
+  auto indices = std::make_shared<std::vector<index_type> const>(index_start, index_end);
   return cuda::transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0},
-    [indices = std::vector<index_type>{index_start, index_end}](auto i) {
-      return std::find(indices.cbegin(), indices.cend(), i) == indices.cend();
+    cuda::counting_iterator<cudf::size_type>{0}, [indices = std::move(indices)](auto i) {
+      return std::find(indices->cbegin(), indices->cend(), i) == indices->cend();
     });
 }
 

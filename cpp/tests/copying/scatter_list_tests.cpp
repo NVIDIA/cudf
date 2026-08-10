@@ -155,8 +155,7 @@ TYPED_TEST(TypedScatterListsTest, NullableListsOfNullableFixedWidth)
   auto src_child = cudf::test::fixed_width_column_wrapper<T, int32_t>{{9, 9, 9, 9, 8, 8, 8},
                                                                       {1, 1, 1, 0, 1, 1, 1}};
 
-  auto src_list_validity_values = cudf::test::iterators::null_at(2);
-  auto src_list_validity        = src_list_validity_values.begin();
+  auto src_list_validity = cudf::test::iterators::null_at(2);
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(src_list_validity, src_list_validity + 3);
   // One null list row, and one row with nulls.
@@ -179,8 +178,7 @@ TYPED_TEST(TypedScatterListsTest, NullableListsOfNullableFixedWidth)
   auto expected_child_ints = cudf::test::fixed_width_column_wrapper<T, int32_t>{
     {8, 8, 8, 1, 1, 9, 9, 9, 9, 3, 3, 4, 4, 6, 6}, {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1}};
 
-  auto expected_validity_values = cudf::test::iterators::null_at(5);
-  auto expected_validity        = expected_validity_values.begin();
+  auto expected_validity = cudf::test::iterators::null_at(5);
   std::tie(null_mask, null_count) =
     cudf::test::detail::make_null_mask(expected_validity, expected_validity + 7);
   auto expected_lists_column = cudf::make_lists_column(
@@ -331,8 +329,7 @@ TEST_F(ScatterListsTest, NullableListsOfNullableStrings)
     cudf::test::strings_column_wrapper{{"all", "the", "leaves", "", "brown", "", "dreaming"},
                                        {true, true, true, false, true, false, true}};
 
-  auto src_validity_values     = cudf::test::iterators::null_at(1);
-  auto src_validity            = src_validity_values.begin();
+  auto src_validity            = cudf::test::iterators::null_at(1);
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(src_validity, src_validity + 3);
   auto src_list_column         = cudf::make_lists_column(
     3,
@@ -370,8 +367,7 @@ TEST_F(ScatterListsTest, NullableListsOfNullableStrings)
                                         "five"},
                                        cudf::test::iterators::nulls_at({0, 7})};
 
-  auto expected_validity_values = cudf::test::iterators::null_at(4);
-  auto expected_validity        = expected_validity_values.begin();
+  auto expected_validity = cudf::test::iterators::null_at(4);
   std::tie(null_mask, null_count) =
     cudf::test::detail::make_null_mask(expected_validity, expected_validity + 6);
   auto expected_lists = cudf::make_lists_column(
@@ -867,8 +863,7 @@ TYPED_TEST(TypedScatterListsTest, NullListsOfStructs)
   auto source_structs = cudf::test::structs_column_wrapper{{source_numerics, source_strings},
                                                            cudf::test::iterators::null_at(1)};
 
-  auto source_list_null_mask_begin_values = cudf::test::iterators::null_at(2);
-  auto source_list_null_mask_begin        = source_list_null_mask_begin_values.begin();
+  auto source_list_null_mask_begin = cudf::test::iterators::null_at(2);
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
     source_list_null_mask_begin, source_list_null_mask_begin + 3);
@@ -935,8 +930,7 @@ TYPED_TEST(TypedScatterListsTest, NullListsOfStructs)
   auto expected_structs = cudf::test::structs_column_wrapper{{expected_numerics, expected_strings},
                                                              cudf::test::iterators::null_at(6)};
 
-  auto expected_lists_null_mask_begin_values = cudf::test::iterators::null_at(4);
-  auto expected_lists_null_mask_begin        = expected_lists_null_mask_begin_values.begin();
+  auto expected_lists_null_mask_begin = cudf::test::iterators::null_at(4);
 
   std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(
     expected_lists_null_mask_begin, expected_lists_null_mask_begin + 6);

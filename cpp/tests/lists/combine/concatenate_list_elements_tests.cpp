@@ -540,8 +540,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child3                  = strings_col{"1", "", "3", "4", "5", "", "7", "", "9", "10"};
       auto structs                 = structs_col{{child1, child2, child3}, nulls_at({1, 5, 7})};
       auto offsets                 = int32s_col{0, 2, 3, 3, 6, 8, 10};
-      auto const null_it_values    = null_at(2);
-      auto const null_it           = null_it_values.begin();  // null list
+      auto const null_it           = null_at(2);  // null list
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 6);
       return cudf::make_lists_column(
         6, offsets.release(), structs.release(), null_count, std::move(null_mask));
@@ -600,8 +599,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child3                  = strings_col{"4", "5", "", "7", "", "9", "10"};
       auto structs                 = structs_col{{child1, child2, child3}, nulls_at({2, 4})};
       auto offsets                 = int32s_col{0, 0, 3, 7};
-      auto const null_it_values    = null_at(0);
-      auto const null_it           = null_it_values.begin();  // null row
+      auto const null_it           = null_at(0);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 3);
       return cudf::make_lists_column(
         3, offsets.release(), structs.release(), null_count, std::move(null_mask));
@@ -623,8 +621,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
       auto child3                  = strings_col{"4", "5", ""};
       auto structs                 = structs_col{{child1, child2, child3}, null_at(2)};
       auto offsets                 = int32s_col{0, 0, 3};
-      auto const null_it_values    = null_at(0);
-      auto const null_it           = null_it_values.begin();  // null row
+      auto const null_it           = null_at(0);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
       return cudf::make_lists_column(
         2, offsets.release(), structs.release(), null_count, std::move(null_mask));
@@ -703,8 +700,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
                   null_at(3)};
       auto structs                 = structs_col{{child1, child2, child3}};
       auto offsets                 = int32s_col{0, 2, 3, 6, 6, 8, 10};
-      auto const null_it_values    = null_at(3);
-      auto const null_it           = null_it_values.begin();  // null list
+      auto const null_it           = null_at(3);  // null list
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 6);
       return cudf::make_lists_column(
         6, offsets.release(), structs.release(), null_count, std::move(null_mask));
@@ -766,8 +762,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
         lists_col{{{1, 1}, {2}, {3, 3}, {7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
       auto structs                 = structs_col{{child1, child2, child3}};
       auto offsets                 = int32s_col{0, 3, 3, 7};
-      auto const null_it_values    = null_at(1);
-      auto const null_it           = null_it_values.begin();  // null row
+      auto const null_it           = null_at(1);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 3);
       return cudf::make_lists_column(
         3, offsets.release(), structs.release(), null_count, std::move(null_mask));
@@ -789,8 +784,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
       auto child3                  = lists_col{{{7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
       auto structs                 = structs_col{{child1, child2, child3}};
       auto offsets                 = int32s_col{0, 0, 4};
-      auto const null_it_values    = null_at(0);
-      auto const null_it           = null_it_values.begin();  // null row
+      auto const null_it           = null_at(0);  // null row
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
       return cudf::make_lists_column(
         2, offsets.release(), structs.release(), null_count, std::move(null_mask));
@@ -847,8 +841,7 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnWithNullRow)
   auto inner_elements = cudf::test::fixed_width_column_wrapper<int32_t>{};
   auto inner_col =
     cudf::make_lists_column(0, inner_offsets.release(), inner_elements.release(), 0, {});
-  auto const null_it_values    = cudf::test::iterators::null_at(0);
-  auto const null_it           = null_it_values.begin();
+  auto const null_it           = cudf::test::iterators::null_at(0);
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
   auto const col               = cudf::make_lists_column(
     2, offsets.release(), std::move(inner_col), null_count, std::move(null_mask));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -85,10 +85,9 @@ TYPED_TEST(TypedRankScanTest, RankWithNulls)
       return make_vector<TypeParam>({-120, -120, -120, -16, -16, 5, 6, 6, 6, 6, 34, 113});
     return make_vector<TypeParam>({5, 5, 5, 6, 6, 9, 11, 11, 11, 11, 14, 34});
   }();
-  auto const null_iter_values = cudf::test::iterators::nulls_at({3, 6, 7, 11});
-  auto const null_iter        = null_iter_values.begin();
-  auto const b                = thrust::host_vector<bool>(null_iter, null_iter + v.size());
-  auto col                    = this->make_column(v, b);
+  auto const null_iter = cudf::test::iterators::nulls_at({3, 6, 7, 11});
+  auto const b         = thrust::host_vector<bool>(null_iter, null_iter + v.size());
+  auto col             = this->make_column(v, b);
 
   auto const expected_dense   = rank_result_col{1, 1, 1, 2, 3, 4, 5, 5, 6, 6, 7, 8};
   auto const expected_rank    = rank_result_col{1, 1, 1, 4, 5, 6, 7, 7, 9, 9, 11, 12};
@@ -220,8 +219,7 @@ TYPED_TEST(TypedRankScanTest, StructsWithNullPushdown)
   // Next, verify that if the structs column a null mask that is NOT pushed down to members,
   // the ranks are still correct.
   {
-    auto const null_iter_values = cudf::test::iterators::nulls_at({1, 2});
-    auto const null_iter        = null_iter_values.begin();
+    auto const null_iter = cudf::test::iterators::nulls_at({1, 2});
     auto [null_mask, null_count] =
       cudf::test::detail::make_null_mask(null_iter, null_iter + struct_col->size());
     struct_col->set_null_mask(std::move(null_mask), null_count);

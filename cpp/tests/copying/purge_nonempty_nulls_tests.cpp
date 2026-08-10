@@ -419,8 +419,7 @@ TEST_F(PurgeNonEmptyNullsTest, StructOfList)
     return cudf::test::structs_column_wrapper{{child}}.release();
   }();
   auto [null_mask, null_count] = [&] {
-    auto const valid_iter_values = null_at(2);
-    auto const valid_iter        = valid_iter_values.begin();
+    auto const valid_iter = null_at(2);
     return cudf::test::detail::make_null_mask(valid_iter, valid_iter + structs_input->size());
   }();
 

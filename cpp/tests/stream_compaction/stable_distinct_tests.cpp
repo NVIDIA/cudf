@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -805,8 +805,7 @@ TEST_F(StableDistinctKeepAny, ListsOfStructs)
   }();
 
   auto const offsets = int32s_col{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
-  auto const null_it_values = nulls_at({2, 3});
-  auto const null_it        = null_it_values.begin();
+  auto const null_it = nulls_at({2, 3});
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 17);
 
@@ -890,8 +889,7 @@ TEST_F(StableDistinctKeepFirstLastNone, ListsOfStructs)
   }();
 
   auto const offsets = int32s_col{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
-  auto const null_it_values = nulls_at({2, 3});
-  auto const null_it        = null_it_values.begin();
+  auto const null_it = nulls_at({2, 3});
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 17);
 
@@ -984,8 +982,7 @@ TEST_F(StableDistinctKeepAny, SlicedListsOfStructs)
   }();
 
   auto const offsets = int32s_col{0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
-  auto const null_it_values = nulls_at({2, 3});
-  auto const null_it        = null_it_values.begin();
+  auto const null_it = nulls_at({2, 3});
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 17);
 
@@ -1040,8 +1037,7 @@ TEST_F(StableDistinctKeepAny, ListsOfEmptyStructs)
   // 11. [{}, {}]       ==
   // 12. [{}, {}]
 
-  auto const structs_null_values = nulls_at({0, 1, 2, 3, 4, 5, 6, 7});
-  auto const structs_null_it     = structs_null_values.begin();
+  auto const structs_null_it = nulls_at({0, 1, 2, 3, 4, 5, 6, 7});
   auto [structs_null_mask, structs_null_count] =
     cudf::test::detail::make_null_mask(structs_null_it, structs_null_it + 14);
   auto const structs =
@@ -1051,9 +1047,8 @@ TEST_F(StableDistinctKeepAny, ListsOfEmptyStructs)
                       static_cast<cudf::bitmask_type const*>(structs_null_mask.data()),
                       structs_null_count);
 
-  auto const offsets           = int32s_col{0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
-  auto const lists_null_values = nulls_at({2, 3});
-  auto const lists_null_it     = lists_null_values.begin();
+  auto const offsets       = int32s_col{0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
+  auto const lists_null_it = nulls_at({2, 3});
   auto [lists_null_mask, lists_null_count] =
     cudf::test::detail::make_null_mask(lists_null_it, lists_null_it + 13);
   auto const keys =
@@ -1153,8 +1148,7 @@ TEST_F(StableDistinctKeepAny, StructsOfStructs)
     std::vector<std::unique_ptr<cudf::column>> s1_children;
     s1_children.emplace_back(s2.release());
     s1_children.emplace_back(c.release());
-    auto const null_it_values = nulls_at({6, 7});
-    auto const null_it        = null_it_values.begin();
+    auto const null_it = nulls_at({6, 7});
     return structs_col(std::move(s1_children), std::vector<bool>{null_it, null_it + 9});
   }();
 
@@ -1208,8 +1202,7 @@ TEST_F(StableDistinctKeepAny, SlicedStructsOfStructs)
     std::vector<std::unique_ptr<cudf::column>> s1_children;
     s1_children.emplace_back(s2.release());
     s1_children.emplace_back(c.release());
-    auto const null_it_values = nulls_at({6, 7});
-    auto const null_it        = null_it_values.begin();
+    auto const null_it = nulls_at({6, 7});
     return structs_col(std::move(s1_children), std::vector<bool>{null_it, null_it + 9});
   }();
 

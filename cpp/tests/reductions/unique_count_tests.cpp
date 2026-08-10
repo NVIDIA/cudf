@@ -261,8 +261,7 @@ TEST_F(UniqueCount, NullableStructOfStructs)
     std::vector<std::unique_ptr<cudf::column>> s1_children;
     s1_children.emplace_back(s2.release());
     s1_children.emplace_back(c.release());
-    auto const null_it_values = nulls_at({6, 7});
-    auto const null_it        = null_it_values.begin();
+    auto const null_it = nulls_at({6, 7});
     return structs_col(std::move(s1_children), std::vector<bool>{null_it, null_it + 9});
   }();
 

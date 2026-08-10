@@ -81,7 +81,7 @@ TYPED_TEST(ColumnUtilitiesTest, NonNullableToHostWithOffset)
     cudf::test::fixed_width_column_wrapper<TypeParam>(data.begin(), data.end(), stream, mr);
 
   auto const splits = std::vector<cudf::size_type>{split};
-  auto result       = cudf::split(col, splits);
+  auto result       = cudf::split(col, splits, stream);
 
   auto host_data = cudf::test::to_host<TypeParam>(result.back(), stream, mr);
 
@@ -106,7 +106,7 @@ TYPED_TEST(ColumnUtilitiesTest, NullableToHostWithOffset)
     data.begin(), data.end(), valid, stream, mr);
 
   std::vector<cudf::size_type> splits{split};
-  std::vector<cudf::column_view> result = cudf::split(col, splits);
+  std::vector<cudf::column_view> result = cudf::split(col, splits, stream);
 
   auto host_data = cudf::test::to_host<TypeParam>(result.back(), stream, mr);
 
@@ -307,7 +307,7 @@ TYPED_TEST(ColumnUtilitiesTestFixedPoint, NonNullableToHostWithOffset)
   auto const col =
     cudf::test::fixed_point_column_wrapper<rep>(reps, reps + size, scale, stream, mr);
   auto const splits = std::vector<cudf::size_type>{split};
-  auto result       = cudf::split(col, splits);
+  auto result       = cudf::split(col, splits, stream);
 
   auto host_data = cudf::test::to_host<decimalXX>(result.back(), stream, mr);
 

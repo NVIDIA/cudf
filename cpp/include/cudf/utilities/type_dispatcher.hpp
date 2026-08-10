@@ -443,7 +443,7 @@ using scalar_device_type_t = typename type_to_scalar_type_impl<T>::ScalarDeviceT
  * lambda must be the same, else there will be a compiler error as you would be
  * trying to return different types from the same function.
  *
- * @tparam IdTypeMap Maps a `cudf::type_id` its dispatched C++ type
+ * @tparam IdTypeMap Maps a `cudf::type_id` to its dispatched C++ type
  * @tparam Functor The callable object's type
  * @tparam Ts Variadic parameter pack type
  * @param dtype The `cudf::data_type` whose `id()` determines which template

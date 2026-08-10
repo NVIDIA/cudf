@@ -41,7 +41,7 @@ from cudf_polars.streaming.utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, MutableMapping
+    from collections.abc import Generator, Iterable, MutableMapping
 
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
@@ -126,6 +126,15 @@ def combine(
         list(itertools.chain.from_iterable(aggregations)),
         list(itertools.chain.from_iterable(reductions)),
         any(need_preshuffles),
+    )
+
+
+def _has_stable_sorted_agg(exprs: Iterable[NamedExpr]) -> bool:
+    """Return True if any expression requires stable sorted aggregation."""
+    return any(
+        isinstance(expr, SortedAgg) and expr.options[0]
+        for ne in exprs
+        for expr in traversal([ne.value])
     )
 
 
@@ -479,6 +488,16 @@ def _(
 
     # Preshuffle ir.child if needed
     if need_preshuffle:
+        if _has_stable_sorted_agg(ir.agg_requests):
+            return _lower_ir_fallback(
+                ir,
+                rec,
+                msg=(
+                    "Streaming group_by does not yet preserve input-order ties "
+                    "for sort_by(..., maintain_order=True) when another "
+                    "aggregation requires repartitioning."
+                ),
+            )
         child = Shuffle(
             child.schema,
             ir.keys,

@@ -212,6 +212,30 @@ def test_groupby_sort_by_first_last_stable_ties(streaming_engine_factory):
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+def test_groupby_sort_by_stable_ties_with_preshuffle_fallback(
+    streaming_engine_factory,
+):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "B", "A", "B", "A", "B", "A", "B"],
+            "idx": [1, 1, 1, 1, 1, 1, 1, 1],
+            "val": [10, 100, 20, 200, 30, 300, 40, 400],
+            "u": [1, 1, 2, 2, 3, 3, 4, 4],
+        }
+    )
+
+    q = df.group_by("g").agg(
+        pl.col("u").n_unique().alias("nu"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("first_tie"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("last_tie"),
+    )
+    with pytest.raises(NotImplementedError, match="input-order ties"):
+        q.collect(engine=streaming_engine)
+
+
 def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
     streaming_engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),

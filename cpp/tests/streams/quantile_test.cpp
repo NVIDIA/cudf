@@ -42,7 +42,7 @@ TEST_F(QuantileTest, TestMultiColumnUnsorted)
 
 TEST_F(QuantileTest, TestEmpty)
 {
-  auto input = cudf::test::fixed_width_column_wrapper<numeric::decimal32>({});
+  auto input = cudf::test::fixed_width_column_wrapper<numeric::decimal32>();
   cudf::quantile(
     input, {0.5, 0.25}, cudf::interpolation::LINEAR, {}, true, cudf::test::get_default_stream());
 }

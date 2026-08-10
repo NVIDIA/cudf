@@ -435,7 +435,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
       {1, 1, -1, -2, -3, 1, 1, -4, -5, -6, -7, -8, -9, -10}, stream, mr);
     cudf::test::fixed_width_column_wrapper<float> c0_l3_floats(
       {1, 1, 10, 20, 30, 1, 1, 40, 50, 60, 70, 80, 90, 100}, stream, mr);
-    cudf::test::structs_column_wrapper c0_l2_data({c0_l3_ints, c0_l3_floats}, stream, mr);
+    cudf::test::structs_column_wrapper c0_l2_data({c0_l3_ints, c0_l3_floats}, {}, stream, mr);
     std::vector<bool> c0_l2_valids = {1, 1, 1, 0, 0, 1, 1};
 
     auto [null_mask, null_count] =
@@ -460,7 +460,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
       {-1, -2, -3, -4, -5, -6, -7, -8, -9, -10}, stream, mr);
     cudf::test::fixed_width_column_wrapper<float> c1_l3_floats(
       {10, 20, 30, 40, 50, 60, 70, 80, 90, 100}, stream, mr);
-    cudf::test::structs_column_wrapper c1_l2_data({c1_l3_ints, c1_l3_floats}, stream, mr);
+    cudf::test::structs_column_wrapper c1_l2_data({c1_l3_ints, c1_l3_floats}, {}, stream, mr);
     std::vector<bool> c1_l2_valids = {1, 0, 0, 1, 1};
 
     std::tie(null_mask, null_count) =
@@ -502,8 +502,8 @@ TEST_F(ColumnUtilitiesStructsTest, Properties)
   cudf::test::fixed_width_column_wrapper<float> s0_sscol1({50, 40, 30, 20, 10}, stream, mr);
   cudf::test::lists_column_wrapper<int> s0_sscol2(
     {{1, 2}, {3, 4}, {5}, {6, 7, 8}, {12, 12}}, stream, mr);
-  cudf::test::structs_column_wrapper s0_scol2({s0_sscol0, s0_sscol1, s0_sscol2}, stream, mr);
-  cudf::test::structs_column_wrapper s_col0({s0_scol0, s0_scol1, s0_scol2}, stream, mr);
+  cudf::test::structs_column_wrapper s0_scol2({s0_sscol0, s0_sscol1, s0_sscol2}, {}, stream, mr);
+  cudf::test::structs_column_wrapper s_col0({s0_scol0, s0_scol1, s0_scol2}, {}, stream, mr);
 
   auto all_valid = cuda::make_constant_iterator<bool>(true);
 
@@ -513,8 +513,8 @@ TEST_F(ColumnUtilitiesStructsTest, Properties)
   cudf::test::fixed_width_column_wrapper<float> s1_sscol1({50, 40, 30, 20, 10}, stream, mr);
   cudf::test::lists_column_wrapper<int> s1_sscol2(
     {{1, 2}, {3, 4}, {5}, {6, 7, 8}, {12, 12}}, all_valid, stream, mr);
-  cudf::test::structs_column_wrapper s1_scol2({s1_sscol0, s1_sscol1, s1_sscol2}, stream, mr);
-  cudf::test::structs_column_wrapper s_col1({s1_scol0, s1_scol1, s1_scol2}, stream, mr);
+  cudf::test::structs_column_wrapper s1_scol2({s1_sscol0, s1_sscol1, s1_sscol2}, {}, stream, mr);
+  cudf::test::structs_column_wrapper s_col1({s1_scol0, s1_scol1, s1_scol2}, {}, stream, mr);
 
   // equivalent, but not equal
   CUDF_TEST_EXPECT_COLUMN_PROPERTIES_EQUIVALENT(
@@ -539,8 +539,8 @@ TEST_F(ColumnUtilitiesStructsTest, Values)
   cudf::test::fixed_width_column_wrapper<float> s0_sscol1({50, 40, 30, 20, 10}, stream, mr);
   cudf::test::lists_column_wrapper<int> s0_sscol2(
     {{1, 2}, {3, 4}, {5}, {6, 7, 8}, {12, 12}}, stream, mr);
-  cudf::test::structs_column_wrapper s0_scol2({s0_sscol0, s0_sscol1, s0_sscol2}, stream, mr);
-  cudf::test::structs_column_wrapper s_col0({s0_scol0, s0_scol1, s0_scol2}, stream, mr);
+  cudf::test::structs_column_wrapper s0_scol2({s0_sscol0, s0_sscol1, s0_sscol2}, {}, stream, mr);
+  cudf::test::structs_column_wrapper s_col0({s0_scol0, s0_scol1, s0_scol2}, {}, stream, mr);
 
   auto all_valid = cuda::make_constant_iterator<bool>(true);
 
@@ -550,8 +550,8 @@ TEST_F(ColumnUtilitiesStructsTest, Values)
   cudf::test::fixed_width_column_wrapper<float> s1_sscol1({50, 40, 30, 20, 10}, stream, mr);
   cudf::test::lists_column_wrapper<int> s1_sscol2(
     {{1, 2}, {3, 4}, {5}, {6, 7, 8}, {12, 12}}, all_valid, stream, mr);
-  cudf::test::structs_column_wrapper s1_scol2({s1_sscol0, s1_sscol1, s1_sscol2}, stream, mr);
-  cudf::test::structs_column_wrapper s_col1({s1_scol0, s1_scol1, s1_scol2}, stream, mr);
+  cudf::test::structs_column_wrapper s1_scol2({s1_sscol0, s1_sscol1, s1_sscol2}, {}, stream, mr);
+  cudf::test::structs_column_wrapper s_col1({s1_scol0, s1_scol1, s1_scol2}, {}, stream, mr);
 
   // equivalent, but not equal
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(s_col0,

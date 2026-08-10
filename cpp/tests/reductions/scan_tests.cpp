@@ -386,8 +386,8 @@ TYPED_TEST_SUITE(ScanEmptyTest, cudf::test::NumericTypes);
 
 TYPED_TEST(ScanEmptyTest, MinInclusive)
 {
-  cudf::test::fixed_width_column_wrapper<TypeParam> col({});
-  cudf::test::fixed_width_column_wrapper<TypeParam> expected({});
+  cudf::test::fixed_width_column_wrapper<TypeParam> col{};
+  cudf::test::fixed_width_column_wrapper<TypeParam> expected{};
 
   auto result = cudf::scan(
     col, *cudf::make_min_aggregation<cudf::scan_aggregation>(), cudf::scan_type::INCLUSIVE);
@@ -396,8 +396,8 @@ TYPED_TEST(ScanEmptyTest, MinInclusive)
 
 TYPED_TEST(ScanEmptyTest, MinExclusive)
 {
-  cudf::test::fixed_width_column_wrapper<TypeParam> col({});
-  cudf::test::fixed_width_column_wrapper<TypeParam> expected({});
+  cudf::test::fixed_width_column_wrapper<TypeParam> col{};
+  cudf::test::fixed_width_column_wrapper<TypeParam> expected{};
 
   auto result = cudf::scan(
     col, *cudf::make_min_aggregation<cudf::scan_aggregation>(), cudf::scan_type::EXCLUSIVE);

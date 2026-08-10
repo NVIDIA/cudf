@@ -116,7 +116,7 @@ TYPED_TEST(NaNsToNullTest, EmptyColumn)
 {
   using T = TypeParam;
 
-  auto input_column = cudf::test::fixed_width_column_wrapper<T>({});
+  auto input_column = cudf::test::fixed_width_column_wrapper<T>();
   this->run_test(input_column, input_column);
 }
 
@@ -141,6 +141,6 @@ TEST_F(NaNsToNullFailTest, IntegerType)
 
 TEST_F(NaNsToNullFailTest, EmptyColumn)
 {
-  auto input_column = cudf::test::fixed_width_column_wrapper<int32_t>({});
+  auto input_column = cudf::test::fixed_width_column_wrapper<int32_t>();
   EXPECT_THROW(cudf::column_nans_to_nulls(input_column), std::invalid_argument);
 }

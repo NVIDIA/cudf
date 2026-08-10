@@ -116,7 +116,7 @@ TEST_F(ClampEmptyCaseTest, EmptyInput)
   auto hi = cudf::make_numeric_scalar(cudf::data_type(cudf::type_id::INT32));
   hi->set_valid_async(true);
 
-  cudf::test::fixed_width_column_wrapper<int32_t> input({});
+  cudf::test::fixed_width_column_wrapper<int32_t> input{};
 
   auto got = cudf::clamp(input, *lo, *hi);
 

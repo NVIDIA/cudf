@@ -420,7 +420,7 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
                                        std::conditional_t<std::is_integral_v<T>, int64_t, T>,
                                        false>(
           input, group_offsets, preceding_window, following_window, min_periods);
-      default: return cudf::test::fixed_width_column_wrapper<T>({}).release();
+      default: return cudf::test::fixed_width_column_wrapper<T>().release();
     }
   }
 };
@@ -1156,7 +1156,7 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
                                              preceding_window,
                                              following_window,
                                              min_periods);
-      default: return cudf::test::fixed_width_column_wrapper<T>({}).release();
+      default: return cudf::test::fixed_width_column_wrapper<T>().release();
     }
   }
 };

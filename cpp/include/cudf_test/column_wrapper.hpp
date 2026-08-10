@@ -355,9 +355,8 @@ class fixed_width_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  explicit fixed_width_column_wrapper(
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  fixed_width_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                             cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
     : column_wrapper{}
   {
     std::vector<ElementTo> empty;
@@ -822,16 +821,13 @@ class strings_column_wrapper : public detail::column_wrapper {
  public:
   /**
    * @brief Default constructor initializes an empty column of strings
-   */
-  /**
-   * @brief Initializes an empty strings column on the specified resource
    *
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  explicit strings_column_wrapper(
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  // Non-explicit so `{}` can copy-initialize empty string columns (e.g. nested in structs).
+  strings_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                         cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
     : strings_column_wrapper(std::initializer_list<std::string>{}, stream, mr)
   {
   }
@@ -1070,18 +1066,16 @@ class dictionary_column_wrapper : public detail::column_wrapper {
 
   /**
    * @brief Default constructor initializes an empty column with dictionary type.
-   */
-  /**
-   * @brief Initializes an empty dictionary column on the specified resource
    *
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  explicit dictionary_column_wrapper(
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  // Non-explicit so `{}` can copy-initialize empty dictionary columns.
+  dictionary_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                            cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
     : column_wrapper{}
   {
+    static_cast<void>(stream);
     static_cast<void>(mr);
     wrapped = cudf::make_empty_column(cudf::type_id::DICTIONARY32);
   }
@@ -1320,16 +1314,13 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
 
   /**
    * @brief Default constructor initializes an empty dictionary column of strings
-   */
-  /**
-   * @brief Initializes an empty string dictionary column on the specified resource
    *
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  explicit dictionary_column_wrapper(
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  // Non-explicit so `{}` can copy-initialize empty dictionary columns.
+  dictionary_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                            cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
     : dictionary_column_wrapper(std::initializer_list<std::string>{}, stream, mr)
   {
   }
@@ -1767,7 +1758,7 @@ class lists_column_wrapper : public detail::column_wrapper {
   }
 
   /**
-   * @brief Construct am empty lists column
+   * @brief Construct an empty lists column
    *
    * Example:
    * @code{.cpp}
@@ -1776,15 +1767,11 @@ class lists_column_wrapper : public detail::column_wrapper {
    * lists_column_wrapper l{};
    * @endcode
    *
-   */
-  /**
-   * @brief Construct an empty lists column on the specified resource
-   *
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  explicit lists_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                                cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  lists_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                       cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
     : column_wrapper{}
   {
     build_from_non_nested(make_empty_column(cudf::type_to_id<T>()), stream, mr);
@@ -1849,7 +1836,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
   {
     cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets({0, 0}, stream, mr);
-    cudf::test::fixed_width_column_wrapper<int> values(mr);
+    cudf::test::fixed_width_column_wrapper<int> values(stream, mr);
     return lists_column_wrapper<T>(
       1,
       offsets.release(),
@@ -1857,6 +1844,7 @@ class lists_column_wrapper : public detail::column_wrapper {
       valid ? 0 : 1,
       valid ? rmm::device_buffer{}
             : cudf::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr.get_output_mr()),
+      stream,
       mr);
   }
 
@@ -2155,6 +2143,9 @@ class structs_column_wrapper : public detail::column_wrapper {
    * provenance. The supplied output resource controls the struct null mask and any child
    * allocations created while sanitizing null struct rows.
    *
+   * To pass an explicit stream/mr with no parent nulls, pass an empty validity:
+   * `structs_column_wrapper(std::move(children), {}, stream, mr)`.
+   *
    * @param child_columns The vector of pre-constructed child columns
    * @param validity The vector of bools representing the column validity values
    * @param stream CUDA stream used for device memory operations
@@ -2166,20 +2157,6 @@ class structs_column_wrapper : public detail::column_wrapper {
                          cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     init(std::move(child_columns), validity, stream, mr);
-  }
-
-  /**
-   * @brief Constructs a struct column by adopting child columns with no parent nulls.
-   *
-   * @param child_columns The vector of pre-constructed child columns
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used for new allocations owned by the returned column
-   */
-  structs_column_wrapper(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
-                         rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                         cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : structs_column_wrapper(std::move(child_columns), std::vector<bool>{}, stream, mr)
-  {
   }
 
   /**
@@ -2201,6 +2178,9 @@ class structs_column_wrapper : public detail::column_wrapper {
    *
    * Child wrappers are deep-copied, so all allocations in the returned children use the supplied
    * output resource. The source wrappers retain their original allocations.
+   *
+   * To pass an explicit stream/mr with no parent nulls, pass an empty validity:
+   * `structs_column_wrapper({wrappers}, {}, stream, mr)`.
    *
    * @param child_column_wrappers The list of child column wrappers
    * @param validity The vector of bools representing the column validity values
@@ -2226,21 +2206,6 @@ class structs_column_wrapper : public detail::column_wrapper {
   }
 
   /**
-   * @brief Constructs a struct column by copying child wrappers with no parent nulls.
-   *
-   * @param child_column_wrappers The list of child column wrappers
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
-   */
-  structs_column_wrapper(
-    std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : structs_column_wrapper(child_column_wrappers, std::vector<bool>{}, stream, mr)
-  {
-  }
-
-  /**
    * @brief Constructs a struct column from the list of column wrappers for child columns.
    *
    * Example usage:
@@ -2263,7 +2228,8 @@ class structs_column_wrapper : public detail::column_wrapper {
    * @param mr Memory resources used to allocate the returned column
    */
   template <typename V,
-            std::enable_if_t<!std::is_convertible_v<V&, cudf::memory_resources>>* = nullptr>
+            std::enable_if_t<!std::is_convertible_v<V&, cudf::memory_resources> &&
+                             !std::is_convertible_v<V&, rmm::cuda_stream_view>>* = nullptr>
   structs_column_wrapper(
     std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
     V validity_iter,

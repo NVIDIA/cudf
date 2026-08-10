@@ -31,8 +31,8 @@ TYPED_TEST(EncodeNumericTests, SingleNullEncode)
 
 TYPED_TEST(EncodeNumericTests, EmptyEncode)
 {
-  cudf::test::fixed_width_column_wrapper<TypeParam> input({});
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> expect({});
+  cudf::test::fixed_width_column_wrapper<TypeParam> input{};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expect{};
   auto const result = cudf::encode(cudf::table_view({input}));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.second->view(), expect);

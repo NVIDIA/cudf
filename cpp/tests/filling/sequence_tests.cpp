@@ -62,7 +62,7 @@ TYPED_TEST(SequenceTypedTestFixture, EmptyOutput)
 
   cudf::size_type num_els = 0;
 
-  cudf::test::fixed_width_column_wrapper<T> expected_w({});
+  cudf::test::fixed_width_column_wrapper<T> expected_w{};
 
   auto result = cudf::sequence(num_els, init, step);
 

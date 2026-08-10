@@ -601,7 +601,7 @@ class RollingTest : public cudf::test::BaseFixture {
                                        std::conditional_t<cudf::is_duration<T>(), T, double>,
                                        true>(
           input, preceding_window, following_window, min_periods);
-      default: return cudf::test::fixed_width_column_wrapper<T>({}).release();
+      default: return cudf::test::fixed_width_column_wrapper<T>().release();
     }
   }
 };

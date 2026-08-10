@@ -108,7 +108,7 @@ TEST_F(CudftableTest, MultiColumnFixedWidth)
 
 TEST_F(CudftableTest, EmptyColumn)
 {
-  cudf::test::fixed_width_column_wrapper<int32_t> empty_col({});
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_col{};
 
   auto const expected = cudf::table_view{{empty_col}};
   run_test(expected);

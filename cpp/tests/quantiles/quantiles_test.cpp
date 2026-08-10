@@ -33,7 +33,7 @@ TYPED_TEST(QuantilesTest, TestMultiColumnZeroRows)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> input_a({});
+  cudf::test::fixed_width_column_wrapper<T> input_a{};
   auto input = cudf::table_view({input_a});
 
   EXPECT_THROW(cudf::quantiles(input, {0.0f}), cudf::logic_error);
@@ -56,8 +56,8 @@ TYPED_TEST(QuantilesTest, TestMultiColumnOrderCountMismatch)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> input_a({});
-  cudf::test::fixed_width_column_wrapper<T> input_b({});
+  cudf::test::fixed_width_column_wrapper<T> input_a{};
+  cudf::test::fixed_width_column_wrapper<T> input_b{};
   auto input = cudf::table_view({input_a});
 
   EXPECT_THROW(cudf::quantiles(input,
@@ -73,8 +73,8 @@ TYPED_TEST(QuantilesTest, TestMultiColumnNullOrderCountMismatch)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> input_a({});
-  cudf::test::fixed_width_column_wrapper<T> input_b({});
+  cudf::test::fixed_width_column_wrapper<T> input_a{};
+  cudf::test::fixed_width_column_wrapper<T> input_b{};
   auto input = cudf::table_view({input_a});
 
   EXPECT_THROW(cudf::quantiles(input,
@@ -90,8 +90,8 @@ TYPED_TEST(QuantilesTest, TestMultiColumnArithmeticInterpolation)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> input_a({});
-  cudf::test::fixed_width_column_wrapper<T> input_b({});
+  cudf::test::fixed_width_column_wrapper<T> input_a{};
+  cudf::test::fixed_width_column_wrapper<T> input_b{};
   auto input = cudf::table_view({input_a});
 
   EXPECT_THROW(cudf::quantiles(input, {0.0f}, cudf::interpolation::LINEAR), std::invalid_argument);

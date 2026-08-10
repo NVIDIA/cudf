@@ -32,7 +32,7 @@ TYPED_TEST(TileTest, NoRows)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> in_a({});
+  cudf::test::fixed_width_column_wrapper<T> in_a{};
   cudf::table_view in(std::vector<cudf::column_view>{in_a});
 
   auto expected = in;

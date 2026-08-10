@@ -823,8 +823,7 @@ TEST_F(StructsColumnTest, ConcatenateStructs)
                                                    {true, false}));
   src.push_back(cudf::test::structs_column_wrapper({name_cols[1], age_cols[1], is_human_cols[1]},
                                                    {true, true}));
-  src.push_back(
-    cudf::test::structs_column_wrapper({name_cols[2], age_cols[2], is_human_cols[2]}, {}));
+  src.push_back(cudf::test::structs_column_wrapper({name_cols[2], age_cols[2], is_human_cols[2]}));
   src.push_back(cudf::test::structs_column_wrapper({name_cols[3], age_cols[3], is_human_cols[3]},
                                                    {true, false}));
 

@@ -90,8 +90,8 @@ TEST_F(HashPartition, ZeroPartitions)
 
 TEST_F(HashPartition, ZeroRows)
 {
-  fixed_width_column_wrapper<float> floats({});
-  fixed_width_column_wrapper<int16_t> integers({});
+  fixed_width_column_wrapper<float> floats{};
+  fixed_width_column_wrapper<int16_t> integers{};
   strings_column_wrapper strings;
   auto input = cudf::table_view({floats, integers, strings});
 

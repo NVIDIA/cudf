@@ -63,8 +63,8 @@ TEST_F(DLPackUntypedTests, EmptyTableToDlpack)
 
 TEST_F(DLPackUntypedTests, EmptyColsToDlpack)
 {
-  cudf::test::fixed_width_column_wrapper<int32_t> col1({});
-  cudf::test::fixed_width_column_wrapper<int32_t> col2({});
+  cudf::test::fixed_width_column_wrapper<int32_t> col1{};
+  cudf::test::fixed_width_column_wrapper<int32_t> col2{};
   cudf::table_view input({col1, col2});
   unique_managed_tensor tensor(cudf::to_dlpack(input));
   validate_dtype<int32_t>(tensor->dl_tensor.dtype);

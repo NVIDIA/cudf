@@ -180,7 +180,7 @@ TEST(TableToDeviceArrayTest, NoRows)
 {
   auto stream = cudf::get_default_stream();
 
-  cudf::test::fixed_width_column_wrapper<int32_t> col({});
+  cudf::test::fixed_width_column_wrapper<int32_t> col{};
   cudf::table_view input_table({col});
 
   rmm::device_buffer output(0, stream);

@@ -424,7 +424,7 @@ TEST_F(TopK, Errors)
   auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 15, 20, 23, 40, 42});
   EXPECT_THROW(cudf::segmented_top_k(input, offsets, -1), std::invalid_argument);
   EXPECT_THROW(cudf::segmented_top_k_order(input, offsets, -1), std::invalid_argument);
-  offsets = cudf::test::fixed_width_column_wrapper<int32_t>({});
+  offsets = cudf::test::fixed_width_column_wrapper<int32_t>();
   EXPECT_THROW(cudf::segmented_top_k(input, offsets, 10), std::invalid_argument);
   EXPECT_THROW(cudf::segmented_top_k_order(input, offsets, 10), std::invalid_argument);
   offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 15}, {1, 0});

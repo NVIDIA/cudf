@@ -36,7 +36,7 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import (
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
-from cudf_polars.streaming.actor_graph.join_planning import make_join_planning_state
+from cudf_polars.streaming.actor_graph.join_planning import JoinPlanningState
 from cudf_polars.streaming.actor_graph.nodes import default_node_multi
 from cudf_polars.streaming.actor_graph.prefilter import (
     JoinPrefilterExecution,
@@ -81,10 +81,7 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.expr import NamedExpr
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
-    from cudf_polars.streaming.actor_graph.join_planning import (
-        JoinInput,
-        JoinPlanningState,
-    )
+    from cudf_polars.streaming.actor_graph.join_planning import JoinInput
     from cudf_polars.streaming.actor_graph.prefilter import (
         PrefilterDecision,
         PrefilterExecution,
@@ -1363,7 +1360,7 @@ async def join_actor(
             *(recv_metadata(ch, context) for ch in ch_prefilter_domains),
         )
 
-        join_state = make_join_planning_state(
+        join_state = JoinPlanningState.create(
             ir,
             ch_left,
             ch_right,

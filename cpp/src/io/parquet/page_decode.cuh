@@ -174,7 +174,8 @@ __device__ constexpr bool is_string_col(PageInfo const& page,
  * @brief Returns whether or not a page spans either the beginning or the end of the
  * specified row bounds
  *
- * @param s Page decode state containing the page and column chunk metadata
+ * @param page The page metadata
+ * @param chunk_start_row Absolute index of the first row of the page's column chunk
  * @param start_row The starting row index
  * @param num_rows The number of rows
  * @param has_repetition True if the schema has nesting
@@ -212,7 +213,8 @@ inline __device__ bool is_bounds_page(PageInfo const& page,
  * @brief Returns whether or not a page is completely contained within the specified
  * row bounds
  *
- * @param s Page decode state containing the page and column chunk metadata
+ * @param page The page metadata
+ * @param chunk_start_row Absolute index of the first row of the page's column chunk
  * @param start_row The starting row index
  * @param num_rows The number of rows
  *
@@ -241,7 +243,8 @@ inline __device__ bool is_page_contained(PageInfo const& page,
  * carry values while containing zero of its own rows. Such a page must still be processed when
  * it spans (is a "bounds" page for) or is fully contained within the requested range.
  *
- * @param s Page decode state containing the page and column chunk metadata
+ * @param page The page metadata
+ * @param chunk_start_row Absolute index of the first row of the page's column chunk
  * @param min_row Absolute index of the first requested row
  * @param num_rows Number of requested rows
  * @param has_repetition True if the schema has nesting (list) columns

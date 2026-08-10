@@ -85,6 +85,17 @@ CUDF_HOST_DEVICE constexpr bool is_supported_encoding(Encoding enc)
 }
 
 /**
+ * @brief Whether a page encoding references a dictionary page.
+ *
+ * Both PLAIN_DICTIONARY (legacy) and RLE_DICTIONARY mark a data page whose values are indices into
+ * the column chunk's dictionary page.
+ */
+CUDF_HOST_DEVICE constexpr bool is_dictionary_encoding(Encoding enc)
+{
+  return enc == Encoding::PLAIN_DICTIONARY or enc == Encoding::RLE_DICTIONARY;
+}
+
+/**
  * @brief Atomically OR `error` into `error_code`.
  */
 __device__ constexpr void set_error(kernel_error::value_type error,
@@ -223,7 +234,8 @@ enum class decode_kernel_mask {
   STRING_STREAM_SPLIT = (1 << 23),  // Run decode kernel for BYTE_STREAM_SPLIT string data
   STRING_STREAM_SPLIT_NESTED =
     (1 << 24),  // Run decode kernel for nested BYTE_STREAM_SPLIT string data
-  STRING_STREAM_SPLIT_LIST = (1 << 25)  // Run decode kernel for list BYTE_STREAM_SPLIT string data
+  STRING_STREAM_SPLIT_LIST = (1 << 25),  // Run decode kernel for list BYTE_STREAM_SPLIT string data
+  DICT_INT32               = (1 << 26),  // Run decode kernel for dict string → INT32 indices
 };
 
 constexpr uint32_t STRINGS_MASK_NON_DELTA = BitOr(decode_kernel_mask::STRING,
@@ -589,8 +601,8 @@ struct EncColumnChunk {
   size_type num_dict_entries;  //!< Total number of entries in dictionary
   size_type
     uniq_data_size;  //!< Size of dictionary page (set of all unique values) if dict enc is used
-  size_type plain_data_size;  //!< Size of data in this chunk if plain encoding is used
-  size_type* dict_data;       //!< Dictionary data (unique row indices)
+  size_t plain_data_size;  //!< Size of data in this chunk if plain encoding is used
+  size_type* dict_data;    //!< Dictionary data (unique row indices)
   size_type* dict_index;  //!< Index of value in dictionary page. column[dict_data[dict_index[row]]]
   uint8_t dict_rle_bits;  //!< Bit size for encoding dictionary indices
   bool use_dictionary;    //!< True if the chunk uses dictionary encoding
@@ -664,7 +676,7 @@ struct EncPage {
 /**
  * @brief Test if the given column chunk is in a string column
  */
-__device__ constexpr bool is_string_col(ColumnChunkDesc const& chunk)
+CUDF_HOST_DEVICE constexpr bool is_string_col(ColumnChunkDesc const& chunk)
 {
   // return true for non-hashed byte_array and fixed_len_byte_array that isn't representing
   // a decimal.

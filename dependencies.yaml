@@ -201,6 +201,9 @@ files:
       - py_version
   py_build_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf
     extras:
       table: build-system
@@ -208,6 +211,9 @@ files:
       - rapids_build_skbuild
   py_rapids_build_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf
     extras:
       table: tool.rapids-build-backend
@@ -222,6 +228,9 @@ files:
       - depends_on_rmm
   py_run_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf
     extras:
       table: project
@@ -239,6 +248,9 @@ files:
       - depends_on_rmm
   py_test_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf
     extras:
       table: project.optional-dependencies
@@ -251,6 +263,9 @@ files:
       - test_python_s3
   py_build_libcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/libcudf
     extras:
       table: build-system
@@ -258,6 +273,9 @@ files:
       - rapids_build_skbuild
   py_rapids_build_libcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/libcudf
     extras:
       table: tool.rapids-build-backend
@@ -272,6 +290,9 @@ files:
       - depends_on_rapids_logger
   py_run_libcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/libcudf
     extras:
       table: project
@@ -283,6 +304,9 @@ files:
       - depends_on_rapids_logger
   py_build_pylibcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/pylibcudf
     extras:
       table: build-system
@@ -290,6 +314,9 @@ files:
       - rapids_build_skbuild
   py_rapids_build_pylibcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/pylibcudf
     extras:
       table: tool.rapids-build-backend
@@ -302,6 +329,9 @@ files:
       - depends_on_rmm
   py_run_pylibcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/pylibcudf
     extras:
       table: project
@@ -312,6 +342,9 @@ files:
       - run_pylibcudf
   py_run_pylibcudf_numpy:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/pylibcudf
     extras:
       table: project.optional-dependencies
@@ -320,6 +353,9 @@ files:
       - numpy_run
   py_run_pylibcudf_pyarrow:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/pylibcudf
     extras:
       table: project.optional-dependencies
@@ -328,6 +364,9 @@ files:
       - pyarrow_run
   py_test_pylibcudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/pylibcudf
     extras:
       table: project.optional-dependencies
@@ -341,6 +380,9 @@ files:
       - test_python_pylibcudf
   py_test_pandas_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf
     extras:
       table: project.optional-dependencies
@@ -349,6 +391,9 @@ files:
       - test_python_pandas_cudf
   py_test_cudf_pandas:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf
     extras:
       table: project.optional-dependencies
@@ -357,6 +402,9 @@ files:
       - test_python_cudf_pandas
   py_build_cudf_polars:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: build-system
@@ -364,6 +412,9 @@ files:
       - rapids_build_setuptools
   py_run_cudf_polars:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: project
@@ -376,6 +427,9 @@ files:
   # TODO(26.10): Remove this alias in favor of dask
   py_run_cudf_polars_experimental:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: project.optional-dependencies
@@ -384,6 +438,9 @@ files:
       - run_cudf_polars_dask
   py_run_cudf_polars_dask:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: project.optional-dependencies
@@ -392,6 +449,9 @@ files:
       - run_cudf_polars_dask
   py_run_cudf_polars_ray:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: project.optional-dependencies
@@ -400,6 +460,9 @@ files:
       - depends_on_ray
   py_test_cudf_polars:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: project.optional-dependencies
@@ -412,6 +475,9 @@ files:
       - cudf_polars_trace
   py_trace_cudf_polars:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_polars
     extras:
       table: project.optional-dependencies
@@ -420,6 +486,9 @@ files:
       - cudf_polars_trace
   py_build_dask_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/dask_cudf
     extras:
       table: build-system
@@ -427,6 +496,9 @@ files:
       - rapids_build_setuptools
   py_run_dask_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/dask_cudf
     extras:
       table: project
@@ -438,6 +510,9 @@ files:
       - depends_on_cupy
   py_test_dask_cudf:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/dask_cudf
     extras:
       table: project.optional-dependencies
@@ -451,6 +526,9 @@ files:
       - test_python_s3
   py_build_cudf_kafka:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_kafka
     extras:
       table: build-system
@@ -458,6 +536,9 @@ files:
       - rapids_build_skbuild
   py_rapids_build_cudf_kafka:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_kafka
     extras:
       table: tool.rapids-build-backend
@@ -467,6 +548,9 @@ files:
       - build_python_common
   py_run_cudf_kafka:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_kafka
     extras:
       table: project
@@ -474,6 +558,9 @@ files:
       - depends_on_cudf
   py_test_cudf_kafka:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_kafka
     extras:
       table: project.optional-dependencies
@@ -483,6 +570,9 @@ files:
       - test_python_cudf_common
   py_build_custreamz:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/custreamz
     extras:
       table: build-system
@@ -490,6 +580,9 @@ files:
       - rapids_build_setuptools
   py_run_custreamz:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/custreamz
     extras:
       table: project
@@ -499,6 +592,9 @@ files:
       - depends_on_cudf_kafka
   py_test_custreamz:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/custreamz
     extras:
       table: project.optional-dependencies
@@ -508,6 +604,9 @@ files:
       - test_python_cudf_common
   py_build_libcudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/libcudf_streaming
     extras:
       table: build-system
@@ -515,6 +614,9 @@ files:
       - rapids_build_skbuild
   py_rapids_build_libcudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/libcudf_streaming
     extras:
       table: tool.rapids-build-backend
@@ -528,6 +630,9 @@ files:
       - depends_on_libucxx
   py_run_libcudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/libcudf_streaming
     extras:
       table: project
@@ -537,6 +642,9 @@ files:
       - depends_on_librapidsmpf
   py_build_cudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_streaming
     extras:
       table: build-system
@@ -544,6 +652,9 @@ files:
       - rapids_build_skbuild
   py_rapids_build_cudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_streaming
     extras:
       table: tool.rapids-build-backend
@@ -562,6 +673,9 @@ files:
       - depends_on_ucxx
   py_run_cudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_streaming
     extras:
       table: project
@@ -572,6 +686,9 @@ files:
       - depends_on_rmm
   py_test_cudf_streaming:
     output: pyproject
+    matrix:
+      use_cuda_wheels: ["true"]
+      cuda_suffixed: ["false"]
     pyproject_dir: python/cudf_streaming
     extras:
       table: project.optional-dependencies
@@ -661,7 +778,7 @@ dependencies:
       - output_types: conda
         packages:
           # Align nvcomp version with rapids-cmake
-          - libnvcomp-dev==5.2.0.10
+          - libnvcomp-dev==5.3.0.16
     specific:
       - output_types: [requirements, pyproject]
         matrices:
@@ -670,15 +787,18 @@ dependencies:
             packages:
           - matrix:
               cuda: "12.*"
+              use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp-cu12==5.2.0.13
+              - nvidia-libnvcomp-cu12==5.3.0.16
           - matrix:
               cuda: "13.*"
+              use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp-cu13==5.2.0.13
+              - nvidia-libnvcomp-cu13==5.3.0.16
           - matrix:
+              use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp==5.2.0.13
+              - nvidia-libnvcomp==5.3.0.16
   rapids_build_skbuild:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -821,6 +941,7 @@ dependencies:
         packages:
           - cuda-cudart-dev
           - cuda-cupti-dev
+          - cuda-profiler-api
           - cuda-nvrtc-dev
           - cuda-nvtx-dev
           - cuda-sanitizer-api
@@ -991,7 +1112,9 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[cufile,nvcc,nvrtc]==13.*
-          - {matrix: null, packages: []}
+          - matrix:
+              cuda_suffixed: "false"
+            packages: []
   run_cudf_polars:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -1248,7 +1371,9 @@ dependencies:
               cuda_suffixed: "true"
             packages:
               - libcudf-cu13==26.10.*,>=0.0.0a0
-          - {matrix: null, packages: [*libcudf_unsuffixed]}
+          - matrix:
+              cuda_suffixed: "false"
+            packages: [*libcudf_unsuffixed]
   depends_on_numba_cuda:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -1273,6 +1398,7 @@ dependencies:
               - numba-cuda[cu13]>=0.22.2
           # fallback to numba-cuda with no extra CUDA packages if 'cuda_suffixed' isn't true
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *numba_cuda
   depends_on_numba_cuda_mlir:
@@ -1297,6 +1423,7 @@ dependencies:
           # fallback to numba-cuda-mlir with no extra CUDA packages if
           # 'cuda_suffixed' isn't true
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - numba-cuda-mlir>=0.3.0
   depends_on_pylibcudf:
@@ -1321,7 +1448,9 @@ dependencies:
               cuda_suffixed: "true"
             packages:
               - pylibcudf-cu13==26.10.*,>=0.0.0a0
-          - {matrix: null, packages: [*pylibcudf_unsuffixed]}
+          - matrix:
+              cuda_suffixed: "false"
+            packages: [*pylibcudf_unsuffixed]
   depends_on_pylibcudf_pyarrow:
     common:
       - output_types: conda
@@ -1344,7 +1473,9 @@ dependencies:
               cuda_suffixed: "true"
             packages:
               - pylibcudf-cu13[pyarrow]==26.10.*,>=0.0.0a0
-          - {matrix: null, packages: [*plc_unsuffixed]}
+          - matrix:
+              cuda_suffixed: "false"
+            packages: [*plc_unsuffixed]
   depends_on_cudf:
     common:
       - output_types: conda
@@ -1367,7 +1498,9 @@ dependencies:
               cuda_suffixed: "true"
             packages:
               - cudf-cu13==26.10.*,>=0.0.0a0
-          - {matrix: null, packages: [*cudf_unsuffixed]}
+          - matrix:
+              cuda_suffixed: "false"
+            packages: [*cudf_unsuffixed]
   depends_on_cudf_kafka:
     common:
       - output_types: [conda, pyproject]
@@ -1406,10 +1539,12 @@ dependencies:
               - *cupy_cu13
           - matrix:
               cuda: "12.*"
+              use_cuda_wheels: "true"
             packages:
               - cupy-cuda12x[ctk]>=14.0.1,!=14.1.0
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
+              use_cuda_wheels: "true"
             packages:
               - cupy-cuda13x[ctk]>=14.0.1,!=14.1.0
   depends_on_libkvikio:
@@ -1434,6 +1569,7 @@ dependencies:
             packages:
               - libkvikio-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *libkvikio_unsuffixed
   depends_on_librmm:
@@ -1459,6 +1595,7 @@ dependencies:
             packages:
               - librmm-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *librmm_unsuffixed
   depends_on_rmm:
@@ -1484,6 +1621,7 @@ dependencies:
             packages:
               - rmm-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *rmm_unsuffixed
   depends_on_libucxx:
@@ -1509,6 +1647,7 @@ dependencies:
             packages:
               - libucxx-cu13==0.52.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *libucxx_unsuffixed
   depends_on_ucxx:
@@ -1534,6 +1673,7 @@ dependencies:
             packages:
               - ucxx-cu13==0.52.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *ucxx_unsuffixed
   depends_on_rapidsmpf:
@@ -1559,6 +1699,7 @@ dependencies:
             packages:
               - rapidsmpf-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *rapidsmpf_unsuffixed
   depends_on_librapidsmpf:
@@ -1584,6 +1725,7 @@ dependencies:
             packages:
               - librapidsmpf-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *librapidsmpf_unsuffixed
   depends_on_libcudf_streaming:
@@ -1609,6 +1751,7 @@ dependencies:
             packages:
               - libcudf-streaming-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *libcudf_streaming_unsuffixed
   depends_on_cudf_streaming:
@@ -1634,6 +1777,7 @@ dependencies:
             packages:
               - cudf-streaming-cu13==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *cudf_streaming_unsuffixed
   depends_on_ray:
@@ -1707,8 +1851,9 @@ dependencies:
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
           - --extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/
+          - *dask_cuda_unsuffixed
     specific:
-      - output_types: [requirements, pyproject]
+      - output_types: pyproject
         matrices:
           - matrix:
               cuda: "12.*"
@@ -1721,6 +1866,7 @@ dependencies:
             packages:
               - dask-cuda[cu13]==26.10.*,>=0.0.0a0
           - matrix:
+              cuda_suffixed: "false"
             packages:
               - *dask_cuda_unsuffixed
   depends_on_dask_cudf:

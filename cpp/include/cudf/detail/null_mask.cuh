@@ -27,7 +27,6 @@
 #include <cuda/std/tuple>
 #include <thrust/for_each.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -577,8 +576,7 @@ rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
   if (count_bits == count_bits_policy::UNSET_BITS) {
     // Convert from set bits counts to unset bits by subtracting the number of
     // set bits from the length of the segment.
-    auto segments_begin =
-      thrust::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);
+    auto segments_begin = cuda::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);
     auto segment_length_iterator = thrust::transform_iterator(
       segments_begin, cuda::proclaim_return_type<size_type>([] __device__(auto const& segment) {
         auto const begin = cuda::std::get<0>(segment);
@@ -795,7 +793,7 @@ std::pair<rmm::device_buffer, size_type> segmented_null_mask_reduction(
   rmm::device_async_resource_ref mr)
 {
   auto const segments_begin =
-    thrust::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);
+    cuda::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);
   auto const segment_length_iterator = thrust::make_transform_iterator(
     segments_begin, cuda::proclaim_return_type<size_type>([] __device__(auto const& segment) {
       auto const begin = cuda::std::get<0>(segment);
@@ -828,7 +826,7 @@ std::pair<rmm::device_buffer, size_type> segmented_null_mask_reduction(
                                        stream,
                                        cudf::get_current_device_resource_ref());
   auto const length_and_valid_count =
-    thrust::make_zip_iterator(segment_length_iterator, segment_valid_counts.begin());
+    cuda::make_zip_iterator(segment_length_iterator, segment_valid_counts.begin());
   return cudf::detail::valid_if(
     length_and_valid_count,
     length_and_valid_count + num_segments,

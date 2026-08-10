@@ -94,6 +94,22 @@ def test_select_fill_null_with_strategy(df, streaming_engine_factory):
         assert_gpu_result_equal(q, engine=engine)
 
 
+def test_select_scan_fill_null_with_strategy_fallback(tmp_path, spmd_engine_factory):
+    engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=1, fallback_mode="warn"),
+    )
+    path = tmp_path / "data.parquet"
+    pl.DataFrame({"a": [None, 1, None, 3]}).write_parquet(path)
+    q = pl.scan_parquet(path).select(pl.col("a").fill_null(strategy="forward"))
+
+    with warns_on_spmd(
+        engine,
+        UserWarning,
+        match="fill_null with strategy other than 'zero' or 'one' is not supported for multiple partitions",
+    ):
+        assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "aggs",
     [

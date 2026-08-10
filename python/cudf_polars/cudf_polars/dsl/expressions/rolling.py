@@ -374,6 +374,7 @@ class GroupedWindow(Expr):
                         "rank",
                         "fill_null_with_strategy",
                         "cum_sum",
+                        "diff",
                         "shift",
                         "shift_and_fill",
                     }
@@ -612,7 +613,7 @@ class GroupedWindow(Expr):
             offsets.append(offset)
             out_names.append(ne.name)
             out_dtypes.append(shift_expr.dtype)
-            if shift_expr.name == "shift":
+            if shift_expr.name in {"diff", "shift"}:
                 fill_scalars.append(
                     plc.Scalar.from_py(None, plc_col.type(), stream=df.stream)
                 )
@@ -638,11 +639,29 @@ class GroupedWindow(Expr):
         shifted_tbl = op.local_grouper.shift(
             plc.Table(val_cols), offsets, fill_scalars, stream=df.stream
         )[1]
-        return (
-            out_names,
-            out_dtypes,
-            [plc.Table([column]) for column in shifted_tbl.columns()],
-        )
+        result_tables: list[plc.Table] = []
+        for val_col, shifted_col, ne in zip(
+            val_cols, shifted_tbl.columns(), op.named_exprs, strict=True
+        ):
+            shift_expr = ne.value
+            assert isinstance(shift_expr, expr.UnaryFunction)
+            if shift_expr.name == "diff":
+                result_tables.append(
+                    plc.Table(
+                        [
+                            plc.binaryop.binary_operation(
+                                val_col,
+                                shifted_col,
+                                plc.binaryop.BinaryOperator.SUB,
+                                shift_expr.dtype.plc_type,
+                                stream=df.stream,
+                            )
+                        ]
+                    )
+                )
+            else:
+                result_tables.append(plc.Table([shifted_col]))
+        return out_names, out_dtypes, result_tables
 
     @_apply_unary_op.register
     def _(
@@ -804,10 +823,13 @@ class GroupedWindow(Expr):
                 and v.children[0].name == "cum_sum"
             ):
                 unary_window_ops["cum_sum"].append(ne)
+            elif isinstance(v, expr.UnaryFunction) and v.name in {
+                "diff",
+                "shift_and_fill",
+            }:
+                unary_window_ops["shift"].append(ne)
             elif isinstance(v, expr.UnaryFunction) and v.name in unary_window_ops:
                 unary_window_ops[v.name].append(ne)
-            elif isinstance(v, expr.UnaryFunction) and v.name == "shift_and_fill":
-                unary_window_ops["shift"].append(ne)
             elif isinstance(v, FixedSizeRollingWindow):
                 unary_window_ops["fixed_size_rolling"].append(ne)
             else:

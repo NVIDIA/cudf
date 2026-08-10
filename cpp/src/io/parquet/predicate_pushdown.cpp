@@ -18,7 +18,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <functional>
@@ -146,14 +146,9 @@ bool aggregate_reader_metadata::any_row_group_stats_available(
 
       auto const& first_row_group =
         per_file_metadata[src_idx].row_groups[row_group_indices.front()];
-      auto const num_col_chunks    = static_cast<size_type>(first_row_group.columns.size());
       auto const mapped_schema_idx = map_schema_index(schema_idx, static_cast<int>(src_idx));
-      auto const cached_offset     = colchunk_offset.value_or(-1);
-
-      if (cached_offset < 0 or cached_offset >= num_col_chunks or
-          first_row_group.columns[cached_offset].schema_idx != mapped_schema_idx) {
-        colchunk_offset = find_colchunk_iter_offset(first_row_group, mapped_schema_idx);
-      }
+      colchunk_offset =
+        find_colchunk_iter_offset(first_row_group, mapped_schema_idx, colchunk_offset);
 
       if (colchunk_has_stats(first_row_group.columns[colchunk_offset.value()])) { return true; }
     }

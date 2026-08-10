@@ -31,7 +31,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/count.h>
-#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
@@ -115,7 +114,7 @@ struct column_scalar_scatterer_impl {
     // Use permutation iterator with constant index to dereference scalar data
     auto scalar_impl = static_cast<scalar_type_t<Element> const*>(&source.get());
     auto scalar_iter =
-      thrust::make_permutation_iterator(scalar_impl->data(), cuda::make_constant_iterator(0));
+      cuda::make_permutation_iterator(scalar_impl->data(), cuda::make_constant_iterator(0));
 
     thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     scalar_iter,
@@ -190,7 +189,7 @@ struct column_scalar_scatterer_impl<dictionary32, MapIterator> {
     auto dict_view    = dictionary_column_view(dict_target->view());
     auto scalar_index = dictionary::detail::get_index(
       dict_view, source.get(), stream, cudf::get_current_device_resource_ref());
-    auto scalar_iter = thrust::make_permutation_iterator(
+    auto scalar_iter = cuda::make_permutation_iterator(
       indexalator_factory::make_input_iterator(*scalar_index), cuda::make_constant_iterator(0));
     auto new_indices = std::make_unique<column>(dict_view.get_indices_annotated(), stream, mr);
     auto target_iter = indexalator_factory::make_output_iterator(new_indices->mutable_view());

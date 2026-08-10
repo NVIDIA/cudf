@@ -7,6 +7,7 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/table_utilities.hpp>
 
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
@@ -846,6 +847,82 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
     auto constexpr expected_surviving_rows = 2 * num_concat * page_size_for_ordered_tests;
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
+}
+
+TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)
+{
+  using T                           = uint32_t;
+  auto constexpr num_concat         = 2;
+  auto [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
+
+  auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(file_buffer.data()), file_buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto options             = cudf::io::parquet_reader_options::builder().build();
+  auto reader = cudf::io::parquet::experimental::hybrid_scan_reader(*footer_buffer, options);
+
+  auto const page_index_buffer =
+    cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range());
+  reader.setup_page_index(*page_index_buffer);
+
+  auto metadata = reader.parquet_metadata();
+  for (auto& row_group : metadata.row_groups) {
+    for (auto& column : row_group.columns) {
+      column.column_index.reset();
+    }
+  }
+
+  auto offset_only_reader = cudf::io::parquet::experimental::hybrid_scan_reader(metadata, options);
+  auto const selected_row_groups = offset_only_reader.all_row_groups(options);
+  auto const total_rows          = offset_only_reader.total_rows_in_row_groups(selected_row_groups);
+
+  auto row_mask_values = cudf::detail::make_counting_transform_iterator(
+    0, [total_rows](auto const row) { return std::cmp_greater_equal(row, total_rows / 2); });
+  auto row_mask =
+    cudf::test::fixed_width_column_wrapper<bool>(row_mask_values, row_mask_values + total_rows);
+  auto const row_mask_view = static_cast<cudf::column_view>(row_mask);
+  auto const stream        = cudf::get_default_stream();
+  auto const mr            = cudf::get_current_device_resource_ref();
+  auto const byte_ranges =
+    offset_only_reader.payload_column_chunks_byte_ranges(selected_row_groups, options);
+  auto [column_buffers, column_data, read_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, byte_ranges, stream, mr);
+  read_tasks.get();
+
+  // Materialization maps the row mask to pages using only offset index, then applies the row mask.
+  auto const result = offset_only_reader.materialize_payload_columns(
+    selected_row_groups,
+    column_data,
+    row_mask_view,
+    cudf::io::parquet::experimental::use_data_page_mask::YES,
+    options,
+    stream,
+    mr);
+  auto const expected = cudf::apply_boolean_mask(written_table->view(), row_mask_view, stream, mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), result.tbl->view());
+
+  // Without offset index, data-page pruning falls back to decoding all pages.
+  for (auto& row_group : metadata.row_groups) {
+    for (auto& column : row_group.columns) {
+      column.offset_index.reset();
+    }
+  }
+  auto no_index_reader = cudf::io::parquet::experimental::hybrid_scan_reader(metadata, options);
+  auto const no_index_row_groups = no_index_reader.all_row_groups(options);
+  auto const no_index_ranges =
+    no_index_reader.payload_column_chunks_byte_ranges(no_index_row_groups, options);
+  auto [no_index_buffers, no_index_data, no_index_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, no_index_ranges, stream, mr);
+  no_index_tasks.get();
+  auto const no_index_result = no_index_reader.materialize_payload_columns(
+    no_index_row_groups,
+    no_index_data,
+    row_mask_view,
+    cudf::io::parquet::experimental::use_data_page_mask::YES,
+    options,
+    stream,
+    mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), no_index_result.tbl->view());
 }
 
 template <typename T>

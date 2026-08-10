@@ -18,8 +18,10 @@
 #include <cudf/utilities/span.hpp>
 
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstring>
+#include <format>
 #include <memory>
 #include <string>
 #include <vector>
@@ -958,14 +960,93 @@ TEST_F(CastVariantTest, ApachePrimitiveInts)
 
 TEST_F(CastVariantTest, ApachePrimitiveFloats)
 {
+  auto stream     = cudf::test::get_default_stream();
+  auto const cast = [&](auto const& fixture, auto expected_val) {
+    using T          = decltype(expected_val);
+    auto col         = make_apache_variant(fixture);
+    auto const value = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    auto got         = cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{cudf::type_to_id<T>()}, stream);
+    cudf::test::fixed_width_column_wrapper<T> expected{expected_val};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  };
+
+  cast(avf::primitive_float, float{1234567936.0f});
+  cast(avf::primitive_double, double{1234567890.1234});
+}
+
+TEST_F(CastVariantTest, ApachePrimitiveBooleans)
+{
+  auto stream     = cudf::test::get_default_stream();
+  auto const cast = [&](auto const& fixture, bool expected_val) {
+    auto col         = make_apache_variant(fixture);
+    auto const value = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    auto got         = cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{cudf::type_id::BOOL8}, stream);
+    cudf::test::fixed_width_column_wrapper<bool> expected{expected_val};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  };
+
+  cast(avf::primitive_boolean_true, true);
+  cast(avf::primitive_boolean_false, false);
+
+  // Null variant value must cast to a null BOOL8, not false.
   {
-    auto got = cast_apache_primitive<float>(avf::primitive_float);
-    cudf::test::fixed_width_column_wrapper<float> expected{float{1234567936.0f}};
+    auto col         = make_apache_variant(avf::primitive_null);
+    auto const value = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    auto got         = cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{cudf::type_id::BOOL8}, stream);
+    cudf::test::fixed_width_column_wrapper<bool> expected({false}, {false});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
   }
+
+  // Sliced multi-row column exercises grid-stride paths with a non-zero slice offset.
+  // num_rows / slice range is chosen so the sliced window (slice_end - slice_beg = 512)
+  // spans more than one cast_variant_bool_kernel block (block_size = 256).
   {
-    auto got = cast_apache_primitive<double>(avf::primitive_double);
-    cudf::test::fixed_width_column_wrapper<double> expected{double{1234567890.1234}};
+    constexpr int num_rows  = 516;
+    constexpr int slice_beg = 3;
+    constexpr int slice_end = 515;
+
+    std::vector<uint8_t> const true_bytes{avf::primitive_boolean_true.value.begin(),
+                                          avf::primitive_boolean_true.value.end()};
+    std::vector<uint8_t> const false_bytes{avf::primitive_boolean_false.value.begin(),
+                                           avf::primitive_boolean_false.value.end()};
+    std::vector<uint8_t> const null_bytes{avf::primitive_null.value.begin(),
+                                          avf::primitive_null.value.end()};
+    std::vector<uint8_t> const meta_bytes{avf::primitive_boolean_true.metadata.begin(),
+                                          avf::primitive_boolean_true.metadata.end()};
+
+    std::vector<std::vector<uint8_t>> metas(num_rows, meta_bytes);
+    std::vector<std::vector<uint8_t>> vals(num_rows);
+    std::vector<bool> exp_vals(num_rows);
+    std::vector<bool> exp_valid(num_rows);
+
+    for (int i = 0; i < num_rows; ++i) {
+      int const pat = i % 3;
+      if (pat == 0) {
+        vals[i]      = true_bytes;
+        exp_vals[i]  = true;
+        exp_valid[i] = true;
+      } else if (pat == 1) {
+        vals[i]      = false_bytes;
+        exp_vals[i]  = false;
+        exp_valid[i] = true;
+      } else {
+        vals[i]      = null_bytes;
+        exp_vals[i]  = false;
+        exp_valid[i] = false;
+      }
+    }
+
+    auto col          = wrap_multi_row_variant(metas, vals);
+    auto const sliced = cudf::slice(col, {slice_beg, slice_end}).front();
+    auto const value  = cudf::structs_column_view{sliced}.get_sliced_child(1, stream);
+    auto got          = cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{cudf::type_id::BOOL8}, stream);
+
+    cudf::test::fixed_width_column_wrapper<bool> expected(
+      exp_vals.begin() + slice_beg, exp_vals.begin() + slice_end, exp_valid.begin() + slice_beg);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
   }
 }
@@ -1024,7 +1105,8 @@ TEST_F(CastVariantTest, EmptyInput)
   for (auto const id : {cudf::type_id::INT32,
                         cudf::type_id::STRING,
                         cudf::type_id::FLOAT32,
-                        cudf::type_id::FLOAT64}) {
+                        cudf::type_id::FLOAT64,
+                        cudf::type_id::BOOL8}) {
     auto got = cudf::io::parquet::experimental::cast_variant(*values, cudf::data_type{id}, stream);
     EXPECT_EQ(got->type().id(), id);
     EXPECT_EQ(got->size(), 0);
@@ -1032,14 +1114,10 @@ TEST_F(CastVariantTest, EmptyInput)
   }
 }
 
-TEST_F(CastVariantTest, CastToUnsupportedTargetThrows)
+TEST_F(CastVariantTest, UnsupportedTypeThrows)
 {
-  // cast_variant only supports INT8/16/32/64 and STRING targets. Every other target is rejected at
-  // compile-time dispatch on the requested output type, independent of the input bytes, so a single
-  // well-formed placeholder row triggers the same throw for all of them.
+  // Unsupported target types must throw regardless of whether the input is empty or non-empty.
   auto stream = cudf::test::get_default_stream();
-  std::vector<uint8_t> const val{make_variant_primitive(variant_primitive_type::NULLVAL)};
-  cudf::test::lists_column_wrapper<uint8_t> values(val.begin(), val.end());
 
   std::vector<cudf::type_id> const ids{cudf::type_id::UINT8,
                                        cudf::type_id::UINT16,
@@ -1053,11 +1131,24 @@ TEST_F(CastVariantTest, CastToUnsupportedTargetThrows)
                                        cudf::type_id::DECIMAL64,
                                        cudf::type_id::DECIMAL128};
 
+  // Empty input: the early-return path must still validate the type.
+  auto const empty_values =
+    cudf::empty_like(cudf::structs_column_view{make_xyz_three_row_variant()}.child(1));
   for (auto const id : ids) {
-    SCOPED_TRACE(std::string{"target type_id: "} + std::to_string(static_cast<int32_t>(id)));
     EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::cast_variant(
-                   values, cudf::data_type{id}, stream)),
-                 std::invalid_argument);
+                   *empty_values, cudf::data_type{id}, stream)),
+                 std::invalid_argument)
+      << std::format("expected throw for type_id {} on empty input", static_cast<int>(id));
+  }
+
+  // Non-empty input: the dispatch path must also throw for unsupported types.
+  auto col         = make_apache_variant(avf::primitive_int32);
+  auto const value = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+  for (auto const id : ids) {
+    EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::cast_variant(
+                   value, cudf::data_type{id}, stream)),
+                 std::invalid_argument)
+      << std::format("expected throw for type_id {} on non-empty input", static_cast<int>(id));
   }
 }
 

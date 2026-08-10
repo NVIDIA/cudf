@@ -23,6 +23,7 @@ dependencies:
 - cuda-nvcc
 - cuda-nvrtc-dev
 - cuda-nvtx-dev
+- cuda-profiler-api
 - cuda-sanitizer-api
 - cuda-version=12.9
 - cupy>=14.0.1,!=14.1.0
@@ -45,7 +46,7 @@ dependencies:
 - libcufile-dev
 - libcurand-dev
 - libkvikio==26.10.*,>=0.0.0a0
-- libnvcomp-dev==5.2.0.10
+- libnvcomp-dev==5.3.0.16
 - libnvjitlink-dev
 - librapidsmpf==26.10.*,>=0.0.0a0
 - librdkafka<2.15.0a0

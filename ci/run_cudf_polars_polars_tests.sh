@@ -75,7 +75,6 @@ python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
        --dist=worksteal \
        --tb=native \
        --durations 10 --durations-min 10 \
-       -ra \
        $DESELECTED_TESTS_STR \
        "$@" \
        py-polars/tests \
@@ -97,7 +96,6 @@ python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
        --dist=worksteal \
        --tb=native \
        --durations 10 --durations-min 10 \
-       -ra \
        $DESELECTED_TESTS_STR \
        "$@" \
        py-polars/tests \

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,6 @@
 #include <cuda/std/algorithm>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
-#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
@@ -64,7 +63,7 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
   auto const t_input    = table_view{{input_col}};
   auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream};
 
-  auto const sorted_index_order = thrust::make_permutation_iterator(
+  auto const sorted_index_order = cuda::make_permutation_iterator(
     sorted_order_view.begin<size_type>(), cuda::counting_iterator<size_type>{0});
 
   auto const input_size = input_col.size();

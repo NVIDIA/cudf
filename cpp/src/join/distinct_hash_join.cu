@@ -30,8 +30,6 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_output_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/sequence.h>
 
 #include <limits>
@@ -239,9 +237,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
   auto left_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
 
-  auto found_indices = rmm::device_uvector<size_type>(left_table_num_rows, stream);
-  auto const found_begin =
-    thrust::make_transform_output_iterator(found_indices.begin(), output_fn{});
+  auto found_indices     = rmm::device_uvector<size_type>(left_table_num_rows, stream);
+  auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
   auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(left, stream);
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
@@ -300,8 +297,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
       [found_iter = found_indices.begin()] __device__(size_type idx) {
         return cuda::std::tuple{*(found_iter + idx), idx};
       }));
-  auto const output_begin =
-    thrust::make_zip_iterator(right_indices->begin(), left_indices->begin());
+  auto const output_begin = cuda::make_zip_iterator(right_indices->begin(), left_indices->begin());
   auto const output_end =
     cudf::detail::copy_if(tuple_iter,
                           tuple_iter + left_table_num_rows,
@@ -335,7 +331,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   auto right_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
   auto const output_begin =
-    thrust::make_transform_output_iterator(right_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
   auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(left, stream);
 

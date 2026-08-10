@@ -117,9 +117,7 @@ void hybrid_scan_reader_impl::prepare_row_groups(
 
   // Check for offset indexes.
   _has_offset_index =
-    std::all_of(_file_itm_data.row_groups.cbegin(),
-                _file_itm_data.row_groups.cend(),
-                [](auto const& row_group) { return row_group.has_offset_index(); });
+    _extended_metadata->has_offset_index(_file_itm_data.row_groups, _input_columns);
 
   if (_file_itm_data.global_num_rows > 0 && not _file_itm_data.row_groups.empty() &&
       not _input_columns.empty()) {

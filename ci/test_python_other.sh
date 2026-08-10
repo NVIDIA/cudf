@@ -52,8 +52,7 @@ rapids-logger "pytest cudf-polars"
   --cov=cudf_polars \
   --cov-report=xml:"${RAPIDS_COVERAGE_DIR}/cudf-polars-coverage.xml" \
   --cov-report=term \
-  --durations=10 --durations-min=10 \
-  -ra
+  --durations=10 --durations-min=10
 
 rapids-logger "pytest cudf_streaming"
 timeout 30m ./ci/run_cudf_streaming_pytests.sh \

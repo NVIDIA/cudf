@@ -12,6 +12,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <thrust/random.h>
 #include <thrust/transform.h>
 
@@ -32,8 +33,8 @@ rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
   using index_t        = std::int64_t;
   auto const end_index = rapidsmpf::safe_cast<index_t>(nelem);
   rmm::device_uvector<std::int32_t> vec(nelem, stream, mr);
-  thrust::counting_iterator<index_t> const begin(0);
-  thrust::counting_iterator<index_t> const end(end_index);
+  cuda::counting_iterator<index_t> const begin(0);
+  cuda::counting_iterator<index_t> const end(end_index);
   thrust::transform(rmm::exec_policy_nosync(stream),
                     begin,
                     end,

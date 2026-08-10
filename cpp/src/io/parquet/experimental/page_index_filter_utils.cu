@@ -22,28 +22,6 @@
 
 namespace cudf::io::parquet::experimental::detail {
 
-using parquet::detail::find_colchunk_iter_offset;
-
-bool compute_has_page_index(std::span<metadata_base const> file_metadatas,
-                            std::span<std::vector<size_type> const> row_group_indices)
-{
-  // For all parquet data sources
-  return std::all_of(
-    cuda::counting_iterator<std::size_t>{0},
-    cuda::counting_iterator{row_group_indices.size()},
-    [&](auto const src_index) {
-      // For all row groups in this parquet data source
-      auto const& rg_indices = row_group_indices[src_index];
-      return std::all_of(rg_indices.begin(), rg_indices.end(), [&](auto const& rg_index) {
-        auto const& row_group = file_metadatas[src_index].row_groups[rg_index];
-        return std::any_of(
-          row_group.columns.begin(), row_group.columns.end(), [&](auto const& col) {
-            return col.offset_index.has_value() and col.column_index.has_value();
-          });
-      });
-    });
-}
-
 std::pair<cudf::detail::host_vector<size_type>, cudf::detail::host_vector<size_type>>
 compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<metadata_base const> per_file_metadata,
@@ -79,36 +57,34 @@ compute_page_row_offsets_and_colchunk_page_offsets(
       std::optional<size_type> colchunk_iter_offset{};
       std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
         auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
-        if (not colchunk_iter_offset.has_value() or
-            row_group.columns[colchunk_iter_offset.value()].schema_idx != schema_idx) {
-          colchunk_iter_offset = find_colchunk_iter_offset(row_group, schema_idx);
-        }
+        colchunk_iter_offset =
+          parquet::detail::find_colchunk_iter_offset(row_group, schema_idx, colchunk_iter_offset);
         auto const& colchunk_iter = row_group.columns.begin() + colchunk_iter_offset.value();
 
-        // Compute page row offsets if this column chunk has column and offset indexes
-        if (colchunk_iter->offset_index.has_value()) {
-          // Get the offset index of the column chunk
-          auto const& offset_index       = colchunk_iter->offset_index.value();
-          auto const row_group_num_pages = offset_index.page_locations.size();
+        CUDF_EXPECTS(colchunk_iter->offset_index.has_value(),
+                     "Offset index not found for column chunk",
+                     std::invalid_argument);
 
-          col_chunk_page_offsets.push_back(col_chunk_page_offsets.back() + row_group_num_pages);
+        auto const& offset_index       = colchunk_iter->offset_index.value();
+        auto const row_group_num_pages = offset_index.page_locations.size();
 
-          // For all pages in this column chunk, update page row offsets.
-          std::for_each(
-            cuda::counting_iterator<std::size_t>{0},
-            cuda::counting_iterator{row_group_num_pages},
-            [&](auto const page_idx) {
-              int64_t const first_row_idx = offset_index.page_locations[page_idx].first_row_index;
-              // For the last page, this is simply the total number of rows in the column chunk
-              int64_t const last_row_idx =
-                (page_idx < row_group_num_pages - 1)
-                  ? offset_index.page_locations[page_idx + 1].first_row_index
-                  : row_group.num_rows;
+        col_chunk_page_offsets.push_back(col_chunk_page_offsets.back() + row_group_num_pages);
 
-              // Update the page row offsets.
-              page_row_offsets.push_back(page_row_offsets.back() + last_row_idx - first_row_idx);
-            });
-        }
+        // For all pages in this column chunk, update page row offsets.
+        std::for_each(
+          cuda::counting_iterator<std::size_t>{0},
+          cuda::counting_iterator{row_group_num_pages},
+          [&](auto const page_idx) {
+            int64_t const first_row_idx = offset_index.page_locations[page_idx].first_row_index;
+            // For the last page, this is simply the total number of rows in the column chunk
+            int64_t const last_row_idx =
+              (page_idx < row_group_num_pages - 1)
+                ? offset_index.page_locations[page_idx + 1].first_row_index
+                : row_group.num_rows;
+
+            // Update the page row offsets.
+            page_row_offsets.push_back(page_row_offsets.back() + last_row_idx - first_row_idx);
+          });
       });
     });
 
@@ -139,13 +115,13 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
                   std::optional<size_type> colchunk_iter_offset{};
                   std::for_each(rg_indices.begin(), rg_indices.end(), [&](auto const& rg_idx) {
                     auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
-                    // Find the column chunk with the given schema index
-                    if (not colchunk_iter_offset.has_value() or
-                        row_group.columns[colchunk_iter_offset.value()].schema_idx != schema_idx) {
-                      colchunk_iter_offset = find_colchunk_iter_offset(row_group, schema_idx);
-                    }
+                    colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
+                      row_group, schema_idx, colchunk_iter_offset);
                     auto const& colchunk_iter =
                       row_group.columns.begin() + colchunk_iter_offset.value();
+                    CUDF_EXPECTS(colchunk_iter->offset_index.has_value(),
+                                 "Offset index not found for column chunk",
+                                 std::invalid_argument);
                     auto const& offset_index       = colchunk_iter->offset_index.value();
                     auto const row_group_num_pages = offset_index.page_locations.size();
                     std::for_each(cuda::counting_iterator<std::size_t>{0},

@@ -26,10 +26,7 @@ namespace CUDF_EXPORT cudf {
  * @brief Construct a dictionary column by copying the provided `keys`
  * and `indices`.
  *
- * It is expected that `keys_column.has_nulls() == false`.
- * It is assumed the elements in `keys_column` are unique and
- * are in a strict, total order. Meaning, `keys_column[i]` is ordered before
- * `keys_column[i+1]` for all `i in [0,n-1)` where `n` is the number of keys.
+ * The keys_column must contain no nulls.
  *
  * The indices values must be in the range [0,keys_column.size()).
  *
@@ -49,7 +46,7 @@ namespace CUDF_EXPORT cudf {
  * @throw std::invalid_argument if keys_column contains nulls
  * @throw std::invalid_argument if indices_column type is not a signed integer
  *
- * @param keys_column Column of unique, ordered values to use as the new dictionary column's keys.
+ * @param keys_column Column of non-null values to use as the new dictionary column's keys.
  * @param indices_column Indices to use for the new dictionary column.
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate the returned column's device memory.
@@ -66,16 +63,12 @@ std::unique_ptr<column> make_dictionary_column(
  * and indices columns.
  *
  * The keys_column and indices columns must contain no nulls.
- * It is assumed the elements in `keys_column` are unique and
- * are in a strict, total order. Meaning, `keys_column[i]` is ordered before
- * `keys_column[i+1]` for all `i in [0,n-1)` where `n` is the number of keys.
- *
  * The indices values must be in the range [0,keys_column.size()).
  *
  * @throw std::invalid_argument if keys_column or indices_column contains nulls
  * @throw std::invalid_argument if indices_column type is not a signed integer type
  *
- * @param keys_column Column of unique, ordered values to use as the new dictionary column's keys.
+ * @param keys_column Column of non-null values to use as the new dictionary column's keys.
  * @param indices_column Indices to use for the new dictionary column.
  * @param null_mask Null mask for the output column.
  * @param null_count Number of nulls for the output column.
@@ -101,7 +94,7 @@ std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys_colu
  *
  * @throw cudf::logic_error if keys_column contains nulls
  *
- * @param keys_column Column of unique, ordered values to use as the new dictionary column's keys.
+ * @param keys_column Column of non-null values to use as the new dictionary column's keys.
  * @param indices_column Indices values and null-mask to use for the new dictionary column.
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate the returned column's device memory.

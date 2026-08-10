@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/transform_reduce.h>
 
@@ -33,7 +34,7 @@ writer_compression_statistics collect_compression_statistics(
 
   auto input_size_with_status = [inputs, results, stream](codec_status status) {
     auto const zipped_begin =
-      thrust::make_zip_iterator(cuda::std::make_tuple(inputs.begin(), results.begin()));
+      cuda::make_zip_iterator(cuda::std::make_tuple(inputs.begin(), results.begin()));
     auto const zipped_end = zipped_begin + inputs.size();
 
     return thrust::transform_reduce(

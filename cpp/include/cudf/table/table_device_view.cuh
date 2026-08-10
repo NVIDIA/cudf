@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,9 +8,11 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+#include <rmm/resource_ref.hpp>
 
 #include <cassert>
 #include <memory>
@@ -157,11 +159,14 @@ class table_device_view : public detail::table_device_view_base<column_device_vi
    *
    * @param source_view The table view whose contents will be copied to create a new table
    * @param stream CUDA stream used for device memory operations
+   * @param mr Device memory resource used to allocate the returned column-view storage
    * @return A `unique_ptr` to a `table_device_view` that makes the data from `source_view`
    * available in device memory
    */
   static std::unique_ptr<table_device_view, std::function<void(table_device_view*)>> create(
-    table_view source_view, rmm::cuda_stream_view stream = cudf::get_default_stream());
+    table_view source_view,
+    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
  private:
   table_device_view(table_view source_view, column_device_view* columns);
@@ -186,11 +191,14 @@ class mutable_table_device_view
    *
    * @param source_view The table view whose contents will be copied to create a new table
    * @param stream CUDA stream used for device memory operations
+   * @param mr Device memory resource used to allocate the returned column-view storage
    * @return A `unique_ptr` to a `mutable_table_device_view` that makes the data from `source_view`
    * available in device memory
    */
   static std::unique_ptr<mutable_table_device_view, std::function<void(mutable_table_device_view*)>>
-  create(mutable_table_view source_view, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  create(mutable_table_view source_view,
+         rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
  private:
   mutable_table_device_view(mutable_table_view source_view, mutable_column_device_view* columns);
@@ -203,10 +211,13 @@ class mutable_table_device_view
  * @tparam HostTableView The type of the table_view to copy from
  * @param source_view The table_view to copy from
  * @param stream The stream to use for device memory allocation
+ * @param mr Device memory resource used to allocate the returned device buffer
  * @return tuple of device_buffer and @p ColumnDeviceView device pointer
  */
 template <typename ColumnDeviceView, typename HostTableView>
 std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_device_views(
-  HostTableView source_view, rmm::cuda_stream_view stream);
+  HostTableView source_view,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace CUDF_EXPORT cudf

@@ -51,16 +51,6 @@ class hash_join;
 }  // namespace detail
 
 /**
- * @brief The enum class to specify if any of the input join tables (`right` table and any later
- * `left` table) has nulls.
- *
- * This is used upon hash_join object construction to specify the existence of nulls in all the
- * possible input tables. If such null existence is unknown, `YES` should be used as the default
- * option.
- */
-enum class nullable_join : bool { YES, NO };
-
-/**
  * @brief Hash join that builds a hash table with the right table on construction and probes
  * results in subsequent `*_join` member functions.
  *

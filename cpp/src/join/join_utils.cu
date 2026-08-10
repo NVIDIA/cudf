@@ -13,6 +13,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/type_checks.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
@@ -40,6 +41,20 @@ double checked_load_factor(double load_factor)
                "Invalid load factor: must be greater than 0 and less than or equal to 1.",
                std::invalid_argument);
   return load_factor;
+}
+
+void validate_hash_join_probe(table_view const& right, table_view const& left, bool has_nulls)
+{
+  CUDF_EXPECTS(0 != left.num_columns(), "Hash join left table is empty", std::invalid_argument);
+  CUDF_EXPECTS(right.num_columns() == left.num_columns(),
+               "Mismatch in number of columns to be joined on",
+               std::invalid_argument);
+  CUDF_EXPECTS(has_nulls || !cudf::has_nested_nulls(left),
+               "Left table has nulls while right table was not hashed with null check.",
+               std::invalid_argument);
+  CUDF_EXPECTS(cudf::have_same_types(right, left),
+               "Mismatch in joining column data types",
+               cudf::data_type_error);
 }
 
 VectorPair get_trivial_left_join_indices(table_view const& left,

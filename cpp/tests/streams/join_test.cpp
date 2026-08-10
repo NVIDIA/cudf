@@ -17,6 +17,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
+#include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 
@@ -24,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <tuple>
+#include <vector>
 
 class JoinTest : public cudf::test::BaseFixture {
   static inline cudf::table make_table()
@@ -54,6 +56,28 @@ class JoinTest : public cudf::test::BaseFixture {
 TEST_F(JoinTest, InnerJoin)
 {
   cudf::inner_join(table0, table1, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
+}
+
+TEST_F(JoinTest, StreamingHashJoin)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> right_keys{{1, 2, 3}};
+  cudf::test::fixed_width_column_wrapper<int32_t> left_keys{{2, 4}};
+  cudf::table_view const right{{right_keys}};
+  cudf::table_view const left{{left_keys}};
+  std::vector<cudf::data_type> const schema{right.column(0).type()};
+  std::vector<cudf::size_type> const key_indices{0};
+
+  cudf::streaming_hash_join joiner{schema,
+                                   key_indices,
+                                   right.num_rows(),
+                                   /*max_num_batches=*/1,
+                                   cudf::nullable_join::NO,
+                                   cudf::null_equality::EQUAL,
+                                   /*load_factor=*/0.5,
+                                   stream};
+  joiner.insert(right, stream);
+  [[maybe_unused]] auto result = joiner.inner_join(left, std::nullopt, stream);
 }
 
 TEST_F(JoinTest, SortMergeInnerJoin)

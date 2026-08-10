@@ -60,6 +60,14 @@ enum class join_kind : int32_t {
 enum class join_prefilter : bool { NO = false, YES = true };
 
 /**
+ * @brief Specifies whether join-key columns may contain nulls.
+ *
+ * Join implementations use this to select row operators that either check or omit null handling.
+ * If nullability is unknown, use `YES`.
+ */
+enum class nullable_join : bool { YES, NO };
+
+/**
  * @brief Sentinel value used to indicate an unmatched row index in join operations.
  *
  * This value is used in join result indices to represent rows that do not have a match

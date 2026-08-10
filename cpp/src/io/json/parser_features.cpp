@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -75,7 +75,7 @@ struct empty_column_functor {
     auto const& child_name        = schema.child_types.begin()->first;
     std::unique_ptr<column> child = cudf::type_dispatcher(
       schema.child_types.at(child_name).type, *this, schema.child_types.at(child_name));
-    auto offsets = make_empty_column(data_type(type_to_id<size_type>()));
+    auto offsets = make_empty_column(data_type(type_id::INT32));
     std::vector<std::unique_ptr<column>> child_columns;
     child_columns.push_back(std::move(offsets));
     child_columns.push_back(std::move(child));

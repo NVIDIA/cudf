@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -46,7 +46,7 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      cuda::counting_iterator<size_type>{0},
                      child.size(),
-                     [list_offsets = out_offsets->view().begin<size_type>(),
+                     [list_offsets = out_offsets->view().begin<int32_t>(),
                       list_indices = labels->view().begin<size_type>(),
                       gather_map   = gather_map.begin()] __device__(auto const idx) {
                        auto const list_idx     = list_indices[idx];

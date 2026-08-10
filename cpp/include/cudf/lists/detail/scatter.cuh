@@ -231,10 +231,10 @@ std::unique_ptr<column> scatter(scalar const& slr,
                                    ? cudf::create_null_mask(1, mask_state::UNALLOCATED, stream, mr)
                                    : cudf::create_null_mask(1, mask_state::ALL_NULL, stream, mr);
   auto offset_column =
-    make_numeric_column(data_type{type_to_id<size_type>()}, 2, mask_state::UNALLOCATED, stream, mr);
+    make_numeric_column(data_type{type_id::INT32}, 2, mask_state::UNALLOCATED, stream, mr);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   offset_column->mutable_view().begin<size_type>(),
-                   offset_column->mutable_view().end<size_type>(),
+                   offset_column->mutable_view().begin<int32_t>(),
+                   offset_column->mutable_view().end<int32_t>(),
                    0,
                    lv->view().size());
   auto wrapped = column_view(data_type{type_id::LIST},

@@ -213,7 +213,7 @@ struct json_column_data {
   using row_offset_t = json_column::row_offset_t;
   row_offset_t* string_offsets;
   row_offset_t* string_lengths;
-  row_offset_t* child_offsets;
+  int32_t* child_offsets;
   bitmask_type* validity;
 };
 

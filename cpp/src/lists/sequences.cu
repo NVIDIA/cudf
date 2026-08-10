@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -156,7 +156,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
   // Generate list offsets for the output.
   auto [list_offsets, n_elements] = cudf::detail::make_offsets_child_column(
     sizes_input_it, sizes_input_it + sizes.size(), stream, mr);
-  auto const offsets_begin = list_offsets->view().template begin<size_type>();
+  auto const offsets_begin = list_offsets->view().template begin<int32_t>();
 
   auto child = type_dispatcher(starts.type(),
                                sequences_dispatcher{},

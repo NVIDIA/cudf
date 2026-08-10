@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -301,16 +301,15 @@ template <typename StringsIterator, typename ValidityIterator>
 auto make_chars_and_offsets(StringsIterator begin, StringsIterator end, ValidityIterator v)
 {
   std::vector<char> chars{};
-  std::vector<cudf::size_type> offsets(1, 0);
+  std::vector<int32_t> offsets(1, 0);
   for (auto str = begin; str < end; ++str) {
     std::string tmp = (*v++) ? std::string(*str) : std::string{};
     chars.insert(chars.end(), std::cbegin(tmp), std::cend(tmp));
     auto const last_offset = static_cast<std::size_t>(offsets.back());
     auto const next_offset = last_offset + tmp.length();
-    CUDF_EXPECTS(
-      next_offset < static_cast<std::size_t>(std::numeric_limits<cudf::size_type>::max()),
-      "Cannot use strings_column_wrapper to build a large strings column");
-    offsets.push_back(static_cast<cudf::size_type>(next_offset));
+    CUDF_EXPECTS(next_offset < static_cast<std::size_t>(std::numeric_limits<int32_t>::max()),
+                 "Cannot use strings_column_wrapper to build a large strings column");
+    offsets.push_back(static_cast<int32_t>(next_offset));
   }
   return std::pair(std::move(chars), std::move(offsets));
 };
@@ -1544,7 +1543,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    */
   static lists_column_wrapper<T> make_one_empty_row_column(bool valid = true)
   {
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 0};
+    cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 0};
     cudf::test::fixed_width_column_wrapper<int> values{};
     return lists_column_wrapper<T>(
       1,
@@ -1627,7 +1626,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     // add the final offset
     offsetv.push_back(count);
     auto offsets =
-      cudf::test::fixed_width_column_wrapper<size_type>(offsetv.begin(), offsetv.end()).release();
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsetv.begin(), offsetv.end()).release();
 
     // concatenate them together, skipping children that are null.
     std::vector<column_view> children;
@@ -1673,7 +1672,7 @@ class lists_column_wrapper : public detail::column_wrapper {
       offsetv.push_back(c->size());
     }
     auto offsets =
-      cudf::test::fixed_width_column_wrapper<size_type>(offsetv.begin(), offsetv.end()).release();
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsetv.begin(), offsetv.end()).release();
 
     // construct the list column. mark this as a root
     root  = true;

@@ -1703,8 +1703,10 @@ void pushdown_lists_null_mask(orc_column_view const& col,
       auto const is_row_valid = d_col.is_valid(idx) and bit_value_or(parent_pd_mask, idx, true);
       if (not is_row_valid) {
         auto offsets                = d_col.child(lists_column_view::offsets_column_index);
-        auto const child_rows_begin = offsets.element<size_type>(idx + d_col.offset());
-        auto const child_rows_end   = offsets.element<size_type>(idx + 1 + d_col.offset());
+        auto const d_offsets =
+          cudf::detail::input_offsetalator{offsets.head(), offsets.type()};
+        auto const child_rows_begin = d_offsets[idx + d_col.offset()];
+        auto const child_rows_end   = d_offsets[idx + 1 + d_col.offset()];
         for (auto child_row = child_rows_begin; child_row < child_rows_end; ++child_row)
           clear_bit(out_mask.data(), child_row);
       }
@@ -1952,10 +1954,12 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
             }
 
             auto offsets = parent_col.child(lists_column_view::offsets_column_index);
-            auto const rows_begin =
-              offsets.element<size_type>(parent_rg.begin + parent_col.offset()) - col.offset();
-            auto const rows_end =
-              offsets.element<size_type>(parent_rg.end + parent_col.offset()) - col.offset();
+            auto const d_offsets =
+              cudf::detail::input_offsetalator{offsets.head(), offsets.type()};
+            auto const rows_begin = static_cast<size_type>(
+              d_offsets[parent_rg.begin + parent_col.offset()] - col.offset());
+            auto const rows_end = static_cast<size_type>(
+              d_offsets[parent_rg.end + parent_col.offset()] - col.offset());
 
             return rowgroup_rows{rows_begin, rows_end};
           }

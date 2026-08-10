@@ -366,6 +366,8 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
 
   // gather from offset and create a new string column
   auto old_offsets = strings_column_view(joined_col->view()).offsets();
+  auto const d_old_offsets =
+    cudf::detail::offsetalator_factory::make_input_iterator(old_offsets);
   rmm::device_uvector<size_type> row_string_offsets(num_rows + 1, stream, mr);
   auto const d_strview_offsets = cudf::detail::make_counting_transform_iterator(
     0, cuda::proclaim_return_type<size_type>([num_strviews_per_row] __device__(size_type const i) {
@@ -374,7 +376,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  d_strview_offsets,
                  d_strview_offsets + row_string_offsets.size(),
-                 old_offsets.begin<size_type>(),
+                 d_old_offsets,
                  row_string_offsets.begin());
   auto chars_data = joined_col->release().data;
   return make_strings_column(
@@ -390,7 +392,7 @@ struct scatter_fn {
   size_type* _d_strview_offsets;
   string_view* _d_strviews;
   size_type const* _labels;
-  size_type const* _list_offsets;
+  cudf::detail::input_offsetalator _list_offsets;
   column_device_view _d_strings_children;
   string_view _element_seperator;
   string_view _element_narep;
@@ -399,7 +401,7 @@ struct scatter_fn {
              size_type* d_strview_offsets,
              string_view* d_strviews,
              size_type const* labels,
-             size_type const* list_offsets,
+             cudf::detail::input_offsetalator list_offsets,
              column_device_view d_strings_children,
              string_view const element_separator,
              string_view const element_narep) noexcept
@@ -473,7 +475,8 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   auto num_strings_per_list = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<size_type>(
-      [offsets = offsets.begin<size_type>(), num_offsets] __device__(size_type idx) {
+      [offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets),
+       num_offsets] __device__(size_type idx) -> size_type {
         if (idx + 1 >= num_offsets) return 0;
         auto const length = offsets[idx + 1] - offsets[idx];
         return length == 0 ? 2 : (2 + length + length - 1);
@@ -516,7 +519,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
                               d_strview_offsets.data(),
                               d_strviews.data(),
                               labels->view().data<size_type>(),
-                              offsets.data<size_type>(),
+                              cudf::detail::offsetalator_factory::make_input_iterator(offsets),
                               *d_strings_children,
                               element_separator,
                               element_narep});
@@ -525,11 +528,13 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
 
   // gather from offset and create a new string column
   auto old_offsets = strings_column_view(joined_col->view()).offsets();
+  auto const d_old_offsets =
+    cudf::detail::offsetalator_factory::make_input_iterator(old_offsets);
   rmm::device_uvector<size_type> row_string_offsets(num_offsets, stream, mr);
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  d_strview_offsets.begin(),
                  d_strview_offsets.end(),
-                 old_offsets.begin<size_type>(),
+                 d_old_offsets,
                  row_string_offsets.begin());
   auto chars_data = joined_col->release().data;
   return make_strings_column(

@@ -13,6 +13,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/io/detail/json.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -456,7 +457,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
 
       // If child is not present, set the null mask correctly, but offsets are zero, and children
       // are empty. Note: json_col modified here, reuse the memory
-      auto offsets_column = std::make_unique<column>(data_type{type_id::INT32},
+      auto offsets_column = std::make_unique<column>(data_type{type_to_id<size_type>()},
                                                      num_rows + 1,
                                                      json_col.child_offsets.release(),
                                                      rmm::device_buffer{},
@@ -485,6 +486,8 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
                                                  stream,
                                                  mr);
       }();
+      offsets_column = cudf::lists::detail::normalize_offsets(
+        std::move(offsets_column), child_column->size(), stream, mr);
       column_names.back().children      = names;
       auto [result_bitmask, null_count] = make_validity(json_col);
       auto ret_col                      = make_lists_column(

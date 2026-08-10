@@ -845,9 +845,11 @@ CUDF_KERNEL void __launch_bounds__(block_size)
           case LIST:
           case MAP: {
             auto const& offsets = column.child(lists_column_view::offsets_column_index);
+            auto const d_offsets =
+              cudf::detail::input_offsetalator{offsets.head(), offsets.type()};
             // Compute list length from the offsets
-            s->lengths.u32[nz_idx] = offsets.element<size_type>(row + 1 + column.offset()) -
-                                     offsets.element<size_type>(row + column.offset());
+            s->lengths.u32[nz_idx] = static_cast<uint32_t>(
+              d_offsets[row + 1 + column.offset()] - d_offsets[row + column.offset()]);
           } break;
           default: break;
         }

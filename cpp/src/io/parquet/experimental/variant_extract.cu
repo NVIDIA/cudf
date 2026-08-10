@@ -17,6 +17,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/experimental/variant.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
@@ -804,7 +805,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   auto const num_rows = variant_column.size();
   if (num_rows == 0) {
     return cudf::make_lists_column(
-      0, make_empty_column(type_to_id<size_type>()), make_empty_column(type_id::UINT8), 0, {});
+      0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
   }
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
@@ -843,15 +844,8 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // Convert sizes to offsets
-  rmm::device_uvector<size_type> offsets(static_cast<std::size_t>(num_rows + 1), stream, mr);
-  CUDF_CUDA_TRY(cudaMemsetAsync(offsets.data(), 0, sizeof(size_type), stream.value()));
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         d_sizes.begin(),
-                         d_sizes.end(),
-                         offsets.begin() + 1);
-  auto const total_bytes = offsets.back_element(stream);
-  auto offsets_column =
-    std::make_unique<column>(std::move(offsets), rmm::device_buffer{}, size_type{0});
+  auto [offsets_column, total_bytes] = cudf::lists::detail::make_offsets_child_column(
+    d_sizes.begin(), d_sizes.end(), stream, mr);
   auto const d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 

@@ -17,6 +17,7 @@
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/io/detail/tokenize_json.hpp>
 #include <cudf/io/json.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
@@ -1939,7 +1940,8 @@ void make_json_column(json_column& root_column,
 
       // Increment parent's child count and insert this struct node into the data path
       current_data_path.top().num_children++;
-      current_data_path.push({selected_col, target_row_index, nullptr, zero_child_count});
+      current_data_path.push(
+        {selected_col, static_cast<uint32_t>(target_row_index), nullptr, zero_child_count});
 
       // Add this struct node to the current column
       selected_col->append_row(target_row_index,
@@ -1977,7 +1979,8 @@ void make_json_column(json_column& root_column,
 
       // Increment parent's child count and insert this struct node into the data path
       current_data_path.top().num_children++;
-      current_data_path.push({selected_col, target_row_index, nullptr, zero_child_count});
+      current_data_path.push(
+        {selected_col, static_cast<uint32_t>(target_row_index), nullptr, zero_child_count});
 
       // Add this struct node to the current column
       selected_col->append_row(target_row_index,
@@ -2222,7 +2225,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
       rmm::device_uvector<json_column::row_offset_t> d_offsets =
         cudf::detail::make_device_uvector_async(json_col.child_offsets, stream, mr);
       auto offsets_column = std::make_unique<column>(
-        data_type{type_id::INT32}, num_rows, d_offsets.release(), rmm::device_buffer{}, 0);
+        data_type{type_to_id<size_type>()}, num_rows, d_offsets.release(), rmm::device_buffer{}, 0);
       // Create children column
       auto [child_column, names] =
         json_col.child_columns.empty()
@@ -2235,6 +2238,8 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
                                        get_child_schema(json_col.child_columns.begin()->first),
                                        stream,
                                        mr);
+      offsets_column = cudf::lists::detail::normalize_offsets(
+        std::move(offsets_column), child_column->size(), stream, mr);
       column_names.back().children      = names;
       auto [result_bitmask, null_count] = make_validity(json_col);
       return {make_lists_column(num_rows - 1,

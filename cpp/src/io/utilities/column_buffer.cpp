@@ -13,6 +13,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -260,6 +261,8 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
         // make child column
         CUDF_EXPECTS(buffer.children.size() > 0, "Encountered malformed column_buffer");
         auto child = construct_column(buffer.children[0], child_info, child_schema);
+        offsets     = cudf::lists::detail::normalize_offsets(
+          std::move(offsets), child->size(), stream, buffer._mr);
 
         // make the final list column (note : size is the # of offsets, so our actual # of rows is 1
         // less)
@@ -325,7 +328,7 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
   switch (buffer.type.id()) {
     case type_id::STRING: {
       if (buffer.string_as_binary) {
-        auto offsets = cudf::make_empty_column(type_to_id<size_type>());
+        auto offsets = cudf::make_empty_column(type_id::INT32);
         auto child   = cudf::make_empty_column(type_id::UINT8);
         if (schema_info != nullptr) {
           // Mirror the binary path in `make_column` so that the schema_info for an empty
@@ -342,7 +345,7 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
 
     case type_id::LIST: {
       // make offsets column
-      auto offsets = cudf::make_empty_column(type_to_id<size_type>());
+      auto offsets = cudf::make_empty_column(type_id::INT32);
 
       column_name_info* child_info = nullptr;
       if (schema_info != nullptr) {

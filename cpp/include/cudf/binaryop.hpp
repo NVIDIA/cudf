@@ -58,28 +58,34 @@ enum class binary_operator : int32_t {
   BITWISE_AND,           ///< operator &
   BITWISE_OR,            ///< operator |
   BITWISE_XOR,           ///< operator ^
-  LOGICAL_AND,           ///< operator &&
-  LOGICAL_OR,            ///< operator ||
-  EQUAL,                 ///< operator ==
-  NOT_EQUAL,             ///< operator !=
+  LOGICAL_AND,           ///< operator &&: returns NULL when either operand is NULL, otherwise
+                         ///< returns true only if both operands are true
+  LOGICAL_OR,            ///< operator ||: returns NULL when either operand is NULL, otherwise
+                         ///< returns true only if either or both operands are true
+  EQUAL,                 ///< operator ==: returns NULL when either operand is NULL, otherwise
+                         ///< returns whether they are equal
+  NOT_EQUAL,             ///< operator !=: returns NULL when either operand is NULL, otherwise
+                         ///< returns whether they are unequal
   LESS,                  ///< operator <
   GREATER,               ///< operator >
   LESS_EQUAL,            ///< operator <=
   GREATER_EQUAL,         ///< operator >=
-  NULL_EQUALS,           ///< Returns true when both operands are null; false when one is null; the
-                         ///< result of equality when both are non-null
-  NULL_NOT_EQUALS,       ///< Returns false when both operands are null; true when one is null; the
-                         ///< result of inequality when both are non-null
+  NULL_EQUALS,           ///< null-safe equality (result is never null): returns true if both
+                         ///< operands are null, false if one is null, otherwise returns whether
+                         ///< they are equal
+  NULL_NOT_EQUALS,       ///< null-safe inequality (result is never null): returns false if both
+                         ///< operands are null, true if one is null, otherwise returns whether
+                         ///< they are unequal
   NULL_MAX,              ///< Returns max of operands when both are non-null; returns the non-null
                          ///< operand when one is null; or invalid when both are null
   NULL_MIN,              ///< Returns min of operands when both are non-null; returns the non-null
                          ///< operand when one is null; or invalid when both are null
   GENERIC_BINARY,        ///< generic binary operator to be generated with input
                          ///< ptx code
-  NULL_LOGICAL_AND,  ///< operator && with Spark rules: (null, null) is null, (null, true) is null,
-                     ///< (null, false) is false, and (valid, valid) == LOGICAL_AND(valid, valid)
-  NULL_LOGICAL_OR,   ///< operator || with Spark rules: (null, null) is null, (null, true) is true,
-                     ///< (null, false) is null, and (valid, valid) == LOGICAL_OR(valid, valid)
+  NULL_LOGICAL_AND,  ///< three-valued (Kleene) &&: if any operand is false, returns false; if both
+                     ///< operands are true, returns true; otherwise returns null
+  NULL_LOGICAL_OR,   ///< three-valued (Kleene) ||: if any operand is true, returns true; if both
+                     ///< operands are false, returns false; otherwise returns null
   INVALID_BINARY     ///< invalid operation
 };
 
@@ -140,7 +146,9 @@ constexpr inline bool binary_op_has_common_type_v =
  * This distinction is significant in case of non-commutative binary operations
  *
  * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands except NullMin and NullMax (logical OR).
+ * AND of the validity of the two operands, except NULL_MIN and NULL_MAX (logical
+ * OR), NULL_EQUALS and NULL_NOT_EQUALS (always valid), and NULL_LOGICAL_AND and
+ * NULL_LOGICAL_OR (see binary_operator).
  *
  * @param lhs         The left operand scalar
  * @param rhs         The right operand column
@@ -171,7 +179,9 @@ std::unique_ptr<column> binary_operation(
  * This distinction is significant in case of non-commutative binary operations
  *
  * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands except NullMin and NullMax (logical OR).
+ * AND of the validity of the two operands, except NULL_MIN and NULL_MAX (logical
+ * OR), NULL_EQUALS and NULL_NOT_EQUALS (always valid), and NULL_LOGICAL_AND and
+ * NULL_LOGICAL_OR (see binary_operator).
  *
  * @param lhs         The left operand column
  * @param rhs         The right operand scalar
@@ -200,7 +210,9 @@ std::unique_ptr<column> binary_operation(
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
  *
  * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands except NullMin and NullMax (logical OR).
+ * AND of the validity of the two operands, except NULL_MIN and NULL_MAX (logical
+ * OR), NULL_EQUALS and NULL_NOT_EQUALS (always valid), and NULL_LOGICAL_AND and
+ * NULL_LOGICAL_OR (see binary_operator).
  *
  * @param lhs         The left operand column
  * @param rhs         The right operand column

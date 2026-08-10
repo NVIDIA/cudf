@@ -39,7 +39,7 @@ struct tabulator {
 
   T const* const starts;
   T const* const steps;
-  size_type const* const offsets;
+  int32_t const* const offsets;
 
   template <typename U>
   static T __device__ multiply(U x, size_type times)
@@ -80,7 +80,7 @@ struct sequences_dispatcher {
                                      size_type n_elements,
                                      column_view const& starts,
                                      std::optional<column_view> const& steps,
-                                     size_type const* offsets,
+                                     int32_t const* offsets,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
   {
@@ -100,7 +100,7 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
                                         size_type n_elements,
                                         column_view const& starts,
                                         std::optional<column_view> const& steps,
-                                        size_type const* offsets,
+                                        int32_t const* offsets,
                                         rmm::cuda_stream_view stream,
                                         rmm::device_async_resource_ref mr)
   {

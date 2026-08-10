@@ -38,8 +38,8 @@ std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& lis
   CUDF_EXPECTS(list_length.type().id() == cudf::type_id::INT32,
                "Input column does not have type INT32.");
 
-  auto const begin_iter = list_length.template begin<cudf::size_type>();
-  auto const end_iter   = list_length.template end<cudf::size_type>();
+  auto const begin_iter = list_length.template begin<int32_t>();
+  auto const end_iter   = list_length.template end<int32_t>();
 
   auto offsets_column = make_numeric_column(
     data_type{type_id::INT32}, list_length.size() + 1, mask_state::UNALLOCATED, stream);

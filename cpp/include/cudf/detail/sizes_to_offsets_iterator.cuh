@@ -317,9 +317,14 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   // using exclusive-scan technically requires count+1 input values even though
   // the final input value is never used.
   // The input iterator is wrapped here to allow the last value to be safely read.
+  // The input sizes are deliberately not narrowed to the 32-bit offsets type here -- doing so
+  // would corrupt individual sizes larger than `int32_t` before they reach the scan, so the
+  // overflow check below could no longer detect the overflow. Narrowing happens only on write
+  // to `d_offsets`, after the accumulated total has been validated.
+  using SizeType = cuda::std::iter_value_t<InputIterator>;
   auto map_fn =
-    cuda::proclaim_return_type<int32_t>([begin, count] __device__(size_type idx) -> int32_t {
-      return idx < count ? static_cast<int32_t>(begin[idx]) : int32_t{0};
+    cuda::proclaim_return_type<SizeType>([begin, count] __device__(size_type idx) -> SizeType {
+      return idx < count ? begin[idx] : SizeType{0};
     });
   auto input_itr = cudf::detail::make_counting_transform_iterator(0, map_fn);
   // Use the sizes-to-offsets iterator to compute the total number of elements

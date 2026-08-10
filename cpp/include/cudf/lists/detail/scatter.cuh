@@ -235,8 +235,8 @@ std::unique_ptr<column> scatter(scalar const& slr,
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    offset_column->mutable_view().begin<int32_t>(),
                    offset_column->mutable_view().end<int32_t>(),
-                   0,
-                   lv->view().size());
+                   int32_t{0},
+                   static_cast<int32_t>(lv->view().size()));
   auto wrapped = column_view(data_type{type_id::LIST},
                              1,
                              nullptr,

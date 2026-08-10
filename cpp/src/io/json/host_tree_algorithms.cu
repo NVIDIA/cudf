@@ -1154,7 +1154,7 @@ void scatter_offsets(tree_meta_t const& tree,
         col.child_offsets.begin(),
         col.child_offsets.end(),
         col.child_offsets.begin(),
-        cuda::maximum<json_column::row_offset_t>{});
+        cuda::maximum<int32_t>{});
     }
   }
   stream.synchronize();

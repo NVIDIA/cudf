@@ -44,7 +44,7 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
   auto start_offset = cudf::detail::get_value<int32_t>(lists.offsets(), start, stream);
   auto end_offset   = cudf::detail::get_value<int32_t>(lists.offsets(), end, stream);
 
-  rmm::device_uvector<cudf::size_type> out_offsets(offsets_count, stream);
+  rmm::device_uvector<int32_t> out_offsets(offsets_count, stream);
 
   // Compute the offsets column of the result:
   thrust::transform(

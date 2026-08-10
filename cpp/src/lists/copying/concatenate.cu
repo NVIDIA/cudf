@@ -70,7 +70,7 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
         offsets.begin<int32_t>() + c.offset(),
         offsets.begin<int32_t>() + c.offset() + c.size() + 1,
         d_merged_offsets.begin<int32_t>() + count,
-        [local_shift] __device__(size_type offset) { return offset + local_shift; });
+        [local_shift] __device__(int32_t offset) -> int32_t { return offset + local_shift; });
 
       shift += c.get_sliced_child(stream).size();
       count += c.size();

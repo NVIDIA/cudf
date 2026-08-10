@@ -117,7 +117,7 @@ struct allnull_column_functor {
   [[nodiscard]] auto make_zeroed_offsets(size_type size) const
   {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<size_type>(size + 1, stream, mr);
+      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
     return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
   }
 

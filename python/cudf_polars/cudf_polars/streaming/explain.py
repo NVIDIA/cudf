@@ -37,8 +37,14 @@ from cudf_polars.dsl.ir import (
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import IOPartitionFlavor
+from cudf_polars.streaming.filter_hint import (
+    ExternalDomain,
+    JoinInputDomain,
+    JoinWithPrefilter,
+    PushdownFilterHint,
+)
 from cudf_polars.streaming.io import StreamingScan, scan_partition_plan
-from cudf_polars.streaming.parallel import lower_ir_graph
+from cudf_polars.streaming.parallel import lower_ir_graph, optimize_with_stats
 from cudf_polars.streaming.shuffle import Shuffle
 from cudf_polars.streaming.statistics import (
     collect_statistics,
@@ -53,6 +59,7 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.expressions.base import Expr
     from cudf_polars.dsl.ir import IR
     from cudf_polars.streaming.base import PartitionInfo, StatsCollector
+    from cudf_polars.streaming.filter_hint import Prefilter
 
 
 @dataclasses.dataclass
@@ -134,6 +141,7 @@ def explain_query(
             # Include row-count statistics for the logical plan
             with cm:
                 stats = collect_statistics(ir, config, executor)
+            ir = optimize_with_stats(ir, config, stats)
             return _repr_ir_tree(ir, stats=stats)
         else:
             return _repr_ir_tree(ir)
@@ -469,6 +477,29 @@ def _(ir: Join, *, offset: str = "") -> str:
     return _repr_header(offset, f"JOIN {ir.options[0]} {left_on} {right_on}", ir.schema)
 
 
+@_repr_ir.register
+def _(ir: JoinWithPrefilter, *, offset: str = "") -> str:
+    left_on = tuple(ne.name for ne in ir.left_on)
+    right_on = tuple(ne.name for ne in ir.right_on)
+    prefilters = tuple(type(prefilter.domain).__name__ for prefilter in ir.prefilters)
+    return _repr_header(
+        offset,
+        f"JOIN {ir.options[0]} {left_on} {right_on} {prefilters=}",
+        ir.schema,
+    )
+
+
+@_repr_ir.register
+def _(ir: PushdownFilterHint, *, offset: str = "") -> str:
+    target_on = tuple(ne.name for ne in ir.target_on)
+    domain_on = tuple(ne.name for ne in ir.domain_on)
+    return _repr_header(
+        offset,
+        f"PUSHDOWN FILTER HINT {target_on} {domain_on} {ir.placement}",
+        ir.schema,
+    )
+
+
 _BinaryOperator = plc.binaryop.BinaryOperator
 _BINOP_SYMBOLS: dict[_BinaryOperator, str] = {
     _BinaryOperator.EQUAL: "==",
@@ -577,6 +608,45 @@ def _(ir: Join) -> dict[str, Serializable]:
         "how": ir.options[0],
         "left_on": [ne.name for ne in ir.left_on],
         "right_on": [ne.name for ne in ir.right_on],
+    }
+
+
+def _serialize_prefilter(prefilter: Prefilter) -> dict[str, Serializable]:
+    """Serialize a normalized join prefilter descriptor."""
+    properties: dict[str, Serializable] = {
+        "type": type(prefilter).__name__,
+        "target_side": prefilter.target_side,
+        "target_on": [ne.name for ne in prefilter.target_on],
+        "domain_on": [ne.name for ne in prefilter.domain_on],
+        "nulls_equal": prefilter.nulls_equal,
+    }
+    if isinstance(prefilter.domain, JoinInputDomain):
+        properties["domain"] = {
+            "type": type(prefilter.domain).__name__,
+            "side": prefilter.domain.side,
+        }
+    elif isinstance(prefilter.domain, ExternalDomain):
+        properties["domain"] = {"type": type(prefilter.domain).__name__}
+    return properties
+
+
+@_serialize_properties.register
+def _(ir: JoinWithPrefilter) -> dict[str, Serializable]:
+    return {
+        "how": ir.options[0],
+        "left_on": [ne.name for ne in ir.left_on],
+        "right_on": [ne.name for ne in ir.right_on],
+        "prefilters": [_serialize_prefilter(prefilter) for prefilter in ir.prefilters],
+    }
+
+
+@_serialize_properties.register
+def _(ir: PushdownFilterHint) -> dict[str, Serializable]:
+    return {
+        "target_on": [ne.name for ne in ir.target_on],
+        "domain_on": [ne.name for ne in ir.domain_on],
+        "nulls_equal": ir.nulls_equal,
+        "placement": ir.placement,
     }
 
 
@@ -815,4 +885,10 @@ class SerializablePlan:
         """
         config_options = ConfigOptions.from_polars_engine(engine)
         ir = Translator(q._ldf.visit(), engine).translate_ir()
+        if not lowered and config_options.executor.name == "streaming":
+            with concurrent.futures.ThreadPoolExecutor(
+                thread_name_prefix="cudf-polars-explain"
+            ) as executor:
+                stats = collect_statistics(ir, config_options, executor)
+            ir = optimize_with_stats(ir, config_options, stats)
         return cls.from_ir(ir, config_options=config_options, lowered=lowered)

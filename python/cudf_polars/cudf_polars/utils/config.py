@@ -372,7 +372,7 @@ class DynamicPlanningOptions:
 @dataclasses.dataclass(frozen=True)
 class JoinFilterPushdownOptions:
     """
-    Configuration options for join filter pushdown in the logical plan.
+    Configuration options for join filter pushdown.
 
     When performing a join between two tables, it is often favourable
     to pre-filter one side of the join with the keys (full or partial) of
@@ -380,7 +380,8 @@ class JoinFilterPushdownOptions:
     participate in the join.
 
     cudf-polars supports a form of this where we can rewrite inner joins by
-    selecting a side to be filtered by the keys of the other side.
+    selecting a side to be filtered by the keys of the other side. At execution
+    time, these options also control how optional filters are applied.
 
     Pass ``None`` to ``StreamingExecutor(join_filter_pushdown=...)`` to
     disable the rewrite.
@@ -393,6 +394,10 @@ class JoinFilterPushdownOptions:
     threshold
         Row-count ratio (key-provider-rows / to-be-filtered-table-rows) below which a
         filter on is inserted on the to-be-filtered table. Default is 0.5.
+    bloom_filter_max_size
+        Maximum Bloom-filter size in bytes. If the estimated Bloom filter exceeds
+        this size, an exact semi-join is preferred when its projected keys fit the
+        broadcast limit. Set to 0 to disable Bloom filters. Default is 32 MiB.
     trace
         Whether to emit plan-time trace decisions for filter decisions. Default is False.
     """
@@ -402,6 +407,13 @@ class JoinFilterPushdownOptions:
     threshold: float = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__THRESHOLD", float, default=0.5
+        )
+    )
+    bloom_filter_max_size: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__BLOOM_FILTER_MAX_SIZE",
+            int,
+            default=32 * 1024 * 1024,
         )
     )
     trace: bool = dataclasses.field(
@@ -418,6 +430,12 @@ class JoinFilterPushdownOptions:
         object.__setattr__(self, "threshold", threshold)
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1")
+        if isinstance(self.bloom_filter_max_size, bool) or not isinstance(
+            self.bloom_filter_max_size, int
+        ):
+            raise TypeError("bloom_filter_max_size must be an int")
+        if self.bloom_filter_max_size < 0:
+            raise ValueError("bloom_filter_max_size must be non-negative")
         if not isinstance(self.trace, bool):
             raise TypeError("trace must be a bool")
 

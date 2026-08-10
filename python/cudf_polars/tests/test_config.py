@@ -669,10 +669,15 @@ def test_join_filter_pushdown_options_from_env(
     monkeypatch.setenv(
         "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__THRESHOLD", "0.125"
     )
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__BLOOM_FILTER_MAX_SIZE",
+        "1024",
+    )
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is not None
     assert config.executor.join_filter_pushdown.threshold == 0.125
+    assert config.executor.join_filter_pushdown.bloom_filter_max_size == 1024
     assert config.executor.join_filter_pushdown.trace
 
 
@@ -707,6 +712,24 @@ def test_validate_join_filter_pushdown_options() -> None:
                 executor_options={"join_filter_pushdown": {"trace": "bad"}},
             )
         )
+    with pytest.raises(TypeError, match="bloom_filter_max_size must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "join_filter_pushdown": {"bloom_filter_max_size": "bad"}
+                },
+            )
+        )
+    with pytest.raises(ValueError, match="bloom_filter_max_size must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "join_filter_pushdown": {"bloom_filter_max_size": -1}
+                },
+            )
+        )
 
 
 def test_validate_join_filter_pushdown_type() -> None:
@@ -723,7 +746,9 @@ def test_validate_join_filter_pushdown_type() -> None:
 
 
 def test_join_filter_pushdown_from_instance() -> None:
-    options = JoinFilterPushdownOptions(threshold=0.25, trace=True)
+    options = JoinFilterPushdownOptions(
+        threshold=0.25, bloom_filter_max_size=1024, trace=True
+    )
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",

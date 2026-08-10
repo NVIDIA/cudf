@@ -811,6 +811,7 @@ add_library(
   src/io/parquet/reader_impl.cpp
   src/io/parquet/reader_impl_chunking.cu
   src/io/parquet/reader_impl_chunking_utils.cu
+  src/io/parquet/reader_impl_dict_transcode.cu
   src/io/parquet/reader_impl_helpers.cpp
   src/io/parquet/reader_impl_preprocess.cu
   src/io/parquet/reader_impl_preprocess_utils.cu

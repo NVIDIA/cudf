@@ -182,8 +182,9 @@ def determine_fanout_nodes(
         elif isinstance(node, (Union, Join, Over, PushdownFilterHint)):
             # Union processes children sequentially; Join may broadcast one
             # side; Over buffers (or samples-then-replays) its input before
-            # producing output. In every case the input source needs
-            # unbounded fanout so other consumers don't block it.
+            # producing output; PushdownFilterHint similarly might buffer
+            # then replay. In every case the input source needs unbounded
+            # fanout so other consumers don't block it.
             _mark_children_unbounded(node)
         elif len(node.children) > 1:
             # Check if this node is doing any broadcasting.

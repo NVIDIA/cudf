@@ -156,11 +156,10 @@ template <typename ElementTo,
           typename ElementFrom,
           typename InputIterator,
           std::enable_if_t<not cudf::is_fixed_point<ElementTo>()>* = nullptr>
-rmm::device_buffer make_elements(
-  InputIterator begin,
-  InputIterator end,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+rmm::device_buffer make_elements(InputIterator begin,
+                                 InputIterator end,
+                                 rmm::cuda_stream_view stream,
+                                 cudf::memory_resources mr)
 {
   static_assert(cudf::is_fixed_width<ElementTo>(), "Unexpected non-fixed width type.");
   auto transformer     = fixed_width_type_converter<ElementFrom, ElementTo>{};
@@ -191,11 +190,10 @@ template <typename ElementTo,
           typename InputIterator,
           std::enable_if_t<not cudf::is_fixed_point<ElementFrom>() and
                            cudf::is_fixed_point<ElementTo>()>* = nullptr>
-rmm::device_buffer make_elements(
-  InputIterator begin,
-  InputIterator end,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+rmm::device_buffer make_elements(InputIterator begin,
+                                 InputIterator end,
+                                 rmm::cuda_stream_view stream,
+                                 cudf::memory_resources mr)
 {
   using RepType        = typename ElementTo::rep;
   auto transformer     = fixed_width_type_converter<ElementFrom, RepType>{};
@@ -222,11 +220,10 @@ template <typename ElementTo,
           typename InputIterator,
           std::enable_if_t<cudf::is_fixed_point<ElementFrom>() and
                            cudf::is_fixed_point<ElementTo>()>* = nullptr>
-rmm::device_buffer make_elements(
-  InputIterator begin,
-  InputIterator end,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+rmm::device_buffer make_elements(InputIterator begin,
+                                 InputIterator end,
+                                 rmm::cuda_stream_view stream,
+                                 cudf::memory_resources mr)
 {
   using namespace numeric;
   using RepType = typename ElementTo::rep;

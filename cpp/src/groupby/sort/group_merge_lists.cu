@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -27,8 +28,9 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
   CUDF_EXPECTS(!values.nullable(),
                "Input to `group_merge_lists` must be a non-nullable lists column.");
 
+  auto const lists = lists_column_view(values);
   auto offsets_column = make_numeric_column(
-    data_type(type_to_id<size_type>()), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
+    lists.offsets().type(), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
 
   // Generate offsets of the output lists column by gathering from the provided group offsets and
   // the input list offsets.
@@ -43,12 +45,13 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  group_offsets.begin(),
                  group_offsets.end(),
-                 lists_column_view(values).offsets_begin(),
-                 offsets_column->mutable_view().template begin<size_type>());
+                 lists.offsets_begin(),
+                 cudf::detail::offsetalator_factory::make_output_iterator(
+                   offsets_column->mutable_view()));
 
   // The child column of the output lists column is just copied from the input column.
   auto child_column =
-    std::make_unique<column>(lists_column_view(values).get_sliced_child(stream), stream, mr);
+    std::make_unique<column>(lists.get_sliced_child(stream), stream, mr);
 
   return make_lists_column(
     num_groups, std::move(offsets_column), std::move(child_column), 0, rmm::device_buffer{});

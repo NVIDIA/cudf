@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/hashing/detail/hash_functions.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
+#include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -319,12 +320,12 @@ std::unique_ptr<column> md5(table_view const& input,
         if (col.is_valid(row_index)) {
           if (col.type().id() == type_id::LIST) {
             auto const data_col = col.child(lists_column_view::child_column_index);
-            auto const offsets  = col.child(lists_column_view::offsets_column_index);
             if (data_col.type().id() == type_id::LIST) {
               CUDF_UNREACHABLE("Nested list unsupported");
             }
-            auto const offset_begin = offsets.element<size_type>(row_index);
-            auto const offset_end   = offsets.element<size_type>(row_index + 1);
+            auto const lists        = cudf::lists_column_device_view{col};
+            auto const offset_begin = lists.offset_at(row_index);
+            auto const offset_end   = lists.offset_at(row_index + 1);
             cudf::type_dispatcher<dispatch_storage_type>(
               data_col.type(), ListHasherDispatcher(&hasher, data_col), offset_begin, offset_end);
           } else {

@@ -194,16 +194,15 @@ CUDF_KERNEL void minhash_ngrams_kernel(cudf::lists_column_device_view const d_in
   if (d_input.is_null(row_idx)) { return; }
 
   // retrieve this row's offset to locate the output position in d_hashes
-  auto const offsets_itr = d_input.offsets().data<cudf::size_type>() + d_input.offset();
-  auto const offset      = offsets_itr[row_idx];
-  auto const size_row    = offsets_itr[row_idx + 1] - offset;
+  auto const offset   = d_input.offset_at(row_idx);
+  auto const size_row = d_input.offset_at(row_idx + 1) - offset;
   if (size_row == 0) { return; }
 
   auto const d_row    = cudf::list_device_view(d_input, row_idx);
   auto const lane_idx = static_cast<cudf::size_type>(tid % tile_size);
 
   // hashes for this row/thread are stored here
-  auto seed_hashes  = d_hashes + offset - offsets_itr[0] + lane_idx;
+  auto seed_hashes  = d_hashes + offset - d_input.offset_at(0) + lane_idx;
   auto const hasher = HashFunction(seed);
 
   for (auto idx = lane_idx; idx < size_row; idx += tile_size, seed_hashes += tile_size) {

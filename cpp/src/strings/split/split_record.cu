@@ -44,10 +44,10 @@ std::unique_ptr<column> split_record_fn(strings_column_view const& input,
   }
   if (input.size() == input.null_count()) {
     auto offsets = make_numeric_column(
-      data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
-    CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<size_type>(),
+      data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
+    CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<int32_t>(),
                                   0,
-                                  static_cast<std::size_t>(input.size() + 1) * sizeof(size_type),
+                                  static_cast<std::size_t>(input.size() + 1) * sizeof(int32_t),
                                   stream.value()));
     auto results = make_empty_column(type_id::STRING);
     return make_lists_column(input.size(),
@@ -83,10 +83,10 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
   }
   if (input.size() == input.null_count()) {
     auto offsets = make_numeric_column(
-      data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
-    CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<size_type>(),
+      data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
+    CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<int32_t>(),
                                   0,
-                                  static_cast<std::size_t>(input.size() + 1) * sizeof(size_type),
+                                  static_cast<std::size_t>(input.size() + 1) * sizeof(int32_t),
                                   stream.value()));
     auto results = make_empty_column(type_id::STRING);
     return make_lists_column(input.size(),

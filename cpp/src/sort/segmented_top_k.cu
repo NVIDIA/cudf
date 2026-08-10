@@ -10,10 +10,10 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -110,7 +110,8 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
     segment_offsets, k, span_indices, segment_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   auto [offsets, total_elements] =
-    cudf::detail::make_offsets_child_column(segment_sizes.begin(), segment_sizes.end(), stream, mr);
+    cudf::lists::detail::make_offsets_child_column(
+      segment_sizes.begin(), segment_sizes.end(), stream, mr);
 
   auto result = cudf::make_fixed_width_column(
     size_data_type, total_elements, mask_state::UNALLOCATED, stream, mr);

@@ -7,6 +7,8 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/copy_if.cuh>
+#include <cudf/detail/iterator.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -63,15 +65,16 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_groups},
     null_purged_sizes.begin(),
-    [d_offsets = offsets.template begin<size_type>(), not_null_pred] __device__(auto i) {
+    [d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets),
+     not_null_pred] __device__(auto i) {
       return thrust::count_if(thrust::seq,
                               cuda::counting_iterator<size_type>{d_offsets[i]},
                               cuda::counting_iterator<size_type>{d_offsets[i + 1]},
                               not_null_pred);
     });
 
-  auto null_purged_offsets = std::get<0>(cudf::detail::make_offsets_child_column(
-    null_purged_sizes.cbegin(), null_purged_sizes.cend(), stream, mr));
+  auto null_purged_offsets = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    null_purged_sizes.cbegin(), null_purged_sizes.cend(), offsets.type(), stream, mr));
 
   return std::pair(std::move(null_purged_values), std::move(null_purged_offsets));
 }
@@ -85,13 +88,14 @@ std::unique_ptr<column> group_collect(column_view const& values,
 {
   auto [child_column,
         offsets_column] = [null_handling, num_groups, &values, &group_offsets, stream, mr] {
-    auto offsets_column = make_numeric_column(
-      data_type(type_to_id<size_type>()), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
-
-    thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                 group_offsets.begin(),
-                 group_offsets.end(),
-                 offsets_column->mutable_view().template begin<size_type>());
+    auto sizes = cudf::detail::make_counting_transform_iterator(
+      0,
+      cuda::proclaim_return_type<size_type>(
+        [group_offsets] __device__(size_type i) {
+          return group_offsets[i + 1] - group_offsets[i];
+        }));
+    auto offsets_column = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+      sizes, sizes + num_groups, stream, mr));
 
     // If column of grouped values contains null elements, and null_policy == EXCLUDE,
     // those elements must be filtered out, and offsets recomputed.

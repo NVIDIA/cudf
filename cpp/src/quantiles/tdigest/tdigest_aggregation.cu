@@ -1379,11 +1379,18 @@ std::pair<rmm::device_uvector<double>, rmm::device_uvector<double>> generate_mer
   //  tdigest 3   centroid 7
   //              centroid 8
   //  ----        centroid 9 --------
-  auto tdigest_offsets  = tdv.centroids().offsets();
+  auto physical_tdigest_offsets = tdv.centroids().offsets();
+  auto converted_tdigest_offsets =
+    physical_tdigest_offsets.type() == data_type{type_to_id<size_type>()}
+      ? std::unique_ptr<column>{}
+      : cudf::cast(
+          physical_tdigest_offsets, data_type{type_to_id<size_type>()}, stream);
+  auto tdigest_offsets = converted_tdigest_offsets ? converted_tdigest_offsets->view()
+                                                   : physical_tdigest_offsets;
   auto centroid_offsets = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<size_type>(
-      [group_offsets, tdigest_offsets = tdv.centroids().offsets().begin<size_type>()] __device__(
+      [group_offsets, tdigest_offsets = tdigest_offsets.begin<size_type>()] __device__(
         size_type i) { return tdigest_offsets[group_offsets[i]]; }));
 
   // perform the sort using the means as the key
@@ -1478,7 +1485,14 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
                         cuda::std::equal_to{},  // key equality check
                         cuda::maximum{});
 
-  auto tdigest_offsets = tdv.centroids().offsets();
+  auto physical_tdigest_offsets = tdv.centroids().offsets();
+  auto converted_tdigest_offsets =
+    physical_tdigest_offsets.type() == data_type{type_to_id<size_type>()}
+      ? std::unique_ptr<column>{}
+      : cudf::cast(
+          physical_tdigest_offsets, data_type{type_to_id<size_type>()}, stream);
+  auto tdigest_offsets = converted_tdigest_offsets ? converted_tdigest_offsets->view()
+                                                   : physical_tdigest_offsets;
 
   // for any empty groups, set the min and max to be 0. not technically necessary but it makes
   // testing simpler.

@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/strings/detail/attributes.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -185,10 +186,11 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
   auto const character_counts = cudf::strings::detail::count_characters(
     strings_column, stream, cudf::get_current_device_resource_ref());
   auto [list_offsets, num_characters] =
-    cudf::detail::make_offsets_child_column(character_counts->view().begin<cudf::size_type>(),
-                                            character_counts->view().end<cudf::size_type>(),
-                                            stream,
-                                            mr);
+    cudf::lists::detail::make_offsets_child_column(
+      character_counts->view().begin<cudf::size_type>(),
+      character_counts->view().end<cudf::size_type>(),
+      stream,
+      mr);
 
   // number of characters becomes the number of rows so need to check the row limit
   CUDF_EXPECTS(

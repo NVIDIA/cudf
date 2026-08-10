@@ -13,9 +13,9 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/strings/detail/split_utils.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -587,7 +587,8 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   thrust::transform(policy, iota_itr, iota_itr + strings_count, token_counts.begin(), count_fn);
 
   auto [offsets, total_tokens] =
-    cudf::detail::make_offsets_child_column(token_counts.begin(), token_counts.end(), stream, mr);
+    cudf::lists::detail::make_offsets_child_column(
+      token_counts.begin(), token_counts.end(), stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   auto tokens = rmm::device_uvector<string_index_pair>(total_tokens, stream, mr);
@@ -711,7 +712,8 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
 
   // create offsets from the counts for return to the caller
   auto [offsets, total_tokens] =
-    cudf::detail::make_offsets_child_column(token_counts.begin(), token_counts.end(), stream, mr);
+    cudf::lists::detail::make_offsets_child_column(
+      token_counts.begin(), token_counts.end(), stream, mr);
   auto const d_tokens_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 

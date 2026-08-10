@@ -12,6 +12,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/findall.hpp>
@@ -35,7 +36,7 @@ namespace {
  */
 struct findall_fn {
   column_device_view const d_strings;
-  size_type const* d_offsets;
+  cudf::detail::input_offsetalator d_offsets;
   string_index_pair* d_indices;
 
   template <typename ProgDevice>
@@ -66,7 +67,7 @@ struct findall_fn {
  */
 struct one_capture_fn {
   column_device_view const d_strings;
-  size_type const* d_offsets;
+  cudf::detail::input_offsetalator d_offsets;
   string_index_pair* d_indices;
 
   __device__ void operator()(size_type const idx,
@@ -122,11 +123,12 @@ std::unique_ptr<column> findall(strings_column_view const& input,
   auto const build_matches = [&](auto& d_prog, auto make_functor) {
     auto const sizes = count_matches(*d_strings, d_prog, input.size(), stream, mr);
     auto [offsets, total_matches] =
-      cudf::detail::make_offsets_child_column(sizes->view().template begin<size_type>(),
-                                              sizes->view().template end<size_type>(),
-                                              stream,
-                                              mr);
-    auto const d_offsets = offsets->view().template data<size_type>();
+      cudf::lists::detail::make_offsets_child_column(sizes->view().template begin<size_type>(),
+                                                     sizes->view().template end<size_type>(),
+                                                     stream,
+                                                     mr);
+    auto const d_offsets =
+      cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
     rmm::device_uvector<string_index_pair> indices(total_matches, stream);
     launch_for_each_kernel(make_functor(d_offsets, indices.data()), d_prog, input.size(), stream);
@@ -136,18 +138,18 @@ std::unique_ptr<column> findall(strings_column_view const& input,
   auto [offsets, indices] = [&]() {
     if (groups == 1) {
       auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-      return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+      return build_matches(*d_prog, [&](auto d_offsets, string_index_pair* d_indices) {
         return one_capture_fn{*d_strings, d_offsets, d_indices};
       });
     }
     if (regex_device_builder::glushkov_fast_path_supported(prog)) {
       auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-      return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+      return build_matches(*d_prog, [&](auto d_offsets, string_index_pair* d_indices) {
         return findall_fn{*d_strings, d_offsets, d_indices};
       });
     }
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+    return build_matches(*d_prog, [&](auto d_offsets, string_index_pair* d_indices) {
       return findall_fn{*d_strings, d_offsets, d_indices};
     });
   }();

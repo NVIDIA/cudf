@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/strings/convert/convert_lists.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
@@ -125,7 +126,8 @@ struct format_lists_fn {
       auto const view = get_nested_child(stack_idx);
 
       auto offsets   = view.child(cudf::lists_column_view::offsets_column_index);
-      auto d_offsets = offsets.data<size_type>() + view.offset();
+      auto d_offsets =
+        cudf::detail::input_offsetalator{offsets.head(), offsets.type(), view.offset()};
 
       // add pending separator
       if (item.separator == item_separator::LIST) {

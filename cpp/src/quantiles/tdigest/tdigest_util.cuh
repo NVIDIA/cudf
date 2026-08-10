@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/tdigest/tdigest_column_view.hpp>
 
 namespace cudf {
@@ -15,7 +16,7 @@ namespace detail {
  * @brief Functor to compute the size of each tdigest of a column
  */
 struct tdigest_size_fn {
-  size_type const* offsets;  ///< Offsets of the t-digest column
+  cudf::detail::input_offsetalator offsets;  ///< Offsets of the t-digest column
   /**
    * @brief Returns size of the each tdigest in the column
    *

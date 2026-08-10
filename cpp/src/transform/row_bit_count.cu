@@ -377,7 +377,9 @@ __device__ size_type row_size_functor::operator()<list_view>(column_device_view 
 {
   auto const num_rows{span.row_end - span.row_start};
 
-  auto const offsets_size  = sizeof(size_type) * CHAR_BIT;
+  auto const offsets = col.child(lists_column_view::offsets_column_index);
+  auto const offsets_size =
+    (offsets.type().id() == type_id::INT32 ? sizeof(int32_t) : sizeof(int64_t)) * CHAR_BIT;
   auto const validity_size = col.nullable() ? 1 : 0;
   return (offsets_size + validity_size) * num_rows;
 }
@@ -462,10 +464,13 @@ CUDF_KERNEL void compute_segment_sizes(device_span<column_device_view const> col
     // if this is a list column, update the working span from our offsets
     if (col.type().id() == type_id::LIST && col.size() > 0) {
       column_device_view const& offsets = col.child(lists_column_view::offsets_column_index);
-      auto const base_offset            = offsets.data<size_type>()[col.offset()];
-      cur_span.row_start =
-        offsets.data<size_type>()[cur_span.row_start + col.offset()] - base_offset;
-      cur_span.row_end = offsets.data<size_type>()[cur_span.row_end + col.offset()] - base_offset;
+      auto const d_offsets =
+        cudf::detail::input_offsetalator{offsets.head(), offsets.type()};
+      auto const base_offset = d_offsets[col.offset()];
+      cur_span.row_start = static_cast<size_type>(
+        d_offsets[cur_span.row_start + col.offset()] - base_offset);
+      cur_span.row_end =
+        static_cast<size_type>(d_offsets[cur_span.row_end + col.offset()] - base_offset);
     }
 
     last_branch_depth = info[idx].branch_depth_end;

@@ -11,6 +11,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/extract.hpp>
@@ -40,7 +41,7 @@ namespace {
  */
 struct extract_fn {
   column_device_view const d_strings;
-  size_type const* d_offsets;
+  cudf::detail::input_offsetalator d_offsets;
   string_index_pair* d_indices;
 
   __device__ void operator()(size_type const idx,
@@ -128,8 +129,9 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
       return d_counts[idx] * groups;
     }));
   auto [offsets, total_strings] =
-    cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + strings_count, stream, mr);
-  auto d_offsets = offsets->view().data<size_type>();
+    cudf::lists::detail::make_offsets_child_column(
+      sizes_itr, sizes_itr + strings_count, stream, mr);
+  auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   rmm::device_uvector<string_index_pair> indices(total_strings, stream);
 

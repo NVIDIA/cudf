@@ -8,6 +8,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -87,8 +88,8 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
     }
 
     auto const it = cuda::make_constant_iterator(sizeof(T));
-    auto offsets_column =
-      std::get<0>(cudf::detail::make_offsets_child_column(it, it + input.size(), stream, mr));
+    auto offsets_column = std::get<0>(
+      cudf::lists::detail::make_offsets_child_column(it, it + input.size(), stream, mr));
 
     auto result = make_lists_column(input.size(),
                                     std::move(offsets_column),

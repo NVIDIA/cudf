@@ -8,7 +8,9 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/gather.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -72,7 +74,7 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
                       }));
 
   // Convert `sizes` to an offsets column, via inclusive_scan():
-  auto offsets_column = std::get<0>(cudf::detail::make_offsets_child_column(
+  auto offsets_column = std::get<0>(cudf::lists::detail::make_offsets_child_column(
     sizes->view().begin<size_type>(), sizes->view().end<size_type>(), stream, mr));
   return offsets_column;
 }
@@ -115,8 +117,8 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
     cuda::counting_iterator<size_type>{per_row_mapping.size()},
     gather_map->mutable_view().template begin<size_type>(),
     cuda::proclaim_return_type<size_type>(
-      [d_offsets =
-         child_offsets.template begin<size_type>(),  // E.g. [0,   2,     5,     8,     11, 13]
+      [d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(
+         child_offsets),  // E.g. [0,   2,     5,     8,     11, 13]
        d_groups =
          per_row_mapping.template begin<size_type>(),  // E.g. [0,0, 1,1,1, 2,2,2, 3,3,3, 4,4]
        d_prev = preceding_iter] __device__(auto i) {

@@ -43,7 +43,7 @@ template <class Functor>
 struct compute_size_and_concatenate_fn {
   Functor const func;
   column_device_view const lists_dv;
-  size_type const* const list_offsets;
+  cudf::detail::input_offsetalator const list_offsets;
   column_device_view const strings_dv;
   string_scalar_device_view const string_narep_dv;
   separator_on_nulls const separate_nulls;

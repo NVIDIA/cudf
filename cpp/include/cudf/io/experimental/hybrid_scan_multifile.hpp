@@ -470,8 +470,8 @@ class hybrid_scan_multifile {
    * @brief Filter the row groups using column chunk dictionary pages
    *
    * @param dictionary_page_data Device spans of dictionary page data of column chunks with an
-   *                             (in)equality predicate, ordered to match the dictionary page byte
-   *                             ranges returned by `dictionary_pages_byte_ranges`
+   * (in)equality predicate, in the same order as the byte ranges returned by
+   * `dictionary_pages_byte_ranges` including empty spans against empty byte ranges
    * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches

@@ -372,15 +372,15 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   // that has a value we need.
   if (skipped_leaf_values > 0) { db->skip_values(skipped_leaf_values); }
 
-  while (s->setup.error == 0 &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (s->setup.error == 0 && (s->progress.input_value_count < s->setup.num_input_values ||
+                                 s->progress.src_pos < s->progress.nz_count)) {
     uint32_t target_pos;
-    uint32_t const src_pos = s->src_pos;
+    uint32_t const src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() < 2) {  // warp0..1
-      target_pos = min(src_pos + 2 * batch_size, s->nz_count + batch_size);
+      target_pos = min(src_pos + 2 * batch_size, s->progress.nz_count + batch_size);
     } else {  // warp2
-      target_pos = min(s->nz_count, src_pos + batch_size);
+      target_pos = min(s->progress.nz_count, src_pos + batch_size);
     }
     // This needs to be here to prevent warp 2 modifying src_pos before all threads have read it
     block.sync();
@@ -414,9 +414,10 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
         // place value for this thread
         if (dst_pos >= 0 && sp < target_pos) {
-          void* const dst = nesting_info_base[leaf_level_index].data_out + dst_pos * s->dtype_len;
-          auto const val  = db->value_at(sp + skipped_leaf_values);
-          switch (s->dtype_len) {
+          void* const dst =
+            nesting_info_base[leaf_level_index].data_out + dst_pos * s->output_cvt.dtype_len;
+          auto const val = db->value_at(sp + skipped_leaf_values);
+          switch (s->output_cvt.dtype_len) {
             case 1: *static_cast<int8_t*>(dst) = val; break;
             case 2: *static_cast<int16_t*>(dst) = val; break;
             case 4: *static_cast<int32_t*>(dst) = val; break;
@@ -424,7 +425,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
           }
         }
       }
-      if (warp.thread_rank() == 0) { s->src_pos = src_pos + batch_size; }
+      if (warp.thread_rank() == 0) { s->progress.src_pos = src_pos + batch_size; }
     }
 
     block.sync();
@@ -435,8 +436,11 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
     auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(
-        s, s->dtype_len, init_valid_map_offset, num_values, static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_block_size>(s,
+                                                         s->output_cvt.dtype_len,
+                                                         init_valid_map_offset,
+                                                         num_values,
+                                                         static_cast<int>(block.thread_rank()));
     }
   }
 
@@ -562,20 +566,20 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // if this is a bounds page and nested, then we need to skip up front. non-nested will work
   // its way through the page.
-  int string_pos = has_repetition ? s->setup.page.start_val : 0;
-  auto const is_bounds_pg =
-    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  int string_pos          = has_repetition ? s->setup.page.start_val : 0;
+  auto const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
   if (is_bounds_pg && string_pos > 0) { dba->skip(use_char_ll); }
 
-  while (!s->setup.error &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (!s->setup.error && (s->progress.input_value_count < s->setup.num_input_values ||
+                             s->progress.src_pos < s->progress.nz_count)) {
     uint32_t target_pos;
-    uint32_t const src_pos = s->src_pos;
+    uint32_t const src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() < 3) {  // warp 0..2
-      target_pos = min(src_pos + 2 * batch_size, s->nz_count + s->setup.first_row + batch_size);
+      target_pos =
+        min(src_pos + 2 * batch_size, s->progress.nz_count + s->setup.first_row + batch_size);
     } else {  // warp 3
-      target_pos = min(s->nz_count, src_pos + batch_size);
+      target_pos = min(s->progress.nz_count, src_pos + batch_size);
     }
     // this needs to be here to prevent warp 3 modifying src_pos before all threads have read it
     block.sync();
@@ -622,7 +626,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         warp.sync();
       }
 
-      if (warp.thread_rank() == 0) { s->src_pos = src_pos + batch_size; }
+      if (warp.thread_rank() == 0) { s->progress.src_pos = src_pos + batch_size; }
     }
 
     block.sync();
@@ -752,8 +756,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   // if this is a bounds page, then we need to decode up to the first mini-block
   // that has a value we need, and set string_offset to the position of the first value in the
   // string data block.
-  auto const is_bounds_pg =
-    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  auto const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
   if (is_bounds_pg && s->setup.page.start_val > 0) {
     if (warp.meta_group_rank() == 0) {
       // string_off is only valid on thread 0
@@ -774,15 +777,15 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   int string_pos = has_repetition ? s->setup.page.start_val : 0;
 
-  while (!s->setup.error &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (!s->setup.error && (s->progress.input_value_count < s->setup.num_input_values ||
+                             s->progress.src_pos < s->progress.nz_count)) {
     uint32_t target_pos;
-    uint32_t const src_pos = s->src_pos;
+    uint32_t const src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() < 2) {  // warp0..1
-      target_pos = min(src_pos + 2 * batch_size, s->nz_count + batch_size);
+      target_pos = min(src_pos + 2 * batch_size, s->progress.nz_count + batch_size);
     } else {  // warp2
-      target_pos = min(s->nz_count, src_pos + batch_size);
+      target_pos = min(s->progress.nz_count, src_pos + batch_size);
     }
     // this needs to be here to prevent warp 2 modifying src_pos before all threads have read it
     __syncthreads();
@@ -824,7 +827,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         warp.sync();
       }
 
-      if (warp.thread_rank() == 0) { s->src_pos = src_pos + batch_size; }
+      if (warp.thread_rank() == 0) { s->progress.src_pos = src_pos + batch_size; }
     }
     block.sync();
   }

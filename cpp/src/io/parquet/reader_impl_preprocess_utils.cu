@@ -20,6 +20,7 @@
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <thrust/for_each.h>
+#include <thrust/gather.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
@@ -401,12 +402,11 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
     sort_indices.begin(),
     cuda::std::less<int>());
   auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    sort_indices.begin(),
-                    sort_indices.end(),
-                    pass_pages.d_begin(),
-                    cuda::proclaim_return_type<PageInfo>(
-                      [p = unsorted_pages.data()] __device__(int32_t i) { return p[i]; }));
+  thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                 sort_indices.begin(),
+                 sort_indices.end(),
+                 unsorted_pages.data(),
+                 pass_pages.d_begin());
   stream.synchronize();
   return pass_pages;
 }

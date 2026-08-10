@@ -308,22 +308,6 @@ def add_bloom_prefilter(
     )
 
 
-def estimate_cardinality(stats: TableSizeStats) -> int | None:
-    """Extrapolate sampled distinct count to the estimated full row count."""
-    if stats.total_rows == 0:
-        return 0
-    if stats.cardinality is None or stats.cardinality.row_count == 0:
-        return None
-    return min(
-        stats.total_rows,
-        math.ceil(
-            stats.cardinality.distinct_count
-            * stats.total_rows
-            / stats.cardinality.row_count
-        ),
-    )
-
-
 def estimate_bloom_filter_bytes(
     cardinality: int,
     desired_false_positive_rate: float = 0.1,
@@ -394,15 +378,15 @@ def choose_prefilter_method(
     bloom_filter_max_size: int,
 ) -> PrefilterDecision:
     """Choose the implementation for an eligible prefilter."""
-    cardinality = estimate_cardinality(domain)
-    if cardinality is None:
+    distinct_count = domain.distinct_count()
+    if distinct_count is None:
         return PrefilterDecision(
             "skip",
             "missing_cardinality",
             target.total_size,
             domain.total_rows,
         )
-    if cardinality == 0:
+    if distinct_count == 0:
         return PrefilterDecision(
             "skip",
             "zero_cardinality",
@@ -415,7 +399,7 @@ def choose_prefilter_method(
 
     bloom_bytes = max(
         32,
-        BloomFilter.aligned_size(estimate_bloom_filter_bytes(cardinality)),
+        BloomFilter.aligned_size(estimate_bloom_filter_bytes(distinct_count)),
     )
     exact_bytes = estimate_bytes(
         tuple(key.value.dtype for key in domain_on),
@@ -427,7 +411,7 @@ def choose_prefilter_method(
             "bloom_fits",
             target.total_size,
             domain.total_rows,
-            estimated_cardinality=cardinality,
+            estimated_cardinality=distinct_count,
             bloom_bytes=bloom_bytes,
             exact_bytes=exact_bytes,
         )
@@ -439,7 +423,7 @@ def choose_prefilter_method(
             "exact_domain_fits",
             target.total_size,
             domain.total_rows,
-            estimated_cardinality=cardinality,
+            estimated_cardinality=distinct_count,
             bloom_bytes=bloom_bytes,
             exact_bytes=exact_bytes,
         )
@@ -448,7 +432,7 @@ def choose_prefilter_method(
         "no_viable_filter",
         target.total_size,
         domain.total_rows,
-        estimated_cardinality=cardinality,
+        estimated_cardinality=distinct_count,
         bloom_bytes=bloom_bytes,
         exact_bytes=exact_bytes,
     )

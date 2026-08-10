@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import math
 import operator
 import struct
 import time
@@ -1038,6 +1039,21 @@ class TableSizeStats:
     """Whether the sample contains the entire table for the represented scope."""
     cardinality: CardinalityEstimate | None = None
     """Global cardinality statistics for the sampled rows, when requested."""
+
+    def distinct_count(self) -> int | None:
+        """Extrapolate sampled distinct count to the estimated full row count."""
+        if self.total_rows == 0:
+            return 0
+        if self.cardinality is None or self.cardinality.row_count == 0:
+            return None
+        return min(
+            self.total_rows,
+            math.ceil(
+                self.cardinality.distinct_count
+                * self.total_rows
+                / self.cardinality.row_count
+            ),
+        )
 
 
 async def aggregate_table_size_stats(

@@ -324,7 +324,7 @@ def test_validate_cluster() -> None:
         "broadcast_limit",
         "sink_to_directory",
         "client_device_threshold",
-        "max_io_threads",
+        "max_concurrent_io_tasks",
         "num_py_executors",
     ],
 )
@@ -360,7 +360,6 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_READ_LIMIT", "200")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_FOOTER_SAMPLES", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_ROW_GROUP_SAMPLES", "0")
-        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_RAPIDSMPF_NATIVE", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "1")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_JIT_FILTER", "1")
 
@@ -373,7 +372,6 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.parquet_options.pass_read_limit == 200
         assert config.parquet_options.max_footer_samples == 0
         assert config.parquet_options.max_row_group_samples == 0
-        assert config.parquet_options.use_rapidsmpf_native is False
         assert config.parquet_options.prefetch_file_metadata is True
         assert config.parquet_options.use_jit_filter is True
 
@@ -398,6 +396,7 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__EXECUTOR__MAX_ROWS_PER_PARTITION", "42")
         m.setenv("CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", "100")
         m.setenv("CUDF_POLARS__EXECUTOR__BROADCAST_LIMIT", "44")
+        m.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "6")
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
 
         engine = pl.GPUEngine()
@@ -408,6 +407,7 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.executor.max_rows_per_partition == 42
         assert config.executor.target_partition_size == 100
         assert config.executor.broadcast_limit == 44
+        assert config.executor.max_concurrent_io_tasks == 6
         assert config.executor.quent_context is not None
 
 
@@ -486,7 +486,6 @@ def test_fallback_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "pass_read_limit",
         "max_footer_samples",
         "max_row_group_samples",
-        "use_rapidsmpf_native",
         "prefetch_file_metadata",
         "use_jit_filter",
     ],
@@ -514,22 +513,6 @@ def test_parquet_options_object_passthrough() -> None:
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
     assert config.parquet_options is parquet_options
-
-
-def test_prefetch_and_use_rapidsmpf_native_raises() -> None:
-    with pytest.raises(
-        NotImplementedError,
-        match="'use_rapidsmpf_native=True' does not currently support 'prefetch_file_metadata=True'",
-    ):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                parquet_options={
-                    "use_rapidsmpf_native": True,
-                    "prefetch_file_metadata": True,
-                },
-            )
-        )
 
 
 def test_validate_raise_on_fail() -> None:

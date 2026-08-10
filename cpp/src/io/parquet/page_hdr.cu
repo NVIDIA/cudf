@@ -232,8 +232,7 @@ __device__ decode_kernel_mask kernel_mask_for_page(PageInfo const& page,
       return is_list(chunk)     ? decode_kernel_mask::STRING_LIST
              : is_nested(chunk) ? decode_kernel_mask::STRING_NESTED
                                 : decode_kernel_mask::STRING;
-    } else if (page.encoding == Encoding::PLAIN_DICTIONARY ||
-               page.encoding == Encoding::RLE_DICTIONARY) {
+    } else if (is_dictionary_encoding(page.encoding)) {
       return is_list(chunk)     ? decode_kernel_mask::STRING_DICT_LIST
              : is_nested(chunk) ? decode_kernel_mask::STRING_DICT_NESTED
                                 : decode_kernel_mask::STRING_DICT;
@@ -249,8 +248,7 @@ __device__ decode_kernel_mask kernel_mask_for_page(PageInfo const& page,
       return is_list(chunk)     ? decode_kernel_mask::FIXED_WIDTH_NO_DICT_LIST
              : is_nested(chunk) ? decode_kernel_mask::FIXED_WIDTH_NO_DICT_NESTED
                                 : decode_kernel_mask::FIXED_WIDTH_NO_DICT;
-    } else if (page.encoding == Encoding::PLAIN_DICTIONARY ||
-               page.encoding == Encoding::RLE_DICTIONARY) {
+    } else if (is_dictionary_encoding(page.encoding)) {
       return is_list(chunk)     ? decode_kernel_mask::FIXED_WIDTH_DICT_LIST
              : is_nested(chunk) ? decode_kernel_mask::FIXED_WIDTH_DICT_NESTED
                                 : decode_kernel_mask::FIXED_WIDTH_DICT;

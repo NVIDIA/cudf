@@ -40,7 +40,6 @@ set(cython_sources
     cudf_streaming/approx_distinct_count.pyx
     cudf_streaming/bloom_filter.pyx
     cudf_streaming/channel_metadata.pyx
-    cudf_streaming/parquet.pyx
     cudf_streaming/partition.pyx
     cudf_streaming/partition_utils.pyx
     cudf_streaming/table_chunk.pyx

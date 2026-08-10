@@ -47,24 +47,39 @@ struct page_decode_stream_state {
   int32_t dict_val{};
 };
 
+struct page_decode_progress_state {
+  int32_t nz_count{};
+  int32_t dict_pos{};
+  int32_t src_pos{};
+  int32_t input_value_count{};
+  int32_t input_row_count{};
+  int32_t input_leaf_count{};
+  int32_t row_index_lower_bound{};
+};
+
+// Output conversion scratch: values written by setup_local_page_info and read
+// by decode kernels to shape the output data type / timestamp scale. Grouped
+// so passes that need only the string byte size scan can pull in this subset
+// (see page_state_composed.cuh).
+struct page_decode_output_state {
+  int32_t dtype_len{};     // Output data type length
+  int32_t dtype_len_in{};  // Can be larger than dtype_len if truncating 32-bit into 8-bit
+  int32_t ts_scale{};      // timestamp scale: <0: divide by -ts_scale, >0: multiply by ts_scale
+};
+
 struct page_state_s {
   CUDF_HOST_DEVICE constexpr page_state_s() noexcept {}
   page_decode_setup_state setup{};
   page_decode_stream_state stream{};
-  int32_t dtype_len{};     // Output data type length
-  int32_t dtype_len_in{};  // Can be larger than dtype_len if truncating 32-bit into 8-bit
+  page_decode_output_state output_cvt{};
+  uint8_t const* lvl_end{};
+  int32_t first_output_value{};  // First value in page to output
 
   // (leaf) value decoding
-  int32_t nz_count{};  // number of valid entries in nz_idx (write position in circular buffer)
-  int32_t dict_pos{};  // write position of dictionary indices
-  int32_t src_pos{};   // input read position of final output value
-  int32_t ts_scale{};  // timestamp scale: <0: divide by -ts_scale, >0: multiply by ts_scale
+  page_decode_progress_state progress{};
 
   // repetition/definition level decoding
-  int32_t input_value_count{};      // how many values of the input we've processed
-  int32_t input_row_count{};        // how many rows of the input we've processed
-  int32_t input_leaf_count{};       // how many leaf values of the input we've processed
-  int32_t row_index_lower_bound{};  // lower bound of row indices we should process
+  uint8_t const* lvl_start[NUM_LEVEL_TYPES]{};  // [def,rep]
 
   // a shared-memory cache of frequently used data when decoding. The source of this data is
   // normally stored in global memory which can yield poor performance. So, when possible
@@ -188,21 +203,20 @@ __device__ constexpr bool is_string_col(PageInfo const& page,
  * @brief Returns whether or not a page spans either the beginning or the end of the
  * specified row bounds
  *
- * @param page The page to be checked
- * @param chunk_start_row Absolute row index of the first row in the page's column chunk
+ * @param s Page decode state containing the page and column chunk metadata
  * @param start_row The starting row index
  * @param num_rows The number of rows
  * @param has_repetition True if the schema has nesting
  *
  * @return True if the page spans the beginning or the end of the row bounds
  */
-inline __device__ bool is_bounds_page(PageInfo const& page,
-                                      size_t chunk_start_row,
+inline __device__ bool is_bounds_page(auto* const s,
                                       size_t start_row,
                                       size_t num_rows,
                                       bool has_repetition)
 {
-  size_t const page_begin = chunk_start_row + page.chunk_row;
+  auto const& page        = s->setup.page;
+  size_t const page_begin = s->setup.col.start_row + page.chunk_row;
   size_t const page_end   = page_begin + page.num_rows;
   size_t const begin      = start_row;
   size_t const end        = start_row + num_rows;
@@ -227,19 +241,16 @@ inline __device__ bool is_bounds_page(PageInfo const& page,
  * @brief Returns whether or not a page is completely contained within the specified
  * row bounds
  *
- * @param page The page to be checked
- * @param chunk_start_row Absolute row index of the first row in the page's column chunk
+ * @param s Page decode state containing the page and column chunk metadata
  * @param start_row The starting row index
  * @param num_rows The number of rows
  *
  * @return True if the page is completely contained within the row bounds
  */
-inline __device__ bool is_page_contained(PageInfo const& page,
-                                         size_t chunk_start_row,
-                                         size_t start_row,
-                                         size_t num_rows)
+inline __device__ bool is_page_contained(auto* const s, size_t start_row, size_t num_rows)
 {
-  size_t const page_begin = chunk_start_row + page.chunk_row;
+  auto const& page        = s->setup.page;
+  size_t const page_begin = s->setup.col.start_row + page.chunk_row;
   size_t const page_end   = page_begin + page.num_rows;
   size_t const begin      = start_row;
   size_t const end        = start_row + num_rows;
@@ -257,21 +268,20 @@ inline __device__ bool is_page_contained(PageInfo const& page,
  * carry values while containing zero of its own rows. Such a page must still be processed when
  * it spans (is a "bounds" page for) or is fully contained within the requested range.
  *
- * @param page The page to be checked
- * @param chunk_start_row Absolute row index of the first row in the page's column chunk
+ * @param s Page decode state containing the page and column chunk metadata
  * @param min_row Absolute index of the first requested row
  * @param num_rows Number of requested rows
  * @param has_repetition True if the schema has nesting (list) columns
  *
  * @return True if the page has rows/values to process for the requested range
  */
-inline __device__ bool page_has_rows_to_process(PageInfo const& page,
-                                                size_t chunk_start_row,
+inline __device__ bool page_has_rows_to_process(auto* const s,
                                                 size_t min_row,
                                                 size_t num_rows,
                                                 bool has_repetition)
 {
-  size_t const page_start_row = chunk_start_row + page.chunk_row;
+  auto const& page            = s->setup.page;
+  size_t const page_start_row = s->setup.col.start_row + page.chunk_row;
   size_t const page_end_row   = page_start_row + page.num_rows;
   size_t const end_row        = min_row + num_rows;
 
@@ -282,8 +292,30 @@ inline __device__ bool page_has_rows_to_process(PageInfo const& page,
 
   // A single list row can span pages, so a list page can carry values (and offsets) with 0 rows;
   // such a page carries no rows of its own but must still be processed.
-  return is_bounds_page(page, chunk_start_row, min_row, num_rows, has_repetition) ||
-         is_page_contained(page, chunk_start_row, min_row, num_rows);
+  return is_bounds_page(s, min_row, num_rows, has_repetition) ||
+         is_page_contained(s, min_row, num_rows);
+}
+
+inline __device__ bool page_has_rows_to_process(PageInfo const& page,
+                                                size_t chunk_start_row,
+                                                size_t min_row,
+                                                size_t num_rows,
+                                                bool has_repetition)
+{
+  size_t const page_start_row = chunk_start_row + page.chunk_row;
+  size_t const page_end_row   = page_start_row + page.num_rows;
+  size_t const end_row        = min_row + num_rows;
+  bool const has_rows =
+    (page.num_rows > 0) && (page_start_row < end_row) && (page_end_row > min_row);
+  if (has_rows || !has_repetition) { return has_rows; }
+
+  auto const test_page_end_nonlists =
+    page.is_num_rows_adjusted ? page_end_row >= end_row : page_end_row > end_row;
+  auto const bounds = ((page_start_row <= min_row and page_end_row >= min_row) or
+                       (page_start_row <= end_row and page_end_row >= end_row)) or
+                      ((page_start_row < min_row and page_end_row > min_row) or
+                       (page_start_row < end_row and test_page_end_nonlists));
+  return bounds || (page_start_row >= min_row && page_end_row <= end_row);
 }
 
 /**
@@ -354,13 +386,13 @@ __device__ cuda::std::pair<int, int> decode_dictionary_indices(
 {
   uint8_t const* end = s->stream.data_end;
   int dict_bits      = s->stream.dict_bits;
-  int pos            = s->dict_pos;
+  int pos            = s->progress.dict_pos;
   int str_len        = 0;
   int const t        = warp.thread_rank();
 
-  // NOTE: racecheck warns about a RAW involving s->dict_pos, which is likely a false
+  // NOTE: racecheck warns about a RAW involving s->progress.dict_pos, which is likely a false
   // positive because the only path that does not include a sync will lead to
-  // s->dict_pos being overwritten with the same value
+  // s->progress.dict_pos being overwritten with the same value
 
   while (pos < target_pos) {
     int is_literal, batch_len;
@@ -480,12 +512,12 @@ inline __device__ int decode_rle_booleans(
   cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
 {
   uint8_t const* end = s->stream.data_end;
-  int64_t pos        = s->dict_pos;
+  int64_t pos        = s->progress.dict_pos;
   int const t        = warp.thread_rank();
 
-  // NOTE: racecheck warns about a RAW involving s->dict_pos, which is likely a false positive
-  // because the only path that does not include a sync will lead to s->dict_pos being overwritten
-  // with the same value
+  // NOTE: racecheck warns about a RAW involving s->progress.dict_pos, which is likely a false
+  // positive because the only path that does not include a sync will lead to s->progress.dict_pos
+  // being overwritten with the same value
 
   while (pos < target_pos) {
     int is_literal, batch_len;
@@ -561,12 +593,12 @@ __device__ size_type initialize_string_descriptors(page_state_s* s,
   int const t         = group.thread_rank();
   int const dict_size = s->stream.dict_size;
   int k               = s->stream.dict_val;
-  int pos             = s->dict_pos;
+  int pos             = s->progress.dict_pos;
   int total_len       = 0;
 
   // All group threads can participate for fixed len byte arrays.
   if (s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-    int const dtype_len_in = s->dtype_len_in;
+    int const dtype_len_in = s->output_cvt.dtype_len_in;
     total_len              = min((target_pos - pos) * dtype_len_in, dict_size - s->stream.dict_val);
     if constexpr (sizes_only == is_calc_sizes_only::NO) {
       for (pos += t, k += t * dtype_len_in; pos < target_pos; pos += group.size()) {
@@ -750,15 +782,15 @@ __device__ void gpuUpdateValidityOffsetsAndRowIndices(int32_t target_input_value
                                                       int t)
 {
   // exit early if there's no work to do
-  if (s->input_value_count >= target_input_value_count) { return; }
+  if (s->progress.input_value_count >= target_input_value_count) { return; }
 
   // max nesting depth of the column
   int const max_depth       = s->setup.col.max_nesting_depth;
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   // how many (input) values we've processed in the page so far
-  int input_value_count = s->input_value_count;
+  int input_value_count = s->progress.input_value_count;
   // how many rows we've processed in the page so far
-  int input_row_count = s->input_row_count;
+  int input_row_count = s->progress.input_row_count;
 
   PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
 
@@ -787,7 +819,7 @@ __device__ void gpuUpdateValidityOffsetsAndRowIndices(int32_t target_input_value
       input_row_count + ((__popc(warp_row_count_mask & ((1 << t) - 1)) + is_new_row) - 1);
     input_row_count += __popc(warp_row_count_mask);
     // is this thread within read row bounds?
-    int const in_row_bounds = thread_row_index >= s->row_index_lower_bound &&
+    int const in_row_bounds = thread_row_index >= s->progress.row_index_lower_bound &&
                                   thread_row_index < (s->setup.first_row + s->setup.num_rows)
                                 ? 1
                                 : 0;
@@ -902,9 +934,9 @@ __device__ void gpuUpdateValidityOffsetsAndRowIndices(int32_t target_input_value
   // update
   if (!t) {
     // update valid value count for decoding and total # of values we've processed
-    s->nz_count          = nesting_info_base[max_depth - 1].valid_count;
-    s->input_value_count = input_value_count;
-    s->input_row_count   = input_row_count;
+    s->progress.nz_count          = nesting_info_base[max_depth - 1].valid_count;
+    s->progress.input_value_count = input_value_count;
+    s->progress.input_row_count   = input_row_count;
   }
 }
 
@@ -939,8 +971,8 @@ __device__ void gpuDecodeLevels(
   cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
 {
   auto cur_leaf_count = target_leaf_count;
-  while (s->setup.error == 0 && s->nz_count < target_leaf_count &&
-         s->input_value_count < s->setup.num_input_values) {
+  while (s->setup.error == 0 && s->progress.nz_count < target_leaf_count &&
+         s->progress.input_value_count < s->setup.num_input_values) {
     // because the rep and def streams are encoded separately, we cannot request an exact
     // # of values to be decoded at once. we can only process the lowest # of decoded rep/def
     // levels we get.
@@ -1188,8 +1220,7 @@ inline __device__ bool setup_local_page_info(auto* const s,
   // NOTE: this check needs to be done after the null counts have been zeroed out
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   if ((stage == page_processing_stage::STRING_BOUNDS || stage == page_processing_stage::DECODE) &&
-      !page_has_rows_to_process(
-        s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition)) {
+      !page_has_rows_to_process(s, min_row, num_rows, has_repetition)) {
     return false;
   }
 
@@ -1204,30 +1235,30 @@ inline __device__ bool setup_local_page_info(auto* const s,
     if (s->setup.page.num_input_values > 0) {
       uint8_t* cur = s->setup.page.page_data;
       uint8_t* end = cur + s->setup.page.uncompressed_page_size;
-      if constexpr (requires { s->dtype_len; }) {
-        s->ts_scale = 0;
+      if constexpr (requires { s->output_cvt.dtype_len; }) {
+        s->output_cvt.ts_scale = 0;
         // Validate data type
         auto const data_type  = s->setup.col.physical_type;
         auto const is_decimal = s->setup.col.logical_type.has_value() and
                                 s->setup.col.logical_type->type == LogicalType::DECIMAL;
         switch (data_type) {
           case Type::BOOLEAN:
-            s->dtype_len = 1;  // Boolean are stored as 1 byte on the output
+            s->output_cvt.dtype_len = 1;  // Boolean are stored as 1 byte on the output
             break;
           case Type::INT32: [[fallthrough]];
-          case Type::FLOAT: s->dtype_len = 4; break;
+          case Type::FLOAT: s->output_cvt.dtype_len = 4; break;
           case Type::INT64:
             if (s->setup.col.ts_clock_rate) {
-              s->ts_scale =
+              s->output_cvt.ts_scale =
                 calc_timestamp_scale(s->setup.col.logical_type, s->setup.col.ts_clock_rate);
             }
             [[fallthrough]];
-          case Type::DOUBLE: s->dtype_len = 8; break;
-          case Type::INT96: s->dtype_len = 12; break;
+          case Type::DOUBLE: s->output_cvt.dtype_len = 8; break;
+          case Type::INT96: s->output_cvt.dtype_len = 12; break;
           case Type::BYTE_ARRAY:
             if (is_decimal) {
               auto const decimal_precision = s->setup.col.logical_type->precision();
-              s->dtype_len                 = [decimal_precision]() {
+              s->output_cvt.dtype_len      = [decimal_precision]() {
                 if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
                   return sizeof(int32_t);
                 } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
@@ -1237,19 +1268,21 @@ inline __device__ bool setup_local_page_info(auto* const s,
                 }
               }();
             } else {
-              s->dtype_len = sizeof(string_index_pair);
+              s->output_cvt.dtype_len = sizeof(string_index_pair);
             }
             break;
           default:  // FIXED_LEN_BYTE_ARRAY:
-            s->dtype_len = s->setup.col.type_length;
-            if (s->dtype_len <= 0) { s->set_error_code(decode_error::INVALID_DATA_TYPE); }
+            s->output_cvt.dtype_len = s->setup.col.type_length;
+            if (s->output_cvt.dtype_len <= 0) {
+              s->set_error_code(decode_error::INVALID_DATA_TYPE);
+            }
             break;
         }
         // Special check for downconversions
-        s->dtype_len_in = s->dtype_len;
+        s->output_cvt.dtype_len_in = s->output_cvt.dtype_len;
         if (data_type == Type::FIXED_LEN_BYTE_ARRAY) {
           if (is_decimal) {
-            s->dtype_len = [dtype_len = s->dtype_len]() {
+            s->output_cvt.dtype_len = [dtype_len = s->output_cvt.dtype_len]() {
               if (dtype_len <= sizeof(int32_t)) {
                 return sizeof(int32_t);
               } else if (dtype_len <= sizeof(int64_t)) {
@@ -1259,23 +1292,23 @@ inline __device__ bool setup_local_page_info(auto* const s,
               }
             }();
           } else {
-            s->dtype_len = sizeof(string_index_pair);
+            s->output_cvt.dtype_len = sizeof(string_index_pair);
           }
         } else if (data_type == Type::INT32) {
           // check for smaller bitwidths
           if (s->setup.col.logical_type.has_value()) {
             auto const& lt = *s->setup.col.logical_type;
             if (lt.type == LogicalType::INTEGER) {
-              s->dtype_len = lt.bit_width() / 8;
+              s->output_cvt.dtype_len = lt.bit_width() / 8;
             } else if (lt.is_time_millis()) {
               // cudf outputs as INT64
-              s->dtype_len = 8;
+              s->output_cvt.dtype_len = 8;
             }
           }
         } else if (data_type == Type::BYTE_ARRAY && s->setup.col.is_strings_to_cat) {
-          s->dtype_len = 4;  // HASH32 output
+          s->output_cvt.dtype_len = 4;  // HASH32 output
         } else if (data_type == Type::INT96) {
-          s->dtype_len = 8;  // Convert to 64-bit timestamp
+          s->output_cvt.dtype_len = 8;  // Convert to 64-bit timestamp
         }
 
         // during the decoding step we need to offset the global output buffers
@@ -1288,51 +1321,55 @@ inline __device__ bool setup_local_page_info(auto* const s,
         // s->setup.col.valid_map_base will be aliased to memory that has been freed when we get
         // here in the non-decode step, so we cannot check against nullptr.  we'll just check a flag
         // directly.
-        if (stage == page_processing_stage::DECODE) {
-          int max_depth = s->setup.col.max_nesting_depth;
-          for (int idx = 0; idx < max_depth; idx++) {
-            PageNestingDecodeInfo* nesting_info = &s->nesting_info[idx];
+        if constexpr (requires { s->nesting_info; }) {
+          if (stage == page_processing_stage::DECODE) {
+            int max_depth = s->setup.col.max_nesting_depth;
+            for (int idx = 0; idx < max_depth; idx++) {
+              PageNestingDecodeInfo* nesting_info = &s->nesting_info[idx];
 
-            size_t output_offset;
-            // schemas without lists
-            if (s->setup.col.max_level[level_type::REPETITION] == 0) {
-              output_offset = page_start_row >= min_row ? page_start_row - min_row : 0;
-            }
-            // for schemas with lists, we've already got the exact value precomputed
-            else {
-              output_offset = nesting_info->page_start_value;
-            }
-
-            if (s->setup.col.column_data_base != nullptr) {
-              nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
-              if (s->setup.col.column_string_base != nullptr) {
-                nesting_info->string_out =
-                  static_cast<uint8_t*>(s->setup.col.column_string_base[idx]);
+              size_t output_offset;
+              // schemas without lists
+              if (s->setup.col.max_level[level_type::REPETITION] == 0) {
+                output_offset = page_start_row >= min_row ? page_start_row - min_row : 0;
+              }
+              // for schemas with lists, we've already got the exact value precomputed
+              else {
+                output_offset = nesting_info->page_start_value;
               }
 
-              nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
+              if (s->setup.col.column_data_base != nullptr) {
+                nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
+                if (s->setup.col.column_string_base != nullptr) {
+                  nesting_info->string_out =
+                    static_cast<uint8_t*>(s->setup.col.column_string_base[idx]);
+                }
 
-              if (nesting_info->data_out != nullptr) {
-                // anything below max depth with a valid data pointer must be a list, so the
-                // element size is the size of the offset type.
-                uint32_t len = idx < max_depth - 1 ? sizeof(cudf::size_type) : s->dtype_len;
-                // if this is a string column, then dtype_len is a lie. data will be offsets rather
-                // than (ptr,len) tuples.
-                if (is_string_col(s->setup.col)) { len = sizeof(cudf::size_type); }
-                nesting_info->data_out += (output_offset * len);
-              }
-              if (nesting_info->string_out != nullptr) {
-                nesting_info->string_out += s->setup.page.str_offset;
-              }
-              nesting_info->valid_map = s->setup.col.valid_map_base[idx];
-              if (nesting_info->valid_map != nullptr) {
-                nesting_info->valid_map += output_offset >> 5;
-                nesting_info->valid_map_offset = (int32_t)(output_offset & 0x1f);
+                nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
+
+                if (nesting_info->data_out != nullptr) {
+                  // anything below max depth with a valid data pointer must be a list, so the
+                  // element size is the size of the offset type.
+                  uint32_t len =
+                    idx < max_depth - 1 ? sizeof(cudf::size_type) : s->output_cvt.dtype_len;
+                  // if this is a string column, then dtype_len is a lie. data will be offsets
+                  // rather than (ptr,len) tuples.
+                  if (is_string_col(s->setup.col)) { len = sizeof(cudf::size_type); }
+                  nesting_info->data_out += (output_offset * len);
+                }
+                if (nesting_info->string_out != nullptr) {
+                  nesting_info->string_out += s->setup.page.str_offset;
+                }
+                nesting_info->valid_map = s->setup.col.valid_map_base[idx];
+                if (nesting_info->valid_map != nullptr) {
+                  nesting_info->valid_map += output_offset >> 5;
+                  nesting_info->valid_map_offset = (int32_t)(output_offset & 0x1f);
+                }
               }
             }
           }
-        }
-      }
+        }  // if constexpr (requires { s->nesting_info; })
+        if constexpr (requires { s->first_output_value; }) { s->first_output_value = 0; }
+      }  // if constexpr (requires { s->output_cvt.dtype_len; })
 
       // Find the compressed size of repetition levels
       cur += InitLevelSection(s, cur, end, level_type::REPETITION);
@@ -1403,10 +1440,10 @@ inline __device__ bool setup_local_page_info(auto* const s,
     }
 
     s->setup.num_input_values = s->setup.page.num_input_values;
-    if constexpr (requires { s->input_value_count; }) {
-      s->nz_count = 0;
-      s->dict_pos = 0;
-      s->src_pos  = 0;
+    if constexpr (requires { s->progress.input_value_count; }) {
+      s->progress.nz_count = 0;
+      s->progress.dict_pos = 0;
+      s->progress.src_pos  = 0;
 
       // for flat hierarchies, we can't know how many leaf values to skip unless we do a full
       // preprocess of the definition levels (since nulls will have no actual decodable value, there
@@ -1416,19 +1453,19 @@ inline __device__ bool setup_local_page_info(auto* const s,
       if (s->setup.col.max_level[level_type::REPETITION] == 0) {
         s->setup.page.skipped_values      = 0;
         s->setup.page.skipped_leaf_values = 0;
-        s->input_value_count              = 0;
-        s->input_row_count                = 0;
-        s->input_leaf_count               = 0;
+        s->progress.input_value_count     = 0;
+        s->progress.input_row_count       = 0;
+        s->progress.input_leaf_count      = 0;
 
         // The fixed-width decode kernel ASSUMES this is always -1 for non-lists!
-        s->row_index_lower_bound = -1;
+        s->progress.row_index_lower_bound = -1;
       }
       // for nested hierarchies, we have run a preprocess that lets us skip directly to the values
       // we need to start decoding at
       else {
         // input_row_count translates to "how many rows we have processed so far", so since we are
         // skipping directly to where we want to start decoding, set it to first_row
-        s->input_row_count = s->setup.first_row;
+        s->progress.input_row_count = s->setup.first_row;
 
         // return the lower bound to compare (page-relative) thread row index against. Explanation:
         // In the case of nested schemas, rows can span page boundaries.  That is to say,
@@ -1441,25 +1478,25 @@ inline __device__ bool setup_local_page_info(auto* const s,
         // relative row index -1
         int const max_row = (min_row + num_rows) - 1;
         if (min_row < page_start_row && max_row >= page_start_row - 1) {
-          s->row_index_lower_bound = -1;
+          s->progress.row_index_lower_bound = -1;
         } else {
-          s->row_index_lower_bound = s->setup.first_row;
+          s->progress.row_index_lower_bound = s->setup.first_row;
         }
 
         // if we're in the decoding step, jump directly to the first
         // value we care about
         if (stage == page_processing_stage::DECODE) {
-          s->input_value_count =
+          s->progress.input_value_count =
             s->setup.page.skipped_values > -1 ? s->setup.page.skipped_values : 0;
         } else if (stage == page_processing_stage::PREPROCESS) {
-          s->input_value_count = 0;
-          s->input_leaf_count  = 0;
+          s->progress.input_value_count = 0;
+          s->progress.input_leaf_count  = 0;
           // magic number to indicate it hasn't been set for use inside UpdatePageSizes
           s->setup.page.skipped_values      = -1;
           s->setup.page.skipped_leaf_values = 0;
         }
       }
-    }  // if constexpr (requires { s->input_value_count; })
+    }  // if constexpr (requires { s->progress.input_value_count; })
 
     __threadfence_block();
   }

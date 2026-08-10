@@ -9,6 +9,7 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -122,10 +123,15 @@ std::vector<std::string> copy_strings_to_host_sync(
     auto const scv     = cudf::strings_column_view(col);
     auto const h_chars = cudf::detail::make_host_vector_async<char>(
       cudf::device_span<char const>(scv.chars_begin(stream), scv.chars_size(stream)), stream);
-    auto const h_offsets = cudf::detail::make_host_vector_async(
-      cudf::device_span<cudf::size_type const>(scv.offsets().data<cudf::size_type>() + scv.offset(),
-                                               scv.size() + 1),
-      stream);
+    // Offsets may be INT32 or INT64 depending on the char buffer size, so normalize through the
+    // offsetalator rather than reading them as a typed pointer.
+    auto d_offsets = rmm::device_uvector<int64_t>(scv.size() + 1, stream);
+    thrust::copy_n(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::offsetalator_factory::make_input_iterator(scv.offsets(), scv.offset()),
+      scv.size() + 1,
+      d_offsets.begin());
+    auto const h_offsets = cudf::detail::make_host_vector_async(d_offsets, stream);
     stream.synchronize();
 
     // build std::string vector from chars and offsets
@@ -589,7 +595,7 @@ void make_device_json_column(device_span<SymbolT const> input,
   auto expected_types = cudf::detail::make_host_vector<NodeT>(num_columns, stream);
   std::fill_n(expected_types.begin(), num_columns, NUM_NODE_CLASSES);
 
-  auto lookup_names = [&column_names](auto const& child_ids, auto const& name) {
+  auto lookup_names = [&column_names](auto const& child_ids, auto const& name) -> NodeIndexT {
     for (auto const& child_id : child_ids) {
       if (column_names[child_id] == name) return child_id;
     }

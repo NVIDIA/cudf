@@ -223,7 +223,7 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
         }),
         cuda::std::plus<NodeIndexT>{});
     } else {
-      auto single_node = 1;
+      auto single_node = NodeIndexT{1};
       row_idx.set_element_async(1, single_node, stream);
     }
 

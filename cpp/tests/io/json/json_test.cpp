@@ -40,6 +40,7 @@ using int_wrapper          = wrapper<int>;
 using int8_wrapper         = wrapper<int8_t>;
 using int16_wrapper        = wrapper<int16_t>;
 using int64_wrapper        = wrapper<int64_t>;
+using size_wrapper         = wrapper<cudf::size_type>;
 using timestamp_ms_wrapper = wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>;
 using bool_wrapper         = wrapper<bool>;
 using size_type_wrapper    = wrapper<cudf::size_type>;
@@ -1728,7 +1729,8 @@ TEST_F(JsonReaderTest, JsonNestedDtypeSchema)
   // Verify column "b" is an int column
   EXPECT_EQ(result.tbl->get_column(1).type().id(), cudf::type_id::INT32);
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0).child(0), int_wrapper{{0, 2, 2, 2}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0).child(0),
+                                 size_wrapper{{0, 2, 2, 2}});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0).child(1).child(0),
                                  float_wrapper{{0.0, 123.0}, {false, true}});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(1), int_wrapper{{1, 1, 2}});
@@ -1739,7 +1741,7 @@ TEST_F(JsonReaderTest, JsonNestedDtypeSchema)
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
   auto expected = cudf::make_lists_column(
     3,
-    int_wrapper{{0, 2, 2, 2}}.release(),
+    size_wrapper{{0, 2, 2, 2}}.release(),
     cudf::test::structs_column_wrapper{{leaf_child}, {false, true}}.release(),
     null_count,
     std::move(null_mask));
@@ -1823,7 +1825,7 @@ TEST_P(JsonReaderParamTest, JsonDtypeParsing)
   auto str_col   = cudf::test::strings_column_wrapper{
     // clang-format off
     {"0", "0", " 0", "1", "1", " 1", "a", "z", "", "true", "false", "null", "true", "false", "nan", "nan"},
-     cudf::test::iterators::nulls_at(std::vector<int>{8})};
+     cudf::test::iterators::nulls_at(std::vector<cudf::size_type>{8})};
   // clang-format on
   auto bool_col = bool_wrapper{{false,
                                 false,
@@ -2763,7 +2765,8 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilter)
       EXPECT_EQ(result.tbl->get_column(2).type().id(), cudf::type_id::BOOL8);
       EXPECT_EQ(result.tbl->get_column(1).child(0).type().id(), cudf::type_id::STRING);
       EXPECT_EQ(result.tbl->get_column(1).child(1).type().id(), cudf::type_id::LIST);
-      EXPECT_EQ(result.tbl->get_column(1).child(1).child(0).type().id(), cudf::type_id::INT32);
+      EXPECT_EQ(result.tbl->get_column(1).child(1).child(0).type().id(),
+                cudf::type_to_id<cudf::size_type>());
       EXPECT_EQ(result.tbl->get_column(1).child(1).child(1).type().id(), cudf::type_id::FLOAT32);
     }
     //// vector
@@ -2855,7 +2858,8 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilter)
       EXPECT_EQ(result.metadata.schema_info[0].children[0].children[1].name, "element");
       EXPECT_EQ(result.tbl->get_column(0).type().id(), cudf::type_id::STRUCT);
       EXPECT_EQ(result.tbl->get_column(0).child(0).type().id(), cudf::type_id::LIST);
-      EXPECT_EQ(result.tbl->get_column(0).child(0).child(0).type().id(), cudf::type_id::INT32);
+      EXPECT_EQ(result.tbl->get_column(0).child(0).child(0).type().id(),
+                cudf::type_to_id<cudf::size_type>());
       EXPECT_EQ(result.tbl->get_column(0).child(0).child(1).type().id(), cudf::type_id::FLOAT32);
     }
     // multiple - all present
@@ -3169,7 +3173,8 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       EXPECT_EQ(result.tbl->get_column(2).type().id(), cudf::type_id::BOOL8);
       EXPECT_EQ(result.tbl->get_column(0).child(0).type().id(), cudf::type_id::STRING);
       EXPECT_EQ(result.tbl->get_column(0).child(1).type().id(), cudf::type_id::LIST);
-      EXPECT_EQ(result.tbl->get_column(0).child(1).child(0).type().id(), cudf::type_id::INT32);
+      EXPECT_EQ(result.tbl->get_column(0).child(1).child(0).type().id(),
+                cudf::type_to_id<cudf::size_type>());
       EXPECT_EQ(result.tbl->get_column(0).child(1).child(1).type().id(), cudf::type_id::FLOAT32);
     }
     //// schema with pruned columns and different order.
@@ -3276,7 +3281,8 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       EXPECT_EQ(result.metadata.schema_info[0].children[0].children[1].name, "element");
       EXPECT_EQ(result.tbl->get_column(0).type().id(), cudf::type_id::STRUCT);
       EXPECT_EQ(result.tbl->get_column(0).child(0).type().id(), cudf::type_id::LIST);
-      EXPECT_EQ(result.tbl->get_column(0).child(0).child(0).type().id(), cudf::type_id::INT32);
+      EXPECT_EQ(result.tbl->get_column(0).child(0).child(0).type().id(),
+                cudf::type_to_id<cudf::size_type>());
       EXPECT_EQ(result.tbl->get_column(0).child(0).child(1).type().id(), cudf::type_id::FLOAT32);
     }
     // multiple - all present

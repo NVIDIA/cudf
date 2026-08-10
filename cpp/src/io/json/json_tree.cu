@@ -10,6 +10,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
@@ -561,23 +562,29 @@ std::pair<size_t, rmm::device_uvector<size_type>> remapped_field_nodes_after_uni
   // insert and find. -> array
   // store to static_map with keys as field key[index], and values as key[array[index]]
 
-  auto str_view         = strings_column_view{utf8_decoded_fields->view()};
-  auto const char_ptr   = str_view.chars_begin(stream);
-  auto const offset_ptr = str_view.offsets().begin<size_type>();
+  auto str_view       = strings_column_view{utf8_decoded_fields->view()};
+  auto const char_ptr = str_view.chars_begin(stream);
+  // Offsets may be INT32 or INT64 depending on the char buffer size, so they cannot be read as
+  // a typed pointer.
+  auto const offset_ptr =
+    cudf::detail::offsetalator_factory::make_input_iterator(str_view.offsets(), str_view.offset());
 
   // String hasher
   auto const d_hasher = cuda::proclaim_return_type<
     typename cudf::hashing::detail::default_hash<cudf::string_view>::result_type>(
     [char_ptr, offset_ptr] __device__(auto node_id) {
-      auto const field_name = cudf::string_view(char_ptr + offset_ptr[node_id],
-                                                offset_ptr[node_id + 1] - offset_ptr[node_id]);
+      auto const field_name =
+        cudf::string_view(char_ptr + offset_ptr[node_id],
+                          static_cast<size_type>(offset_ptr[node_id + 1] - offset_ptr[node_id]));
       return cudf::hashing::detail::default_hash<cudf::string_view>{}(field_name);
     });
   auto const d_equal = [char_ptr, offset_ptr] __device__(auto node_id1, auto node_id2) {
-    auto const field_name1 = cudf::string_view(char_ptr + offset_ptr[node_id1],
-                                               offset_ptr[node_id1 + 1] - offset_ptr[node_id1]);
-    auto const field_name2 = cudf::string_view(char_ptr + offset_ptr[node_id2],
-                                               offset_ptr[node_id2 + 1] - offset_ptr[node_id2]);
+    auto const field_name1 =
+      cudf::string_view(char_ptr + offset_ptr[node_id1],
+                        static_cast<size_type>(offset_ptr[node_id1 + 1] - offset_ptr[node_id1]));
+    auto const field_name2 =
+      cudf::string_view(char_ptr + offset_ptr[node_id2],
+                        static_cast<size_type>(offset_ptr[node_id2 + 1] - offset_ptr[node_id2]));
     return field_name1 == field_name2;
   };
 

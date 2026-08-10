@@ -516,7 +516,7 @@ records_orient_tree_traversal_cpu(cudf::host_span<cuio_json::SymbolT const> inpu
 #endif
 
   // row_offsets
-  std::vector<int> row_offsets(tree.parent_node_ids.size(), 0);
+  std::vector<cudf::size_type> row_offsets(tree.parent_node_ids.size(), 0);
   std::unordered_map<int, int> col_id_current_offset;
   for (std::size_t i = 0; i < tree.parent_node_ids.size(); i++) {
     auto current_col_id = node_ids[i];

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import pylibcudf as plc
@@ -75,21 +75,9 @@ class PrefilterDecision:
     bloom_bytes: int | None = None
     exact_bytes: int | None = None
 
-    def trace_details(self) -> dict[str, str | int | None]:
-        """Return trace information common to every prefilter placement."""
-        return {
-            "method": self.method,
-            "reason": self.reason,
-            "target_bytes": self.target_bytes,
-            "domain_rows": self.domain_rows,
-            "estimated_cardinality": self.estimated_cardinality,
-            "bloom_bytes": self.bloom_bytes,
-            "exact_bytes": self.exact_bytes,
-        }
-
     def trace(self, prefilter: Prefilter) -> dict[str, str | int | None]:
         """Return serializable actor-trace information."""
-        result = self.trace_details()
+        result = asdict(self)
         result["target_side"] = prefilter.target_side
         if isinstance(prefilter.domain, JoinInputDomain):
             result["domain_side"] = prefilter.domain.side

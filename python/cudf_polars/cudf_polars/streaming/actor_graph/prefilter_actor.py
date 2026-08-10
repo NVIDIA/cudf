@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from cudf_streaming import CardinalityEstimator
@@ -112,7 +113,7 @@ async def pushdown_filter_actor(
                 broadcast_limit=executor.broadcast_limit,
                 bloom_filter_max_size=config.bloom_filter_max_size,
             )
-            trace: dict[str, Any] = decision.trace_details()
+            trace = asdict(decision)
             trace["placement"] = "standalone"
             trace["target_on"] = [key.name for key in ir.target_on]
             trace["domain_on"] = [key.name for key in ir.domain_on]

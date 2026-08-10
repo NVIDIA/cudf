@@ -13,7 +13,7 @@ import polars as pl
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataType
-from cudf_polars.dsl.expressions.aggregation import Agg
+from cudf_polars.dsl.expressions.aggregation import Agg, SortedAgg
 from cudf_polars.dsl.expressions.base import Col, ExecutionContext, NamedExpr
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.testing.asserts import (
@@ -524,6 +524,39 @@ def test_groupby_sort_by_drop_nulls_first_raises(
 
     q = df.group_by("g").agg(pl.col("val").sort_by("idx").drop_nulls().first())
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_groupby_sort_by_nested_agg_order_by_raises(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "B"],
+            "idx": [2, 1, 1],
+            "val": [30, 10, 20],
+        }
+    )
+
+    q = df.group_by("g").agg(pl.col("val").sort_by(pl.col("idx").max()).first())
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_sorted_agg_validation() -> None:
+    dtype = DataType(pl.Int64())
+    value = Col(dtype, "value")
+    by = Col(dtype, "by")
+    options = (False, (False,), (False,))
+
+    with pytest.raises(NotImplementedError, match="name='sum'"):
+        SortedAgg(dtype, "sum", options, value, by)
+    with pytest.raises(NotImplementedError, match="requires order-by expressions"):
+        SortedAgg(dtype, "first", (False, (), ()), value)
+    with pytest.raises(NotImplementedError, match="one null/descending option"):
+        SortedAgg(dtype, "first", (False, (False, False), (False,)), value, by)
+
+    sorted_agg = SortedAgg(dtype, "first", options, value, by)
+    with pytest.raises(NotImplementedError, match="pylibcudf aggregation request"):
+        _ = sorted_agg.agg_request
 
 
 @pytest.mark.xfail(reason="https://github.com/pola-rs/polars/issues/17513")

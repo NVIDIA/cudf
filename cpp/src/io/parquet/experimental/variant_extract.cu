@@ -723,12 +723,10 @@ struct cast_variant_fn {
     requires(is_variant_numerical<T>)
   {
     rmm::device_buffer data{num_rows * sizeof(T), stream, mr};
-
     auto grid = cudf::detail::grid_1d{num_rows, block_size};
     cast_variant_primitive_kernel<T><<<grid.num_blocks, block_size, 0, stream.value()>>>(
       values, {static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)}, d_null_mask);
     CUDF_CUDA_TRY(cudaGetLastError());
-
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return std::make_unique<column>(desired_type,
@@ -774,7 +772,6 @@ struct cast_variant_fn {
     cast_variant_string_fn fn{values, d_null_mask, nullptr, nullptr, {}};
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(fn, num_rows, stream, mr);
-
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return make_strings_column(num_rows,
@@ -926,6 +923,19 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                                      rmm::device_async_resource_ref mr)
 {
   validate_variant_child(values);
+
+  switch (desired_type.id()) {
+    case type_id::INT8:
+    case type_id::INT16:
+    case type_id::INT32:
+    case type_id::INT64:
+    case type_id::FLOAT32:
+    case type_id::FLOAT64:
+    case type_id::BOOL8:
+    case type_id::STRING: break;
+    default: CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
+  }
+
   size_type const num_rows = values.size();
   if (num_rows == 0) { return make_empty_column(desired_type); }
 

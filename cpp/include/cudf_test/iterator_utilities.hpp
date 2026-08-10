@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <iterator>
-#include <ranges>
 #include <vector>
 
 namespace CUDF_EXPORT cudf {
@@ -21,53 +20,54 @@ namespace test {
 namespace iterators {
 
 /**
- * @brief Bool range for marking (possibly multiple) null elements in a column_wrapper.
+ * @brief Bool iterator for marking (possibly multiple) null elements in a column_wrapper.
  *
- * The returned range yields `false` (to mark `null`) at all the specified indices,
+ * The returned iterator yields `false` (to mark `null`) at all the specified indices,
  * and yields `true` (to mark valid rows) for all other indices. E.g.
  *
  * @code
  * auto indices = std::vector<size_type>{8,9};
- * auto range = nulls_at(indices.cbegin(), indices.end());
- * range[6] == true;  // i.e. Valid row at index 6.
- * range[7] == true;  // i.e. Valid row at index 7.
- * range[8] == false; // i.e. Invalid row at index 8.
- * range[9] == false; // i.e. Invalid row at index 9.
+ * auto iter = nulls_at(indices.cbegin(), indices.end());
+ * iter[6] == true;  // i.e. Valid row at index 6.
+ * iter[7] == true;  // i.e. Valid row at index 7.
+ * iter[8] == false; // i.e. Invalid row at index 8.
+ * iter[9] == false; // i.e. Invalid row at index 9.
  * @endcode
  *
  * @tparam Iter Iterator type
  * @param index_start Iterator to start of indices for which the validity iterator
  *                    must return `false` (i.e. null)
  * @param index_end   Iterator to end of indices for the validity iterator
- * @return auto Validity range
+ * @return auto Validity iterator
  */
 template <typename Iter>
 [[maybe_unused]] static auto nulls_at(Iter index_start, Iter index_end)
 {
   using index_type = typename std::iterator_traits<Iter>::value_type;
 
-  return std::views::iota(cudf::size_type{0}) |
-         std::views::transform([indices = std::vector<index_type>{index_start, index_end}](auto i) {
-           return std::find(indices.cbegin(), indices.cend(), i) == indices.cend();
-         });
+  return cuda::transform_iterator(
+    cuda::counting_iterator<cudf::size_type>{0},
+    [indices = std::vector<index_type>{index_start, index_end}](auto i) {
+      return std::find(indices.cbegin(), indices.cend(), i) == indices.cend();
+    });
 }
 
 /**
- * @brief Bool range for marking (possibly multiple) null elements in a column_wrapper.
+ * @brief Bool iterator for marking (possibly multiple) null elements in a column_wrapper.
  *
- * The returned range yields `false` (to mark `null`) at all the specified indices,
+ * The returned iterator yields `false` (to mark `null`) at all the specified indices,
  * and yields `true` (to mark valid rows) for all other indices. E.g.
  *
  * @code
- * auto range = nulls_at({8,9});
- * range[6] == true;  // i.e. Valid row at index 6.
- * range[7] == true;  // i.e. Valid row at index 7.
- * range[8] == false; // i.e. Invalid row at index 8.
- * range[9] == false; // i.e. Invalid row at index 9.
+ * auto iter = nulls_at({8,9});
+ * iter[6] == true;  // i.e. Valid row at index 6.
+ * iter[7] == true;  // i.e. Valid row at index 7.
+ * iter[8] == false; // i.e. Invalid row at index 8.
+ * iter[9] == false; // i.e. Invalid row at index 9.
  * @endcode
  *
  * @param indices The indices for which the validity iterator must return `false` (i.e. null)
- * @return auto Validity range
+ * @return auto Validity iterator
  */
 [[maybe_unused]] static auto nulls_at(std::vector<cudf::size_type> const& indices)
 {
@@ -75,19 +75,19 @@ template <typename Iter>
 }
 
 /**
- * @brief Bool range for marking a single null element in a column_wrapper
+ * @brief Bool iterator for marking a single null element in a column_wrapper
  *
- * The returned range yields `false` (to mark `null`) at the specified index,
+ * The returned iterator yields `false` (to mark `null`) at the specified index,
  * and yields `true` (to mark valid rows) for all other indices. E.g.
  *
  * @code
- * auto range = null_at(8);
- * range[7] == true;  // i.e. Valid row at index 7.
- * range[8] == false; // i.e. Invalid row at index 8.
+ * auto iter = null_at(8);
+ * iter[7] == true;  // i.e. Valid row at index 7.
+ * iter[8] == false; // i.e. Invalid row at index 8.
  * @endcode
  *
  * @param index The index for which the validity iterator must return `false` (i.e. null)
- * @return auto Validity range
+ * @return auto Validity iterator
  */
 [[maybe_unused]] static auto null_at(cudf::size_type index)
 {

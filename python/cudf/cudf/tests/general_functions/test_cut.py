@@ -242,6 +242,7 @@ def test_cut_unique_bins_larger_than_integer_cache():
 
 def test_cut_duplicate_bins_with_distinct_large_integers():
     x = [1, 2]
+    # Construct equal bin edges independently so they are distinct objects.
     duplicate_edge = int("257")
     bins = [0, duplicate_edge, int("257"), 258]
 

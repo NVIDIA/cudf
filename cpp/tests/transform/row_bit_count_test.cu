@@ -655,7 +655,7 @@ TEST_F(RowBitCount, DepthJump)
 
   // expected size = (num rows at level 1 + num_rows at level 2) + (# values the leaf int column) +
   // 1 (value in topmost int column)
-  constexpr cudf::size_type offset_size = sizeof(cudf::size_type) * CHAR_BIT;
+  constexpr cudf::size_type offset_size = sizeof(int32_t) * CHAR_BIT;
   constexpr cudf::size_type type_size   = sizeof(T) * CHAR_BIT;
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{
     ((1 + 3) * offset_size) + (6 * type_size) + (1 * type_size),

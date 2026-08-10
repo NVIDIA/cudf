@@ -201,6 +201,12 @@ inline auto make_data_type()
   return cudf::data_type{cudf::type_to_id<T>()};
 }
 
+TEST(IsSupportedCast, StringToInt32IsUnsupported)
+{
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::STRING},
+                                       cudf::data_type{cudf::type_id::INT32}));
+}
+
 struct CastTimestampsSimple : public cudf::test::BaseFixture {};
 
 TEST_F(CastTimestampsSimple, IsIdempotent)

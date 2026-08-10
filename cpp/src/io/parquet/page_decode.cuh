@@ -57,15 +57,25 @@ struct page_decode_progress_state {
   int32_t row_index_lower_bound{};
 };
 
+// Output conversion scratch: values written by setup_local_page_info and read
+// by decode kernels to shape the output data type / timestamp scale. Grouped
+// so passes that need only the string byte size scan can pull in this subset
+// (see page_state_composed.cuh).
+struct page_decode_output_state {
+  int32_t dtype_len{};     // Output data type length
+  int32_t dtype_len_in{};  // Can be larger than dtype_len if truncating 32-bit into 8-bit
+  int32_t ts_scale{};      // timestamp scale: <0: divide by -ts_scale, >0: multiply by ts_scale
+};
+
 struct page_state_s {
   CUDF_HOST_DEVICE constexpr page_state_s() noexcept {}
   page_decode_setup_state setup{};
   page_decode_stream_state stream{};
-  int32_t dtype_len{};     // Output data type length
-  int32_t dtype_len_in{};  // Can be larger than dtype_len if truncating 32-bit into 8-bit
+  page_decode_output_state output_cvt{};
+  uint8_t const* lvl_end{};
+  int32_t first_output_value{};  // First value in page to output
 
   // (leaf) value decoding
-  int32_t ts_scale{};  // timestamp scale: <0: divide by -ts_scale, >0: multiply by ts_scale
   page_decode_progress_state progress{};
 
   // repetition/definition level decoding
@@ -588,7 +598,7 @@ __device__ size_type initialize_string_descriptors(page_state_s* s,
 
   // All group threads can participate for fixed len byte arrays.
   if (s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-    int const dtype_len_in = s->dtype_len_in;
+    int const dtype_len_in = s->output_cvt.dtype_len_in;
     total_len              = min((target_pos - pos) * dtype_len_in, dict_size - s->stream.dict_val);
     if constexpr (sizes_only == is_calc_sizes_only::NO) {
       for (pos += t, k += t * dtype_len_in; pos < target_pos; pos += group.size()) {
@@ -1225,30 +1235,30 @@ inline __device__ bool setup_local_page_info(auto* const s,
     if (s->setup.page.num_input_values > 0) {
       uint8_t* cur = s->setup.page.page_data;
       uint8_t* end = cur + s->setup.page.uncompressed_page_size;
-      if constexpr (requires { s->dtype_len; }) {
-        s->ts_scale = 0;
+      if constexpr (requires { s->output_cvt.dtype_len; }) {
+        s->output_cvt.ts_scale = 0;
         // Validate data type
         auto const data_type  = s->setup.col.physical_type;
         auto const is_decimal = s->setup.col.logical_type.has_value() and
                                 s->setup.col.logical_type->type == LogicalType::DECIMAL;
         switch (data_type) {
           case Type::BOOLEAN:
-            s->dtype_len = 1;  // Boolean are stored as 1 byte on the output
+            s->output_cvt.dtype_len = 1;  // Boolean are stored as 1 byte on the output
             break;
           case Type::INT32: [[fallthrough]];
-          case Type::FLOAT: s->dtype_len = 4; break;
+          case Type::FLOAT: s->output_cvt.dtype_len = 4; break;
           case Type::INT64:
             if (s->setup.col.ts_clock_rate) {
-              s->ts_scale =
+              s->output_cvt.ts_scale =
                 calc_timestamp_scale(s->setup.col.logical_type, s->setup.col.ts_clock_rate);
             }
             [[fallthrough]];
-          case Type::DOUBLE: s->dtype_len = 8; break;
-          case Type::INT96: s->dtype_len = 12; break;
+          case Type::DOUBLE: s->output_cvt.dtype_len = 8; break;
+          case Type::INT96: s->output_cvt.dtype_len = 12; break;
           case Type::BYTE_ARRAY:
             if (is_decimal) {
               auto const decimal_precision = s->setup.col.logical_type->precision();
-              s->dtype_len                 = [decimal_precision]() {
+              s->output_cvt.dtype_len      = [decimal_precision]() {
                 if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
                   return sizeof(int32_t);
                 } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
@@ -1258,19 +1268,21 @@ inline __device__ bool setup_local_page_info(auto* const s,
                 }
               }();
             } else {
-              s->dtype_len = sizeof(string_index_pair);
+              s->output_cvt.dtype_len = sizeof(string_index_pair);
             }
             break;
           default:  // FIXED_LEN_BYTE_ARRAY:
-            s->dtype_len = s->setup.col.type_length;
-            if (s->dtype_len <= 0) { s->set_error_code(decode_error::INVALID_DATA_TYPE); }
+            s->output_cvt.dtype_len = s->setup.col.type_length;
+            if (s->output_cvt.dtype_len <= 0) {
+              s->set_error_code(decode_error::INVALID_DATA_TYPE);
+            }
             break;
         }
         // Special check for downconversions
-        s->dtype_len_in = s->dtype_len;
+        s->output_cvt.dtype_len_in = s->output_cvt.dtype_len;
         if (data_type == Type::FIXED_LEN_BYTE_ARRAY) {
           if (is_decimal) {
-            s->dtype_len = [dtype_len = s->dtype_len]() {
+            s->output_cvt.dtype_len = [dtype_len = s->output_cvt.dtype_len]() {
               if (dtype_len <= sizeof(int32_t)) {
                 return sizeof(int32_t);
               } else if (dtype_len <= sizeof(int64_t)) {
@@ -1280,23 +1292,23 @@ inline __device__ bool setup_local_page_info(auto* const s,
               }
             }();
           } else {
-            s->dtype_len = sizeof(string_index_pair);
+            s->output_cvt.dtype_len = sizeof(string_index_pair);
           }
         } else if (data_type == Type::INT32) {
           // check for smaller bitwidths
           if (s->setup.col.logical_type.has_value()) {
             auto const& lt = *s->setup.col.logical_type;
             if (lt.type == LogicalType::INTEGER) {
-              s->dtype_len = lt.bit_width() / 8;
+              s->output_cvt.dtype_len = lt.bit_width() / 8;
             } else if (lt.is_time_millis()) {
               // cudf outputs as INT64
-              s->dtype_len = 8;
+              s->output_cvt.dtype_len = 8;
             }
           }
         } else if (data_type == Type::BYTE_ARRAY && s->setup.col.is_strings_to_cat) {
-          s->dtype_len = 4;  // HASH32 output
+          s->output_cvt.dtype_len = 4;  // HASH32 output
         } else if (data_type == Type::INT96) {
-          s->dtype_len = 8;  // Convert to 64-bit timestamp
+          s->output_cvt.dtype_len = 8;  // Convert to 64-bit timestamp
         }
 
         // during the decoding step we need to offset the global output buffers
@@ -1309,51 +1321,55 @@ inline __device__ bool setup_local_page_info(auto* const s,
         // s->setup.col.valid_map_base will be aliased to memory that has been freed when we get
         // here in the non-decode step, so we cannot check against nullptr.  we'll just check a flag
         // directly.
-        if (stage == page_processing_stage::DECODE) {
-          int max_depth = s->setup.col.max_nesting_depth;
-          for (int idx = 0; idx < max_depth; idx++) {
-            PageNestingDecodeInfo* nesting_info = &s->nesting_info[idx];
+        if constexpr (requires { s->nesting_info; }) {
+          if (stage == page_processing_stage::DECODE) {
+            int max_depth = s->setup.col.max_nesting_depth;
+            for (int idx = 0; idx < max_depth; idx++) {
+              PageNestingDecodeInfo* nesting_info = &s->nesting_info[idx];
 
-            size_t output_offset;
-            // schemas without lists
-            if (s->setup.col.max_level[level_type::REPETITION] == 0) {
-              output_offset = page_start_row >= min_row ? page_start_row - min_row : 0;
-            }
-            // for schemas with lists, we've already got the exact value precomputed
-            else {
-              output_offset = nesting_info->page_start_value;
-            }
-
-            if (s->setup.col.column_data_base != nullptr) {
-              nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
-              if (s->setup.col.column_string_base != nullptr) {
-                nesting_info->string_out =
-                  static_cast<uint8_t*>(s->setup.col.column_string_base[idx]);
+              size_t output_offset;
+              // schemas without lists
+              if (s->setup.col.max_level[level_type::REPETITION] == 0) {
+                output_offset = page_start_row >= min_row ? page_start_row - min_row : 0;
+              }
+              // for schemas with lists, we've already got the exact value precomputed
+              else {
+                output_offset = nesting_info->page_start_value;
               }
 
-              nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
+              if (s->setup.col.column_data_base != nullptr) {
+                nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
+                if (s->setup.col.column_string_base != nullptr) {
+                  nesting_info->string_out =
+                    static_cast<uint8_t*>(s->setup.col.column_string_base[idx]);
+                }
 
-              if (nesting_info->data_out != nullptr) {
-                // anything below max depth with a valid data pointer must be a list, so the
-                // element size is the size of the offset type.
-                uint32_t len = idx < max_depth - 1 ? sizeof(cudf::size_type) : s->dtype_len;
-                // if this is a string column, then dtype_len is a lie. data will be offsets rather
-                // than (ptr,len) tuples.
-                if (is_string_col(s->setup.col)) { len = sizeof(cudf::size_type); }
-                nesting_info->data_out += (output_offset * len);
-              }
-              if (nesting_info->string_out != nullptr) {
-                nesting_info->string_out += s->setup.page.str_offset;
-              }
-              nesting_info->valid_map = s->setup.col.valid_map_base[idx];
-              if (nesting_info->valid_map != nullptr) {
-                nesting_info->valid_map += output_offset >> 5;
-                nesting_info->valid_map_offset = (int32_t)(output_offset & 0x1f);
+                nesting_info->data_out = static_cast<uint8_t*>(s->setup.col.column_data_base[idx]);
+
+                if (nesting_info->data_out != nullptr) {
+                  // anything below max depth with a valid data pointer must be a list, so the
+                  // element size is the size of the offset type.
+                  uint32_t len =
+                    idx < max_depth - 1 ? sizeof(cudf::size_type) : s->output_cvt.dtype_len;
+                  // if this is a string column, then dtype_len is a lie. data will be offsets
+                  // rather than (ptr,len) tuples.
+                  if (is_string_col(s->setup.col)) { len = sizeof(cudf::size_type); }
+                  nesting_info->data_out += (output_offset * len);
+                }
+                if (nesting_info->string_out != nullptr) {
+                  nesting_info->string_out += s->setup.page.str_offset;
+                }
+                nesting_info->valid_map = s->setup.col.valid_map_base[idx];
+                if (nesting_info->valid_map != nullptr) {
+                  nesting_info->valid_map += output_offset >> 5;
+                  nesting_info->valid_map_offset = (int32_t)(output_offset & 0x1f);
+                }
               }
             }
           }
-        }
-      }
+        }  // if constexpr (requires { s->nesting_info; })
+        if constexpr (requires { s->first_output_value; }) { s->first_output_value = 0; }
+      }  // if constexpr (requires { s->output_cvt.dtype_len; })
 
       // Find the compressed size of repetition levels
       cur += InitLevelSection(s, cur, end, level_type::REPETITION);

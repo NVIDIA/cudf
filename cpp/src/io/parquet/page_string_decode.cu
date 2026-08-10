@@ -599,12 +599,12 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
                                          size_t min_row,
                                          size_t num_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) string_size_scan_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -630,7 +630,7 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
   // if data size is known, can short circuit here
   if (chunks[pp->chunk_idx].physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
     if (t == 0) {
-      pp->str_bytes = pp->num_valids * s->dtype_len_in;
+      pp->str_bytes = pp->num_valids * s->output_cvt.dtype_len_in;
 
       // only need temp space if we're skipping values
       if (start_value > 0) {
@@ -638,7 +638,7 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
         delta_binary_decoder db;
         db.init_binary_block(s->stream.data_start, s->stream.data_end);
         // save enough for one mini-block plus some extra to save the last_string
-        pp->temp_string_size = s->dtype_len_in * (db.values_per_mb + 1);
+        pp->temp_string_size = s->output_cvt.dtype_len_in * (db.values_per_mb + 1);
       }
     }
   } else {
@@ -695,13 +695,13 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
   using cudf::detail::warp_size;
   using WarpReduce = cub::WarpReduce<uleb128_t>;
   __shared__ typename WarpReduce::TempStorage temp_storage;
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) string_size_scan_state state_g;
   __shared__ __align__(16) delta_binary_decoder string_lengths;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -810,12 +810,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                                    size_t min_row,
                                    size_t num_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) string_size_scan_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -852,7 +852,7 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
   size_t str_bytes = 0;
   // short circuit for FIXED_LEN_BYTE_ARRAY
   if (col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-    str_bytes = pp->num_valids * s->dtype_len_in;
+    str_bytes = pp->num_valids * s->output_cvt.dtype_len_in;
   } else {
     // now process string info in the range [start_value, end_value)
     // set up for decoding strings...can be either plain or dictionary

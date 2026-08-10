@@ -32,6 +32,18 @@ struct level_scan_state {
   CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
 };
 
+// Shared memory state struct used by the compute_page_string_sizes,
+// compute_delta_page_string_sizes, and compute_delta_length_page_string_sizes kernels. Includes
+// setup (page metadata + error), stream (page bytes + dictionary), and output_cvt (dtype_len_in)
+// because these scans read the conversion scratch written by setup_local_page_info for
+// FIXED_LEN_BYTE_ARRAY size math but never walk nesting info or track progress counters.
+struct string_size_scan_state {
+  page_decode_setup_state setup;
+  page_decode_stream_state stream;
+  page_decode_output_state output_cvt;
+  CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
+};
+
 // Shared memory state struct used by the preprocess_string_offsets kernel.
 // Includes setup (page metadata + error), stream (page bytes + dictionary), and
 // progress (input counters) because this pass scans flat string payloads while tracking counts.
@@ -41,8 +53,6 @@ struct string_offset_scan_state {
   page_decode_progress_state progress;
   CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
 };
-static_assert(sizeof(string_offset_scan_state) < sizeof(page_state_s),
-              "string_offset_scan_state did not shrink after removing output conversion state");
 #undef CUDF_PARQUET_PAGE_STATE_ERROR_METHODS
 
 }  // namespace cudf::io::parquet::detail

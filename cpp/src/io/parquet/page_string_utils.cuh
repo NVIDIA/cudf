@@ -244,8 +244,8 @@ __device__ size_t decode_strings(page_state_s* s,
         int input_thread_string_offset;
         int string_length;
         if (s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-          input_thread_string_offset = src_pos * s->dtype_len_in;
-          string_length              = s->dtype_len_in;
+          input_thread_string_offset = src_pos * s->output_cvt.dtype_len_in;
+          string_length              = s->output_cvt.dtype_len_in;
         } else {
           input_thread_string_offset = str_offsets[src_pos];
           int const next_offset      = str_offsets[src_pos + 1];
@@ -288,7 +288,7 @@ __device__ size_t decode_strings(page_state_s* s,
 
     if constexpr (split_decode_t) {
       if (in_range) {
-        auto const split_string_length = s->dtype_len_in;
+        auto const split_string_length = s->output_cvt.dtype_len_in;
         auto const stream_length       = s->setup.page.str_bytes / split_string_length;
 
         for (int ii = 0; ii < split_string_length; ii++) {

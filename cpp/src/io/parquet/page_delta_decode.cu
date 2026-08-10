@@ -414,9 +414,10 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
         // place value for this thread
         if (dst_pos >= 0 && sp < target_pos) {
-          void* const dst = nesting_info_base[leaf_level_index].data_out + dst_pos * s->dtype_len;
-          auto const val  = db->value_at(sp + skipped_leaf_values);
-          switch (s->dtype_len) {
+          void* const dst =
+            nesting_info_base[leaf_level_index].data_out + dst_pos * s->output_cvt.dtype_len;
+          auto const val = db->value_at(sp + skipped_leaf_values);
+          switch (s->output_cvt.dtype_len) {
             case 1: *static_cast<int8_t*>(dst) = val; break;
             case 2: *static_cast<int16_t*>(dst) = val; break;
             case 4: *static_cast<int32_t*>(dst) = val; break;
@@ -435,8 +436,11 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
     auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(
-        s, s->dtype_len, init_valid_map_offset, num_values, static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_block_size>(s,
+                                                         s->output_cvt.dtype_len,
+                                                         init_valid_map_offset,
+                                                         num_values,
+                                                         static_cast<int>(block.thread_rank()));
     }
   }
 

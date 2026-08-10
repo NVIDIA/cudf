@@ -159,7 +159,7 @@ __device__ void decode_fixed_width_values(
   auto const data_out        = s->nesting_info[leaf_level_index].data_out;
 
   Type const dtype         = s->setup.col.physical_type;
-  uint32_t const dtype_len = s->dtype_len;
+  uint32_t const dtype_len = s->output_cvt.dtype_len;
 
   int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
@@ -200,9 +200,9 @@ __device__ void decode_fixed_width_values(
           read_fixed_width_value_fast(s, sb, src_pos, static_cast<uint2*>(dst));
           break;
         default:
-          if (s->dtype_len_in <= sizeof(int32_t)) {
+          if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
             read_fixed_width_byte_array_as_int(s, sb, src_pos, static_cast<int32_t*>(dst));
-          } else if (s->dtype_len_in <= sizeof(int64_t)) {
+          } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
             read_fixed_width_byte_array_as_int(s, sb, src_pos, static_cast<int64_t*>(dst));
           } else {
             read_fixed_width_byte_array_as_int(s, sb, src_pos, static_cast<__int128_t*>(dst));
@@ -214,7 +214,7 @@ __device__ void decode_fixed_width_values(
     } else if (dtype == Type::INT96) {
       read_int96_timestamp(s, sb, src_pos, static_cast<int64_t*>(dst));
     } else if (dtype_len == 8) {
-      if (s->dtype_len_in == 4) {
+      if (s->output_cvt.dtype_len_in == 4) {
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
         // TIME_MILLIS is the only duration type stored as int32:
         // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
@@ -222,7 +222,7 @@ __device__ void decode_fixed_width_values(
         read_fixed_width_value_fast(s, sb, src_pos, dst_ptr);
         // zero out most significant bytes
         cuda::std::memset(dst_ptr + 1, 0, sizeof(int32_t));
-      } else if (s->ts_scale) {
+      } else if (s->output_cvt.ts_scale) {
         read_int64_timestamp(s, sb, src_pos, static_cast<int64_t*>(dst));
       } else {
         read_fixed_width_value_fast(s, sb, src_pos, static_cast<uint2*>(dst));
@@ -253,12 +253,12 @@ __device__ inline void decode_fixed_width_split_values(
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
   // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->dtype_len_in <= 0 or data_len <= 0) {
+  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
     if (t == 0) { s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE); }
     return;
   }
 
-  auto const num_values = data_len / s->dtype_len_in;
+  auto const num_values = data_len / s->output_cvt.dtype_len_in;
 
   int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
@@ -288,7 +288,7 @@ __device__ inline void decode_fixed_width_split_values(
       }
     }();
 
-    uint32_t const dtype_len = s->dtype_len;
+    uint32_t const dtype_len = s->output_cvt.dtype_len;
     uint8_t const* const src = s->stream.data_start + src_pos;
     uint8_t* const dst       = data_out + static_cast<size_t>(dst_pos) * dtype_len;
     auto const is_decimal    = s->setup.col.logical_type.has_value() and
@@ -300,17 +300,17 @@ __device__ inline void decode_fixed_width_split_values(
         case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
         case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
         case Type::FIXED_LEN_BYTE_ARRAY:
-          if (s->dtype_len_in <= sizeof(int32_t)) {
+          if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
             gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int32_t*>(dst), src, num_values, s->dtype_len_in);
+              reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
             break;
-          } else if (s->dtype_len_in <= sizeof(int64_t)) {
+          } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
             gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->dtype_len_in);
+              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
             break;
-          } else if (s->dtype_len_in <= sizeof(__int128_t)) {
+          } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
             gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<__int128_t*>(dst), src, num_values, s->dtype_len_in);
+              reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
             break;
           }
           // unsupported decimal precision
@@ -319,15 +319,16 @@ __device__ inline void decode_fixed_width_split_values(
         default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
       }
     } else if (dtype_len == 8) {
-      if (s->dtype_len_in == 4) {
+      if (s->output_cvt.dtype_len_in == 4) {
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
         // TIME_MILLIS is the only duration type stored as int32:
         // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
         gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
         // zero out most significant bytes
         cuda::std::memset(dst + sizeof(int32_t), 0, sizeof(int32_t));
-      } else if (s->ts_scale) {
-        gpuOutputSplitInt64Timestamp(reinterpret_cast<int64_t*>(dst), src, num_values, s->ts_scale);
+      } else if (s->output_cvt.ts_scale) {
+        gpuOutputSplitInt64Timestamp(
+          reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.ts_scale);
       } else {
         gpuOutputByteStreamSplit<int64_t>(dst, src, num_values);
       }
@@ -1306,7 +1307,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
       uint32_t const dtype_len = [&]() -> uint32_t {
         if constexpr (is_dict_int32_t) { return sizeof(int32_t); }
         if constexpr (has_strings_t) { return sizeof(cudf::size_type); }
-        return s->dtype_len;
+        return s->output_cvt.dtype_len;
       }();
       int const num_values = [&]() {
         if constexpr (has_lists_t) {

@@ -81,10 +81,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const process_nulls  = should_process_nulls(s);
 
   auto const data_len   = cuda::std::distance(s->stream.data_start, s->stream.data_end);
-  auto const num_values = data_len / s->dtype_len_in;
+  auto const num_values = data_len / s->output_cvt.dtype_len_in;
 
   // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->dtype_len_in <= 0 or data_len <= 0) {
+  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
     cg::invoke_one(block, [&]() {
       set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE),
                 error_code);
@@ -161,7 +161,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         // nesting level that is storing actual leaf values
         int leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-        uint32_t dtype_len = s->dtype_len;
+        uint32_t dtype_len = s->output_cvt.dtype_len;
         uint8_t const* src = s->stream.data_start + val_src_pos;
         uint8_t* dst =
           nesting_info_base[leaf_level_index].data_out + static_cast<size_t>(dst_pos) * dtype_len;
@@ -174,17 +174,17 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
             case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
             case Type::FIXED_LEN_BYTE_ARRAY:
-              if (s->dtype_len_in <= sizeof(int32_t)) {
+              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
                 gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int32_t*>(dst), src, num_values, s->dtype_len_in);
+                  reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
                 break;
-              } else if (s->dtype_len_in <= sizeof(int64_t)) {
+              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
                 gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int64_t*>(dst), src, num_values, s->dtype_len_in);
+                  reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
                 break;
-              } else if (s->dtype_len_in <= sizeof(__int128_t)) {
+              } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
                 gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<__int128_t*>(dst), src, num_values, s->dtype_len_in);
+                  reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
                 break;
               }
               // unsupported decimal precision
@@ -193,16 +193,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
           }
         } else if (dtype_len == 8) {
-          if (s->dtype_len_in == 4) {
+          if (s->output_cvt.dtype_len_in == 4) {
             // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
             // TIME_MILLIS is the only duration type stored as int32:
             // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
             gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
             // zero out most significant bytes
             memset(dst + 4, 0, 4);
-          } else if (s->ts_scale) {
+          } else if (s->output_cvt.ts_scale) {
             gpuOutputSplitInt64Timestamp(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->ts_scale);
+              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.ts_scale);
           } else {
             gpuOutputByteStreamSplit<int64_t>(dst, src, num_values);
           }
@@ -226,8 +226,11 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     auto const& ni             = s->nesting_info[leaf_level_index];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(
-        s, s->dtype_len, init_valid_map_offset, num_values, static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_block_size>(s,
+                                                         s->output_cvt.dtype_len,
+                                                         init_valid_map_offset,
+                                                         num_values,
+                                                         static_cast<int>(block.thread_rank()));
     }
   }
 
@@ -398,7 +401,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         // nesting level that is storing actual leaf values
         int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-        uint32_t const dtype_len = s->dtype_len;
+        uint32_t const dtype_len = s->output_cvt.dtype_len;
         void* dst =
           nesting_info_base[leaf_level_index].data_out + static_cast<size_t>(dst_pos) * dtype_len;
 
@@ -427,9 +430,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
               read_fixed_width_value_fast(s, sb, val_src_pos, static_cast<uint2*>(dst));
               break;
             default:
-              if (s->dtype_len_in <= sizeof(int32_t)) {
+              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
                 read_fixed_width_byte_array_as_int(s, sb, val_src_pos, static_cast<int32_t*>(dst));
-              } else if (s->dtype_len_in <= sizeof(int64_t)) {
+              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
                 read_fixed_width_byte_array_as_int(s, sb, val_src_pos, static_cast<int64_t*>(dst));
               } else {
                 read_fixed_width_byte_array_as_int(
@@ -442,7 +445,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         } else if (dtype == Type::INT96) {
           read_int96_timestamp(s, sb, val_src_pos, static_cast<int64_t*>(dst));
         } else if (dtype_len == 8) {
-          if (s->dtype_len_in == 4) {
+          if (s->output_cvt.dtype_len_in == 4) {
             // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
             // TIME_MILLIS is the only duration type stored as int32:
             // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
@@ -450,7 +453,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             read_fixed_width_value_fast(s, sb, val_src_pos, dst_ptr);
             // zero out most significant bytes
             cuda::std::memset(dst_ptr + 1, 0, sizeof(int32_t));
-          } else if (s->ts_scale) {
+          } else if (s->output_cvt.ts_scale) {
             read_int64_timestamp(s, sb, val_src_pos, static_cast<int64_t*>(dst));
           } else {
             read_fixed_width_value_fast(s, sb, val_src_pos, static_cast<uint2*>(dst));
@@ -474,8 +477,11 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(
-        s, s->dtype_len, init_valid_map_offset, num_values, static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_block_size>(s,
+                                                         s->output_cvt.dtype_len,
+                                                         init_valid_map_offset,
+                                                         num_values,
+                                                         static_cast<int>(block.thread_rank()));
     }
   }
 

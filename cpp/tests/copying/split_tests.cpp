@@ -1255,7 +1255,7 @@ void split_nested_list_of_structs(SplitFunc Split, CompareFunc Compare, bool spl
 
   // wrap in a list
   std::vector<int> outer_offsets{0, 3, 4, 8, 13, 16, 17, 18};
-  cudf::test::fixed_width_column_wrapper<int> outer_offsets_col(outer_offsets.begin(),
+  cudf::test::fixed_width_column_wrapper<int32_t> outer_offsets_col(outer_offsets.begin(),
                                                                 outer_offsets.end());
   std::vector<bool> outer_validity{true, true, true, false, true, true, false};
   auto [outer_null_mask, outer_null_count] =
@@ -1802,7 +1802,8 @@ TEST_F(ContiguousSplitUntypedTest, OffsetAlignment)
     cudf::table_view tbl({str});
     for (size_t ridx = 0; ridx < row_index_start.size(); ridx++) {
       for (size_t cidx = 0; cidx < row_counts.size(); cidx++) {
-        std::vector<int> splits{row_index_start[ridx], row_index_start[ridx] + row_counts[cidx]};
+        std::vector<cudf::size_type> splits{row_index_start[ridx],
+                                            row_index_start[ridx] + row_counts[cidx]};
 
         auto res      = cudf::contiguous_split(tbl, splits);
         auto expected = cudf::split(tbl, splits);
@@ -1828,7 +1829,8 @@ TEST_F(ContiguousSplitUntypedTest, OffsetAlignment)
     cudf::table_view tbl({*long_str});
     for (size_t ridx = 0; ridx < row_index_start.size(); ridx++) {
       for (size_t cidx = 0; cidx < row_counts.size(); cidx++) {
-        std::vector<int> splits{row_index_start[ridx], row_index_start[ridx] + row_counts[cidx]};
+        std::vector<cudf::size_type> splits{row_index_start[ridx],
+                                            row_index_start[ridx] + row_counts[cidx]};
 
         auto res      = cudf::contiguous_split(tbl, splits);
         auto expected = cudf::split(tbl, splits);
@@ -2259,7 +2261,7 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitList)
 
   // list<struct<float>>
   {
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 2, 5, 7, 10, 12, 14, 17, 20};
+    cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 2, 5, 7, 10, 12, 14, 17, 20};
     cudf::test::fixed_width_column_wrapper<float> floats{1,  2,  3,  4,  5,  6,  7,  8,  9,  10,
                                                          11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
     cudf::test::structs_column_wrapper data({floats});
@@ -2320,7 +2322,7 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitStructs)
 
   // struct<list<struct>>
   {
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 2, 5, 7, 10, 12, 14, 17, 20};
+    cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 2, 5, 7, 10, 12, 14, 17, 20};
     cudf::test::fixed_width_column_wrapper<float> floats{1,  2,  3,  4,  5,  6,  7,  8,  9,  10,
                                                          11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
     cudf::test::structs_column_wrapper data({floats});
@@ -2352,7 +2354,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
   // nested inside a list
   {
     auto empty_string = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
-    auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets      = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0});
     auto list         = cudf::make_lists_column(
       1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
 
@@ -2372,7 +2374,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
   {
     cudf::test::strings_column_wrapper str{"abc"};
     auto empty_string = cudf::empty_like(str);
-    auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets      = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0});
     auto list         = cudf::make_lists_column(
       1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
 
@@ -2392,7 +2394,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
   {
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
-    auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0});
     auto list =
       cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
 
@@ -2412,7 +2414,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
   {
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
-    auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0});
     auto list =
       cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
 
@@ -2434,7 +2436,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::fixed_width_column_wrapper<float> floats{4, 3, 2, 1, 0};
     auto struct_column = cudf::test::structs_column_wrapper({ints, floats});
     auto empty_struct  = cudf::empty_like(struct_column);
-    auto offsets       = cudf::test::fixed_width_column_wrapper<int>({0, 0});
+    auto offsets       = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0});
     auto list          = cudf::make_lists_column(
       1, offsets.release(), std::move(empty_struct), 0, rmm::device_buffer{});
 
@@ -2738,7 +2740,7 @@ TEST_F(ContiguousSplitLongStrings, LongOffsets)
   }
 
   {
-    std::vector<int> splits{3, 7};
+    std::vector<cudf::size_type> splits{3, 7};
     auto res      = cudf::contiguous_split(tbl, splits);
     auto expected = cudf::split(tbl, splits);
 
@@ -2755,11 +2757,11 @@ TEST_F(ContiguousSplitLongStrings, LongOffsetsNested)
   children.push_back(make_long_offsets_string_column());
   cudf::test::structs_column_wrapper st(std::move(children));
 
-  cudf::test::fixed_width_column_wrapper<int> offsets{0, 3, 5, 7, 9, 10};
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 3, 5, 7, 9, 10};
   auto list = make_lists_column(5, offsets.release(), st.release(), 0, {});
 
   cudf::table_view tbl({*list});
-  std::vector<int> splits{2, 3};
+  std::vector<cudf::size_type> splits{2, 3};
   auto res      = cudf::contiguous_split(tbl, splits);
   auto expected = cudf::split(tbl, splits);
 
@@ -2772,7 +2774,7 @@ TEST_F(ContiguousSplitLongStrings, DISABLED_LongOffsetsAndChars)
 {
   auto str = make_long_offsets_and_chars_string_column();
 
-  std::vector<int> splits{3, 7};
+  std::vector<cudf::size_type> splits{3, 7};
   cudf::table_view tbl({*str});
   auto res      = cudf::contiguous_split(tbl, splits);
   auto expected = cudf::split(tbl, splits);
@@ -2784,12 +2786,12 @@ TEST_F(ContiguousSplitLongStrings, DISABLED_LongOffsetsAndChars)
 
 TEST_F(ContiguousSplitLongStrings, DISABLED_LongOffsetsAndCharsNested)
 {
-  cudf::test::fixed_width_column_wrapper<int> offsets{0, 3, 5, 7, 9, 10};
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 3, 5, 7, 9, 10};
   auto list =
     make_lists_column(5, offsets.release(), make_long_offsets_and_chars_string_column(), 0, {});
 
   cudf::table_view tbl({*list});
-  std::vector<int> splits{2, 3};
+  std::vector<cudf::size_type> splits{2, 3};
   auto res      = cudf::contiguous_split(tbl, splits);
   auto expected = cudf::split(tbl, splits);
 

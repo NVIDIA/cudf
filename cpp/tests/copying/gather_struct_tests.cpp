@@ -76,7 +76,7 @@ template <typename ElementTo,
 auto get_expected_column(std::vector<SourceElementT> const& input_values,
                          InputValidityIter input_validity,
                          StructValidityIter struct_validity,
-                         std::vector<int32_t> const& gather_map)
+                         gather_map_t const& gather_map)
 {
   auto is_valid =  // Validity predicate.
     [&input_values, &input_validity, &struct_validity, &gather_map](auto gather_index) {

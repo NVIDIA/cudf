@@ -346,6 +346,9 @@ struct OverflowTest : public cudf::test::BaseFixture {};
 
 TEST_F(OverflowTest, OverflowTest)
 {
+  if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+    GTEST_SKIP() << "This test constructs values around the 32-bit size_type limit";
+  }
   // should concatenate up to size_type::max rows.
   {
     // 5 x size + size_last adds to size_type::max
@@ -460,6 +463,9 @@ TEST_F(OverflowTest, OverflowTest)
 
 TEST_F(OverflowTest, Presliced)
 {
+  if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+    GTEST_SKIP() << "This test constructs values around the 32-bit size_type limit";
+  }
   // primitive column
   {
     constexpr auto size = static_cast<cudf::size_type>(static_cast<uint32_t>(1024) * 1024 * 1024);
@@ -508,7 +514,7 @@ TEST_F(OverflowTest, Presliced)
     // try and concatenate 4 string columns of with ~1/2 billion chars in each
     auto offset_gen = cudf::detail::make_counting_transform_iterator(
       0, [](cudf::size_type index) { return index * string_size; });
-    cudf::test::fixed_width_column_wrapper<int> offsets(offset_gen, offset_gen + num_rows + 1);
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(offset_gen, offset_gen + num_rows + 1);
     auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
     auto col        = cudf::make_strings_column(
       num_rows, offsets.release(), many_chars.release(), 0, rmm::device_buffer{});
@@ -851,7 +857,7 @@ TEST_F(StructsColumnTest, ConcatenateSplitStructs)
 {
   auto count_iter = cuda::counting_iterator<int>{0};
 
-  std::vector<int> splits({2});
+  std::vector<cudf::size_type> splits({2});
 
   // 1. String "names" column.
   std::vector<std::vector<std::string>> names(
@@ -1532,12 +1538,12 @@ TEST_F(ListsColumnTest, ListOfStructs)
   auto struct_views = std::vector<column_view>(
     {inner_structs[0], inner_structs[1], inner_structs[2], inner_structs[3]});
   auto expected_child = cudf::concatenate(struct_views);
-  cudf::test::fixed_width_column_wrapper<int> offsets_w{0, 1, 1, 1, 1, 4, 6, 6, 6, 10, 11};
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets_w{0, 1, 1, 1, 1, 4, 6, 6, 6, 10, 11};
   auto expected =
     make_lists_column(10, offsets_w.release(), std::move(expected_child), 0, rmm::device_buffer{});
 
   // lists
-  std::vector<cudf::test::fixed_width_column_wrapper<int>> offsets;
+  std::vector<cudf::test::fixed_width_column_wrapper<int32_t>> offsets;
   offsets.push_back({0, 1, 1, 1, 1, 4, 6, 6});
   offsets.push_back({0});
   offsets.push_back({0});

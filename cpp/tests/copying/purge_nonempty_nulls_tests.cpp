@@ -20,7 +20,8 @@ using cudf::test::iterators::null_at;
 using cudf::test::iterators::nulls_at;
 using T             = int32_t;  // The actual type of the leaf node isn't really important.
 using values_col_t  = cudf::test::fixed_width_column_wrapper<T>;
-using offsets_col_t = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+using offsets_col_t = cudf::test::fixed_width_column_wrapper<int32_t>;
+using string_offsets_col_t = cudf::test::fixed_width_column_wrapper<int32_t>;
 using gather_map_t  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 
 template <typename T>
@@ -354,7 +355,7 @@ TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
   test_purge(*strings);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::strings_column_view(*strings).offsets(),
-                                 offsets_col_t{0, 1, 3, 4, 6, 7, 9, 10, 14, 15, 19}
+                                 string_offsets_col_t{0, 1, 3, 4, 6, 7, 9, 10, 14, 15, 19}
                                  // 10-14 indicates that "8888" is unsanitized.
   );
 
@@ -401,7 +402,7 @@ TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
   // Ensure that "8888" has been sanitized, and stored as "".
   auto const child_strings_view = cudf::strings_column_view(results_lists_view.child());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(child_strings_view.offsets(),
-                                 offsets_col_t{0, 1, 2, 4, 5, 7, 7, 8, 12});
+                                 string_offsets_col_t{0, 1, 2, 4, 5, 7, 7, 8, 12});
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*result));
   EXPECT_FALSE(cudf::has_nonempty_nulls(*result));
 }

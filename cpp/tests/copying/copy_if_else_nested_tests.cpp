@@ -302,7 +302,7 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ListsWithNulls)
 
   auto result_column = cudf::copy_if_else(lhs->view(), rhs->view(), selector_column->view());
 
-  auto null_at_4_5 = nulls_at(std::vector{4, 5});
+  auto null_at_4_5 = nulls_at(std::vector<cudf::size_type>{4, 5});
 
   auto expected_output =
     lcw{{{0, 0}, {1, 1}, {22, 22}, lcw{{3, 3, 3}, null_at_0}, {}, {}, {6, 6, 6, 6, 6, 6}},
@@ -352,7 +352,7 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ListsWithStructs)
 
   auto result_column = cudf::copy_if_else(lhs->view(), rhs->view(), selector_column->view());
 
-  auto const null_at_6_9 = nulls_at(std::vector{6, 9});
+  auto const null_at_6_9 = nulls_at(std::vector<cudf::size_type>{6, 9});
   auto expected_ints     = ints{{0, 1, 0, 11, 22, 33, 4, 5, -1, 77}, null_at_8};
   auto expected_strings =
     strings{{"0", "1", "00", "11", "22", "33", "", "5", "66", ""}, null_at_6_9};

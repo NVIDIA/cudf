@@ -38,7 +38,6 @@
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
 #include <thrust/replace.h>
@@ -1046,7 +1045,7 @@ std::unique_ptr<column> compute_tdigests(int delta,
   cudf::mutable_column_view weight_col(*centroid_weights);
 
   // reduce the centroids into the clusters
-  auto output = thrust::make_zip_iterator(cuda::std::make_tuple(
+  auto output = cuda::make_zip_iterator(cuda::std::make_tuple(
     mean_col.begin<double>(), weight_col.begin<double>(), cuda::make_discard_iterator()));
 
   auto const num_values = std::distance(centroids_begin, centroids_end);
@@ -1180,8 +1179,8 @@ struct typed_group_tdigest {
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::counting_iterator<cudf::size_type>{0} + num_groups,
-      thrust::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
-                                                      max_col->mutable_view().begin<double>())),
+      cuda::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
+                                                    max_col->mutable_view().begin<double>())),
       get_scalar_minmax_grouped<T>{*d_col, group_offsets, group_valid_counts.data()});
 
     // for simple input values, the "centroids" all have a weight of 1.
@@ -1259,8 +1258,8 @@ struct typed_reduce_tdigest {
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::counting_iterator<cudf::size_type>{0} + 1,
-      thrust::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
-                                                      max_col->mutable_view().begin<double>())),
+      cuda::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
+                                                    max_col->mutable_view().begin<double>())),
       get_scalar_minmax<T>{*d_col, valid_count});
 
     // for simple input values, the "centroids" all have a weight of 1.
@@ -1451,7 +1450,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto merged_min_col = cudf::make_numeric_column(
     data_type{type_id::FLOAT64}, num_groups, mask_state::UNALLOCATED, stream, mr);
   auto min_iter =
-    thrust::make_transform_iterator(thrust::make_zip_iterator(cuda::std::make_tuple(
+    thrust::make_transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
                                       tdv.min_begin(), cudf::tdigest::detail::size_begin(tdv))),
                                     tdigest_min{});
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -1466,7 +1465,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto merged_max_col = cudf::make_numeric_column(
     data_type{type_id::FLOAT64}, num_groups, mask_state::UNALLOCATED, stream, mr);
   auto max_iter =
-    thrust::make_transform_iterator(thrust::make_zip_iterator(cuda::std::make_tuple(
+    thrust::make_transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
                                       tdv.max_begin(), cudf::tdigest::detail::size_begin(tdv))),
                                     tdigest_max{});
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

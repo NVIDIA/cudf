@@ -1,13 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/debug_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -16,6 +19,8 @@
 
 #include <cuda/iterator>
 #include <thrust/iterator/transform_iterator.h>
+
+#include <sstream>
 
 template <typename T>
 struct ColumnUtilitiesTest : public cudf::test::BaseFixture {
@@ -139,6 +144,58 @@ TEST_F(ColumnUtilitiesEquivalenceTest, NullabilityTest)
   cudf::test::fixed_width_column_wrapper<double> col2({1, 2, 3}, all_valid);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(col1, col2);
+}
+
+TEST_F(ColumnUtilitiesEquivalenceTest, DistinctMemoryResources)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> lhs{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int32_t> rhs{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int32_t> nullable({1, 2, 3, 4}, {true, false, true, true});
+  cudf::test::strings_column_wrapper strings{"one", "two", "three", "four"};
+  cudf::test::fixed_point_column_wrapper<int32_t> decimals({123, 456}, numeric::scale_type{-2});
+  cudf::column_view const lhs_view = lhs;
+  cudf::column_view const rhs_view = rhs;
+  auto const sliced                = cudf::slice(nullable, {1, 4}).front();
+  auto const table                 = cudf::table_view{{lhs_view, rhs_view}};
+
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const mr     = harness.resources();
+  auto const stream = cudf::test::get_default_stream();
+
+  CUDF_TEST_EXPECT_COLUMN_PROPERTIES_EQUAL(
+    lhs, rhs, cudf::test::debug_output_level::QUIET, stream, mr);
+  CUDF_TEST_EXPECT_COLUMN_PROPERTIES_EQUIVALENT(
+    lhs, rhs, cudf::test::debug_output_level::QUIET, stream, mr);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(lhs, rhs, cudf::test::debug_output_level::QUIET, stream, mr);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    lhs, rhs, cudf::test::debug_output_level::QUIET, cudf::test::default_ulp, stream, mr);
+  CUDF_TEST_EXPECT_EQUAL_BUFFERS(lhs_view.data<int32_t>(),
+                                 rhs_view.data<int32_t>(),
+                                 lhs_view.size() * sizeof(int32_t),
+                                 stream,
+                                 mr);
+
+  static_cast<void>(cudf::test::bitmask_to_host(sliced, stream, mr));
+  static_cast<void>(cudf::test::to_host<int32_t>(sliced, stream, mr));
+  static_cast<void>(cudf::test::to_host<std::string>(strings, stream, mr));
+  static_cast<void>(cudf::test::to_host<numeric::decimal32>(decimals, stream, mr));
+
+  CUDF_TEST_EXPECT_TABLE_PROPERTIES_EQUAL(table, table);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table, table, stream, mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table, table, stream, mr);
+
+  static_cast<void>(cudf::test::to_strings(sliced, stream, mr));
+  static_cast<void>(cudf::test::to_string(sliced, ",", stream, mr));
+  std::ostringstream output;
+  cudf::test::print(sliced, output, stream, mr);
+
+  // These validation utilities allocate no output and route temporaries to the temporary MR.
+  harness.expect_resource_usage(
+    /*expected_output_bytes=*/0,
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+  harness.expect_no_live_allocations(stream);
 }
 
 struct ColumnUtilitiesStringsTest : public cudf::test::BaseFixture {};

@@ -23,7 +23,6 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -140,7 +139,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // Fused compaction: for each unmatched right row, emit (JoinNoMatch, right_idx) into
   // (left_out_tail, right_out_tail) in a single CUB DeviceSelect pass.
   auto zip_tail =
-    thrust::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
+    cuda::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
   auto out_iter = cuda::make_transform_output_iterator(zip_tail, to_no_match_pair{});
 
   auto const new_end =

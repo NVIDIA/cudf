@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -53,7 +53,9 @@ namespace {
 // helper function for column_device_view::create and mutable_column_device::create methods
 template <typename ColumnView, typename ColumnDeviceView>
 std::unique_ptr<ColumnDeviceView, std::function<void(ColumnDeviceView*)>>
-create_device_view_from_view(ColumnView const& source, rmm::cuda_stream_view stream)
+create_device_view_from_view(ColumnView const& source,
+                             rmm::cuda_stream_view stream,
+                             rmm::device_async_resource_ref mr)
 {
   size_type num_children = source.num_children();
   // First calculate the size of memory needed to hold the child columns. This is done by calling
@@ -73,7 +75,8 @@ create_device_view_from_view(ColumnView const& source, rmm::cuda_stream_view str
   // Each ColumnDeviceView instance may have child objects that
   // require setting some internal device pointers before being copied
   // from CPU to device.
-  auto const descendant_storage = new rmm::device_uvector<char>(descendant_storage_bytes, stream);
+  auto const descendant_storage =
+    new rmm::device_uvector<char>(descendant_storage_bytes, stream, mr);
 
   auto deleter = [descendant_storage](ColumnDeviceView* v) {
     v->destroy();
@@ -108,7 +111,9 @@ column_device_view::column_device_view(column_view source, void* h_ptr, void* d_
 
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>
-column_device_view::create(column_view source, rmm::cuda_stream_view stream)
+column_device_view::create(column_view source,
+                           rmm::cuda_stream_view stream,
+                           rmm::device_async_resource_ref mr)
 {
   size_type num_children = source.num_children();
   if (num_children == 0) {
@@ -116,7 +121,7 @@ column_device_view::create(column_view source, rmm::cuda_stream_view stream)
     return std::unique_ptr<column_device_view>(new column_device_view(source));
   }
 
-  return create_device_view_from_view<column_view, column_device_view>(source, stream);
+  return create_device_view_from_view<column_view, column_device_view>(source, stream, mr);
 }
 
 std::size_t column_device_view::extent(column_view const& source)
@@ -160,12 +165,14 @@ void mutable_column_device_view::destroy() { delete this; }
 
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>
-mutable_column_device_view::create(mutable_column_view source, rmm::cuda_stream_view stream)
+mutable_column_device_view::create(mutable_column_view source,
+                                   rmm::cuda_stream_view stream,
+                                   rmm::device_async_resource_ref mr)
 {
   return source.num_children() == 0
            ? std::unique_ptr<mutable_column_device_view>(new mutable_column_device_view(source))
-           : create_device_view_from_view<mutable_column_view, mutable_column_device_view>(source,
-                                                                                           stream);
+           : create_device_view_from_view<mutable_column_view, mutable_column_device_view>(
+               source, stream, mr);
 }
 
 std::size_t mutable_column_device_view::extent(mutable_column_view source)

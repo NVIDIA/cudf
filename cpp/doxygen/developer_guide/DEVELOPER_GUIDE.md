@@ -1578,7 +1578,7 @@ the null masks of both struct fields.
 ## Dictionary columns
 
 Dictionaries provide an efficient way to represent low-cardinality data by storing a single copy
-of each value. A dictionary comprises a column of distinct keys and a column containing an index into
+of each value. A dictionary comprises a column of keys and a column containing an index into
 the keys column for each row of the parent column. The keys column may have any fixed-width data_type
 or STRING data_type. The indices represent the corresponding positions of each
 element's value in the keys. The indices child column can have any signed integer type
@@ -1589,8 +1589,11 @@ input column will produce equivalent dictionary columns but the keys may be in a
 and therefore the indices will not match as well. Using `cudf::dictionary::decode()` on both dictionary
 columns should produce the same result.
 
-Although `cudf::make_dictionary_column()` expects distinct keys, the API does not enforce this constraint.
-Using a dictionary column with non-distinct keys in libcudf APIs may result in undefined behavior.
+The libcudf APIs also accept dictionary columns with non-unique keys.
+However, output dictionary columns will generally contain unique keys in an unspecified order.
+The exceptions are `cudf::make_dictionary_column()`, which accepts keys and indices without
+changing them, and `cudf::dictionary::set_keys()`, which strictly honors the given keys
+(both order and duplicates).
 
 ## Nested column challenges
 

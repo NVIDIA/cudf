@@ -366,35 +366,6 @@ filter_join_indices(cudf::table_view const& left,
                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Filters join result indices based on a conditional predicate and join type.
- *
- * @deprecated Use the overload that accepts an optional output size instead.
- *
- * @param left The left table for predicate evaluation (conditional columns only).
- * @param right The right table for predicate evaluation (conditional columns only).
- * @param left_indices Device span of row indices in the left table from hash join.
- * @param right_indices Device span of row indices in the right table from hash join.
- * @param predicate An AST expression that returns a boolean for each pair of rows.
- * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
- * @param stream CUDA stream used for kernel launches and memory operations.
- * @param mr Device memory resource used to allocate output indices.
- *
- * @return A pair of device vectors [filtered_left_indices, filtered_right_indices]
- *         corresponding to rows that satisfy the join semantics and predicate.
- */
-[[deprecated("Use the overload that takes an optional output_size parameter.")]]
-std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-          std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices(cudf::table_view const& left,
-                    cudf::table_view const& right,
-                    cudf::device_span<size_type const> left_indices,
-                    cudf::device_span<size_type const> right_indices,
-                    cudf::ast::expression const& predicate,
-                    cudf::join_kind join_kind,
-                    rmm::cuda_stream_view stream,
-                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
  * @brief Returns the exact output size of `filter_join_indices` without materializing
  *        the filtered index vectors.
  *

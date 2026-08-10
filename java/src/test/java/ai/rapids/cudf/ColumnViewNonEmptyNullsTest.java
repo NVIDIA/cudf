@@ -16,6 +16,7 @@ import java.util.Optional;
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -61,6 +62,15 @@ public class ColumnViewNonEmptyNullsTest extends CudfTestBase {
       assertColumnsAreEqual(v2, intResultv0v1v2);
       assertColumnsAreEqual(stringExpected, stringResult);
       assertColumnsAreEqual(v3, noMaskResult);
+    }
+  }
+
+  @Test
+  void testMergeWithNoColumnsIsNoOp() {
+    try (ColumnVector v0 = ColumnVector.fromBoxedInts(0, 100, null, null, Integer.MIN_VALUE, null);
+         ColumnVector result = v0.mergeAndSetValidity(BinaryOp.BITWISE_AND)) {
+      assertSame(v0, result);
+      assertEquals(3, result.getNullCount());
     }
   }
 

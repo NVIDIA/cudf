@@ -28,7 +28,6 @@
 #include <cuda/std/utility>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <thrust/unique.h>
@@ -166,16 +165,16 @@ reduce_to_column_tree(tree_meta_t const& tree,
 
   thrust::copy_n(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    thrust::make_zip_iterator(
+    cuda::make_zip_iterator(
       cuda::make_permutation_iterator(tree.node_levels.begin(), unique_node_ids.begin()),
       cuda::make_permutation_iterator(tree.parent_node_ids.begin(), unique_node_ids.begin()),
       cuda::make_permutation_iterator(tree.node_range_begin.begin(), unique_node_ids.begin()),
       cuda::make_permutation_iterator(tree.node_range_end.begin(), unique_node_ids.begin())),
     unique_node_ids.size(),
-    thrust::make_zip_iterator(column_levels.begin(),
-                              parent_col_ids.begin(),
-                              col_range_begin.begin(),
-                              col_range_end.begin()));
+    cuda::make_zip_iterator(column_levels.begin(),
+                            parent_col_ids.begin(),
+                            col_range_begin.begin(),
+                            col_range_end.begin()));
 
   // convert parent_node_ids to parent_col_ids
   thrust::transform(
@@ -343,7 +342,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
         auto [normalized_d_input, col_offsets, col_lengths] =
           cudf::io::json::detail::normalize_whitespace(
             d_input, json_col.string_offsets, json_col.string_lengths, stream, mr);
-        auto offset_length_it = thrust::make_zip_iterator(col_offsets.begin(), col_lengths.begin());
+        auto offset_length_it = cuda::make_zip_iterator(col_offsets.begin(), col_lengths.begin());
         target_type           = data_type{type_id::STRING};
         // Convert strings to the inferred data type
         col = parse_data(normalized_d_input.data(),
@@ -356,8 +355,8 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
                          stream,
                          mr);
       } else {
-        auto offset_length_it = thrust::make_zip_iterator(json_col.string_offsets.begin(),
-                                                          json_col.string_lengths.begin());
+        auto offset_length_it =
+          cuda::make_zip_iterator(json_col.string_offsets.begin(), json_col.string_lengths.begin());
         if (schema.has_value()) {
 #ifdef NJP_DEBUG_PRINT
           std::cout << "-> explicit type: "

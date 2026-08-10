@@ -143,6 +143,9 @@ TEST_F(DLPackUntypedTests, UnsupportedDimsFromDlpack)
 
 TEST_F(DLPackUntypedTests, TooManyRowsFromDlpack)
 {
+  if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+    GTEST_SKIP() << "DLPack dimensions cannot exceed a 64-bit cudf::size_type";
+  }
   cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4});
   cudf::table_view input({col});
   unique_managed_tensor tensor(cudf::to_dlpack(input));
@@ -155,6 +158,9 @@ TEST_F(DLPackUntypedTests, TooManyRowsFromDlpack)
 
 TEST_F(DLPackUntypedTests, TooManyColsFromDlpack)
 {
+  if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+    GTEST_SKIP() << "DLPack dimensions cannot exceed a 64-bit cudf::size_type";
+  }
   cudf::test::fixed_width_column_wrapper<int32_t> col1({1, 2, 3, 4});
   cudf::test::fixed_width_column_wrapper<int32_t> col2({5, 6, 7, 8});
   cudf::table_view input({col1, col2});

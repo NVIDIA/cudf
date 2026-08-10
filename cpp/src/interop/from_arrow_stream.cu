@@ -42,7 +42,7 @@ std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
     }
     case type_id::LIST: {
       return cudf::make_lists_column(0,
-                                     cudf::make_empty_column(data_type{type_id::INT32}),
+                                     cudf::make_empty_column(data_type{type_to_id<size_type>()}),
                                      make_empty_column_from_schema(schema->children[0], stream, mr),
                                      0,
                                      {});

@@ -238,7 +238,7 @@ TEST_F(FromArrowTest, StructColumn)
       .release();
   auto str_col2 =
     cudf::test::strings_column_wrapper{{"", "ROCKS", ""}, {false, true, false}}.release();
-  int num_rows{str_col->size()};
+  cudf::size_type num_rows{str_col->size()};
   auto int_col = cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{48, 27, 25}}.release();
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {true, false, true}}

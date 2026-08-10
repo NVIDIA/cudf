@@ -17,6 +17,7 @@
 #include <cudf/interop.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
+#include <cudf/unary.hpp>
 
 std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, generated_test_data>
 get_nanoarrow_cudf_table(cudf::size_type length)
@@ -44,7 +45,7 @@ get_nanoarrow_cudf_table(cudf::size_type length)
     cudf::test::fixed_width_column_wrapper<int64_t>(test_data.list_int64_data.begin(),
                                                     test_data.list_int64_data.end(),
                                                     test_data.list_int64_data_validity.begin());
-  auto list_offsets_column = cudf::test::fixed_width_column_wrapper<int32_t>(
+  auto list_offsets_column = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
     test_data.list_offsets.begin(), test_data.list_offsets.end());
   auto [list_mask, list_nulls] = cudf::bools_to_mask(cudf::test::fixed_width_column_wrapper<bool>(
     test_data.list_validity.begin(), test_data.list_validity.end()));
@@ -212,7 +213,14 @@ void populate_list_from_col(ArrowArray* arr, cudf::lists_column_view view)
 
   NANOARROW_THROW_NOT_OK(ArrowBufferSetAllocator(ArrowArrayBuffer(arr, 1), noop_alloc));
   ArrowArrayBuffer(arr, 1)->size_bytes = sizeof(int32_t) * view.offsets().size();
-  ArrowArrayBuffer(arr, 1)->data       = const_cast<uint8_t*>(view.offsets().data<uint8_t>());
+  if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+    static std::vector<std::unique_ptr<cudf::column>> arrow_offsets;
+    arrow_offsets.push_back(cudf::cast(view.offsets(), cudf::data_type{cudf::type_id::INT32}));
+    ArrowArrayBuffer(arr, 1)->data =
+      const_cast<uint8_t*>(arrow_offsets.back()->view().data<uint8_t>());
+  } else {
+    ArrowArrayBuffer(arr, 1)->data = const_cast<uint8_t*>(view.offsets().data<uint8_t>());
+  }
 }
 
 struct BaseArrowFixture : public cudf::test::BaseFixture {
@@ -271,6 +279,17 @@ struct BaseArrowFixture : public cudf::test::BaseFixture {
       if (schema_view.type == NANOARROW_TYPE_BOOL) {
         size_t const nbytes = (expected->length + 7) >> 3;
         compare_device_buffers(nbytes, 1, expected, actual);
+      } else if constexpr (CUDF_SIZE_TYPE_BITS == 64) {
+        if (schema_view.type == NANOARROW_TYPE_LIST) {
+          compare_device_buffers(sizeof(int32_t) * (expected->length + 1), 1, expected, actual);
+        } else if (schema_view.type == NANOARROW_TYPE_DECIMAL128) {
+          size_t const nbytes = (expected->length * sizeof(__int128_t));
+          compare_device_buffers(nbytes, 1, expected, actual);
+        } else {
+          for (int i = 1; i < expected->n_buffers; ++i) {
+            EXPECT_EQ(expected->buffers[i], actual->buffers[i]);
+          }
+        }
       } else if (schema_view.type == NANOARROW_TYPE_DECIMAL128) {
         size_t const nbytes = (expected->length * sizeof(__int128_t));
         compare_device_buffers(nbytes, 1, expected, actual);
@@ -560,7 +579,7 @@ TEST_F(ToArrowDeviceTest, StructColumn)
       .release();
   auto str_col2 =
     cudf::test::strings_column_wrapper{{"CUDF", "ROCKS", "EVERYWHERE"}, {0, 1, 0}}.release();
-  int num_rows{str_col->size()};
+  cudf::size_type num_rows{str_col->size()};
   auto int_col = cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{48, 27, 25}}.release();
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();

@@ -87,7 +87,8 @@ std::pair<std::unique_ptr<cudf::table>, std::shared_ptr<arrow::Table>> get_table
   auto list_child_column = cudf::test::fixed_width_column_wrapper<int64_t>(
     list_int64_data.begin(), list_int64_data.end(), list_int64_data_validity.begin());
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<int32_t>(list_offsets.begin(), list_offsets.end());
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(list_offsets.begin(),
+                                                            list_offsets.end());
   auto [list_mask, list_nulls] = cudf::bools_to_mask(
     cudf::test::fixed_width_column_wrapper<bool>(list_validity.begin(), list_validity.end()));
   columns.emplace_back(cudf::make_lists_column(length,
@@ -278,7 +279,7 @@ TEST_F(ToArrowTest, StructColumn)
       .release();
   auto str_col2 =
     cudf::test::strings_column_wrapper{{"CUDF", "ROCKS", "EVERYWHERE"}, {0, 1, 0}}.release();
-  int num_rows{str_col->size()};
+  cudf::size_type num_rows{str_col->size()};
   auto int_col = cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{48, 27, 25}}.release();
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();

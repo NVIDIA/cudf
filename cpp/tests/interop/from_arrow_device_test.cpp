@@ -280,7 +280,7 @@ TEST_F(FromArrowDeviceTest, StructColumn)
       "Samuel Vimes", "Carrot Ironfoundersson", "Angua von Überwald"}
       .release();
   auto str_col2 = cudf::test::strings_column_wrapper{{"", "ROCKS", ""}, {0, 1, 0}}.release();
-  int num_rows{str_col->size()};
+  cudf::size_type num_rows{str_col->size()};
   auto int_col = cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{48, 27, 25}}.release();
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();
@@ -408,7 +408,7 @@ TEST_F(FromArrowDeviceTest, StructColumn)
     // there's one boolean column so we should have one "owned_mem" column in the
     // returned unique_ptr's custom deleter
     cudf::custom_view_deleter<cudf::table_view> const& deleter = got_cudf_table_view.get_deleter();
-    EXPECT_EQ(deleter.owned_mem_.size(), 1);
+    EXPECT_EQ(deleter.owned_mem_.size(), CUDF_SIZE_TYPE_BITS == 64 ? 3 : 1);
   }
 
   auto got_cudf_col = cudf::from_arrow_device_column(input_schema.get(), &input_device_array);
@@ -421,7 +421,7 @@ TEST_F(FromArrowDeviceTest, StructColumn)
     // there's one boolean column so we should have one "owned_mem" column in the
     // returned unique_ptr's custom deleter
     cudf::custom_view_deleter<cudf::column_view> const& deleter = got_cudf_col.get_deleter();
-    EXPECT_EQ(deleter.owned_mem_.size(), 1);
+    EXPECT_EQ(deleter.owned_mem_.size(), CUDF_SIZE_TYPE_BITS == 64 ? 3 : 1);
   }
 }
 

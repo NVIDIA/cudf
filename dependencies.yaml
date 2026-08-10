@@ -1059,7 +1059,7 @@ dependencies:
       - output_types: [conda, requirements, pyproject]
         packages:
           - fsspec>=0.6.0
-          - &pandas pandas>=3.0.0
+          - &pandas pandas>=3.0.0,<3.1.0
   run_pylibcudf:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -1182,11 +1182,11 @@ dependencies:
           - matrix: {dependencies: "oldest"}
             packages:
               - numba==0.60.0
-              - pandas==3.0.*
+              - *pandas
               - numba-cuda==0.22.2
           - matrix: {dependencies: "latest"}
             packages:
-              - pandas==3.0.3
+              - *pandas
           - matrix:
             packages:
       - output_types: conda
@@ -1326,10 +1326,6 @@ dependencies:
           - zstandard
           # Used by ci/timeout_with_stack.py utility
           - psutil
-          # The polars test suite constructs pandas objects for interop and
-          # dask-cuda pulls pandas in transitively (unbounded), so constrain it
-          # here to exclude the 3.0.4 release that segfaults on pd.Timedelta
-          # (https://github.com/pandas-dev/pandas/issues/66086).
           - *pandas
       - output_types: conda
         packages:
@@ -1903,7 +1899,7 @@ dependencies:
               pandas_compat_version: "3.0"
             packages:
               - numpy>=2.0,<3.0
-              - pandas==3.0.*
+              - *pandas
           - matrix:
             packages:
   test_cudf_polars_compat:

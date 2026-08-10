@@ -356,9 +356,9 @@ def pytest_configure(config: pytest.Config):
     # pytest 9, these surface as unraisable `ResourceWarning`s and, combined
     # with `filterwarnings = ["error", ...]` in pyproject.toml, fail
     # otherwise-unrelated tests when the GC finalizer happens to fire during
-    # them. With `pytest-xdist --dist=worksteal`, the leak can land in any
-    # test that shares a worker with a ray/dask test, so the suppression must
-    # apply globally rather than per-module.
+    # them. With pytest-xdist, the leak can land in any test that shares a
+    # worker with a ray/dask test, so the suppression must apply globally
+    # rather than per-module.
     config.addinivalue_line("filterwarnings", "ignore::ResourceWarning")
     # https://github.com/open-telemetry/opentelemetry-python/issues/5231 (used by Ray)
     config.addinivalue_line("filterwarnings", "ignore::DeprecationWarning")
@@ -383,9 +383,18 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
     else:
         raise AssertionError("Unknown engine fixture")
 
+    # Group by full engine param id so each variant (including ``spmd`` vs
+    # ``spmd-small``) stays on one xdist worker when using ``--dist=loadgroup``.
+    params = [
+        pytest.param(
+            eng,
+            marks=pytest.mark.xdist_group(eng),
+        )
+        for eng in engines
+    ]
     metafunc.parametrize(
         "_engine_param",
-        engines,
+        params,
         indirect=True,
         ids=engines,
         scope="session",

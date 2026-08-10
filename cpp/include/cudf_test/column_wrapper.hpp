@@ -1569,7 +1569,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    */
   static lists_column_wrapper<T> make_one_empty_row_column(bool valid = true)
   {
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 0};
+    cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 0};
     cudf::test::fixed_width_column_wrapper<int> values{};
     return lists_column_wrapper<T>(
       1,
@@ -1638,21 +1638,21 @@ class lists_column_wrapper : public detail::column_wrapper {
 
     // generate offsets
     size_type count = 0;
-    std::vector<size_type> offsetv;
+    std::vector<int32_t> offsetv;
     std::transform(cols.cbegin(),
                    cols.cend(),
                    valids,
                    std::back_inserter(offsetv),
                    [&](cudf::column_view const& col, bool valid) {
                      // nulls are represented as a repeated offset
-                     size_type ret = count;
+                     int32_t ret = static_cast<int32_t>(count);
                      if (valid) { count += col.size(); }
                      return ret;
                    });
     // add the final offset
     offsetv.push_back(count);
     auto offsets =
-      cudf::test::fixed_width_column_wrapper<size_type>(offsetv.begin(), offsetv.end()).release();
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsetv.begin(), offsetv.end()).release();
 
     // concatenate them together, skipping children that are null.
     std::vector<column_view> children;
@@ -1692,13 +1692,13 @@ class lists_column_wrapper : public detail::column_wrapper {
     CUDF_EXPECTS(c->type().id() == type_id::EMPTY || !cudf::is_nested(c->type()),
                  "Unexpected type");
 
-    std::vector<size_type> offsetv;
+    std::vector<int32_t> offsetv;
     if (c->size() > 0) {
       offsetv.push_back(0);
       offsetv.push_back(c->size());
     }
     auto offsets =
-      cudf::test::fixed_width_column_wrapper<size_type>(offsetv.begin(), offsetv.end()).release();
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsetv.begin(), offsetv.end()).release();
 
     // construct the list column. mark this as a root
     root  = true;

@@ -16,6 +16,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/list_view.hpp>
 #include <cudf/structs/struct_view.hpp>
 #include <cudf/table/table_device_view.cuh>
@@ -115,7 +116,9 @@ std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
     0,
     cuda::proclaim_return_type<size_type>([row_indices = row_indices.begin<size_type>(),
                                            validity    = c.null_mask(),
-                                           offsets     = c.offsets().begin<size_type>(),
+                                           offsets =
+                                             cudf::detail::offsetalator_factory::
+                                               make_input_iterator(c.offsets()),
                                            offset      = c.offset()] __device__(int index) {
       // both null mask and offsets data are not pre-sliced. so we need to add the column offset to
       // every incoming index.
@@ -162,9 +165,9 @@ std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
     0,
     cuda::proclaim_return_type<size_type>(
       [row_indices  = row_indices.begin<size_type>(),
-       offsets      = c.offsets().begin<size_type>(),
+       offsets = cudf::detail::offsetalator_factory::make_input_iterator(c.offsets()),
        offset       = c.offset(),
-       first_offset = cudf::detail::get_value<size_type>(
+       first_offset = cudf::lists::detail::get_offset_value(
          c.offsets(), c.offset(), cudf::test::get_default_stream())] __device__(int index) {
         auto const true_index = row_indices[index] + offset;
         return offsets[true_index] - first_offset;
@@ -595,10 +598,11 @@ struct column_comparator_impl<list_view, check_exact_equality> {
     // compare offsets, taking slicing into account
 
     // left side
-    size_type lhs_shift = cudf::detail::get_value<size_type>(
+    auto const lhs_shift = cudf::lists::detail::get_offset_value(
       lhs_l.offsets(), lhs_l.offset(), cudf::test::get_default_stream());
     auto lhs_offsets = thrust::make_transform_iterator(
-      lhs_l.offsets().begin<size_type>() + lhs_l.offset(),
+      cudf::detail::offsetalator_factory::make_input_iterator(
+        lhs_l.offsets(), lhs_l.offset()),
       cuda::proclaim_return_type<size_type>(
         [lhs_shift] __device__(size_type offset) { return offset - lhs_shift; }));
     auto lhs_valids = thrust::make_transform_iterator(
@@ -609,10 +613,11 @@ struct column_comparator_impl<list_view, check_exact_equality> {
         }));
 
     // right side
-    size_type rhs_shift = cudf::detail::get_value<size_type>(
+    auto const rhs_shift = cudf::lists::detail::get_offset_value(
       rhs_l.offsets(), rhs_l.offset(), cudf::test::get_default_stream());
     auto rhs_offsets = thrust::make_transform_iterator(
-      rhs_l.offsets().begin<size_type>() + rhs_l.offset(),
+      cudf::detail::offsetalator_factory::make_input_iterator(
+        rhs_l.offsets(), rhs_l.offset()),
       cuda::proclaim_return_type<size_type>(
         [rhs_shift] __device__(size_type offset) { return offset - rhs_shift; }));
     auto rhs_valids = thrust::make_transform_iterator(

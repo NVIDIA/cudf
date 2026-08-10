@@ -8,6 +8,7 @@
 
 #include <cudf/detail/get_value.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/lists/detail/utilities.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/convert/convert_datetime.hpp>
 #include <cudf/structs/structs_column_view.hpp>
@@ -139,24 +140,25 @@ template <typename NestedColumnView>
 std::string nested_offsets_to_string(NestedColumnView const& c, std::string const& delimiter = ", ")
 {
   column_view offsets = (c.parent()).child(NestedColumnView::offsets_column_index);
-  CUDF_EXPECTS(offsets.type().id() == type_to_id<size_type>(),
+  CUDF_EXPECTS(offsets.type().id() == type_id::INT32 || offsets.type().id() == type_id::INT64,
                "Column does not appear to be an offsets column");
   CUDF_EXPECTS(offsets.offset() == 0, "Offsets column has an internal offset!");
   size_type output_size = c.size() + 1;
 
   // the first offset value to normalize everything against
-  size_type first =
-    cudf::detail::get_value<size_type>(offsets, c.offset(), cudf::get_default_stream());
+  auto const first =
+    cudf::lists::detail::get_offset_value(offsets, c.offset(), cudf::get_default_stream());
   rmm::device_uvector<size_type> shifted_offsets(output_size, cudf::get_default_stream());
 
   // normalize the offset values for the column offset
-  size_type const* d_offsets = offsets.head<size_type>() + c.offset();
+  auto const d_offsets =
+    cudf::detail::offsetalator_factory::make_input_iterator(offsets, c.offset());
   thrust::transform(
     rmm::exec_policy_nosync(cudf::get_default_stream()),
     d_offsets,
     d_offsets + output_size,
     shifted_offsets.begin(),
-    [first] __device__(int32_t offset) { return static_cast<size_type>(offset - first); });
+    [first] __device__(int64_t offset) { return static_cast<size_type>(offset - first); });
 
   auto const h_shifted_offsets =
     cudf::detail::make_host_vector(shifted_offsets, cudf::get_default_stream());

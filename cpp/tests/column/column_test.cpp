@@ -18,6 +18,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
@@ -637,6 +638,34 @@ TYPED_TEST(ListsColumnTest, ListsSlicedColumnViewConstructorWithNulls)
     cudf::mask_to_bools(result->view().null_mask(), 0, 4)->view(),
     cudf::mask_to_bools(static_cast<cudf::column_view>(expect).null_mask(), 0, 4)->view());
 }
+
+struct ListOffsetsColumnTest : public cudf::test::BaseFixture {};
+
+TEST_F(ListOffsetsColumnTest, RegularListsUseInt32Offsets)
+{
+  cudf::test::lists_column_wrapper<int32_t> lists{{1, 2}, {3}};
+  EXPECT_EQ(cudf::lists_column_view{lists}.offsets().type(), cudf::data_type{cudf::type_id::INT32});
+}
+
+#if CUDF_SIZE_TYPE_BITS == 64
+TEST_F(ListOffsetsColumnTest, LargeListsPreserveAndPromoteOffsets)
+{
+  cudf::test::fixed_width_column_wrapper<int64_t> large_offsets{0, 2, 3};
+  cudf::test::fixed_width_column_wrapper<int32_t> large_child{1, 2, 3};
+  auto large = cudf::make_lists_column(
+    2, large_offsets.release(), large_child.release(), 0, rmm::device_buffer{});
+
+  auto copied = std::make_unique<cudf::column>(large->view());
+  EXPECT_EQ(cudf::lists_column_view{copied->view()}.offsets().type(),
+            cudf::data_type{cudf::type_id::INT64});
+
+  cudf::test::lists_column_wrapper<int32_t> regular{{4, 5}, {6}};
+  auto concatenated =
+    cudf::concatenate(std::vector<cudf::column_view>{regular, large->view()});
+  EXPECT_EQ(cudf::lists_column_view{concatenated->view()}.offsets().type(),
+            cudf::data_type{cudf::type_id::INT64});
+}
+#endif
 
 struct RebindStreamColumnTest : public cudf::test::BaseFixture {};
 

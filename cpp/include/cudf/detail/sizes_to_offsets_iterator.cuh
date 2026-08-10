@@ -289,6 +289,7 @@ auto sizes_to_offsets(SizesIterator begin,
  * @throw std::overflow_error if the total size of the scan (last element) greater than maximum
  * value of `size_type`
  *
+ * @tparam OffsetType Storage type of the generated offsets
  * @tparam InputIterator Used as input to scan to set the offset values
  * @param begin The beginning of the input sequence
  * @param end The end of the input sequence
@@ -296,7 +297,7 @@ auto sizes_to_offsets(SizesIterator begin,
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Offsets column and total elements
  */
-template <typename InputIterator>
+template <typename OffsetType = size_type, typename InputIterator>
 std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   InputIterator begin,
   InputIterator end,
@@ -305,9 +306,9 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
 {
   auto count          = static_cast<size_type>(std::distance(begin, end));
   auto offsets_column = make_numeric_column(
-    data_type{type_to_id<size_type>()}, count + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_to_id<OffsetType>()}, count + 1, mask_state::UNALLOCATED, stream, mr);
   auto offsets_view = offsets_column->mutable_view();
-  auto d_offsets    = offsets_view.template data<size_type>();
+  auto d_offsets    = offsets_view.template data<OffsetType>();
 
   // The number of offsets is count+1 so to build the offsets from the sizes
   // using exclusive-scan technically requires count+1 input values even though
@@ -324,6 +325,10 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   CUDF_EXPECTS(
     total_elements <= static_cast<decltype(total_elements)>(std::numeric_limits<size_type>::max()),
     "Size of output exceeds the column size limit",
+    std::overflow_error);
+  CUDF_EXPECTS(
+    total_elements <= static_cast<decltype(total_elements)>(std::numeric_limits<OffsetType>::max()),
+    "Size of output exceeds the offsets type limit",
     std::overflow_error);
 
   offsets_column->set_null_count(0);

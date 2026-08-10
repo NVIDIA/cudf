@@ -484,11 +484,11 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
  * @endcode
  *
  * @param num_rows The number of lists the column represents.
- * @param offsets_column The column of offset values for this column. Each value should
- * represent the starting offset into the child elements that corresponds to the beginning of the
- * row, with the first row starting at 0. The length of row N can be determined by subtracting
- * `offsets[N+1] - offsets[N]`. The total number of offsets should be 1 longer than the
- * number of rows in the column.
+ * @param offsets_column An INT32 or INT64 column of offset values. INT32 represents a regular
+ * list and INT64 represents a large list. Each value identifies the starting row in the child
+ * column, with the first row starting at 0. The length of row N is
+ * `offsets[N+1] - offsets[N]`. The total number of offsets must be one greater than the number of
+ * rows. INT64 offsets require a build configured with a 64-bit `cudf::size_type`.
  * @param child_column The column of nested data referenced by the lists represented by the
  * offsets_column. Note: the child column may itself be further nested.
  * @param null_count The number of null list entries.

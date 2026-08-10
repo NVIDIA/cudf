@@ -40,10 +40,10 @@ class list_device_view {
     cudf_assert(row_index >= 0 && row_index < lists_column.size() && row_index < offsets.size() &&
                 "row_index out of bounds");
 
-    begin_offset = offsets.element<size_type>(row_index + lists_column.offset());
+    begin_offset = lists_column.offset_at(row_index);
     cudf_assert(begin_offset >= 0 && begin_offset <= lists_column.child().size() &&
                 "begin_offset out of bounds.");
-    _size = offsets.element<size_type>(row_index + 1 + lists_column.offset()) - begin_offset;
+    _size = lists_column.offset_at(row_index + 1) - begin_offset;
   }
 
   ~list_device_view() = default;

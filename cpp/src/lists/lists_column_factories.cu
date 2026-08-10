@@ -7,7 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/gather.cuh>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/lists/detail/lists_column_factories.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -30,7 +30,7 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
   if (size == 0) {
     return make_lists_column(
       0,
-      make_empty_column(type_to_id<size_type>()),
+      make_empty_column(type_id::INT32),
       empty_like(value.view()),
       0,
       cudf::detail::create_null_mask(0, mask_state::UNALLOCATED, stream, mr));
@@ -39,8 +39,8 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
 
   // Handcraft a 1-row column
   auto sizes_itr = cuda::constant_iterator<size_type>(value.view().size());
-  auto offsets   = std::get<0>(
-    cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr_final));
+  auto offsets   = std::get<0>(cudf::lists::detail::make_offsets_child_column(
+    sizes_itr, sizes_itr + 1, stream, mr_final));
   size_type null_count = value.is_valid(stream) ? 0 : 1;
   auto null_mask_state = null_count ? mask_state::ALL_NULL : mask_state::UNALLOCATED;
   auto null_mask       = cudf::detail::create_null_mask(1, null_mask_state, stream, mr_final);
@@ -72,7 +72,7 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
 
 std::unique_ptr<column> make_empty_lists_column(data_type child_type)
 {
-  auto offsets = make_empty_column(data_type(type_to_id<size_type>()));
+  auto offsets = make_empty_column(data_type{type_id::INT32});
   auto child   = make_empty_column(child_type);
   return make_lists_column(0, std::move(offsets), std::move(child), 0, rmm::device_buffer{});
 }
@@ -84,7 +84,7 @@ std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
 {
   auto offsets = [&] {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<size_type>(size + 1, stream, mr);
+      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
     return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
   }();
   auto child     = make_empty_column(child_type);
@@ -115,11 +115,14 @@ std::unique_ptr<column> make_lists_column(size_type num_rows,
     "Invalid offsets column size for lists column.");
   CUDF_EXPECTS(offsets_column->null_count() == 0, "Offsets column should not contain nulls");
   CUDF_EXPECTS(child_column != nullptr, "Must pass a valid child column");
-  // A list offset indexes a row of the child column, so it is size_type wide. Everything that
-  // reads these offsets assumes as much, and reads past the end of a narrower buffer.
-  CUDF_EXPECTS(offsets_column->type() == data_type{type_to_id<size_type>()},
-               "Offsets column must be of type size_type, got type id " +
+  auto const offsets_type = offsets_column->type().id();
+  CUDF_EXPECTS(offsets_type == type_id::INT32 || offsets_type == type_id::INT64,
+               "Offsets column must be INT32 or INT64, got type id " +
                  std::to_string(static_cast<int32_t>(offsets_column->type().id())));
+#if CUDF_SIZE_TYPE_BITS == 32
+  CUDF_EXPECTS(offsets_type != type_id::INT64,
+               "INT64 list offsets require a 64-bit cudf::size_type");
+#endif
 
   std::vector<std::unique_ptr<column>> children;
   children.emplace_back(std::move(offsets_column));

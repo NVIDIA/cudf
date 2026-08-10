@@ -355,8 +355,8 @@ specific elements, segments for subsets of column elements, etc. It is equivalen
 index values and those functions support a minimum value of -2147483648. This fundamental type also
 influences output values not just for column size limits but for counting elements as well.
 
-Offset to elements within a column should be either `int32_t` or `int64_t` appropriately, except
-for `LIST` columns that only support `int32_t` offsets.
+Offsets to elements within a column use signed `INT32` or `INT64` storage. `LIST` columns use
+`INT32` for regular lists and `INT64` for large lists.
 
 ## Spans
 
@@ -1470,8 +1470,8 @@ For list columns, the parent column's type is `LIST` and contains no data, but i
 the number of lists in the column, and its null mask represents the validity of each list element.
 The parent has two children.
 
-1. A non-nullable column of [`size_type`](#cudfsize_type) elements that indicates the offset to the
-   beginning of each list in a dense column of elements.
+1. A non-nullable `INT32` or `INT64` column that indicates the offset to the beginning of each list
+   in a dense column of elements. Regular lists use `INT32`; large lists use `INT64`.
 2. A column containing the actual data and optional null mask for all elements of all the lists
    packed together.
 

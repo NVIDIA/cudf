@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/types.hpp>
 
@@ -79,7 +80,10 @@ class lists_column_device_view : private column_device_view {
    */
   [[nodiscard]] __device__ inline size_type offset_at(size_type idx) const
   {
-    return offsets().size() > 0 ? offsets().element<size_type>(offset() + idx) : 0;
+    if (offsets().size() == 0) { return 0; }
+    auto const d_offsets =
+      detail::input_offsetalator{offsets().head(), offsets().type(), offset()};
+    return static_cast<size_type>(d_offsets[idx]);
   }
 
   /**

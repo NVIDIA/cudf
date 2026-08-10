@@ -6,6 +6,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/utilities/export.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
@@ -62,7 +63,7 @@ class lists_column_view : private column_view {
   using column_view::null_mask;
   using column_view::offset;
   using column_view::size;
-  using offset_iterator = size_type const*;  ///< Iterator type for offsets
+  using offset_iterator = detail::input_offsetalator;  ///< Width-normalizing iterator for offsets
 
   /**
    * @brief Returns the parent column.
@@ -104,24 +105,24 @@ class lists_column_view : private column_view {
   /**
    * @brief Return first offset (accounting for column offset)
    *
-   * @return Pointer to the first offset
+   * @return Iterator to the first offset
    */
-  [[nodiscard]] offset_iterator offsets_begin() const noexcept
+  [[nodiscard]] offset_iterator offsets_begin() const
   {
-    return offsets().begin<size_type>() + offset();
+    return detail::offsetalator_factory::make_input_iterator(offsets(), offset());
   }
 
   /**
-   * @brief Return pointer to the position that is one past the last offset
+   * @brief Return iterator to the position that is one past the last offset
    *
    * This function return the position that is one past the last offset of the lists column.
    * Since the current lists column may be a sliced column, this offsets_end() iterator should not
    * be computed using the size of the offsets() child column, which is also the offsets of the
    * entire original (non-sliced) lists column.
    *
-   * @return Pointer to one past the last offset
+   * @return Iterator to one past the last offset
    */
-  [[nodiscard]] offset_iterator offsets_end() const noexcept
+  [[nodiscard]] offset_iterator offsets_end() const
   {
     return offsets_begin() + size() + 1;
   }

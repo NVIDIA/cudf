@@ -1,3 +1,740 @@
+# cudf 26.08.00 (5 Aug 2026)
+
+### 🚨 Breaking Changes
+* Enforce pandas 3.0 deprecations and subsequent related cuDF deprecations part 1 by @mroeschke in https://github.com/rapidsai/cudf/pull/20823
+* Enforce Series.interpolate deprecations by @mroeschke in https://github.com/rapidsai/cudf/pull/20905
+* Remove FutureWarning checks from series/test_pct_change by @mroeschke in https://github.com/rapidsai/cudf/pull/20904
+* Enforce Series.replace argument deprecations by @mroeschke in https://github.com/rapidsai/cudf/pull/20903
+* Enforce pandas 3 DataFrame/Series.first/last removal by @mroeschke in https://github.com/rapidsai/cudf/pull/20909
+* Enforce pandas 3 fillna deprecation by @mroeschke in https://github.com/rapidsai/cudf/pull/20912
+* Enforce pandas 3 timedelta frequency string deprecation by @mroeschke in https://github.com/rapidsai/cudf/pull/20915
+* Enforce pandas 3 concat with empties deprecation by @mroeschke in https://github.com/rapidsai/cudf/pull/20916
+* Enforce pandas 3 `to_numeric(errors='ignore')` deperecation by @mroeschke in https://github.com/rapidsai/cudf/pull/20920
+* Enforce pandas 3 date_range(periods=) deprecation by @mroeschke in https://github.com/rapidsai/cudf/pull/20921
+* Enforce pandas 3 resample deprecations by @mroeschke in https://github.com/rapidsai/cudf/pull/20923
+* Enforce pandas 3 TimedeltaIndex/DatetimeIndex deprecations by @mroeschke in https://github.com/rapidsai/cudf/pull/20924
+* Enforce pandas 3 future_stack argument switch by @mroeschke in https://github.com/rapidsai/cudf/pull/20926
+* Remove pandas 3.0 Series.__getitem__ int positional deprecation by @mroeschke in https://github.com/rapidsai/cudf/pull/20930
+* Test pandas 3.0.0rc1 by @mroeschke in https://github.com/rapidsai/cudf/pull/20941
+* Change `to_datetime` to match pandas-3 by @galipremsagar in https://github.com/rapidsai/cudf/pull/20913
+* More misc cuDF classic test fixes for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21049
+* Switch default string dtype by @galipremsagar in https://github.com/rapidsai/cudf/pull/20890
+* Change CUDF_STRING_DTYPE to pandas.StringDtype for pandas 3.0 by @mroeschke in https://github.com/rapidsai/cudf/pull/21062
+* Adjust cuDF grouby unit tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21081
+* Fix StringDtype dask serialization in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21103
+* Avoid object dtype in ColumnAccessor.to_pandas_index for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21110
+* Move CategoricalDtype higher in cudf.dtype elif chain for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21129
+* Match groupby idxmin/max skipna=True pandas 3.0 behavior with all null groups by @mroeschke in https://github.com/rapidsai/cudf/pull/21189
+* Map numpy dtypes to new default string dtype in np_dtypes_to_pandas_dtypes for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21201
+* Fix test_string_char_types for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21210
+* Adjust more misc tests for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21228
+* Preserve StringDtype correctly in StringColumn.to_pandas for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21206
+* Update pandas pinnings in conda-forge recipes for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21302
+* Update cudf_pandas proxies for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21606
+* Change `date_range` time unit inferencing logic by @galipremsagar in https://github.com/rapidsai/cudf/pull/21694
+* Make copy-on-write the default for pandas3 by @vyasr in https://github.com/rapidsai/cudf/pull/21801
+* Fix multiple repr issues in `cudf` with `pandas-3.0` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21778
+* Fix `replace` API & pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/21938
+* Fix `cudf.pandas` pytest failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/22137
+* Fix setitem dtype validation, NaT column inference, and boolean-dtype join by @galipremsagar in https://github.com/rapidsai/cudf/pull/22255
+* Reject pd.NA string-to-object casts in pandas-compatible mode by @galipremsagar in https://github.com/rapidsai/cudf/pull/22295
+* Align groupby apply/rolling defaults with pandas 3 by @galipremsagar in https://github.com/rapidsai/cudf/pull/22448
+* Align cudf find_common_type with pandas for empty/bool/datetime+timedelta inputs by @galipremsagar in https://github.com/rapidsai/cudf/pull/22466
+* Add validations in various code-paths by @galipremsagar in https://github.com/rapidsai/cudf/pull/22336
+* Merge `pandas3` feature branch into `main` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22518
+* Forward-merge release/26.06 into main by @madsbk in https://github.com/rapidsai/cudf/pull/22585
+* Remove deprecated `.values_host` property in cudf by @mroeschke in https://github.com/rapidsai/cudf/pull/22649
+* Remove deprecated nvtext::edit_distance_matrix by @davidwendt in https://github.com/rapidsai/cudf/pull/22644
+* Fix capture group handling in cudf::strings::findall by @davidwendt in https://github.com/rapidsai/cudf/pull/22408
+* Removed deprecated multi-pattern overload of replace_re by @davidwendt in https://github.com/rapidsai/cudf/pull/22639
+* Skip sum updates once SUM_WITH_OVERFLOW flag is set by @PointKernel in https://github.com/rapidsai/cudf/pull/22696
+* Remove deprecated strings::like string_scalar API by @davidwendt in https://github.com/rapidsai/cudf/pull/22678
+* Fix Categorical astype for nulls in pandas-compatible mode by @galipremsagar in https://github.com/rapidsai/cudf/pull/22652
+* [cudf_streaming] Using rapidsmpf spill unspill partition by @nirandaperera in https://github.com/rapidsai/cudf/pull/22810
+* Change behavior for regex class pattern [a-m-z] by @davidwendt in https://github.com/rapidsai/cudf/pull/22601
+* Fix groupby `any`/`all` on null-containing string columns by @galipremsagar in https://github.com/rapidsai/cudf/pull/22926
+* Align cudf indexing/setitem validation and alignment with pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/22912
+* refactor(streaming): flatten namespaces and rename to snake_case by @vyasr in https://github.com/rapidsai/cudf/pull/22909
+* [cudf_streaming] rapidsmpf backrefmixin API changes by @nirandaperera in https://github.com/rapidsai/cudf/pull/22911
+* Refactor packed metadata to use an explicit table header by @madsbk in https://github.com/rapidsai/cudf/pull/22951
+* Support `skipna` in groupby reductions (first/last, sum/prod/mean/median/min/max, idxmin/idxmax) by @galipremsagar in https://github.com/rapidsai/cudf/pull/22925
+* Make `pylibcudf.Table.columns()` return a tuple by @madsbk in https://github.com/rapidsai/cudf/pull/23040
+* Align DataFrame.reindex dtype and validation behavior with pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/22914
+* Match pandas suffix handling in merge (None/non-string suffixes, invalid-container TypeError) by @galipremsagar in https://github.com/rapidsai/cudf/pull/23059
+* Rapidsmpf logger API changes by @nirandaperera in https://github.com/rapidsai/cudf/pull/22972
+* Refactor ``OrderScheme`` to track multiple ``Ordering`` descriptions by @rjzamora in https://github.com/rapidsai/cudf/pull/22896
+* Return null for non-participating regex capture groups in strings::extract by @galipremsagar in https://github.com/rapidsai/cudf/pull/23123
+* wheels: build CUDA 13 wheels with latest CTK (13.3.0) by @jameslamb in https://github.com/rapidsai/cudf/pull/23174
+* Support explicit row counts for zero-column tables by @madsbk in https://github.com/rapidsai/cudf/pull/22765
+* Fix MultiIndex indexing/.loc to match pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/22966
+* Match pandas merge/join dtype, index and error semantics by @galipremsagar in https://github.com/rapidsai/cudf/pull/23060
+* Rapidsmpf backref API changes for Host and Pinned MR  by @nirandaperera in https://github.com/rapidsai/cudf/pull/23128
+* Rewrite mixed inner/left/full join with post-filtering by @PointKernel in https://github.com/rapidsai/cudf/pull/23012
+* Fix DataFrame.stack level resolution, ordering, and dtype preservation by @galipremsagar in https://github.com/rapidsai/cudf/pull/23370
+* Rework approach to cudf-streaming bloom filter sizing by @wence- in https://github.com/rapidsai/cudf/pull/23067
+* Match pandas ordering, dtypes, and validation in unstack/_pivot by @galipremsagar in https://github.com/rapidsai/cudf/pull/23368
+* JNI bridge for the retention filter support for deletion vectors by @jihoonson in https://github.com/rapidsai/cudf/pull/23423
+### 🐛 Bug Fixes
+* Add back Index.fillna by @mroeschke in https://github.com/rapidsai/cudf/pull/21002
+* Account of pandas.NamedAgg subclass change in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21023
+* Account for non-fixed `pandas.offsets.Day` in `date_range` for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21036
+* Fix `columns` validation logic of DataFrame.from_records by @mroeschke in https://github.com/rapidsai/cudf/pull/21034
+* Unify `_is_null_host_scalar` into `is_na_like` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21079
+* Fix datetime binops issues in `pandas-3.0` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21172
+* Fix convert_dtypes with new StringDtype in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21200
+* Preserve StringDtype variants from pandas inputs for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21208
+* Re-enable `dtype=category` in pandas-3.0 branch by @galipremsagar in https://github.com/rapidsai/cudf/pull/21604
+* Fix all string type bugs by @galipremsagar in https://github.com/rapidsai/cudf/pull/21609
+* Fix astype `CategoricalDtype` cases. by @galipremsagar in https://github.com/rapidsai/cudf/pull/21627
+* Fix column type for empty columns by @galipremsagar in https://github.com/rapidsai/cudf/pull/21638
+* Fix interval_range type inference bugs by @galipremsagar in https://github.com/rapidsai/cudf/pull/21686
+* Fix `Index.intersection` for categorical types by @galipremsagar in https://github.com/rapidsai/cudf/pull/21723
+* Fix string udf failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21727
+* Fix join bug that shows up in `Index.difference` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21733
+* Fix all binops failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21738
+* Use reduction_axis for dataframes by @vyasr in https://github.com/rapidsai/cudf/pull/21743
+* Fix `astype(category)` for empty column scenarios by @galipremsagar in https://github.com/rapidsai/cudf/pull/21741
+* Fix all explode failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21766
+* Fix orc pytest failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21847
+* Fix failures in `rolling` pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/21846
+* Fix all `Series.astype` bugs by @galipremsagar in https://github.com/rapidsai/cudf/pull/21860
+* Fix numpy `ufunc` return type by @galipremsagar in https://github.com/rapidsai/cudf/pull/21876
+* Fix dtype issues in `test_between.py` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21887
+* Fix `isin` test failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21886
+* Fix `string.to_pandas` for `nullable` & `arrow_type` cases by @galipremsagar in https://github.com/rapidsai/cudf/pull/21890
+* Fix `concat` & `union` bugs by @galipremsagar in https://github.com/rapidsai/cudf/pull/21889
+* Fix all `test_iloc.py` failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21872
+* Fix all failures in `test_constructors.py` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21905
+* Fix all string related failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21939
+* Fix Parquet pytest failures  by @galipremsagar in https://github.com/rapidsai/cudf/pull/21967
+* Switch default time resolutions for `DatetimeIndex` & `TimedeltaIndex` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21997
+* Fix `add_prefix` & `add_suffix` pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/22000
+* Fix all json test failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21998
+* Fix runtime warnings in `apply` pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/22017
+* Fix string column `to_arrow` to generate large strings when needed by @galipremsagar in https://github.com/rapidsai/cudf/pull/21891
+* Fix type inconsistencies in pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/22016
+* Fix `replace` pytest by @galipremsagar in https://github.com/rapidsai/cudf/pull/22019
+* Fix parquet metadata failures in pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/22020
+* Fix `copy-on-write` failures related to `astype` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22022
+* Fix `str` reductions to match pandas3 by @galipremsagar in https://github.com/rapidsai/cudf/pull/22026
+* Fix `right-join` column ordering by @galipremsagar in https://github.com/rapidsai/cudf/pull/22002
+* [pandas3] Fix test_categorical_series_with_nan_repr for pandas 3 nan_as_null change by @galipremsagar in https://github.com/rapidsai/cudf/pull/22066
+* [pandas3] Fix test_diff_many_dtypes for boolean Series diff null representation by @galipremsagar in https://github.com/rapidsai/cudf/pull/22065
+* [pandas3] Fix test_timedelta_astype_unicode_dtype_pandas_compat for pandas 3 StringDtype by @galipremsagar in https://github.com/rapidsai/cudf/pull/22064
+* [pandas3] Fix test_categorical_empty: update categories dtype assertion by @galipremsagar in https://github.com/rapidsai/cudf/pull/22062
+* [pandas3] Fix test_rename_shallow_copy: use np.shares_memory instead of identity check by @galipremsagar in https://github.com/rapidsai/cudf/pull/22060
+* [pandas3] Fix test_groupby_pct_change_empty_columns for pandas 3 dtype inference by @galipremsagar in https://github.com/rapidsai/cudf/pull/22059
+* [pandas3] Fix two regressions in Series.describe() by @galipremsagar in https://github.com/rapidsai/cudf/pull/22058
+* [pandas3] Fix test_alltypes_plain_avro timestamp conversion for pandas 3 by @galipremsagar in https://github.com/rapidsai/cudf/pull/22061
+* [pandas3] Add _CachedAccessor to replace removed pandas.core.accessor.CachedAccessor by @galipremsagar in https://github.com/rapidsai/cudf/pull/22056
+* Update memory usage test by @galipremsagar in https://github.com/rapidsai/cudf/pull/22080
+* [pandas3] Fix float-category NaN handling in CategoricalColumn.to_pandas() by @galipremsagar in https://github.com/rapidsai/cudf/pull/22057
+* Skip pandas failure cases in `ewm` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22082
+* Fix `sort_values` when `return_indexer=True` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22098
+* Fix pandas 3 compatibility bugs in index, groupby, and dask_cudf tests by @galipremsagar in https://github.com/rapidsai/cudf/pull/22101
+* Make `cudf.pandas` pandas tests able to run by @galipremsagar in https://github.com/rapidsai/cudf/pull/22140
+* Fix `12k` pandas test suite failures  by @galipremsagar in https://github.com/rapidsai/cudf/pull/22158
+* Allow SeriesApplyKernel to support pd.StringDtype in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22177
+* Fix `datetime` & `timedelta` failures in pandas test suite by @galipremsagar in https://github.com/rapidsai/cudf/pull/22174
+* Fix return types for `rank` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22180
+* Fix regression in `eval` frame fetching by @galipremsagar in https://github.com/rapidsai/cudf/pull/22221
+* Propagate writes to internal or private properties to slow objects only by @galipremsagar in https://github.com/rapidsai/cudf/pull/22231
+* Fix cudf.pandas view semantics across fast/slow conversions and add __array__ to datetimelike ExtensionArray proxies by @galipremsagar in https://github.com/rapidsai/cudf/pull/22259
+* Fix cudf.pandas pickle round-trips for proxy classes, DatetimeTZ columns, and NaT by @galipremsagar in https://github.com/rapidsai/cudf/pull/22297
+* Add proxy types for missing offsets  by @galipremsagar in https://github.com/rapidsai/cudf/pull/22314
+* Fix failures in masked array pandas unit tests under cudf.pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/22296
+* Fix `StataReader` proxy type by @galipremsagar in https://github.com/rapidsai/cudf/pull/22322
+* Fix `MultiIndex` getitem by @galipremsagar in https://github.com/rapidsai/cudf/pull/22326
+* Define attributes that are not discoverable by `dir(cls)` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22330
+* Drop invalidated frequency in `DatetimeIndex` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22328
+* Fix `to_period` parameter by @galipremsagar in https://github.com/rapidsai/cudf/pull/22329
+* Expose __from_arrow__ on masked extension dtype proxies by @galipremsagar in https://github.com/rapidsai/cudf/pull/22373
+* Fix datetime resolution for empty data inputs by @galipremsagar in https://github.com/rapidsai/cudf/pull/22363
+* Expose additional proxy attributes for IntervalArray, Styler, and _MethodProxy by @galipremsagar in https://github.com/rapidsai/cudf/pull/22374
+* Fix `tz` aware binops by @galipremsagar in https://github.com/rapidsai/cudf/pull/22243
+* Implement min_count for groupby reductions by @galipremsagar in https://github.com/rapidsai/cudf/pull/22372
+* Fix datetime tz + categorical creation by @galipremsagar in https://github.com/rapidsai/cudf/pull/22278
+* Expose DateOffset instance attributes on cudf.pandas proxy by @galipremsagar in https://github.com/rapidsai/cudf/pull/22447
+* Fix np.ufunc(Index, Series) dispatch and np.matmul scalar return type by @galipremsagar in https://github.com/rapidsai/cudf/pull/22444
+* Fix `fillna` in `binop` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22442
+* Fix `is_numeric_dtype` for `Index` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22438
+* Preserve StringDtype storage and na_value in get_dtype_of_same_kind by @galipremsagar in https://github.com/rapidsai/cudf/pull/22289
+* Raise TypeError for numeric column arithmetic with pd.NaT by @galipremsagar in https://github.com/rapidsai/cudf/pull/22451
+* Make StringArray proxy inherit from NumpyExtensionArray by @galipremsagar in https://github.com/rapidsai/cudf/pull/22457
+* Fix return types of `quantile` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22433
+* Preserve extension dtypes in groupby reductions and exclude grouping-key columns by identity by @galipremsagar in https://github.com/rapidsai/cudf/pull/22369
+* Fix several to_datetime edge cases for pandas 3 compatibility by @galipremsagar in https://github.com/rapidsai/cudf/pull/22446
+* Fix arrow types related failures in `cudf.pandas` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22194
+* Implement groupby all/any via bool-coercion + min/max by @galipremsagar in https://github.com/rapidsai/cudf/pull/22371
+* Fix `AssertionError: DataFrame.columns are different` failures in cudf.pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/22351
+* Fix factorize for pandas 3 compatibility by @galipremsagar in https://github.com/rapidsai/cudf/pull/22445
+* Fix empty series dtype by @galipremsagar in https://github.com/rapidsai/cudf/pull/22443
+* Implement groupby sum on StringDtype columns as per-group concatenation by @galipremsagar in https://github.com/rapidsai/cudf/pull/22370
+* Preserve pandas-nullable dtypes through ufuncs and empty value_counts by @galipremsagar in https://github.com/rapidsai/cudf/pull/22461
+* Fix all `datetime` type inconsistencies with extension types by @galipremsagar in https://github.com/rapidsai/cudf/pull/22409
+* Serialize engine config in new pdsh benchmark CLI by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22365
+* Fix unsafe, missing close() of HostColumnVectors by @mythrocks in https://github.com/rapidsai/cudf/pull/22432
+* Skip flaky test_make_spill_function on pinned-memory allocation failure by @Matt711 in https://github.com/rapidsai/cudf/pull/22551
+* Fix JSON token count estimate to account for the delimiter in recovery mode by @shrshi in https://github.com/rapidsai/cudf/pull/22559
+* Fix AST expression evaluator handling of intermediate values for fixed-point types by @davidwendt in https://github.com/rapidsai/cudf/pull/22512
+* Remove __arrow_array__ from NumPy ndarray cudf.pandas proxy by @galipremsagar in https://github.com/rapidsai/cudf/pull/22617
+* Expose per-column had_schema_mismatch diagnostic from JSON reader by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/22450
+* Fix Arrow device string view variadic buffers by @0ax1 in https://github.com/rapidsai/cudf/pull/22620
+* [BUG] Parquet reader: treat LIST-annotated REPEATED group as the list, not a stub by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/22597
+* Fix invalid use of data_type constructor in row_ir logic by @davidwendt in https://github.com/rapidsai/cudf/pull/22676
+* Preserve single-field unannotated repeated groups in parquet schema sanitization by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/22567
+* Expose `__array_ufunc__` on NumpyExtensionArray cudf.pandas proxy by @galipremsagar in https://github.com/rapidsai/cudf/pull/22607
+* Expose __from_arrow__ on DatetimeTZDtype cudf.pandas proxy by @galipremsagar in https://github.com/rapidsai/cudf/pull/22608
+* Fix DataFrame mask Series condition alignment by @aryansri05 in https://github.com/rapidsai/cudf/pull/22701
+* fix(cudf.pandas): fix Excel/openpyxl test failures and add xlsxwriter dependency by @vyasr in https://github.com/rapidsai/cudf/pull/22722
+* Fix to_numpy object null handling by @aryansri05 in https://github.com/rapidsai/cudf/pull/22621
+* Match pandas dtype semantics in groupby quantile by @galipremsagar in https://github.com/rapidsai/cudf/pull/22750
+* Make `IntervalDtype` construction pandas-compatible by @galipremsagar in https://github.com/rapidsai/cudf/pull/22731
+* Remove cudf-polars CI timeouts by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22768
+* Fix scalar as column view for null scalars by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22773
+* Increase timeouts for slower cudf-polars tests by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22780
+* Enable chunked row masks in hybrid scan reader by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22716
+* Fix Parquet page header decoder to allow empty dict pages by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22777
+* declare nvidia-nvjitlink dependency in 'libcudf' wheels by @jameslamb in https://github.com/rapidsai/cudf/pull/22785
+* Fix replace_with_backrefs copy remainder logic for empty pattern match by @davidwendt in https://github.com/rapidsai/cudf/pull/22711
+* Fix ArrowDtype integer arithmetic to match pandas pyarrow semantics by @galipremsagar in https://github.com/rapidsai/cudf/pull/22633
+* Fix zero-count regex quantifier expansion by @fallintoplace in https://github.com/rapidsai/cudf/pull/22800
+* Build cudf_streaming wheel against this CI run's pylibcudf by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22819
+* Fix groupby.apply columns axis name for row-like UDF results by @galipremsagar in https://github.com/rapidsai/cudf/pull/22809
+* Use (un)spill_partitions from RapidsMPF by @pentschev in https://github.com/rapidsai/cudf/pull/22837
+* Fix cudf.pandas DateOffset equality and empty-frame column dtype preservation by @galipremsagar in https://github.com/rapidsai/cudf/pull/22806
+* Fix `MultiIndex.join` to join on all common levels by @galipremsagar in https://github.com/rapidsai/cudf/pull/22827
+* Let NVRTC choose automatic PCH directory by @bdice in https://github.com/rapidsai/cudf/pull/22812
+* [cudf-polars] Sort ORDER BY keys by column, not alias by @madsbk in https://github.com/rapidsai/cudf/pull/22781
+* Fix cudf_polars benchmarking summarizing mean times by @mroeschke in https://github.com/rapidsai/cudf/pull/22845
+* Fix masked dtype equality in cudf.pandas so real_dtype == proxy_dtype holds by @galipremsagar in https://github.com/rapidsai/cudf/pull/22842
+* Reduce size of input dataframe in test_parallel_scan by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22835
+* Fix findall logic handling for empty match regex patterns by @davidwendt in https://github.com/rapidsai/cudf/pull/22714
+* Reduce setup runtime of multi_orderby_range rolling benchmarks by @davidwendt in https://github.com/rapidsai/cudf/pull/22869
+* Skip polars tests relying on newer sqlite features by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22870
+* Fix ARROW_FLAG_NULLABLE flag usage in cudf interop by @davidwendt in https://github.com/rapidsai/cudf/pull/22828
+* Pin pytest-cases version to fix nightly build errors by @davidwendt in https://github.com/rapidsai/cudf/pull/22888
+* Drop dynamic predicates from logical plan by @Matt711 in https://github.com/rapidsai/cudf/pull/22820
+* Fix group-key columns in `SeriesGroupBy` list-`agg` and `any`/`all` with `as_index=False` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22813
+* Preserve object dtype for string columns when constructing cudf DataFrame from pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/22831
+* Reduce concurrency of cudf-polars tests by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22894
+* Fix groupby and single-column `to_numpy` pandas-compatibility bugs by @galipremsagar in https://github.com/rapidsai/cudf/pull/22783
+* Preserve categorical column index in `DataFrame.describe` and handle pure iterators in `cudf.pandas` fallback by @galipremsagar in https://github.com/rapidsai/cudf/pull/22821
+* [BUG] Fix conditional linking of RTCX embed dependencies & Allow null fragment names by @lamarrr in https://github.com/rapidsai/cudf/pull/22898
+* Allow IR fallback to handle an ErrorNode by @mroeschke in https://github.com/rapidsai/cudf/pull/22855
+* Fix type annotations in pylibucdf hybrid scan by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22118
+* Destroy RTCX cache before teardown by @fallintoplace in https://github.com/rapidsai/cudf/pull/22843
+* `create_string_column` bug fix by @abigalekim in https://github.com/rapidsai/cudf/pull/22942
+* Fix categorical replace no-op remapping by @anthonyguerrera in https://github.com/rapidsai/cudf/pull/22436
+* Enable cudf.pandas `test_numpy_ufuncs_basic` via tolerant Index comparison by @galipremsagar in https://github.com/rapidsai/cudf/pull/22924
+* Make `to_string` match pandas (drop repr-style truncation/footer) by @galipremsagar in https://github.com/rapidsai/cudf/pull/22929
+* Fix cudf.to_numeric to match pandas semantics by @galipremsagar in https://github.com/rapidsai/cudf/pull/22934
+* Protect against integer overflow in ``groupby_actor`` by @rjzamora in https://github.com/rapidsai/cudf/pull/22950
+* Skip code coverage where dynamic predicates are dropped by @Matt711 in https://github.com/rapidsai/cudf/pull/22973
+* Work around pola-rs/polars#23214 in streaming dataframe scan by @wence- in https://github.com/rapidsai/cudf/pull/23007
+* Fix `cudf.pandas --line-profile` clobbering `__file__` by @galipremsagar in https://github.com/rapidsai/cudf/pull/23017
+* Pin pandas to exclude 3.0.4 (segfault constructing `pd.Timedelta` on Python 3.14) by @galipremsagar in https://github.com/rapidsai/cudf/pull/23022
+* Fix stream ordering bug in join of expression-based keys by @wence- in https://github.com/rapidsai/cudf/pull/23024
+* Fix `DataFrame` and `GroupBy.value_counts` to match pandas ordering, `dropna`, and categorical handling by @galipremsagar in https://github.com/rapidsai/cudf/pull/22903
+* Fix ``Distinct`` expression lowering by @rjzamora in https://github.com/rapidsai/cudf/pull/22970
+* Add bounds checking for AST column_reference out-of-range indices by @utkarshparekh in https://github.com/rapidsai/cudf/pull/23021
+* Implement `DataFrame.count(axis=1)` on the GPU by @galipremsagar in https://github.com/rapidsai/cudf/pull/23016
+* Fix ptr null check in packed_data_from_cudf_packed_columns by @Matt711 in https://github.com/rapidsai/cudf/pull/23038
+* Fix cudf-java native_jstring to emit standard UTF-8 for supplementary characters and embedded NULs by @igorpeshansky in https://github.com/rapidsai/cudf/pull/23018
+* Fix cudf.pandas Excel reader failures (empty-column dtype, string offset width, proxy monkeypatch) by @galipremsagar in https://github.com/rapidsai/cudf/pull/22927
+* Keep Nanoarrow ArrowArrayStream chunks alive during cudaMemcpyBatchAsync by @mroeschke in https://github.com/rapidsai/cudf/pull/23009
+* Support host buffers (`BytesIO`) in `cudf.read_text` by @nethum529 in https://github.com/rapidsai/cudf/pull/23032
+* Fully initialize PageInfo before sort_pages copies it by @pramodsatya in https://github.com/rapidsai/cudf/pull/22957
+* Declare return type on device lambdas queried in host code by @PointKernel in https://github.com/rapidsai/cudf/pull/23046
+* Add exception for unsupported decimal128 AST operations by @davidwendt in https://github.com/rapidsai/cudf/pull/22982
+* Fix `explain()` failing on `UnaryFunction` with multiple children by @Matt711 in https://github.com/rapidsai/cudf/pull/23050
+* Raise parquet partitions_info validation errors by @fallintoplace in https://github.com/rapidsai/cudf/pull/22801
+* Re-derive cudf.pandas intermediate proxies when their parents change by @galipremsagar in https://github.com/rapidsai/cudf/pull/22998
+* Add Numba pin to cuDF wheel build requirements by @bdice in https://github.com/rapidsai/cudf/pull/23084
+* Return np.intp from argsort to match numpy/pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/23061
+* Fix pinned-host spill reservations for packed table alignment by @pentschev in https://github.com/rapidsai/cudf/pull/23088
+* Enable cudf_streaming distributed (MPI/UCXX) tests in CI by @nirandaperera in https://github.com/rapidsai/cudf/pull/22954
+* Fix DataFrame.rename for an unnamed MultiIndex level by @galipremsagar in https://github.com/rapidsai/cudf/pull/23062
+* Fix rtcx embed target-level dependencies under the Makefiles generator by @galipremsagar in https://github.com/rapidsai/cudf/pull/23106
+* fix(pylibcudf): accept inf/-inf as valid FLOAT32 scalar values by @nethum529 in https://github.com/rapidsai/cudf/pull/23099
+* Match pandas semantics in groupby.rolling and groupby.apply result construction by @galipremsagar in https://github.com/rapidsai/cudf/pull/23122
+* Hybrid scan reports correct number of input RGs by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/23052
+* Fix uninitialized read for empty segments in segmented top-k by @ttnghia in https://github.com/rapidsai/cudf/pull/23109
+* Aggregate category values instead of codes in window operations by @galipremsagar in https://github.com/rapidsai/cudf/pull/23120
+* Sum interleave benchmark byte counts across all columns by @fallintoplace in https://github.com/rapidsai/cudf/pull/23103
+* Fix type annotation for CachedParquetInfo.size by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23142
+* Raise TypeError for NaT in where() on masked dtypes by @galipremsagar in https://github.com/rapidsai/cudf/pull/23107
+* Fix ``Scan`` projection with pandas index by @rjzamora in https://github.com/rapidsai/cudf/pull/23135
+* Match pandas semantics in DataFrame.select_dtypes by @galipremsagar in https://github.com/rapidsai/cudf/pull/23116
+* Fix to_datetime nanosecond inference and DatetimeIndex tz wall-time interpretation by @galipremsagar in https://github.com/rapidsai/cudf/pull/23141
+* Return value_counts groups in order of first appearance by @galipremsagar in https://github.com/rapidsai/cudf/pull/23140
+* Implement factorize for MultiIndex by @galipremsagar in https://github.com/rapidsai/cudf/pull/23139
+* Fix cudf.pandas datetimelike plotting failures (canonical freq offsets + Period/offset pickling) by @galipremsagar in https://github.com/rapidsai/cudf/pull/23054
+* Use `rapids_test_add()` again by @KyleFromNVIDIA in https://github.com/rapidsai/cudf/pull/23181
+* Add error checking to format inference by @vyasr in https://github.com/rapidsai/cudf/pull/23172
+* Set `RUN_SERIAL` property on streaming tests by @KyleFromNVIDIA in https://github.com/rapidsai/cudf/pull/23188
+* Handle Arrow bool masks in DataFrame getitem by @dttutty in https://github.com/rapidsai/cudf/pull/23195
+* Supply stream and mr to column synthesizers by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/23209
+* Fix out-of-bounds access in segmented top-k with partial offsets by @ttnghia in https://github.com/rapidsai/cudf/pull/23105
+* Remove duplicate return in ndsh apply_inner_join by @fallintoplace in https://github.com/rapidsai/cudf/pull/23104
+* Fix cuco::extent type for comparator_helper key_set in distinct_count by @davidwendt in https://github.com/rapidsai/cudf/pull/23236
+* Fix string reductions and isin across string dtype flavors by @galipremsagar in https://github.com/rapidsai/cudf/pull/23214
+* fix(pre-commit): normalize SPDX handling by @bdice in https://github.com/rapidsai/cudf/pull/23228
+* Fix cudf.pandas arithmetic test failures (pow null identities, RangeIndex range-preserving binops, Index proxy array priority) by @galipremsagar in https://github.com/rapidsai/cudf/pull/23176
+* Fix benchmark generate_input create_ascii_string_column function signature by @davidwendt in https://github.com/rapidsai/cudf/pull/23239
+* Raise OutOfBoundsDatetime for datetime conversions that exceed the target unit's range by @galipremsagar in https://github.com/rapidsai/cudf/pull/23216
+* Fix cudf.pandas series accessor failures across numpy/nullable/arrow dtypes by @galipremsagar in https://github.com/rapidsai/cudf/pull/23056
+* Fix Series.isin dtype and value semantics for masked (nullable) dtypes by @galipremsagar in https://github.com/rapidsai/cudf/pull/23057
+* Replace thrust::reduce_by_key with cub::DeviceReduce::ReduceByKey in tdigest generation by @PointKernel in https://github.com/rapidsai/cudf/pull/23204
+* Change cuco::extent type usage from size_type to size_t by @davidwendt in https://github.com/rapidsai/cudf/pull/23259
+* Fix DataFrame.quantile and Series.quantile to match pandas by @galipremsagar in https://github.com/rapidsai/cudf/pull/23058
+* Fix data_type ctor calls in the row_ir get_return_type function by @davidwendt in https://github.com/rapidsai/cudf/pull/23237
+* Fix groupby size dtype for masked series and apply group order for sort=False by @galipremsagar in https://github.com/rapidsai/cudf/pull/23260
+* Rewrite GroupBy.nth as a pandas-compatible positional row filter by @galipremsagar in https://github.com/rapidsai/cudf/pull/23257
+* Keep the dtype family in GroupBy.rank results by @galipremsagar in https://github.com/rapidsai/cudf/pull/23258
+* Fix stale num_rows argument breaking mypy in cudf-polars duplicated-output path by @galipremsagar in https://github.com/rapidsai/cudf/pull/23303
+* Pin pyarrow<24 in the cudf and pylibcudf conda recipes by @galipremsagar in https://github.com/rapidsai/cudf/pull/23319
+* Fix cudf.pandas isinstance checks for unproxied pandas subclasses and wrap groupby resamplers by @galipremsagar in https://github.com/rapidsai/cudf/pull/23273
+* Fix GroupBy.apply result assembly, UDF closure side effects, and empty-frame dtypes by @galipremsagar in https://github.com/rapidsai/cudf/pull/23272
+* Avoid leaving multi-rank execution in a bad state in cudf-polars tests by @wence- in https://github.com/rapidsai/cudf/pull/23340
+* Reconcile Index.union dtypes before the empty-operand short-circuits by @galipremsagar in https://github.com/rapidsai/cudf/pull/23318
+* Support the limit parameter in GroupBy.ffill and bfill by @galipremsagar in https://github.com/rapidsai/cudf/pull/23302
+* Stop forward-filling in GroupBy.pct_change by @galipremsagar in https://github.com/rapidsai/cudf/pull/23301
+* Return index labels from GroupBy idxmin/idxmax in agg and transform by @galipremsagar in https://github.com/rapidsai/cudf/pull/23298
+* Match pandas semantics for null reduction results and mode ordering by @galipremsagar in https://github.com/rapidsai/cudf/pull/23328
+* Fix incorrect DECIMAL128 groupby sums on Blackwell with CUDA 13.0 by @PointKernel in https://github.com/rapidsai/cudf/pull/23229
+* Fix null_precedence access in preprocessed_table::create by @davidwendt in https://github.com/rapidsai/cudf/pull/23238
+* Route GroupBy.transform size/cumcount/ngroup to their group-level implementations by @galipremsagar in https://github.com/rapidsai/cudf/pull/23297
+* Recognize named-aggregation lambdas as scans in GroupBy by @galipremsagar in https://github.com/rapidsai/cudf/pull/23300
+* Add timeout stacktrace utility for cudf-polars tests, remove pytest-timeout by @wence- in https://github.com/rapidsai/cudf/pull/23332
+* Stop mutating the source column dtype in equivalent-type numerical casts by @galipremsagar in https://github.com/rapidsai/cudf/pull/23364
+* Mirror cudf.pandas class-level monkeypatches onto the real type by @galipremsagar in https://github.com/rapidsai/cudf/pull/23001
+* Restore the original index in GroupBy transform broadcasts and ngroup by @galipremsagar in https://github.com/rapidsai/cudf/pull/23296
+* Honor level and sort_remaining in sort_index(axis=1) by @galipremsagar in https://github.com/rapidsai/cudf/pull/23367
+* Fix lazy quantifier priority handling in Glushkov regex engine by @davidwendt in https://github.com/rapidsai/cudf/pull/23381
+* Keep MultiIndex columns in GroupBy.agg for MultiIndex-column sources by @galipremsagar in https://github.com/rapidsai/cudf/pull/23366
+* Preserve masked integer dtypes in GroupBy cumsum/cumprod by @galipremsagar in https://github.com/rapidsai/cudf/pull/23299
+* Use new rapidsmpf utilities to handle cancellation in bloom filter awaitables by @wence- in https://github.com/rapidsai/cudf/pull/23293
+* RMM Library Linking Error Bug Fix by @abigalekim in https://github.com/rapidsai/cudf/pull/23341
+* Fix Parquet stats pinned host copy lifetime by @aryansri05 in https://github.com/rapidsai/cudf/pull/23219
+* Add cuFile wheel dependencies for Python tests by @bdice in https://github.com/rapidsai/cudf/pull/23392
+* Include sources.jar and javadoc.jar in the Java Maven repo output by @paul-aiyedun in https://github.com/rapidsai/cudf/pull/23389
+* Preserve MultiIndex column fidelity through ColumnAccessor round trips by @galipremsagar in https://github.com/rapidsai/cudf/pull/23365
+* [BUG] Fix ORC chunked writer root row statistics by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/23118
+* Fix flaky cudf-polars Quent integration test by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23482
+### 📖 Documentation
+* Fix misleading Javadoc for Aggregation.nth(int) by @piotrrzysko in https://github.com/rapidsai/cudf/pull/22486
+* Remove wrong example from the docs by @findepi in https://github.com/rapidsai/cudf/pull/22575
+* Reorganize cuDF documentation to highlight all projects by @mroeschke in https://github.com/rapidsai/cudf/pull/22352
+* Drop caveat about strict channel priority by @jakirkham in https://github.com/rapidsai/cudf/pull/22688
+* Remove unneeded cudf classic documentation pages by @mroeschke in https://github.com/rapidsai/cudf/pull/22693
+* Fix duplicate and truncated copyright header in lists/detail/copying.hpp by @PointKernel in https://github.com/rapidsai/cudf/pull/22719
+* Fix cudf-polars MemoryResourceConfig example rendering by @bdice in https://github.com/rapidsai/cudf/pull/22751
+* Update cuDF Python user guides to current/pandas 3 behaviors by @mroeschke in https://github.com/rapidsai/cudf/pull/22720
+* Overhaul cudf Python developer docs by @mroeschke in https://github.com/rapidsai/cudf/pull/22689
+* Add blog links to appropriate cpp/examples readme files by @davidwendt in https://github.com/rapidsai/cudf/pull/22799
+* Document and test Parquet row-group output ordering for `read_parquet` by @qbacpey in https://github.com/rapidsai/cudf/pull/22733
+* Fix documentation for `cudf::lists::sort_lists` and the corresponding Java binding `listSortRows` by @ttnghia in https://github.com/rapidsai/cudf/pull/22916
+* Fix Python docs source links by @bdice in https://github.com/rapidsai/cudf/pull/22791
+* Clarify list sorting docs and replace stale disabled `sort_lists` test by @ttnghia in https://github.com/rapidsai/cudf/pull/22921
+* Document cudf.pandas Profiler usage in Python scripts and CLI line profiling by @gmartini2000 in https://github.com/rapidsai/cudf/pull/21991
+* Update docs to use NVIDIA Sphinx theme by @bdice in https://github.com/rapidsai/cudf/pull/23035
+* Add instructions on running PDS-H by @Matt711 in https://github.com/rapidsai/cudf/pull/23025
+* Fix doxygen to include appropriate include path names in generated output by @davidwendt in https://github.com/rapidsai/cudf/pull/23080
+* Add instructions on running PDS-H for pandas by @Matt711 in https://github.com/rapidsai/cudf/pull/23087
+* Add file descriptions for doxygen output by @davidwendt in https://github.com/rapidsai/cudf/pull/23083
+* Clarify C++ review approval requirements by @bdice in https://github.com/rapidsai/cudf/pull/23092
+* Align cuDF documentation branding by @bdice in https://github.com/rapidsai/cudf/pull/23079
+* Update outdated overflow/size guidance in libcudf developer guide by @PointKernel in https://github.com/rapidsai/cudf/pull/23127
+* Fix doxygen file descriptions by moving file/brief out of addtogroup blocks by @davidwendt in https://github.com/rapidsai/cudf/pull/23125
+* Document the include-what-you-use convention in developer and review guidelines by @PointKernel in https://github.com/rapidsai/cudf/pull/23245
+### 🚀 New Features
+* Write variable bit-width keys for Parquet dictionary encoded pages by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22279
+* [FEA] ANSI SQL Operator JIT Support (1) : Refactor ROW IR by @lamarrr in https://github.com/rapidsai/cudf/pull/22511
+* Forward merge release/26.06 into main by @KyleFromNVIDIA in https://github.com/rapidsai/cudf/pull/22603
+* [FEA] LTO IR Support (1) - Introduce LibRTCX by @lamarrr in https://github.com/rapidsai/cudf/pull/21625
+* Extend SUM_WITH_OVERFLOW reduction to signed integers and decimals by @PointKernel in https://github.com/rapidsai/cudf/pull/22465
+* [FEA] LTO IR Support (2) - Cleanup CUDF's JIT Sources by @lamarrr in https://github.com/rapidsai/cudf/pull/22641
+* Rename build/probe to right/left in filtered_join by @PointKernel in https://github.com/rapidsai/cudf/pull/22464
+* Parquet utilities to fetch footer and page index buffers from multiple sources by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22613
+* Add hybrid scan multifile reader basics by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22616
+* [FEA] ANSI SQL Operator JIT Support (2) : Implement Operator Library by @lamarrr in https://github.com/rapidsai/cudf/pull/22514
+* Support reading from `file://` URIs in cudf-polars by @Matt711 in https://github.com/rapidsai/cudf/pull/22749
+* Create new libcudf_streaming C++ library by @vyasr in https://github.com/rapidsai/cudf/pull/22747
+* Add multifile row group pruning with stats and byte ranges by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22715
+* Add Python/Cython bindings for libcudf_streaming by @vyasr in https://github.com/rapidsai/cudf/pull/22760
+* [FEA] LTO IR Support (3) -  Replace JITIFY usage with LIBRTCX by @lamarrr in https://github.com/rapidsai/cudf/pull/22654
+* [BUG][FEA] Implement Static Linking for RTCX's Dependencies by @lamarrr in https://github.com/rapidsai/cudf/pull/22823
+* Add filter_join_indices_output_size by @PointKernel in https://github.com/rapidsai/cudf/pull/22694
+* Expose max_dictionary_size and dictionary_policy in Java/JNI Parquet writer bindings by @thirtiseven in https://github.com/rapidsai/cudf/pull/22656
+* Add multi-column ORDER BY support to range rolling windows by @pramodsatya in https://github.com/rapidsai/cudf/pull/22627
+* Prepare librtcx for standalone usage by @vyasr in https://github.com/rapidsai/cudf/pull/22856
+* Field extraction for Parquet VARIANT columns (scalar + nested objects) by @vuule in https://github.com/rapidsai/cudf/pull/22416
+* Add hybrid scan multifile single-step materializers by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22793
+* Add array-index ("[N]") support to VARIANT field extraction by @vuule in https://github.com/rapidsai/cudf/pull/22877
+* Add row mask builder APIs for multifile hybrid scan by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22792
+* Add multifile hybrid scan pass construction API by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22794
+* [MLIR] Scaffold MLIR based UDF backend by @brandon-b-miller in https://github.com/rapidsai/cudf/pull/22766
+* Split libcudf-streaming tests and benchmarks into a dedicated conda package by @pentschev in https://github.com/rapidsai/cudf/pull/22871
+* Added Concurrent Polynomial Transform Benchmark by @lamarrr in https://github.com/rapidsai/cudf/pull/19199
+* Support converting column to a python list in pylibcudf by @Matt711 in https://github.com/rapidsai/cudf/pull/19446
+* [FEA] ANSI SQL Operator JIT Support (3) : Refactor operator library by @lamarrr in https://github.com/rapidsai/cudf/pull/22836
+* Support `cudf-polars` `epoch` by @brandon-b-miller in https://github.com/rapidsai/cudf/pull/18443
+* Support `cudf-polars` `total_xxx` datetime extraction methods by @brandon-b-miller in https://github.com/rapidsai/cudf/pull/18171
+* Add SUM_OVERFLOW in sort groupby by @PointKernel in https://github.com/rapidsai/cudf/pull/22832
+* Skill to compare performance of a branch or PR with main by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22725
+* Add dynamic join key prefilter planning by @pentschev in https://github.com/rapidsai/cudf/pull/22995
+* Add hybrid scan multifile two-step materializers by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22833
+* Add hybrid scan multifile chunked materializers by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/23013
+* [MLIR] MaskedType: core type, constructor, accessors by @brandon-b-miller in https://github.com/rapidsai/cudf/pull/22884
+* Prepend source index column in Parquet reader by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22879
+* [FEA] Improve cuDF's Kernel Cache Directory Resolution by @lamarrr in https://github.com/rapidsai/cudf/pull/22975
+* [FEA] ANSI SQL Operator JIT Support (4) : Implement IR for ANSI and other JIT Extensions by @lamarrr in https://github.com/rapidsai/cudf/pull/22602
+* Pin Polars<1.43 by @Matt711 in https://github.com/rapidsai/cudf/pull/22993
+* [FEA] Support input of dictionary-encoded types in Transforms by @lamarrr in https://github.com/rapidsai/cudf/pull/21552
+* [FEA] LTO IR Support (4) - Implement LTO Transform Kernels by @lamarrr in https://github.com/rapidsai/cudf/pull/22680
+* Add config option for JIT parquet filtering by @Matt711 in https://github.com/rapidsai/cudf/pull/21460
+* [MLIR] MaskedType: NA handling by @brandon-b-miller in https://github.com/rapidsai/cudf/pull/22885
+* Implement ``item`` aggregation for ``LazyFrame.pivot`` by @rjzamora in https://github.com/rapidsai/cudf/pull/22941
+* Support fused arithmetic expressions in cudf-polars by @Matt711 in https://github.com/rapidsai/cudf/pull/23136
+* JNI support for multiple order-by columns for RANGE-based window functions by @mythrocks in https://github.com/rapidsai/cudf/pull/22778
+* Add Java Variant extraction support by @nartal1 in https://github.com/rapidsai/cudf/pull/23069
+* Add Java Bindings for Hybrid Scan Parquet Reader by @paul-aiyedun in https://github.com/rapidsai/cudf/pull/22456
+* Add cuDF Java option for loading libraries from a user provided directory by @paul-aiyedun in https://github.com/rapidsai/cudf/pull/22592
+* Propagate ``OrderScheme`` metadata through aliases and timestamp truncation by @rjzamora in https://github.com/rapidsai/cudf/pull/23148
+* Prepend row index column in Parquet reader by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/23077
+* Add memory_resources and reusable validation foundations by @bdice in https://github.com/rapidsai/cudf/pull/23028
+* Select Parquet columns by field ID by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22955
+* Prepend source and row index columns in Hybrid scan reader by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22878
+* Add Glushkov regex fast-path to libcudf by @lingyany-nv in https://github.com/rapidsai/cudf/pull/21936
+* Add memory resource parameter to cudf::hash_join constructors by @PointKernel in https://github.com/rapidsai/cudf/pull/23223
+* Add ``adjust_ordering`` utility by @rjzamora in https://github.com/rapidsai/cudf/pull/22628
+* Support non-``Col`` shuffle keys in streaming ``Join`` (version 2) by @rjzamora in https://github.com/rapidsai/cudf/pull/23262
+* Add fixed-size rolling window support to cudf-polars by @tolleybot in https://github.com/rapidsai/cudf/pull/21964
+* Add cuDF JAR build support for all Maven classifiers by @paul-aiyedun in https://github.com/rapidsai/cudf/pull/23261
+* Add plan optimizer pass that extracts join keys and uses them to construct pre-filters for inner joins by @pentschev in https://github.com/rapidsai/cudf/pull/22996
+* Experimental Parquet reader supports retention vectors by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/23402
+* Add array indexing support to Parquet variant field extraction by @vuule in https://github.com/rapidsai/cudf/pull/22895
+* Upgrade to nvcomp 5.3.0.16 by @robertmaynard in https://github.com/rapidsai/cudf/pull/23456
+### 🛠️ Improvements
+* Trim CI temporarily for pandas3 feature branch by @galipremsagar in https://github.com/rapidsai/cudf/pull/20892
+* Ignore UserWarning from pandas 3.0 about obj.round on temporal types by @mroeschke in https://github.com/rapidsai/cudf/pull/20900
+* Remove expect_warning_if in series/test_np_ufuncs.py by @mroeschke in https://github.com/rapidsai/cudf/pull/20899
+* Remove unneeded pandas 3 FutureWarning filters from test_binops.py/test_apply.py by @mroeschke in https://github.com/rapidsai/cudf/pull/20917
+* Remove expected FutureWarning in test_date_range_raise_unsupported for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/20931
+* Remove most pandas 2.x version checks for pandas 3.0 by @mroeschke in https://github.com/rapidsai/cudf/pull/20932
+* Remove more pandas<3 version checks in cuDF by @mroeschke in https://github.com/rapidsai/cudf/pull/20948
+* Drop warnings in `test_reductions.py` by @galipremsagar in https://github.com/rapidsai/cudf/pull/20911
+* Modify/Remove cuDF classic pandas-2 related xfails  by @mroeschke in https://github.com/rapidsai/cudf/pull/20988
+* Modify unit tests that use deprecated copy keyword in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21020
+* Fix miscellaneous cuDF test failures from pandas 3 pt 2 by @mroeschke in https://github.com/rapidsai/cudf/pull/21005
+* Fix miscellaneous cuDF test failures from pandas 3  by @mroeschke in https://github.com/rapidsai/cudf/pull/21001
+* Implement .groups return dictionary keys FutureWarning for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21021
+* Chage more misc cuDF classic unit tests for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21031
+* Fix DatetimeIndex docstrings for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21035
+* Fix Numba row udf compat with pandas.StringDtype by @mroeschke in https://github.com/rapidsai/cudf/pull/21063
+* Adjust cuDF unit tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21080
+* Bump to `pandas-3.0rc2` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21097
+* Adjust parquet unit tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21109
+* Adjust reset_index and categorial tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21111
+* Adjust string accessor, setitem, constructor tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21127
+* Adjust json, csv tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21128
+* Fix pandas3 related test failures in `test_fillna` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21142
+* Avoid asserting object in test_csv for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21150
+* Fully assert the result for test_join_multi in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21149
+* Adjust categorical tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21148
+* Switch to release version of pandas 3.0 by @galipremsagar in https://github.com/rapidsai/cudf/pull/21121
+* Fix pytest failures in `test_explode` and `test_repr` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21158
+* Adjust misc tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21171
+* Fix most tests that raise a Pandas4Warning by @mroeschke in https://github.com/rapidsai/cudf/pull/21167
+* Adjust more misc tests for existing pandas object types in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21193
+* Fix test_index_append_error for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21211
+* Fix docstrings for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/21209
+* Forward merge main into pandas3 by @Matt711 in https://github.com/rapidsai/cudf/pull/21215
+* Forward merge main into pandas3 by @Matt711 in https://github.com/rapidsai/cudf/pull/21233
+* Forward merge main into pandas3 by @Matt711 in https://github.com/rapidsai/cudf/pull/21288
+* Bump pandas 3 branch's latest version to 3.0.1 by @mroeschke in https://github.com/rapidsai/cudf/pull/21593
+* Fix some minor, pandas 3 branch backport issues  by @mroeschke in https://github.com/rapidsai/cudf/pull/21595
+* Fix `strftime` callers in `pandas3` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21624
+* Fix groupby value_counts pytest by @galipremsagar in https://github.com/rapidsai/cudf/pull/21689
+* Fix all udf pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/21731
+* Fix all pytest failures in `test_apply.py` by @galipremsagar in https://github.com/rapidsai/cudf/pull/21835
+* Fix pandas failures in fillna tests by @galipremsagar in https://github.com/rapidsai/cudf/pull/21830
+* Update test_attributes for new better cudf/pandas alignment by @vyasr in https://github.com/rapidsai/cudf/pull/21833
+* Use arrow type to fix test issue by @vyasr in https://github.com/rapidsai/cudf/pull/21878
+* Remove now unnecessary env var flags by @vyasr in https://github.com/rapidsai/cudf/pull/21877
+* Fix type inconsistencies in `diff` pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/21893
+* Update `loc` pytests by @galipremsagar in https://github.com/rapidsai/cudf/pull/21983
+* Fix reduction test failures by @galipremsagar in https://github.com/rapidsai/cudf/pull/21986
+* Bump latest pandas to 3.0.2 by @mroeschke in https://github.com/rapidsai/cudf/pull/21987
+* Avoid pytz in test_holidays_within_dates by @mroeschke in https://github.com/rapidsai/cudf/pull/22139
+* Test different pandas option in test_options_mode for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22160
+* Pass writable numpy array to pytorch third party test with pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22161
+* Drop all xpassing tests in pandas-3 by @galipremsagar in https://github.com/rapidsai/cudf/pull/22163
+* Fix custreamz tests for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22195
+* Fix some DatetimeIndex doctests for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22198
+* Adjust pylibcudf test_read_csv_parse_options for pandas 3 large string by @mroeschke in https://github.com/rapidsai/cudf/pull/22200
+* Fix more misc cuDF unit tests for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22201
+* Fix cudf interval test for pandas 3 and numpy < 2 by @mroeschke in https://github.com/rapidsai/cudf/pull/22205
+* Disable csv tests temporarily & fix dask_cudf failure by @galipremsagar in https://github.com/rapidsai/cudf/pull/22203
+* Remove unnecessary older pandas checks in pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22215
+* Change pandas links from version/2.3.3 to stable by @mroeschke in https://github.com/rapidsai/cudf/pull/22218
+* Move skippable pandas tests in run-pandas-test.sh to conftest-patch.py by @mroeschke in https://github.com/rapidsai/cudf/pull/22260
+* Remove pandas tests that no longer exist by @galipremsagar in https://github.com/rapidsai/cudf/pull/22262
+* Implement `Flags` in `cudf` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22225
+* Consolidate all pandas test skips to new NODEIDS_TO_SKIP dictionary by @mroeschke in https://github.com/rapidsai/cudf/pull/22282
+* Drop passing tests from `conftest-patch.py` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22298
+* Consolidate all pandas test to NODEIDS_THAT_FAIL dictionary by @mroeschke in https://github.com/rapidsai/cudf/pull/22311
+* Add remaining pandas test failures to NODEIDS_THAT_FAIL for pandas 3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22339
+* Remove dtype workaround in `Column.create` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22396
+* Add ability to set `freq` on `DatetimeIndex` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22440
+* Bump pandas to 3.0.3 by @mroeschke in https://github.com/rapidsai/cudf/pull/22484
+* Handle all dtypes in `convert_dtypes` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22202
+* Update conftest-patch with latest xfails by @galipremsagar in https://github.com/rapidsai/cudf/pull/22489
+* Enable full ci for `pandas3` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22502
+* Use `cudf::tables_equal` API in libcudf examples by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22428
+* Add additional AI review guidelines for pylibcudf/cudf_polars by @mroeschke in https://github.com/rapidsai/cudf/pull/22340
+* Require CMake 4.0 by @KyleFromNVIDIA in https://github.com/rapidsai/cudf/pull/22492
+* Bump run_cudf_polars_pytests timeout by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22505
+* Add `Node.get_stable_plan_id` to cudf-polars by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22513
+* Capture command line on pds-h benchmark runner by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22508
+* Fix mypy issue by @wence- in https://github.com/rapidsai/cudf/pull/22549
+* Add nvtx annotations to more cudf-polars IO by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22573
+* Reduce some input data sizes for cudf_polars unit tests by @mroeschke in https://github.com/rapidsai/cudf/pull/22562
+* pylibcudf read_parquet accepts pre-materialized FileMetadata by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22587
+* Add compression type axis to the parquet reader benchmarks by @qbacpey in https://github.com/rapidsai/cudf/pull/22471
+* Excercise assert_collect_raises with engine fixture by @mroeschke in https://github.com/rapidsai/cudf/pull/22563
+* Require engine argument in assert_ir_translation_raises in cudf_polars tests by @mroeschke in https://github.com/rapidsai/cudf/pull/22565
+* Pass memory resource to exec_policy_nosync in remaining modules by @bdice in https://github.com/rapidsai/cudf/pull/22045
+* Pass engine everywhere in assert_sink_ir_translation_raises by @mroeschke in https://github.com/rapidsai/cudf/pull/22609
+* Add pylibucdf bindings for `FileMetadata.row_groups` by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22599
+* Expose libcudf tables_equal in pylibcudf by @mroeschke in https://github.com/rapidsai/cudf/pull/22611
+* Use CCCL overflow utils instead of custom overflow logic by @PointKernel in https://github.com/rapidsai/cudf/pull/22593
+* Improve devcontainer startup times by @trxcllnt in https://github.com/rapidsai/cudf/pull/22594
+* Reduce mutex scoped region in parquet io utilities by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22550
+* Clone rapidsmpf before devcontainer env creation by @bdice in https://github.com/rapidsai/cudf/pull/22579
+* Minimize Dask resource acquisition in cudf_polars tests by @mroeschke in https://github.com/rapidsai/cudf/pull/22646
+* Convert conftest-patch.py to a pytest plugin for pandas testing by @mroeschke in https://github.com/rapidsai/cudf/pull/22643
+* Clean up Polars unit tests setup by @mroeschke in https://github.com/rapidsai/cudf/pull/22605
+* Use `nvcompGetStatusString` when available by @vuule in https://github.com/rapidsai/cudf/pull/22566
+* Add LZ4 to ORC/Parquet IO benchmark compression axes by @vuule in https://github.com/rapidsai/cudf/pull/22564
+* Add row group size/stripe options to Parquet and ORC benchmarks by @qbacpey in https://github.com/rapidsai/cudf/pull/22503
+* Workaround nvcc compiler hangs in libcudf debug build by @davidwendt in https://github.com/rapidsai/cudf/pull/22675
+* Remove deprecated mark_join overloads without join_prefilter by @PointKernel in https://github.com/rapidsai/cudf/pull/22670
+* Add SECURITY.md by @jameslamb in https://github.com/rapidsai/cudf/pull/22684
+* Various cuDF CI fixes by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22677
+* Reduce verbosity of cudf-polars-polars tests by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22543
+* Drop the GIL while making datasources in read_parquet_footers by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22685
+* Use CUB bulk for row hashing by @bdice in https://github.com/rapidsai/cudf/pull/22632
+* Minimize Ray resource acquisition in cudf_polars tests by @mroeschke in https://github.com/rapidsai/cudf/pull/22661
+* Adjust cudf-polars test timeouts by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22691
+* Parallelize statistics collection by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22645
+* Reduce MixedInnerJoinTest.LargeDataMultiBlockCoordination to a single type by @davidwendt in https://github.com/rapidsai/cudf/pull/22698
+* Add noinline to n_table_comparator::operator() by @davidwendt in https://github.com/rapidsai/cudf/pull/22699
+* Add debug-cudf-pandas skill for fixing pandas test compatibility failures by @vyasr in https://github.com/rapidsai/cudf/pull/22625
+* Remove stale python filterwarnings and skipped tests by @mroeschke in https://github.com/rapidsai/cudf/pull/22706
+* PERF: Skip header check in parquet reader by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22679
+* docs: fix linked locations for notebooks after docs refactor by @gforsyth in https://github.com/rapidsai/cudf/pull/22710
+* Pass value to timeout parameters in subprocess/threading APIs in cudf_polars tests by @mroeschke in https://github.com/rapidsai/cudf/pull/22669
+* Drop the GIL in more places for parquet reads by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22692
+* Add cuDF agent skill by @kjmph in https://github.com/rapidsai/cudf/pull/22721
+* Add peak_memory_usage tracking to nvbench benchmarks by @lhlRahman in https://github.com/rapidsai/cudf/pull/22548
+* Add more patterns to libcudf regex benchmarks by @davidwendt in https://github.com/rapidsai/cudf/pull/22213
+* Remove deprecated cudf::detail::copy_if_safe by @davidwendt in https://github.com/rapidsai/cudf/pull/22682
+* More miscellaneous cuDF Python testing cleanups by @mroeschke in https://github.com/rapidsai/cudf/pull/22713
+* Remove rapidsmpf from all dependencies by @bdice in https://github.com/rapidsai/cudf/pull/22655
+* Fix various pandas issues by @vyasr in https://github.com/rapidsai/cudf/pull/22705
+* Remove duplicated logic that does parquet metadata read by @Matt711 in https://github.com/rapidsai/cudf/pull/22741
+* fix(ci): fix configuration for breaking change notification workflow by @jameslamb in https://github.com/rapidsai/cudf/pull/22732
+* Define pandas and polars compatibility testing versions in dependencies.yaml by @Matt711 in https://github.com/rapidsai/cudf/pull/22189
+* Drop stale tests in `cudf.pandas` by @galipremsagar in https://github.com/rapidsai/cudf/pull/22618
+* Remove deprecated filtered_join set_as_build_table API by @PointKernel in https://github.com/rapidsai/cudf/pull/22671
+* Support `polars.Expr.truncate` by @mroeschke in https://github.com/rapidsai/cudf/pull/22754
+* Asynchronously fetch byte ranges from multiple sources by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22586
+* fix(ci): add missing permissions to pandas-tests workflow by @vyasr in https://github.com/rapidsai/cudf/pull/22761
+* Improve Parquet case-insensitive column selection semantics by @qbacpey in https://github.com/rapidsai/cudf/pull/22729
+* Unpin `numba-cuda` upper bound on `main` by @brandon-b-miller in https://github.com/rapidsai/cudf/pull/22730
+* Condense `Decimal32/64/128Column` to `DecimalColumn`, remove other unused code by @mroeschke in https://github.com/rapidsai/cudf/pull/22738
+* Bump polars upper bound to <1.42 by @madsbk in https://github.com/rapidsai/cudf/pull/22745
+* Refactor dynamic Scan node lowering by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22758
+* Add benchmarks for reshaping operations by @Matt711 in https://github.com/rapidsai/cudf/pull/21212
+* Rename build/probe to left/right in mark_join by @PointKernel in https://github.com/rapidsai/cudf/pull/22723
+* Update `cudf.pandas` skill with recent changes by @galipremsagar in https://github.com/rapidsai/cudf/pull/22787
+* Rename build/probe to right/left in mixed_join_semi by @PointKernel in https://github.com/rapidsai/cudf/pull/22790
+* refactor(cudf_polars): use cudf_streaming for cudf-specific streaming imports by @vyasr in https://github.com/rapidsai/cudf/pull/22786
+* Make publish job search for abi3 wheels by @vyasr in https://github.com/rapidsai/cudf/pull/22815
+* Add fused expression IR tests by @Matt711 in https://github.com/rapidsai/cudf/pull/22805
+* refactor(rtcx): decouple librtcx from cudf and add standalone CMake build by @vyasr in https://github.com/rapidsai/cudf/pull/22744
+* Add remaining cudf_streaming tests and benchmarks by @vyasr in https://github.com/rapidsai/cudf/pull/22814
+* Treat `
+` as a single line terminator for `^`/`$` under EXT_NEWLINE by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/22763
+* Add rolling window tests that exercise overflow-like edge cases for SUM by @wence- in https://github.com/rapidsai/cudf/pull/22660
+* Add ``send_chunk`` utility for repeated trace-then-send pattern by @rjzamora in https://github.com/rapidsai/cudf/pull/22651
+* Add unstable decorator to cudf-polars by @madsbk in https://github.com/rapidsai/cudf/pull/22804
+* Add CUDA error checks after every kernel launch by @PointKernel in https://github.com/rapidsai/cudf/pull/22755
+* Add `FusedScan` and nxtx annotations for `FusedScan` and `SplitScan` by @Matt711 in https://github.com/rapidsai/cudf/pull/22838
+* Improve performance of strings count_matches utility with specific expression patterns by @davidwendt in https://github.com/rapidsai/cudf/pull/22429
+* Increase polars IR coverage in tests by @Matt711 in https://github.com/rapidsai/cudf/pull/22847
+* Derive per-chunk memory reservation from scan statistics by @Matt711 in https://github.com/rapidsai/cudf/pull/22846
+* Reenable benchmarks when rapidsmpf supports MPI by @vyasr in https://github.com/rapidsai/cudf/pull/22853
+* Build `libcudf_streaming` comm benchmarks with partial MPI/UCXX availability by @pentschev in https://github.com/rapidsai/cudf/pull/22860
+* Don't capture GPU hardware information during CPU benchmarking runs by @mroeschke in https://github.com/rapidsai/cudf/pull/22862
+* Use google cloud read-only Maven Central mirror by @davidwendt in https://github.com/rapidsai/cudf/pull/22875
+* Collect CPU hardware info during benchmarking by @mroeschke in https://github.com/rapidsai/cudf/pull/22873
+* Pin matplotlib<3.11 for pandas-tests CI job by @vyasr in https://github.com/rapidsai/cudf/pull/22882
+* ci: reduce timeout for cudf_streaming C++ tests to 5m by @vyasr in https://github.com/rapidsai/cudf/pull/22880
+* Improve parquet footer reading performance by speculatively reading footer bytes by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22782
+* Add cudf_streaming to clang-format IncludeCategories by @vyasr in https://github.com/rapidsai/cudf/pull/22881
+* refactor: switch to `rapids-artifact-name` for consistent artifact naming by @gforsyth in https://github.com/rapidsai/cudf/pull/22327
+* Refactor streaming scan construction into `StreamingScan` static methods by @Matt711 in https://github.com/rapidsai/cudf/pull/22889
+* Revert unreviewed VARIANT array-index extraction changes by @vuule in https://github.com/rapidsai/cudf/pull/22893
+* chore(cudf.pandas): remove stale xfail entries for tests no longer in pandas by @vyasr in https://github.com/rapidsai/cudf/pull/22883
+* Use conservative column-size estimates in cudf-polars by @rjzamora in https://github.com/rapidsai/cudf/pull/22796
+* fix(artifacts): correctly label non-arch-dependent but cuda-dependent artifacts by @gforsyth in https://github.com/rapidsai/cudf/pull/22902
+* Fix Parquet column mis-resolution when `allow_mismatched_pq_schemas` is enabled by @qbacpey in https://github.com/rapidsai/cudf/pull/22803
+* Rename build/probe to right/left in key_remapping by @PointKernel in https://github.com/rapidsai/cudf/pull/22789
+* CI Add third-party testing of cuml by @betatim in https://github.com/rapidsai/cudf/pull/21897
+* Expand chunked Parquet writer benchmark also add formatted throughput by @Matt711 in https://github.com/rapidsai/cudf/pull/19049
+* Update pre-commit hooks by @vyasr in https://github.com/rapidsai/cudf/pull/22905
+* Expose the table_view version of unique/distinct_count in pylibcudf by @wence- in https://github.com/rapidsai/cudf/pull/22487
+* Revert xfail_strict=false for pandas tests by @vyasr in https://github.com/rapidsai/cudf/pull/22913
+* Cudf_streaming dedup tests from rapidsmpf  by @nirandaperera in https://github.com/rapidsai/cudf/pull/22858
+* Add nvbench for libcudf dictionary concatenate by @davidwendt in https://github.com/rapidsai/cudf/pull/22798
+* Adapt to rapidsmpf changes by @wence- in https://github.com/rapidsai/cudf/pull/22919
+* Build and test with CUDA 13.3.0 by @bdice in https://github.com/rapidsai/cudf/pull/22825
+* Fix deprecation warning in transform_polynomials_concurrent benchmarks by @davidwendt in https://github.com/rapidsai/cudf/pull/22937
+* Test only oldest and newest supported polars versions in PR CI by @Matt711 in https://github.com/rapidsai/cudf/pull/22939
+* Default the chunked Parquet reader's `pass_read_limit` to reduce surprise OOM by @qbacpey in https://github.com/rapidsai/cudf/pull/22779
+* Add reproduce-ci agent skill for local CI failure reproduction by @vyasr in https://github.com/rapidsai/cudf/pull/22872
+* Adding cudf streaming dist tests by @nirandaperera in https://github.com/rapidsai/cudf/pull/22864
+* Hide absorbed rapids_logger from cudf exports by @bdice in https://github.com/rapidsai/cudf/pull/22538
+* fix(cudf.pandas): remove stale xfail entries from pandas-testing-plugin by @vyasr in https://github.com/rapidsai/cudf/pull/22904
+* Update CONTRIBUTING guide and `build.sh` script to include cudf streaming libraries by @Matt711 in https://github.com/rapidsai/cudf/pull/22943
+* Add string_view -> string normalization in pylibcudf test utilities by @vyasr in https://github.com/rapidsai/cudf/pull/22958
+* [FEA] Use the conda package for croaring instead of fetching via CPM by @vyasr in https://github.com/rapidsai/cudf/pull/22953
+* Enable deprecation warnings by default in build.sh by @vyasr in https://github.com/rapidsai/cudf/pull/22959
+* Use main shared-workflows branch by @bdice in https://github.com/rapidsai/cudf/pull/22960
+* java: use GCS mirror for Maven Central, other small changes by @jameslamb in https://github.com/rapidsai/cudf/pull/22969
+* Relax librdkafka pinning by @vyasr in https://github.com/rapidsai/cudf/pull/22961
+* Pin Cython <3.3.0a0 to avoid prerelease regression by @vyasr in https://github.com/rapidsai/cudf/pull/22977
+* Use matplotlib-base instead of matplotlib in conda test deps by @vyasr in https://github.com/rapidsai/cudf/pull/22974
+* Add row-group statistics availability check by @qbacpey in https://github.com/rapidsai/cudf/pull/22664
+* Fix mypy arg-type for from_buffers after pyarrow-stubs bump by @madsbk in https://github.com/rapidsai/cudf/pull/22979
+* Make HostColumnVector constructors for non-nested types public by @paul-aiyedun in https://github.com/rapidsai/cudf/pull/22498
+* Add the predicate in physical plan explain output by @Matt711 in https://github.com/rapidsai/cudf/pull/22984
+* Adjust verbosity of cudf-polars-polars-tests by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22980
+* Omit Parquet min/max statistics for float/double columns containing NaN by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/22818
+* Add a I/O partition planning information to benchmark runner by @Matt711 in https://github.com/rapidsai/cudf/pull/22945
+* Add additional regex gtests for contains, count, findall, and replace by @davidwendt in https://github.com/rapidsai/cudf/pull/22874
+* Support building and testing cudf-java on JDK 17/21 by @igorpeshansky in https://github.com/rapidsai/cudf/pull/23006
+* Add pandas-compatible args and caching to RangeIndex.to_numpy by @rpathade in https://github.com/rapidsai/cudf/pull/21896
+* Add regex-flags member variable to internal libcudf reprog class by @davidwendt in https://github.com/rapidsai/cudf/pull/22994
+* Remove nogil from pylibcudf view()/mutable_view() and hoist calls out of nogil blocks by @vyasr in https://github.com/rapidsai/cudf/pull/23002
+* Fuse multi-column range window offset generation by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/22863
+* PERF/API: Specify datasource size to avoid HEAD requests for S3 endpoints by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22739
+* Improve performance for concatenate on dictionary columns by @davidwendt in https://github.com/rapidsai/cudf/pull/22807
+* Bound mypy pre-commit dependencies by @vyasr in https://github.com/rapidsai/cudf/pull/23020
+* Move lists_column_device_view and structs_column_device_view to cudf public namespace by @davidwendt in https://github.com/rapidsai/cudf/pull/23008
+* Upgrade nanoarrow to 0.8.0 by @vyasr in https://github.com/rapidsai/cudf/pull/23019
+* Cull unused CudaStreamPoolConfig and dependents by @wence- in https://github.com/rapidsai/cudf/pull/23026
+* fix(csv): correct to_csv quoting documentation and expose QUOTE_NONE by @a-hirota in https://github.com/rapidsai/cudf/pull/21517
+* Avoid unnecessary copy when `TableChunk` data is already packed by @Matt711 in https://github.com/rapidsai/cudf/pull/23034
+* Update CuPy and NumPy dependency specs by @bdice in https://github.com/rapidsai/cudf/pull/22962
+* Document and Migrate host_span vs span public APIs by @joannamooon in https://github.com/rapidsai/cudf/pull/22588
+* Rename `sum_with_overflow` aggregation to `sum_overflow` and deprecate old APIs by @PointKernel in https://github.com/rapidsai/cudf/pull/23014
+* Add braces to prefetch_noexcept location var to fix clang-tidy reported error by @davidwendt in https://github.com/rapidsai/cudf/pull/23066
+* Update dictionary::get_index to use cub FindIf by @davidwendt in https://github.com/rapidsai/cudf/pull/22841
+* Skewed-Length String Dataset Benchmark  by @abigalekim in https://github.com/rapidsai/cudf/pull/22876
+* Add additional regex pytests derived from cudf-spark integration tests by @davidwendt in https://github.com/rapidsai/cudf/pull/23065
+* cudf-classic and CI cleanups for NumPy/CuPy 2/14 version bump by @mroeschke in https://github.com/rapidsai/cudf/pull/23053
+* Enforce east const via clang-format QualifierAlignment by @PointKernel in https://github.com/rapidsai/cudf/pull/22834
+* cudf-polars `PythonScan` support with rank-aware IO sources by @madsbk in https://github.com/rapidsai/cudf/pull/22867
+* Add roles to cudf-polars benchmark run outputs. by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23068
+* Improve scan partitioning planning to prefer sizes closer to target by @Matt711 in https://github.com/rapidsai/cudf/pull/23011
+* Improve chunk sampling in dynamic actors by @rjzamora in https://github.com/rapidsai/cudf/pull/23051
+* fix(deps): try to dynamically load nvrtc from wheel by @gforsyth in https://github.com/rapidsai/cudf/pull/23089
+* Add copyright header to .clang-format and enforce it via pre-commit by @nethum529 in https://github.com/rapidsai/cudf/pull/23073
+* Replace numeric_scalar parameters in cudf::strings::slice_strings with std::optional by @davidwendt in https://github.com/rapidsai/cudf/pull/23031
+* Adopt cuco's parametric bloom filter policy in Parquet and streaming by @PointKernel in https://github.com/rapidsai/cudf/pull/23049
+* Prefetch parquet metadata for scan tasks by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22700
+* switch from 'cuda-python' to specific components (e.g. 'cuda-bindings') by @jameslamb in https://github.com/rapidsai/cudf/pull/23091
+* Emit Quent traces for Engine, Lifecycle, and Plans by @TomAugspurger in https://github.com/rapidsai/cudf/pull/22337
+* Add row-level JSON schema mismatch diagnostics by @wjxiz1992 in https://github.com/rapidsai/cudf/pull/22915
+* Add Quent trace export to .gitignore by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23152
+* Support single-partition `pl.Expr.is_empty` by @mroeschke in https://github.com/rapidsai/cudf/pull/23170
+* Support single-partition `pl.Expr.gather_every` by @mroeschke in https://github.com/rapidsai/cudf/pull/23166
+* Support single-partition `pl.Expr.drop_nans` by @mroeschke in https://github.com/rapidsai/cudf/pull/23165
+* Support single-partition `pl.Expr.cum_count` by @mroeschke in https://github.com/rapidsai/cudf/pull/23163
+* Support `pl.Expr.str.escape_regex` by @mroeschke in https://github.com/rapidsai/cudf/pull/23171
+* Support `pl.Expr.dt.century` by @mroeschke in https://github.com/rapidsai/cudf/pull/23153
+* Support single-partition `pl.Expr.has_nulls` by @mroeschke in https://github.com/rapidsai/cudf/pull/23168
+* Add agent skill for cudf_polars expressions by @mroeschke in https://github.com/rapidsai/cudf/pull/23078
+* Support single-partition `pl.Expr.extend_constant` by @mroeschke in https://github.com/rapidsai/cudf/pull/23167
+* Refactor host_span to use cuda::std::span internally and remove span_base by @PointKernel in https://github.com/rapidsai/cudf/pull/23072
+* Support single-partition `pl.Expr.product` in cudf_polars by @mroeschke in https://github.com/rapidsai/cudf/pull/23169
+* Support `pl.Expr.dt.millennium` by @mroeschke in https://github.com/rapidsai/cudf/pull/23154
+* Support `pl.Expr.dt.days_in_month` by @mroeschke in https://github.com/rapidsai/cudf/pull/23156
+* Support `pl.Expr.dt.quarter` by @mroeschke in https://github.com/rapidsai/cudf/pull/23157
+* Propagate parent nulls into struct children in mergeAndSetValidity by @rishic3 in https://github.com/rapidsai/cudf/pull/22650
+* Support `pl.Expr.rechunk` by @mroeschke in https://github.com/rapidsai/cudf/pull/23192
+* Support remote storage URLs for PDS-H validation by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23202
+* Support `pl.Expr.clip` by @mroeschke in https://github.com/rapidsai/cudf/pull/23162
+* Update benchmark data-generator to allow nullable with no nulls by @davidwendt in https://github.com/rapidsai/cudf/pull/23198
+* Rename some benchmark .cu files to .cpp by @davidwendt in https://github.com/rapidsai/cudf/pull/23186
+* Plumb statistics object into ProgressThread for all engines by @wence- in https://github.com/rapidsai/cudf/pull/23082
+* Support `pl.Expr.reinterpret/degrees/radians` by @mroeschke in https://github.com/rapidsai/cudf/pull/23210
+* Pin pyarrow < 25 in Polars tests by @mroeschke in https://github.com/rapidsai/cudf/pull/23218
+* Optimize RLE decoding by staging in shared memory by @vyasr in https://github.com/rapidsai/cudf/pull/23090
+* Fix IO benchmark naming consistency by @Tjindl in https://github.com/rapidsai/cudf/pull/23180
+* Error when parquet decode string corruption detected by @pmattione-nvidia in https://github.com/rapidsai/cudf/pull/23203
+* Add dictionary benchmarks for match-keys and join by @davidwendt in https://github.com/rapidsai/cudf/pull/23185
+* Use rtcx from the librtcx repository by @vyasr in https://github.com/rapidsai/cudf/pull/23137
+* Support `pl.Expr.cot/log1p` by @mroeschke in https://github.com/rapidsai/cudf/pull/23191
+* Start async device writes and default host reads eagerly instead of deferring I/O to future wait by @Emillock in https://github.com/rapidsai/cudf/pull/23231
+* Move function definitions from generate_input.hpp to generate_input.cu by @davidwendt in https://github.com/rapidsai/cudf/pull/23199
+* Add fast-path logic to some libcudf regex APIs by @davidwendt in https://github.com/rapidsai/cudf/pull/22178
+* Fix parquet preprocess strings page bounds check for pages with zero rows by @pmattione-nvidia in https://github.com/rapidsai/cudf/pull/23241
+* Support `pl.Expr.truncate/unique_counts` by @mroeschke in https://github.com/rapidsai/cudf/pull/23244
+* Use batched memcpy instead of a custom copy kernel by @mhaseeb123 in https://github.com/rapidsai/cudf/pull/23266
+* Add multifile dictionary pruning support for hybrid scan parquet reader by @qbacpey in https://github.com/rapidsai/cudf/pull/22866
+* Replace docs.rapids.ai links that 400 by @mroeschke in https://github.com/rapidsai/cudf/pull/23270
+* Support `pl.Expr.index_of/search_sorted` by @mroeschke in https://github.com/rapidsai/cudf/pull/23252
+* Support `pl.Expr.arg_max/arg_min/arg_unique/arg_sort` by @mroeschke in https://github.com/rapidsai/cudf/pull/23212
+* Support `pl.Expr.round_sig_figs/sign` by @mroeschke in https://github.com/rapidsai/cudf/pull/23250
+* Add `engine.execute()` returning a `PersistedQueryResult` by @madsbk in https://github.com/rapidsai/cudf/pull/23114
+* No longer link Arrow in CSV and JSON tests by @mroeschke in https://github.com/rapidsai/cudf/pull/23283
+* Support `pl.Expr.replace/replace_strict` by @mroeschke in https://github.com/rapidsai/cudf/pull/23253
+* cudf-polars: preserve zero-column row counts by @madsbk in https://github.com/rapidsai/cudf/pull/23234
+* Improve column selection validation under mismatched PQ schemas by @qbacpey in https://github.com/rapidsai/cudf/pull/23000
+* Support `pl.argwhere/pl.Expr.arg_true` by @mroeschke in https://github.com/rapidsai/cudf/pull/23284
+* Update upstream cuml tests run by @jcrist in https://github.com/rapidsai/cudf/pull/23335
+* Empty commit to trigger a build by @bdice in https://github.com/rapidsai/cudf/pull/23376
+* Remove rmm::device_buffer forward declaration from types.hpp by @davidwendt in https://github.com/rapidsai/cudf/pull/23373
+* Bump cudf-polars test suite timeouts by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23399
+* Bump cudf-polars CI timeouts by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23410
+* Disable join filter pushdown rewrites by default by @TomAugspurger in https://github.com/rapidsai/cudf/pull/23407
+* Add profitability guards for join filter pushdown by @pentschev in https://github.com/rapidsai/cudf/pull/22997
+
+## New Contributors
+* @piotrrzysko made their first contribution in https://github.com/rapidsai/cudf/pull/22486
+* @findepi made their first contribution in https://github.com/rapidsai/cudf/pull/22575
+* @0ax1 made their first contribution in https://github.com/rapidsai/cudf/pull/22620
+* @kjmph made their first contribution in https://github.com/rapidsai/cudf/pull/22721
+* @lhlRahman made their first contribution in https://github.com/rapidsai/cudf/pull/22548
+* @betatim made their first contribution in https://github.com/rapidsai/cudf/pull/21897
+* @anthonyguerrera made their first contribution in https://github.com/rapidsai/cudf/pull/22436
+* @igorpeshansky made their first contribution in https://github.com/rapidsai/cudf/pull/23006
+* @rpathade made their first contribution in https://github.com/rapidsai/cudf/pull/21896
+* @utkarshparekh made their first contribution in https://github.com/rapidsai/cudf/pull/23021
+* @gmartini2000 made their first contribution in https://github.com/rapidsai/cudf/pull/21991
+* @joannamooon made their first contribution in https://github.com/rapidsai/cudf/pull/22588
+* @dttutty made their first contribution in https://github.com/rapidsai/cudf/pull/23195
+* @Emillock made their first contribution in https://github.com/rapidsai/cudf/pull/23231
+* @lingyany-nv made their first contribution in https://github.com/rapidsai/cudf/pull/21936
+* @tolleybot made their first contribution in https://github.com/rapidsai/cudf/pull/21964
+
+**Full Changelog**: https://github.com/rapidsai/cudf/compare/v26.08.00a...release/26.08
+
 # cudf 26.06.00 (3 Jun 2026)
 
 ### 🚨 Breaking Changes

@@ -81,6 +81,72 @@ __device__ static void scan_block_exclusive_sum(
   }
 }
 
+/**
+ * @brief Write a batch of decoded dictionary indices directly as INT32 output values.
+ *
+ * Used by the Parquet-dict → DICTIONARY32 transcode path: instead of materializing the dictionary
+ * keys, the per-row dictionary indices are emitted verbatim as the INT32 indices child of the
+ * output DICTIONARY32 column.
+ *
+ * @tparam block_size Number of threads per block
+ * @tparam has_lists_t Whether the column has a list (repetition) level
+ * @tparam copy_mode_t Whether destination positions are direct or indirect (nz_idx) mapped
+ * @tparam state_buf Page state buffer type providing the decoded dictionary indices
+ * @param s Page decode state for the current page
+ * @param sb Page state buffers holding the decoded dictionary indices
+ * @param start First value position (within the page) to write in this batch
+ * @param end One-past-the-last value position to write in this batch
+ * @param t Thread index within the block
+ */
+template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
+__device__ void decode_dict_indices_as_int32(
+  page_state_s* s, state_buf* const sb, int start, int end, int t)
+{
+  constexpr int num_warps      = block_size / cudf::detail::warp_size;
+  constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
+
+  int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
+  auto const data_out        = s->nesting_info[leaf_level_index].data_out;
+
+  int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
+
+  int pos = start;
+  while (pos < end) {
+    int const batch_size = min(max_batch_size, end - pos);
+    int const target_pos = pos + batch_size;
+    int const thread_pos = pos + t;
+
+    int const dst_pos = [&]() {
+      if constexpr (copy_mode_t == copy_mode::DIRECT) {
+        return thread_pos - s->setup.first_row;
+      } else {
+        int dst_pos = sb->nz_idx[rolling_index<state_buf::nz_buf_size>(thread_pos)];
+        if constexpr (!has_lists_t) { dst_pos -= s->setup.first_row; }
+        return dst_pos;
+      }
+    }();
+
+    if (thread_pos < target_pos && dst_pos >= 0) {
+      int const src_pos = [&]() {
+        if constexpr (has_lists_t) { return thread_pos + skipped_leaf_values; }
+        return thread_pos;
+      }();
+
+      auto* dst           = reinterpret_cast<int32_t*>(data_out) + dst_pos;
+      auto const num_keys = static_cast<uint32_t>(s->stream.dict_size / sizeof(string_index_pair));
+      auto const idx      = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)];
+      if (idx >= num_keys) {
+        s->set_error_code(decode_error::DATA_STREAM_OVERRUN);
+      } else {
+        *dst = idx;
+      }
+    }
+
+    pos += batch_size;
+    __syncthreads();
+  }
+}
+
 template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
 __device__ void decode_fixed_width_values(
   page_state_s* s, state_buf* const sb, int start, int end, int t)
@@ -906,6 +972,12 @@ __device__ void skip_ahead_in_decoding(page_state_s* s,
   block.sync();
 }
 
+/**
+ * @brief Check if the kernel mask decodes dictionary-encoded data (has a dictionary stream).
+ *
+ * @tparam kernel_mask_t The decode kernel mask to test
+ * @return True for fixed-width, string and INT32-index dictionary masks
+ */
 template <decode_kernel_mask kernel_mask_t>
 CUDF_HOST_DEVICE constexpr bool has_dict()
 {
@@ -914,7 +986,21 @@ CUDF_HOST_DEVICE constexpr bool has_dict()
          (kernel_mask_t == decode_kernel_mask::FIXED_WIDTH_DICT_LIST) ||
          (kernel_mask_t == decode_kernel_mask::STRING_DICT) ||
          (kernel_mask_t == decode_kernel_mask::STRING_DICT_NESTED) ||
-         (kernel_mask_t == decode_kernel_mask::STRING_DICT_LIST);
+         (kernel_mask_t == decode_kernel_mask::STRING_DICT_LIST) ||
+         (kernel_mask_t == decode_kernel_mask::DICT_INT32);
+}
+
+/**
+ * @brief Check whether the kernel mask decodes parquet dictionary indices directly to an INT32
+ * column.
+ *
+ * @tparam kernel_mask_t The decode kernel mask to test
+ * @return True for the DICT_INT32 mask
+ */
+template <decode_kernel_mask kernel_mask_t>
+CUDF_HOST_DEVICE constexpr bool is_dict_int32_output()
+{
+  return (kernel_mask_t == decode_kernel_mask::DICT_INT32);
 }
 
 template <decode_kernel_mask kernel_mask_t>
@@ -925,6 +1011,12 @@ CUDF_HOST_DEVICE constexpr bool has_bools()
          (kernel_mask_t == decode_kernel_mask::BOOLEAN_LIST);
 }
 
+/**
+ * @brief Check if the kernel mask decodes a (non-list) nested column.
+ *
+ * @tparam kernel_mask_t The decode kernel mask to test
+ * @return True for the `*_NESTED` masks
+ */
 template <decode_kernel_mask kernel_mask_t>
 CUDF_HOST_DEVICE constexpr bool has_nesting()
 {
@@ -937,6 +1029,12 @@ CUDF_HOST_DEVICE constexpr bool has_nesting()
          (kernel_mask_t == decode_kernel_mask::STRING_STREAM_SPLIT_NESTED);
 }
 
+/**
+ * @brief Check if the kernel mask decodes a list column (has a repetition level).
+ *
+ * @tparam kernel_mask_t The decode kernel mask to test
+ * @return True for the `*_LIST` masks
+ */
 template <decode_kernel_mask kernel_mask_t>
 CUDF_HOST_DEVICE constexpr bool has_lists()
 {
@@ -961,7 +1059,7 @@ CUDF_HOST_DEVICE constexpr bool is_split_decode()
 }
 
 /**
- * @brief Kernel for computing fixed width non dictionary column data stored in the pages
+ * @brief Kernel for computing fixed width column data stored in the pages
  *
  * This function will write the page data and the page data's validity to the
  * output specified in the page's column chunk. If necessary, additional
@@ -996,6 +1094,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   constexpr bool split_decode_t = is_split_decode<kernel_mask_t>();
   constexpr bool has_strings_t =
     (static_cast<uint32_t>(kernel_mask_t) & STRINGS_MASK_NON_DELTA) != 0;
+  constexpr bool is_dict_int32_t = is_dict_int32_output<kernel_mask_t>();
 
   constexpr int rolling_buf_size    = decode_block_size_t * 2;
   constexpr int rle_run_buffer_size = rle_stream_required_run_buffer_size<decode_block_size_t>();
@@ -1170,7 +1269,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
     }
 
     auto decode_values = [&]<copy_mode copy_mode_t>() {
-      if constexpr (has_strings_t) {
+      if constexpr (is_dict_int32_t) {
+        decode_dict_indices_as_int32<decode_block_size_t, has_lists_t, copy_mode_t>(
+          s, sb, valid_count, next_valid_count, t);
+      } else if constexpr (has_strings_t) {
         uint32_t* const str_offsets =
           s->setup.col.column_string_offset_base + page_string_offset_indices[page_idx];
         string_output_offset =
@@ -1199,10 +1301,14 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   }
 
   // Zero-fill null positions after decoding valid values
-  if constexpr (has_strings_t || has_lists_t) {
+  if constexpr (has_strings_t || has_lists_t || is_dict_int32_t) {
     if (process_nulls) {
-      uint32_t const dtype_len = has_strings_t ? sizeof(cudf::size_type) : s->dtype_len;
-      int const num_values     = [&]() {
+      uint32_t const dtype_len = [&]() -> uint32_t {
+        if constexpr (is_dict_int32_t) { return sizeof(int32_t); }
+        if constexpr (has_strings_t) { return sizeof(cudf::size_type); }
+        return s->dtype_len;
+      }();
+      int const num_values = [&]() {
         if constexpr (has_lists_t) {
           auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
           return ni.valid_map_offset - init_valid_map_offset;
@@ -1365,6 +1471,9 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
       break;
     case decode_kernel_mask::STRING_STREAM_SPLIT_LIST:
       launch_kernel(int_tag_t<128>{}, kernel_tag_t<decode_kernel_mask::STRING_STREAM_SPLIT_LIST>{});
+      break;
+    case decode_kernel_mask::DICT_INT32:
+      launch_kernel(int_tag_t<128>{}, kernel_tag_t<decode_kernel_mask::DICT_INT32>{});
       break;
     default: CUDF_EXPECTS(false, "Kernel type not handled by this function"); break;
   }

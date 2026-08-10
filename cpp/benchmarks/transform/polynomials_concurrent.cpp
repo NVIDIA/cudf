@@ -18,6 +18,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
+#include <array>
 #include <random>
 
 template <typename key_type>
@@ -85,15 +86,17 @@ static void BM_transform_polynomials_concurrent(nvbench::state& state)
                         ";"
                         "}";
 
-      cudf::transform_extended(inputs,
-                               udf,
-                               cudf::data_type{cudf::type_to_id<key_type>()},
-                               cudf::udf_source_type::CUDA,
-                               std::nullopt,
-                               cudf::null_aware::NO,
-                               std::nullopt,
-                               cudf::output_nullability::PRESERVE,
-                               stream);
+      cudf::transform(
+        udf,
+        cudf::udf_source_type::CUDA,
+        cudf::null_aware::NO,
+        std::nullopt,
+        inputs,
+        std::array{cudf::transform_output{cudf::data_type{cudf::type_to_id<key_type>()},
+                                          cudf::output_nullability::PRESERVE}},
+        {},
+        std::nullopt,
+        stream);
       nvtxRangePop();
     };
 

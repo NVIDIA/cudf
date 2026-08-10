@@ -12,6 +12,10 @@ else:
     libcudf_streaming.load_library()
     del libcudf_streaming
 
+from cudf_streaming.approx_distinct_count import (
+    CardinalityEstimate,
+    CardinalityEstimator,
+)
 from cudf_streaming.bloom_filter import BloomFilter
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
@@ -39,6 +43,8 @@ from cudf_streaming.table_chunk import (
 
 __all__ = [
     "BloomFilter",
+    "CardinalityEstimate",
+    "CardinalityEstimator",
     "ChannelMetadata",
     "Filter",
     "HashScheme",

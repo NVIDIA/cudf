@@ -30,7 +30,6 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/fill.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/sequence.h>
 
 #include <limits>
@@ -298,8 +297,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
       [found_iter = found_indices.begin()] __device__(size_type idx) {
         return cuda::std::tuple{*(found_iter + idx), idx};
       }));
-  auto const output_begin =
-    thrust::make_zip_iterator(right_indices->begin(), left_indices->begin());
+  auto const output_begin = cuda::make_zip_iterator(right_indices->begin(), left_indices->begin());
   auto const output_end =
     cudf::detail::copy_if(tuple_iter,
                           tuple_iter + left_table_num_rows,

@@ -34,6 +34,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/numeric>
 #include <cuda/std/cstring>
 #include <cuda/std/limits>
@@ -415,17 +416,17 @@ constexpr bool is_variant_int =
 
 // The fixed-width primitive types (signed integers and floats) a VARIANT value can be decoded into.
 template <typename T>
-constexpr bool is_variant_primitive = is_variant_int<T> || cudf::is_floating_point<T>();
+constexpr bool is_variant_numerical = is_variant_int<T> || cudf::is_floating_point<T>();
 
-// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats, and
-// strings.
+// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats, bool,
+// and strings.
 template <typename T>
-constexpr bool is_variant_castable =
-  is_variant_primitive<T> || cuda::std::is_same_v<T, cudf::string_view>;
+constexpr bool is_variant_castable = is_variant_numerical<T> || cuda::std::is_same_v<T, bool> ||
+                                     cuda::std::is_same_v<T, cudf::string_view>;
 
 // Maps a fixed-width output type to the VARIANT primitive type header id that encodes it.
 template <typename T>
-  requires(is_variant_primitive<T>)
+  requires(is_variant_numerical<T>)
 __device__ constexpr primitive_type primitive_type_for()
 {
   if constexpr (cuda::std::is_same_v<T, int8_t>) {
@@ -462,6 +463,23 @@ __device__ inline cuda::std::optional<T> decode_primitive(device_span<uint8_t co
     return cuda::std::nullopt;
   }
   return cudf::io::unaligned_load<T>(enc.data() + 1);
+}
+
+/**
+ * @brief Decode a single VARIANT value blob into a bool.
+ *
+ * Boolean values carry no payload: the distinction between true and false is encoded entirely in
+ * the primitive type header (`boolean_true` vs `boolean_false`).
+ */
+__device__ inline cuda::std::optional<bool> decode_bool(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return cuda::std::nullopt; }
+  uint8_t const value_metadata = enc[0];
+  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE) { return cuda::std::nullopt; }
+  auto const value_header = variant_value_header(value_metadata);
+  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_TRUE)) { return true; }
+  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_FALSE)) { return false; }
+  return cuda::std::nullopt;
 }
 
 // Parse an array-index step token of the form "[<N>]" into its zero-based index. Returns nullopt
@@ -547,20 +565,21 @@ __device__ cuda::std::optional<device_span<uint8_t const>> decode_string(
   return cuda::std::nullopt;
 }
 
+__device__ device_span<uint8_t const> list_row_span(cudf::lists_column_device_view const& col,
+                                                    size_type row)
+{
+  auto const begin = col.offset_at(row);
+  auto const end   = col.offset_at(row + 1);
+  return {col.child().data<uint8_t>() + begin, static_cast<std::size_t>(end - begin)};
+}
+
 // Returns the metadata and value list bytes for a given row from device views
 __device__ cuda::std::pair<device_span<uint8_t const>, device_span<uint8_t const>>
 metadata_and_value_at(cudf::lists_column_device_view const& metadata,
                       cudf::lists_column_device_view const& values,
                       size_type row)
 {
-  auto const meta_begin = metadata.offset_at(row);
-  auto const meta_end   = metadata.offset_at(row + 1);
-  auto const val_begin  = values.offset_at(row);
-  auto const val_end    = values.offset_at(row + 1);
-  return {
-    {metadata.child().data<uint8_t>() + meta_begin,
-     static_cast<std::size_t>(meta_end - meta_begin)},
-    {values.child().data<uint8_t>() + val_begin, static_cast<std::size_t>(val_end - val_begin)}};
+  return {list_row_span(metadata, row), list_row_span(values, row)};
 }
 
 constexpr int block_size = 256;
@@ -629,11 +648,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
       continue;
     }
 
-    auto const val_begin = values.offset_at(row);
-    auto const val_end   = values.offset_at(row + 1);
-    auto const val_child = values.child();
-    device_span<uint8_t const> const val{val_child.data<uint8_t>() + val_begin,
-                                         static_cast<std::size_t>(val_end - val_begin)};
+    auto const val = list_row_span(values, row);
 
     auto const decoded = decode_primitive<T>(val);
     if (decoded.has_value()) {
@@ -667,11 +682,7 @@ struct cast_variant_string_fn {
       return;
     }
 
-    auto const val_begin = d_values.offset_at(row);
-    auto const val_end   = d_values.offset_at(row + 1);
-    auto const val_child = d_values.child();
-    device_span<uint8_t const> const val{val_child.data<uint8_t>() + val_begin,
-                                         static_cast<std::size_t>(val_end - val_begin)};
+    auto const val = list_row_span(d_values, row);
 
     auto const str = decode_string(val);
     if (!str) {
@@ -709,14 +720,41 @@ struct cast_variant_fn {
 
   template <typename T>
   std::unique_ptr<column> operator()()
-    requires(is_variant_primitive<T>)
+    requires(is_variant_numerical<T>)
   {
     rmm::device_buffer data{num_rows * sizeof(T), stream, mr};
-
     auto grid = cudf::detail::grid_1d{num_rows, block_size};
     cast_variant_primitive_kernel<T><<<grid.num_blocks, block_size, 0, stream.value()>>>(
       values, {static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)}, d_null_mask);
     CUDF_CUDA_TRY(cudaGetLastError());
+    auto const null_count =
+      num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
+    return std::make_unique<column>(desired_type,
+                                    num_rows,
+                                    std::move(data),
+                                    null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                    null_count);
+  }
+
+  template <typename T>
+  std::unique_ptr<column> operator()()
+    requires(cuda::std::is_same_v<T, bool>)
+  {
+    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr};
+
+    thrust::transform(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<size_type>(0),
+      cuda::counting_iterator<size_type>(num_rows),
+      static_cast<bool*>(data.data()),
+      [values = this->values, d_null_mask = this->d_null_mask] __device__(size_type row) -> bool {
+        if (!cudf::bit_is_set(d_null_mask, row)) { return false; }
+        auto const val     = list_row_span(values, row);
+        auto const decoded = decode_bool(val);
+        if (decoded.has_value()) { return *decoded; }
+        cudf::clear_bit(d_null_mask, row);
+        return false;
+      });
 
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
@@ -734,7 +772,6 @@ struct cast_variant_fn {
     cast_variant_string_fn fn{values, d_null_mask, nullptr, nullptr, {}};
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(fn, num_rows, stream, mr);
-
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return make_strings_column(num_rows,
@@ -886,6 +923,19 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                                      rmm::device_async_resource_ref mr)
 {
   validate_variant_child(values);
+
+  switch (desired_type.id()) {
+    case type_id::INT8:
+    case type_id::INT16:
+    case type_id::INT32:
+    case type_id::INT64:
+    case type_id::FLOAT32:
+    case type_id::FLOAT64:
+    case type_id::BOOL8:
+    case type_id::STRING: break;
+    default: CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
+  }
+
   size_type const num_rows = values.size();
   if (num_rows == 0) { return make_empty_column(desired_type); }
 

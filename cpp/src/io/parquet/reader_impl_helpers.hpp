@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -66,17 +67,24 @@ struct column_chunk_info {
  * @brief The row_group_info class
  */
 struct row_group_info {
-  size_type index;  // row group index within a file. aggregate_reader_metadata::get_row_group() is
-                    // called with index and source_index
-  size_t start_row;
+  size_type index;   // row group index within a file. aggregate_reader_metadata::get_row_group() is
+                     // called with index and source_index
+  size_t start_row;  // global start row of this row group
   size_t source_start_row;     // file-local start row of this row group within its source file
   size_t unadjusted_num_rows;  // number of unadjusted rows in the row group
   size_type source_index;      // file index.
-  size_t compressed_size;      // compressed size of the row group
-  size_t max_leaf_values;      // maximum number of leaf values in the row group
 
   // Optional metadata pulled from the column and offset indexes, if present.
   std::optional<std::vector<column_chunk_info>> column_chunks;
+};
+
+/**
+ * @brief Row group size information for pass partitioning.
+ */
+struct row_group_size_info {
+  size_t unadjusted_num_rows;  // number of unadjusted rows in this row group
+  size_t compressed_size;      // compressed size of the selected columns in this row group
+  size_t max_leaf_values;      // maximum number of leaf values over the selected columns
 };
 
 /**
@@ -435,6 +443,22 @@ class aggregate_reader_metadata {
   [[nodiscard]] RowGroup const& get_row_group(size_type row_group_index, size_type src_idx) const;
 
   /**
+   * @brief Computes row group size information over selected columns
+   *
+   * When `input_columns` is specified, computes the compressed size and maximum leaf value count
+   * over only those columns. Otherwise, over all columns in the row group.
+   *
+   * @param row_group_index Index of the row group within its source
+   * @param src_idx Index of the input source
+   * @param input_columns Optional selected leaf columns
+   * @return Row group size information
+   */
+  [[nodiscard]] row_group_size_info get_row_group_size_info(
+    size_type row_group_index,
+    size_type src_idx,
+    std::optional<std::span<input_column_info const>> input_columns) const;
+
+  /**
    * @brief Check if all row groups have an offset index
    *
    * @param row_groups Span of row group objects
@@ -621,18 +645,6 @@ class aggregate_reader_metadata {
    * @param names List of column names to load, where index column name(s) will be added
    */
   [[nodiscard]] std::vector<std::string> get_pandas_index_names() const;
-
-  /**
-   * @brief Computes the compressed and total size, the number of rows, and the maximum number of
-   * leaf values in the specified row group
-   *
-   * @param row_group The row group
-   *
-   * @return A tuple of row group compressed size, total size, number of rows, and maximum leaf
-   * values
-   */
-  [[nodiscard]] std::tuple<size_t, size_t, size_t, size_t> get_row_group_properties(
-    RowGroup const& rg) const;
 
   /**
    * @brief Filters the row groups using stats and bloom filters based on predicate filter

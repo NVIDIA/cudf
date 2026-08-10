@@ -63,6 +63,7 @@ def test_rolling_datetime(engine):
         pl.col("x").rank(method="dense", descending=True).over("g"),
         pl.col("x").rank(method="min").over("g", "g2"),
         pl.col("x").cum_sum().over("g", order_by="s"),
+        pl.col("x").diff().over("g", order_by="s"),
         pl.col("x").shift(1).over("g", order_by="s"),
         pl.col("x").shift(-1, fill_value=0).over("g", order_by="s"),
         pl.when((pl.col("x") % 2) == 0)
@@ -80,6 +81,7 @@ def test_rolling_datetime(engine):
         "rank_dense",
         "rank_min_multi_key",
         "cum_sum_order_by",
+        "diff_order_by",
         "shift_order_by",
         "shift_fill_order_by",
         "fill_null_forward",

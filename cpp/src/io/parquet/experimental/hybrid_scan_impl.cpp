@@ -793,38 +793,28 @@ hybrid_scan_reader_impl::construct_row_group_passes(
   CUDF_EXPECTS(
     pass_read_limit > 0, "Pass read limit must be greater than 0", std::invalid_argument);
 
-  auto row_groups_info = std::vector<row_group_info>{};
-  row_groups_info.reserve(total_row_groups);
-  size_t start_row = 0;
+  auto row_group_ids   = std::vector<std::pair<size_type, size_type>>{};
+  auto row_group_sizes = std::vector<cudf::io::parquet::detail::row_group_size_info>{};
+  row_group_ids.reserve(total_row_groups);
+  row_group_sizes.reserve(total_row_groups);
+
   std::for_each(cuda::counting_iterator<cudf::size_type>(0),
                 cuda::counting_iterator<cudf::size_type>(row_group_indices.size()),
                 [&](auto const source_index) {
-                  auto const& src_row_groups = row_group_indices[source_index];
-                  std::transform(
-                    src_row_groups.begin(),
-                    src_row_groups.end(),
-                    std::back_inserter(row_groups_info),
-                    [&](auto const rg_index) {
-                      auto const& row_group =
-                        _extended_metadata->get_row_group(rg_index, source_index);
-                      auto const [compressed_size, total_size, num_rows, max_leaf_values] =
-                        _extended_metadata->get_row_group_properties(row_group);
-                      auto rg_info = row_group_info{.index               = rg_index,
-                                                    .start_row           = start_row,
-                                                    .unadjusted_num_rows = num_rows,
-                                                    .source_index        = source_index,
-                                                    .compressed_size     = compressed_size,
-                                                    .max_leaf_values     = max_leaf_values};
-                      start_row += num_rows;
-                      return rg_info;
-                    });
+                  for (auto const rg_index : row_group_indices[source_index]) {
+                    row_group_ids.emplace_back(rg_index, source_index);
+                    // TODO(mh): Compute the row group size information over the selected columns
+                    // instead
+                    row_group_sizes.push_back(_extended_metadata->get_row_group_size_info(
+                      rg_index, source_index, std::nullopt));
+                  }
                 });
 
   auto const comp_read_limit = static_cast<std::size_t>(
     pass_read_limit * cudf::io::parquet::detail::input_limit_compression_reserve);
 
   auto const pass_data =
-    cudf::io::parquet::detail::compute_row_group_passes(row_groups_info, comp_read_limit, 0);
+    cudf::io::parquet::detail::compute_row_group_passes(row_group_sizes, comp_read_limit, 0);
 
   // Convert offset-based pass boundaries back to vectors of row group indices
   auto const& offsets = pass_data.pass_row_group_offsets;
@@ -832,7 +822,7 @@ hybrid_scan_reader_impl::construct_row_group_passes(
   passes.reserve(offsets.size() - 1);
   auto row_group_source_map       = std::vector<cudf::size_type>{};
   auto const has_multiple_sources = row_group_indices.size() > 1;
-  if (has_multiple_sources) { row_group_source_map.reserve(row_groups_info.size()); }
+  if (has_multiple_sources) { row_group_source_map.reserve(row_group_ids.size()); }
   std::transform(offsets.begin(),
                  offsets.end() - 1,
                  offsets.begin() + 1,
@@ -840,12 +830,12 @@ hybrid_scan_reader_impl::construct_row_group_passes(
                  [&](auto const start, auto const end) {
                    auto pass = std::vector<cudf::size_type>{};
                    pass.reserve(end - start);
-                   std::for_each(row_groups_info.begin() + start,
-                                 row_groups_info.begin() + end,
-                                 [&](auto const& rg_info) {
-                                   pass.emplace_back(rg_info.index);
+                   std::for_each(row_group_ids.begin() + start,
+                                 row_group_ids.begin() + end,
+                                 [&](auto const& row_group_id) {
+                                   pass.emplace_back(row_group_id.first);
                                    if (has_multiple_sources) {
-                                     row_group_source_map.emplace_back(rg_info.source_index);
+                                     row_group_source_map.emplace_back(row_group_id.second);
                                    }
                                  });
                    return pass;

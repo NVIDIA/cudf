@@ -268,6 +268,9 @@ def _prepare_array_metadata(
         If the interface is invalid, big-endian, non-contiguous,
         or exceed the size_type limit.
     """
+    if iface.get("mask") is not None:
+        raise NotImplementedError("Masked array-interface inputs are not supported")
+
     if iface["typestr"][0] == ">":
         raise ValueError("Big-endian data is not supported")
 

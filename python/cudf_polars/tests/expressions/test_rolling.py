@@ -303,7 +303,7 @@ def test_rank_over(
     method: RankMethod,
     *,
     descending: bool,
-    order_by: None | list[str | pl.Expr],
+    order_by: list[str | pl.Expr] | None,
 ) -> None:
     q = df.select(
         pl.col("x")
@@ -322,7 +322,7 @@ def test_rank_over_with_ties(
     method: RankMethod,
     *,
     descending: bool,
-    order_by: None | list[str | pl.Expr],
+    order_by: list[str | pl.Expr] | None,
 ) -> None:
     q = df.select(
         pl.when(pl.col("g") == 2)
@@ -343,7 +343,7 @@ def test_rank_over_with_null_values(
     method: RankMethod,
     *,
     descending: bool,
-    order_by: None | list[str | pl.Expr],
+    order_by: list[str | pl.Expr] | None,
 ) -> None:
     q = df.select(
         pl.when((pl.col("x") % 2) == 0)
@@ -364,7 +364,7 @@ def test_rank_over_with_null_group_keys(
     method: RankMethod,
     *,
     descending: bool,
-    order_by: None | list[str | pl.Expr],
+    order_by: list[str | pl.Expr] | None,
 ) -> None:
     q = df.select(
         pl.col("x")
@@ -395,7 +395,7 @@ def test_fill_over(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     strategy: str,
-    order_by: None | list[str | pl.Expr],
+    order_by: list[str | pl.Expr] | None,
     group_key: str,
     expr: pl.Expr,
 ) -> None:
@@ -435,7 +435,7 @@ def test_cum_sum_over(
     *,
     expr: pl.Expr,
     group_key: str,
-    order_by: None | list[str | pl.Expr],
+    order_by: list[str | pl.Expr] | None,
 ) -> None:
     q = df.select(expr.cum_sum().over(group_key, order_by=order_by))
     assert_gpu_result_equal(q, engine=engine)
@@ -474,6 +474,21 @@ def test_shift_over_fill_value(
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("n", [1, -1, 2])
+@pytest.mark.parametrize("order_by", ["x2", None])
+def test_diff_over(
+    engine: pl.GPUEngine,
+    df: pl.LazyFrame,
+    n: int,
+    order_by: str | None,
+) -> None:
+    expr = pl.col("x").diff(n=n).over("g")
+    if order_by is not None:
+        expr = pl.col("x").diff(n=n).over("g", order_by=order_by)
+    q = df.select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "expr",
     [
@@ -483,6 +498,23 @@ def test_shift_over_fill_value(
     ids=["nonliteral_offset", "nonliteral_fill_value"],
 )
 def test_shift_over_nonliteral_args_raises(
+    engine: pl.GPUEngine,
+    df: pl.LazyFrame,
+    expr: pl.Expr,
+) -> None:
+    q = df.select(expr)
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("x").diff(n=pl.col("x2").min()).over("g"),
+        pl.col("x").diff(null_behavior="drop").over("g"),
+    ],
+    ids=["nonliteral_offset", "drop_null_behavior"],
+)
+def test_diff_over_unsupported_args_raises(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     expr: pl.Expr,

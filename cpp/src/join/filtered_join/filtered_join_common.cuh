@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include <cudf/detail/join/distinct_filtered_join.cuh>
 #include <cudf/detail/join/filtered_join.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/table/table_view.hpp>
@@ -59,7 +58,7 @@ void filtered_join::insert_right_table(Iterator right_iter,
                                        Ref const& insert_ref,
                                        rmm::cuda_stream_view stream)
 {
-  cudf::scoped_range range{"distinct_filtered_join::insert_right_table"};
+  cudf::scoped_range range{"filtered_join::insert_right_table"};
   // Insert valid rows from the right table into the hash table.
   auto const grid_size              = cuco::detail::grid_size(_right.num_rows(), CGSize);
   auto const bitmask_buffer_and_ptr = make_filtered_join_row_bitmask(_right, _nulls_equal, stream);
@@ -84,13 +83,13 @@ void filtered_join::insert_right_table(Iterator right_iter,
 }
 
 template <int32_t CGSize, typename Iterator, typename Ref>
-void distinct_filtered_join::query_right_table(cudf::table_view const& left,
-                                               Iterator left_iter,
-                                               Ref query_ref,
-                                               cudf::device_span<bool> contains_map,
-                                               rmm::cuda_stream_view stream)
+void filtered_join::query_right_table(cudf::table_view const& left,
+                                      Iterator left_iter,
+                                      Ref query_ref,
+                                      cudf::device_span<bool> contains_map,
+                                      rmm::cuda_stream_view stream)
 {
-  cudf::scoped_range range{"distinct_filtered_join::query_right_table"};
+  cudf::scoped_range range{"filtered_join::query_right_table"};
   auto const grid_size              = cuco::detail::grid_size(left.num_rows(), CGSize);
   auto const bitmask_buffer_and_ptr = make_filtered_join_row_bitmask(left, _nulls_equal, stream);
   if (bitmask_buffer_and_ptr.second != nullptr) {

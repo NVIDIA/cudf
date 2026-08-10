@@ -659,14 +659,7 @@ async def _aggregate_estimates(
 ) -> tuple[TableSizeStats, TableSizeStats]:
     """Aggregate table-size and row estimates across ranks."""
     # AllGather size, row, and chunk count estimates across ranks
-    (
-        left_total,
-        right_total,
-        left_total_rows,
-        right_total_rows,
-        left_total_chunks,
-        right_total_chunks,
-    ) = await allgather_reduce(
+    totals = await allgather_reduce(
         context,
         comm,
         collective_ids.pop(0),
@@ -676,24 +669,40 @@ async def _aggregate_estimates(
         right_sample.total_rows,
         left_sample.total_chunks,
         right_sample.total_chunks,
+        int(left_sample.is_complete),
+        int(right_sample.is_complete),
     )
+    (
+        left_total,
+        right_total,
+        left_total_rows,
+        right_total_rows,
+        left_total_chunks,
+        right_total_chunks,
+        left_complete_count,
+        right_complete_count,
+    ) = totals
 
     new_left_sample = TableSizeStats(
         chunks=left_sample.chunks,
         total_size=left_total,
         total_rows=left_total_rows,
         total_chunks=left_total_chunks,
+        is_complete=left_complete_count == comm.nranks,
+        cardinality=left_sample.cardinality,
     )
     new_right_sample = TableSizeStats(
         chunks=right_sample.chunks,
         total_size=right_total,
         total_rows=right_total_rows,
         total_chunks=right_total_chunks,
+        is_complete=right_complete_count == comm.nranks,
+        cardinality=right_sample.cardinality,
     )
     return new_left_sample, new_right_sample
 
 
-async def _choose_strategy_from_samples(
+def _choose_strategy_from_samples(
     comm: Communicator,
     ir: Join,
     left_metadata: ChannelMetadata,
@@ -912,7 +921,7 @@ async def _choose_strategy(
             collective_ids,
         )
 
-    strategy = await _choose_strategy_from_samples(
+    strategy = _choose_strategy_from_samples(
         comm,
         ir,
         left_metadata,

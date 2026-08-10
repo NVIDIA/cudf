@@ -840,7 +840,7 @@ class pinned_fallback_host_memory_resource {
         // If the pool is exhausted, fall back to the upstream memory resource
       }
     }
-    return prior_cudf_pinned_mr().allocate(stream, bytes);
+    return prior_cudf_pinned_mr().allocate(stream, bytes, alignment);
   }
 
   void deallocate(cuda::stream_ref stream,
@@ -851,7 +851,7 @@ class pinned_fallback_host_memory_resource {
     if (bytes <= pool.pool_size() && ptr >= pool_begin && ptr < pool_end) {
       pool.deallocate(stream, ptr, bytes, alignment);
     } else {
-      prior_cudf_pinned_mr().deallocate(stream, ptr, bytes);
+      prior_cudf_pinned_mr().deallocate(stream, ptr, bytes, alignment);
     }
   }
 

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import pylibcudf as plc
 import rmm.mr
+from cudf_streaming import CardinalityEstimate
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
     HashScheme,
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
         Sequence,
     )
 
+    from cudf_streaming import CardinalityEstimator
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -171,6 +173,10 @@ class ChunkStore:
     def __init__(self, ctx: Context) -> None:
         self._mids: deque[int] = deque()
         self._store = ctx.spillable_messages()
+
+    def __len__(self) -> int:
+        """Return the number of messages in the store."""
+        return len(self._mids)
 
     def insert(self, msg: Message) -> None:
         """Insert a message into the store."""
@@ -1021,6 +1027,138 @@ class TableSizeStats:
     """The estimated number of rows for the represented scope."""
     total_chunks: int = 0
     """The estimated number of chunks for the represented scope."""
+    is_complete: bool = False
+    """Whether the sample contains the entire table for the represented scope."""
+    cardinality: CardinalityEstimate | None = None
+    """Global cardinality statistics for the sampled rows, when requested."""
+
+
+@dataclass(frozen=True)
+class ChunkSampler:
+    """Object for obtaining statistics from a channel of TableChunks."""
+
+    context: Context
+    ch_in: Channel[TableChunk]
+    max_chunks: int
+    max_bytes: int
+    ch_in_chunk_count: int
+    cardinality_estimator: CardinalityEstimator | None = None
+    cardinality_columns: tuple[int, ...] = ()
+
+    async def sample_channel(
+        self,
+        ch_out: Channel[TableChunk],
+    ) -> tuple[bool, int, int]:
+        """
+        Sample a prefix from the input channel.
+
+        Parameters
+        ----------
+        ch_out
+            Channel to forward samples into.
+
+        Returns
+        -------
+        bool
+            Whether sampling exhausted the input.
+        int
+            Number of bytes in the sampled chunks.
+        int
+            Number of rows in the sampled chunks.
+        """
+        sampled_bytes = 0
+        sampled_rows = 0
+        exhausted = False
+        await ch_out.shutdown_metadata(self.context)
+        for _ in range(self.max_chunks):
+            msg = await self.ch_in.recv(self.context)
+            if msg is None:
+                exhausted = True
+                break
+            chunk = TableChunk.from_message(msg, br=self.context.br())
+            sampled_bytes += chunk.data_alloc_size()
+            sampled_rows += chunk.shape[0]
+            await ch_out.send(self.context, Message(msg.sequence_number, chunk))
+            if sampled_bytes >= self.max_bytes:
+                break
+        await ch_out.drain(self.context)
+        return exhausted, sampled_bytes, sampled_rows
+
+    async def store_sample(
+        self,
+        ch_in: Channel[TableChunk],
+    ) -> ChunkStore:
+        """
+        Store chunks from a channel.
+
+        Parameters
+        ----------
+        ch_in
+            Channel to store
+
+        Returns
+        -------
+        ChunkStore containing the chunks from the channel.
+        """
+        chunks = ChunkStore(self.context)
+        while (msg := await ch_in.recv(self.context)) is not None:
+            chunk = TableChunk.from_message(msg, br=self.context.br())
+            chunks.insert(Message(msg.sequence_number, chunk))
+        return chunks
+
+    async def sample(self) -> TableSizeStats:
+        """Sample the configured channel and return extrapolated statistics."""
+        ch_sampled = self.context.create_channel()
+        temporary_channels = [ch_sampled]
+        tasks: list[Coroutine[Any, Any, Any]]
+        if self.cardinality_estimator is None:
+            tasks = [self.sample_channel(ch_sampled), self.store_sample(ch_sampled)]
+        else:
+            ch_cardinality_input = self.context.create_channel()
+            ch_cardinality = self.context.create_channel()
+            temporary_channels.extend((ch_cardinality_input, ch_cardinality))
+            # The sampled output must be consumed concurrently with estimation:
+            # backpressure there can prevent the cardinality result from being
+            # produced.
+            tasks = [
+                self.sample_channel(ch_cardinality_input),
+                self.cardinality_estimator.estimate(
+                    self.context,
+                    ch_cardinality_input,
+                    ch_cardinality,
+                    ch_sampled,
+                    self.cardinality_columns,
+                ),
+                self.store_sample(ch_sampled),
+                ch_cardinality.recv(self.context),
+            ]
+
+        async with shutdown_channels_on_error(self.context, *temporary_channels):
+            results = await gather_in_task_group(*tasks)
+        if self.cardinality_estimator is None:
+            (is_complete, sample_bytes, sample_rows), chunks = results
+            cardinality = None
+        else:
+            (is_complete, sample_bytes, sample_rows), _, chunks, msg = results
+            if msg is None:
+                raise RuntimeError("Cardinality estimator did not produce an estimate")
+            cardinality = CardinalityEstimate.from_message(msg)
+
+        sample_count = len(chunks)
+        if sample_count and not is_complete:
+            total_size = int((sample_bytes / sample_count) * self.ch_in_chunk_count)
+            total_rows = int((sample_rows / sample_count) * self.ch_in_chunk_count)
+        else:
+            total_size = sample_bytes
+            total_rows = sample_rows
+        return TableSizeStats(
+            chunks=chunks,
+            total_size=total_size,
+            total_rows=total_rows,
+            total_chunks=(sample_count if is_complete else self.ch_in_chunk_count),
+            is_complete=is_complete,
+            cardinality=cardinality,
+        )
 
 
 async def _sample_chunks(
@@ -1029,6 +1167,9 @@ async def _sample_chunks(
     max_sample_chunks: int,
     max_sample_bytes: int,
     local_count: int,
+    *,
+    cardinality_estimator: CardinalityEstimator | None = None,
+    cardinality_columns: Sequence[int] = (),
 ) -> TableSizeStats:
     """
     Sample chunks from a channel and extrapolate to a per-rank size estimate.
@@ -1045,35 +1186,26 @@ async def _sample_chunks(
         The maximum number of bytes to sample.
     local_count
         The expected number of local chunks (used for extrapolation).
+    cardinality_estimator
+        Optional distributed cardinality estimator. When provided, cardinality
+        is estimated from the same fixed chunk prefix used for size sampling.
+    cardinality_columns
+        Column indices whose row tuples are counted. An empty sequence selects
+        all columns.
 
     Returns
     -------
-    Sampled chunks and the extrapolated total size/rows for this rank.
+    Sampled chunks, extrapolated size/rows, and optional global cardinality.
     """
-    sampled_chunks = ChunkStore(context)
-    sampled_count = 0
-    total_size = 0
-    total_rows = 0
-    for _ in range(max_sample_chunks):
-        msg = await ch.recv(context)
-        if msg is None:
-            break
-        chunk = TableChunk.from_message(msg, br=context.br())
-        total_size += chunk.data_alloc_size()
-        total_rows += chunk.shape[0]
-        sampled_count += 1
-        sampled_chunks.insert(Message(msg.sequence_number, chunk))
-        if total_size >= max_sample_bytes:
-            break
-    if sampled_count:
-        total_size = int((total_size / sampled_count) * local_count)
-        total_rows = int((total_rows / sampled_count) * local_count)
-    return TableSizeStats(
-        chunks=sampled_chunks,
-        total_size=total_size,
-        total_rows=total_rows,
-        total_chunks=local_count,
-    )
+    return await ChunkSampler(
+        context=context,
+        ch_in=ch,
+        max_chunks=max_sample_chunks,
+        max_bytes=max_sample_bytes,
+        ch_in_chunk_count=local_count,
+        cardinality_estimator=cardinality_estimator,
+        cardinality_columns=tuple(cardinality_columns),
+    ).sample()
 
 
 async def replay_buffered_channel(

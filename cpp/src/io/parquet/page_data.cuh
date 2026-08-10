@@ -133,7 +133,7 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
     dict_pos = src_pos;
     src8     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   ofs = 3 & reinterpret_cast<size_t>(src8);
   src8 -= ofs;  // align to 32-bit boundary
   ofs <<= 3;    // bytes -> bits
@@ -208,7 +208,7 @@ inline __device__ void read_int64_timestamp(page_state_s* s,
     dict_pos = src_pos;
     src8     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   ofs = 3 & reinterpret_cast<size_t>(src8);
   src8 -= ofs;  // align to 32-bit boundary
   ofs <<= 3;    // bytes -> bits
@@ -226,7 +226,7 @@ inline __device__ void read_int64_timestamp(page_state_s* s,
     val <<= 32;
     val |= v.x;
     // Output to desired clock rate
-    ts = apply_ts_scale(val, s->ts_scale);
+    ts = apply_ts_scale(val, s->output_cvt.ts_scale);
   } else {
     ts = 0;
   }
@@ -269,7 +269,7 @@ __device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
                                                    int src_pos,
                                                    T* dst)
 {
-  uint32_t const dtype_len_in = s->dtype_len_in;
+  uint32_t const dtype_len_in = s->output_cvt.dtype_len_in;
   uint8_t const* data         = s->stream.dict_base ? s->stream.dict_base : s->stream.data_start;
   uint32_t const pos =
     (s->stream.dict_base
@@ -321,7 +321,7 @@ inline __device__ void read_fixed_width_value_fast(page_state_s* s,
     dict_pos = src_pos;
     dict     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   gpuStoreOutput(dst, dict, dict_pos, dict_size);
 }
 
@@ -352,7 +352,7 @@ inline __device__ void read_nbyte_fixed_width_value(
     dict_pos = src_pos;
     dict     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   if (len & 3) {
     // Generic slow path
     for (unsigned int i = 0; i < len; i++) {

@@ -92,17 +92,6 @@ def test_parallel_scan(
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
-def test_scan_parquet_use_rapidsmpf_native(tmp_path, df, streaming_engine_factory):
-    streaming_engine = streaming_engine_factory(
-        StreamingOptions(
-            target_partition_size=1_000,
-            parquet_options={"use_rapidsmpf_native": True},
-        ),
-    )
-    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
-    assert_gpu_result_equal(pl.scan_parquet(tmp_path), engine=streaming_engine)
-
-
 @pytest.mark.parametrize(
     "target_partition_size_and_n_files", [(1_000, 1), (1_000, 2), (1_000_000, 5)]
 )

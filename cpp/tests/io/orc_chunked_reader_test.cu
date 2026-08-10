@@ -676,7 +676,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsNoNulls)
   {
     auto const [result, num_chunks] =
       chunked_read(filepath, output_limit{400'000UL}, output_granularity);
-    EXPECT_EQ(num_chunks, 3);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 5 : 3);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
   }
 
@@ -762,7 +762,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
   {
     auto const [result, num_chunks] =
       chunked_read(filepath, output_limit{285'000UL}, output_granularity);
-    EXPECT_EQ(num_chunks, 3);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 5 : 3);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
   }
 
@@ -877,19 +877,19 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithStructsOfLists)
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_with_nulls, output_limit{1'000'000UL});
-    EXPECT_EQ(num_chunks, 5);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 10 : 5);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_with_nulls, *result);
   }
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_with_nulls, output_limit{1'500'000UL});
-    EXPECT_EQ(num_chunks, 4);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 5 : 4);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_with_nulls, *result);
   }
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_with_nulls, output_limit{2'000'000UL});
-    EXPECT_EQ(num_chunks, 3);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 4 : 3);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_with_nulls, *result);
   }
 
@@ -934,7 +934,9 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsOfStructs)
 
     input_columns.emplace_back(
       cudf::make_lists_column(static_cast<cudf::size_type>(offsets.size() - 1),
-                              int32s_col(offsets.begin(), offsets.end()).release(),
+                              cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+                                offsets.begin(), offsets.end())
+                                .release(),
                               make_structs_col(),
                               0,
                               rmm::device_buffer{}));
@@ -985,19 +987,19 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsOfStructs)
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_no_null, output_limit{1'000'000UL});
-    EXPECT_EQ(num_chunks, 7);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 10 : 7);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_no_null, *result);
   }
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_no_null, output_limit{1'500'000UL});
-    EXPECT_EQ(num_chunks, 4);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 5 : 4);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_no_null, *result);
   }
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_no_null, output_limit{2'000'000UL});
-    EXPECT_EQ(num_chunks, 3);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 4 : 3);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_no_null, *result);
   }
 
@@ -1015,13 +1017,13 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsOfStructs)
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_with_nulls, output_limit{1'500'000UL});
-    EXPECT_EQ(num_chunks, 3);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 4 : 3);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_with_nulls, *result);
   }
 
   {
     auto const [result, num_chunks] = chunked_read(filepath_with_nulls, output_limit{2'000'000UL});
-    EXPECT_EQ(num_chunks, 2);
+    EXPECT_EQ(num_chunks, CUDF_SIZE_TYPE_BITS == 64 ? 3 : 2);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_with_nulls, *result);
   }
 
@@ -1228,11 +1230,13 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
   auto const iter   = cuda::counting_iterator<int32_t>{0};
 
   auto offset_col = cudf::make_fixed_width_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED);
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+    num_rows + 1,
+    cudf::mask_state::UNALLOCATED);
   thrust::transform(rmm::exec_policy_nosync(stream),
                     iter,
                     iter + num_rows + 1,
-                    offset_col->mutable_view().begin<int>(),
+                    offset_col->mutable_view().begin<cudf::size_type>(),
                     offset_gen{list_size});
 
   int constexpr num_ints = num_rows * list_size;
@@ -1287,11 +1291,13 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
 
   // list<int>
   auto offset_col = cudf::make_fixed_width_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED);
+    cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+    num_rows + 1,
+    cudf::mask_state::UNALLOCATED);
   thrust::transform(rmm::exec_policy_nosync(stream),
                     iter,
                     iter + num_rows + 1,
-                    offset_col->mutable_view().begin<int>(),
+                    offset_col->mutable_view().begin<cudf::size_type>(),
                     offset_gen{list_size});
 
   int constexpr num_ints = num_rows * list_size;
@@ -1430,6 +1436,9 @@ TEST_F(OrcChunkedReaderInputLimitTest, ReadWithRowSelection)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, read_result->view());
 }
 
+// This limit is a property of a 32-bit size_type: a table with more rows than it can index
+// cannot be built at all once size_type is wider, so there is nothing left to reject.
+#if CUDF_SIZE_TYPE_BITS == 32
 TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
 {
   // this test runs over 3 hours when racecheck is used
@@ -1570,6 +1579,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
 
 #endif  // LOCAL_TEST
 }
+#endif
 
 TEST_P(OrcChunkedDecompressionTest, RoundTripBasic)
 {

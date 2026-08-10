@@ -7,6 +7,7 @@
 #include "io/utilities/column_buffer.hpp"
 #include "orc_gpu.hpp"
 
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/io/orc_types.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
@@ -1598,10 +1599,10 @@ CUDF_KERNEL void __launch_bounds__(block_size)
     // If we have an index, seek to the initial run and update row positions
     if (num_rowgroups > 0) {
       if (s->top.data.index.strm_offset[0] > s->chunk.strm_len[CI_DATA]) {
-        atomicAdd(error_count, 1);
+        cudf::detail::atomic_add_relaxed(error_count, size_type{1});
       }
       if (s->top.data.index.strm_offset[1] > s->chunk.strm_len[CI_DATA2]) {
-        atomicAdd(error_count, 1);
+        cudf::detail::atomic_add_relaxed(error_count, size_type{1});
       }
       auto const ofs0       = min(s->top.data.index.strm_offset[0], s->chunk.strm_len[CI_DATA]);
       auto const ofs1       = min(s->top.data.index.strm_offset[1], s->chunk.strm_len[CI_DATA2]);
@@ -1920,7 +1921,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
                 (s->vals.u64[t + vals_skipped] <= cuda::std::numeric_limits<size_type>::max()) and
                 "Number of elements is more than what size_type can handle");
               list_child_elements                   = s->vals.u64[t + vals_skipped];
-              static_cast<uint32_t*>(data_out)[row] = list_child_elements;
+              static_cast<size_type*>(data_out)[row] = static_cast<size_type>(list_child_elements);
             } break;
             case SHORT:
               static_cast<uint16_t*>(data_out)[row] =

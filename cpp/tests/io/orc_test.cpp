@@ -1540,7 +1540,8 @@ TEST_F(OrcWriterTest, TestMap)
     row_offsets[idx] = offset;
     if (valids[idx]) { offset += lists_per_row; }
   }
-  int32_col offsets(row_offsets.begin(), row_offsets.end());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(row_offsets.begin(),
+                                                                  row_offsets.end());
 
   auto num_list_rows           = static_cast<cudf::column_view>(offsets).size() - 1;
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_list_rows);
@@ -1682,7 +1683,8 @@ TEST_F(OrcWriterTest, DecimalOptionsNested)
 
   std::vector<int> row_offsets(num_rows + 1);
   std::iota(row_offsets.begin(), row_offsets.end(), 0);
-  int32_col offsets(row_offsets.begin(), row_offsets.end());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(row_offsets.begin(),
+                                                                  row_offsets.end());
 
   auto map_list_col = cudf::make_lists_column(
     num_rows, offsets.release(), std::move(map_struct_col), 0, rmm::device_buffer{});
@@ -1782,7 +1784,8 @@ TEST_F(OrcMetadataReaderTest, TestNested)
   for (int idx = 0; idx < num_rows + 1; ++idx) {
     row_offsets[idx] = idx * lists_per_row;
   }
-  int32_col offsets(row_offsets.begin(), row_offsets.end());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(row_offsets.begin(),
+                                                                  row_offsets.end());
 
   auto list_col =
     cudf::make_lists_column(num_rows, offsets.release(), std::move(s_col), 0, rmm::device_buffer{});
@@ -2235,6 +2238,9 @@ TEST_F(OrcWriterTest, BounceBufferBug)
   cudf::io::write_orc(out_opts);
 }
 
+// This limit is a property of a 32-bit size_type: a table with more rows than it can index
+// cannot be built at all once size_type is wider, so there is nothing left to reject.
+#if CUDF_SIZE_TYPE_BITS == 32
 TEST_F(OrcReaderTest, SizeTypeRowsOverflow)
 {
   // this test runs over 1.5 hours when racecheck is used
@@ -2304,6 +2310,7 @@ TEST_F(OrcReaderTest, SizeTypeRowsOverflow)
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, got_with_stripe_selection->view());
 }
+#endif
 
 TEST_F(OrcChunkedWriterTest, NoWriteCloseNotThrow)
 {

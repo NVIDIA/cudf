@@ -306,7 +306,7 @@ std::size_t gather_stream_info_and_column_desc(
   std::size_t level,
   StripeInformation const* stripeinfo,
   StripeFooter const* stripefooter,
-  host_span<int const> orc2gdf,
+  host_span<size_type const> orc2gdf,
   host_span<SchemaType const> types,
   bool use_index,
   bool apply_struct_map,

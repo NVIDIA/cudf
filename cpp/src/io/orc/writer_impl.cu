@@ -984,7 +984,7 @@ encoded_data encode_columns(orc_table_view const& orc_table,
               }
             } else if (strm_type == CI_DATA && ck.type_kind == TypeKind::STRING &&
                        ck.encoding_kind == DIRECT_V2) {
-              strm.lengths[strm_type] = std::max(column.rowgroup_char_count(rg_idx), 1);
+              strm.lengths[strm_type] = std::max(column.rowgroup_char_count(rg_idx), size_type{1});
             } else if (strm_type == CI_DATA && streams[strm_id].length == 0 &&
                        (ck.type_kind == DOUBLE || ck.type_kind == FLOAT)) {
               // Pass-through

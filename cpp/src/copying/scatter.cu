@@ -383,7 +383,7 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
                                              rmm::cuda_stream_view stream,
                                              rmm::device_async_resource_ref mr)
 {
-  auto indices         = cudf::make_numeric_column(data_type{type_id::INT32},
+  auto indices         = cudf::make_numeric_column(data_type{type_to_id<size_type>()},
                                            target.size(),
                                            mask_state::UNALLOCATED,
                                            stream,
@@ -439,7 +439,7 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
 
   // Build a scatter map of the target row indices selected by the boolean mask, then delegate to
   // detail::scatter.
-  auto indices         = cudf::make_numeric_column(data_type{type_id::INT32},
+  auto indices         = cudf::make_numeric_column(data_type{type_to_id<size_type>()},
                                            target.num_rows(),
                                            mask_state::UNALLOCATED,
                                            stream,

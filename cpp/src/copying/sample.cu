@@ -54,7 +54,7 @@ std::unique_ptr<table> sample(table_view const& input,
 
     return detail::gather(input, begin, begin + n, out_of_bounds_policy::DONT_CHECK, stream, mr);
   } else {
-    auto gather_map              = make_numeric_column(data_type{type_id::INT32},
+    auto gather_map              = make_numeric_column(data_type{type_to_id<size_type>()},
                                           num_rows,
                                           mask_state::UNALLOCATED,
                                           stream,

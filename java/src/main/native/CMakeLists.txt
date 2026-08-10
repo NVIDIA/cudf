@@ -255,7 +255,7 @@ if(USE_GDS)
                POSITION_INDEPENDENT_CODE ON
                INTERFACE_POSITION_INDEPENDENT_CODE ON
   )
-  target_include_directories(cufilejni PRIVATE "${JNI_INCLUDE_DIRS}")
+  target_include_directories(cufilejni PRIVATE "${CMAKE_SOURCE_DIR}/include" "${JNI_INCLUDE_DIRS}")
   target_link_libraries(cufilejni PRIVATE cudfjni CUDA::cuFile${_cufile_suffix} cudf::cudf)
 endif()
 

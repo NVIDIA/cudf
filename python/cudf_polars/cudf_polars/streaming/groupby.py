@@ -264,40 +264,58 @@ def _decompose_std_var(
 def _decompose_sorted_agg(
     name: str, expr: SortedAgg, *, names: Generator[str, None, None]
 ) -> tuple[NamedExpr, list[NamedExpr], list[NamedExpr], bool]:
-    """Carry the selected payload and order keys through grouped reductions."""
-    value, *by = expr.children
-    by_names = [f"{next(names)}__sort_key" for _ in by]
-    by_cols = [
-        Col(order_by.dtype, by_name)
-        for order_by, by_name in zip(by, by_names, strict=True)
+    """Carry the selected payload and its sort-key values through reductions."""
+    payload, *sort_keys = expr.children
+    sort_key_names = [f"{next(names)}__sort_key" for _ in sort_keys]
+    sort_key_cols = [
+        Col(sort_key.dtype, sort_key_name)
+        for sort_key, sort_key_name in zip(sort_keys, sort_key_names, strict=True)
     ]
 
     selection = NamedExpr(name, Col(expr.dtype, name))
     aggregations = [
-        NamedExpr(name, SortedAgg(expr.dtype, expr.name, expr.options, value, *by)),
+        NamedExpr(
+            name,
+            SortedAgg(expr.dtype, expr.name, expr.options, payload, *sort_keys),
+        ),
         *(
             NamedExpr(
-                by_name,
-                SortedAgg(order_by.dtype, expr.name, expr.options, order_by, *by),
+                sort_key_name,
+                SortedAgg(
+                    sort_key.dtype, expr.name, expr.options, sort_key, *sort_keys
+                ),
             )
-            for order_by, by_name in zip(by, by_names, strict=True)
+            for sort_key, sort_key_name in zip(sort_keys, sort_key_names, strict=True)
         ),
     ]
     reductions = [
         NamedExpr(
             name,
             SortedAgg(
-                expr.dtype, expr.name, expr.options, Col(expr.dtype, name), *by_cols
+                expr.dtype,
+                expr.name,
+                expr.options,
+                Col(expr.dtype, name),
+                *sort_key_cols,
             ),
         ),
         *(
             NamedExpr(
-                by_name,
-                SortedAgg(order_by.dtype, expr.name, expr.options, order_by, *by_cols),
+                sort_key_name,
+                SortedAgg(
+                    sort_key.dtype,
+                    expr.name,
+                    expr.options,
+                    sort_key,
+                    *sort_key_cols,
+                ),
             )
-            for order_by, by_name in zip(by_cols, by_names, strict=True)
+            for sort_key, sort_key_name in zip(
+                sort_key_cols, sort_key_names, strict=True
+            )
         ),
     ]
+    # SortedAgg supports tree reduction by carrying the winning sort-key values.
     return selection, aggregations, reductions, False
 
 

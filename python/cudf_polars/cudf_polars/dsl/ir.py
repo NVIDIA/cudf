@@ -2313,6 +2313,7 @@ class GroupBy(IR):
             cast_to_schema.append(should_cast)
 
         if not requests:
+            # Defer empty requests in case we have sorted aggregations
             return None, []
 
         group_keys, raw_tables = grouper.aggregate(requests, stream=df.stream)
@@ -2343,28 +2344,27 @@ class GroupBy(IR):
             return target_group_keys, []
 
         request_groups: dict[
-            tuple[Any, tuple[expr.Expr, ...]], list[expr.NamedExpr]
+            tuple[tuple[bool, tuple[bool], tuple[bool]], tuple[expr.Expr, ...]],
+            list[expr.NamedExpr],
         ] = {}
         for request in sorted_requests:
-            assert isinstance(request.value, expr.SortedAgg)
-            by_exprs = request.value.children[1:]
-            request_groups.setdefault(
-                (request.value.options, tuple(by_exprs)), []
-            ).append(request)
+            sorted_agg = request.value
+            assert isinstance(sorted_agg, expr.SortedAgg)
+            by_exprs = sorted_agg.children[1:]
+            request_groups.setdefault((sorted_agg.options, tuple(by_exprs)), []).append(
+                request
+            )
 
         common_group_keys = target_group_keys
         results_by_name: dict[str, Column] = {}
         key_order = [key.order for key in keys]
         key_null_order = [key.null_order for key in keys]
 
-        for group in request_groups.values():
-            first_agg = group[0].value
-            assert isinstance(first_agg, expr.SortedAgg)
+        for (options, by_exprs), group in request_groups.items():
             value_exprs = []
             for request in group:
                 assert isinstance(request.value, expr.SortedAgg)
                 value_exprs.append(request.value.children[0])
-            by_exprs = first_agg.children[1:]
             columns = broadcast(
                 *(
                     child.evaluate(df, context=ExecutionContext.GROUPBY)
@@ -2375,7 +2375,7 @@ class GroupBy(IR):
             )
             values = columns[: len(value_exprs)]
             by = columns[len(value_exprs) :]
-            stable, nulls_last, descending = first_agg.options
+            stable, nulls_last, descending = options
             by_order, by_null_order = sorting.sort_order(
                 descending, nulls_last=nulls_last, num_keys=len(by_exprs)
             )

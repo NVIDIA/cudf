@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#if 0  // Replaced by the HashCSR full-join size path in size_impl.cuh.
 #include "retrieve_impl.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
@@ -96,3 +97,4 @@ std::size_t get_full_join_size(
 }
 
 }  // namespace cudf::detail
+#endif

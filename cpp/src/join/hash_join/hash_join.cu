@@ -4,6 +4,8 @@
  */
 
 #include "common.cuh"
+#include "dispatch.cuh"
+#include "hash_csr_kernels.cuh"
 #include "join/join_common_utils.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
@@ -23,8 +25,11 @@
 
 #include <cuda/iterator>
 
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace cudf::detail {
@@ -59,43 +64,19 @@ void validate_hash_join_probe(table_view const& right, table_view const& left, b
 }
 
 namespace {
-void build_hash_join(
-  cudf::table_view const& right,
-  std::shared_ptr<detail::row::equality::preprocessed_table> const& preprocessed_right,
-  cudf::detail::hash_table_t& hash_table,
-  bool has_nested_nulls,
-  null_equality nulls_equal,
-  [[maybe_unused]] bitmask_type const* bitmask,
-  rmm::cuda_stream_view stream)
+std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
 {
-  CUDF_EXPECTS(0 != right.num_columns(), "Selected right dataset is empty", std::invalid_argument);
-  CUDF_EXPECTS(0 != right.num_rows(), "Right side table has no rows", std::invalid_argument);
-
-  auto insert_rows = [&](auto const& right, auto const& d_hasher) {
-    auto const iter = cudf::detail::make_counting_transform_iterator(0, pair_fn{d_hasher});
-
-    if (nulls_equal == cudf::null_equality::EQUAL or not nullable(right)) {
-      hash_table.insert(iter, iter + right.num_rows(), stream.value());
-    } else {
-      auto const stencil = cuda::counting_iterator<size_type>{0};
-      auto const pred    = row_is_valid{bitmask};
-
-      hash_table.insert_if(iter, iter + right.num_rows(), stencil, pred, stream.value());
-    }
-  };
-
-  auto const nulls = nullate::DYNAMIC{has_nested_nulls};
-
-  if (cudf::detail::is_primitive_row_op_compatible(right)) {
-    auto const d_hasher = cudf::detail::row::primitive::row_hasher{nulls, preprocessed_right};
-
-    insert_rows(right, d_hasher);
-  } else {
-    auto const row_hash = detail::row::hash::row_hasher{preprocessed_right};
-    auto const d_hasher = row_hash.device_hasher(nulls);
-
-    insert_rows(right, d_hasher);
+  auto const checked     = checked_load_factor(load_factor);
+  auto const requested   = std::max(static_cast<long double>(rows) + 1,
+                                  std::ceil(static_cast<long double>(rows) / checked));
+  std::uint64_t capacity = 1;
+  while (static_cast<long double>(capacity) < requested) {
+    capacity <<= 1;
   }
+  CUDF_EXPECTS(capacity <= std::numeric_limits<std::uint32_t>::max(),
+               "HashCSR table capacity is not representable",
+               std::overflow_error);
+  return static_cast<std::uint32_t>(capacity);
 }
 }  // namespace
 
@@ -119,32 +100,46 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   : _has_nulls(has_nulls),
     _is_empty{right.num_rows() == 0},
     _nulls_equal{compare_nulls},
-    _impl{std::make_unique<impl>(impl{typename impl::hash_table_t{
-      cuco::extent{static_cast<size_t>(right.num_rows())},
-      checked_load_factor(load_factor),
-      cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(), cudf::JoinNoMatch}},
-      {},
-      {},
-      {},
-      {},
-      rmm::mr::polymorphic_allocator<char>{std::move(mr)},
-      stream.value()}})},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)}
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)},
+    _impl{std::make_unique<impl>(
+      hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, mr)}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
   if (_is_empty) { return; }
 
-  auto const row_bitmask =
-    cudf::detail::bitmask_and(right, stream, cudf::get_current_device_resource_ref()).first;
-  cudf::detail::build_hash_join(_right,
-                                _preprocessed_right,
-                                _impl->_hash_table,
-                                _has_nulls,
-                                _nulls_equal,
-                                reinterpret_cast<bitmask_type const*>(row_bitmask.data()),
+  CUDF_CUDA_TRY(cudaMemsetAsync(
+    _impl->entries.data(), 0xff, _impl->entries.size() * sizeof(std::uint64_t), stream.value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->cumulative_ends.data(),
+                                0,
+                                _impl->cumulative_ends.size() * sizeof(size_type),
+                                stream.value()));
+
+  auto const temp_mr     = cudf::get_current_device_resource_ref();
+  auto const row_bitmask = cudf::detail::bitmask_and(right, stream, temp_mr).first;
+  auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
+                             ? static_cast<bitmask_type const*>(row_bitmask.data())
+                             : nullptr;
+  rmm::device_uvector<std::uint64_t> build_positions(right.num_rows(), stream, temp_mr);
+  auto build = [&](auto equality, auto hasher) {
+    launch_hash_csr_build_count(right.num_rows(),
+                                valid_rows,
+                                build_positions.data(),
+                                _impl->cumulative_ends.data(),
+                                _impl->map_view(),
+                                equality,
+                                hasher,
                                 stream);
+  };
+  dispatch_hash_csr_comparator(
+    right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
+  hash_csr_inclusive_sum(_impl->cumulative_ends.data(), _impl->capacity, stream);
+  launch_hash_csr_build_fill(right.num_rows(),
+                             build_positions.data(),
+                             _impl->cumulative_ends.data(),
+                             _impl->values.data(),
+                             stream);
 }
 
 template hash_join<hash_join_hasher>::hash_join(

@@ -1,8 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#if 0  // Replaced by the HashCSR partitioned pull path.
 #include "partitioned_retrieve_kernels.cuh"
 #include "ref_types.cuh"
 
@@ -39,3 +40,4 @@ launch_partitioned_retrieve<false, flat_count_ref_t>(probe_key_type const*,
                                                      rmm::device_async_resource_ref);
 
 }  // namespace cudf::detail
+#endif

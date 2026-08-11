@@ -1,62 +1,44 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include "hash_csr.cuh"
+
 #include <cudf/detail/join/hash_join.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/mr/polymorphic_allocator.hpp>
+#include <rmm/device_uvector.hpp>
 
-#include <cuco/static_multiset.cuh>
-#include <cuda/std/functional>
+#include <cstdint>
 
 namespace cudf::detail {
 
 template <typename Hasher>
 struct hash_join<Hasher>::impl {
-  struct always_not_equal {
-    __device__ constexpr bool operator()(
-      cuco::pair<hash_value_type, size_type> const&,
-      cuco::pair<hash_value_type, size_type> const&) const noexcept
-    {
-      // multiset always insert
-      return false;
-    }
-  };
+  impl(std::uint32_t capacity,
+       size_type rows,
+       rmm::cuda_stream_view stream,
+       cuda::mr::any_resource<cuda::mr::device_accessible> const& mr)
+    : entries(capacity, stream, mr),
+      cumulative_ends(capacity, stream, mr),
+      values(rows, stream, mr),
+      capacity{capacity}
+  {
+  }
 
-  struct hasher1 {
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, size_type> const& key) const noexcept
-    {
-      return key.first;
-    }
-  };
+  hash_csr_map_view map_view() const
+  {
+    return {const_cast<std::uint64_t*>(entries.data()), capacity, capacity - 1};
+  }
 
-  struct hasher2 {
-    hasher2(hash_value_type seed) : _hash{seed} {}
+  hash_csr_view csr_view() const { return {cumulative_ends.data(), values.data()}; }
 
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, size_type> const& key) const noexcept
-    {
-      return _hash(key.first);
-    }
-
-   private:
-    Hasher _hash;
-  };
-
-  using hash_table_t =
-    cuco::static_multiset<cuco::pair<cudf::hash_value_type, cudf::size_type>,
-                          cuco::extent<std::size_t>,
-                          cuda::thread_scope_device,
-                          always_not_equal,
-                          cuco::double_hashing<DEFAULT_JOIN_CG_SIZE, hasher1, hasher2>,
-                          rmm::mr::polymorphic_allocator<char>,
-                          cuco::storage<2>>;
-
-  hash_table_t _hash_table;
+  rmm::device_uvector<std::uint64_t> entries;
+  rmm::device_uvector<size_type> cumulative_ends;
+  rmm::device_uvector<size_type> values;
+  std::uint32_t capacity;
 };
 
 }  // namespace cudf::detail

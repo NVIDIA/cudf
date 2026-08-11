@@ -1,19 +1,22 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "common.cuh"
 #include "dispatch.cuh"
-#include "join/join_common_utils.cuh"
+#include "hash_csr_kernels.cuh"
 #include "join/join_common_utils.hpp"
-#include "partitioned_retrieve_kernels.hpp"
 
 #include <cudf/copying.hpp>
+#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/prefetch.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
@@ -21,7 +24,6 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/tabulate.h>
-#include <thrust/transform.h>
 
 namespace cudf::detail {
 namespace {
@@ -109,49 +111,90 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   auto const preprocessed_left =
     cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream);
 
-  // For FULL_JOIN, probe with LEFT_JOIN semantics (no complement here)
-  bool const is_outer = (join != join_kind::INNER_JOIN);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto counts        = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+    static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
+  CUDF_CUDA_TRY(
+    cudf::detail::memcpy_async(counts.data(),
+                               match_ctx._match_counts->data() + left_start_idx,
+                               static_cast<std::size_t>(partition_size) * sizeof(size_type),
+                               stream));
+  auto offsets = cudf::detail::make_zeroed_device_uvector_async<std::int64_t>(
+    static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
+  auto const output_size =
+    hash_csr_scan_counts(counts.data(), partition_size, offsets.data(), stream);
+  CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
 
-  // launch_partitioned_retrieve reduces match counts to compute output size
-  // (total = last_offset + last_count), allocates output buffers, and launches the kernel.
-  auto const* partition_counts = match_ctx._match_counts->data() + left_start_idx;
-  auto const n                 = static_cast<thread_index_type>(partition_size);
-
-  std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-            std::unique_ptr<rmm::device_uvector<size_type>>>
-    join_indices;
-
-  auto retrieve_partition = [&](auto equality, auto d_hasher) {
-    // Precompute left keys for this partition slice.
-    rmm::device_uvector<probe_key_type> left_keys(n, stream);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      cuda::counting_iterator<size_type>(0),
-                      cuda::counting_iterator<size_type>(partition_size),
-                      left_keys.begin(),
-                      pair_fn{d_hasher});
-
-    auto const ref = _impl->_hash_table.ref(cuco::op::count)
-                       .rebind_key_eq(equality)
-                       .rebind_hash_function(_impl->_hash_table.hash_function());
-
-    if (is_outer) {
-      join_indices = launch_partitioned_retrieve<true>(
-        left_keys.data(), n, partition_counts, ref, left_start_idx, stream, mr);
+  rmm::device_uvector<size_type> probe_slots(partition_size, stream, temp_mr);
+  auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
+  auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
+                             ? static_cast<bitmask_type const*>(row_bitmask.data())
+                             : nullptr;
+  auto save_slots        = [&](auto equality, auto hasher) {
+    if (join == join_kind::INNER_JOIN) {
+      launch_hash_csr_probe_count<false>(partition_size,
+                                         valid_rows,
+                                         probe_slots.data(),
+                                         nullptr,
+                                         nullptr,
+                                         nullptr,
+                                         _impl->map_view(),
+                                         _impl->csr_view(),
+                                         equality,
+                                         hasher,
+                                         stream);
     } else {
-      join_indices = launch_partitioned_retrieve<false>(
-        left_keys.data(), n, partition_counts, ref, left_start_idx, stream, mr);
+      launch_hash_csr_probe_count<true>(partition_size,
+                                        valid_rows,
+                                        probe_slots.data(),
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        _impl->map_view(),
+                                        _impl->csr_view(),
+                                        equality,
+                                        hasher,
+                                        stream);
     }
   };
+  dispatch_hash_csr_comparator(_right,
+                               left_partition_view,
+                               _preprocessed_right,
+                               preprocessed_left,
+                               _has_nulls,
+                               _nulls_equal,
+                               save_slots);
 
-  dispatch_join_comparator(_right,
-                           left_partition_view,
-                           _preprocessed_right,
-                           preprocessed_left,
-                           _has_nulls,
-                           _nulls_equal,
-                           retrieve_partition);
+  auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    static_cast<std::size_t>(output_size), stream, mr);
+  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    static_cast<std::size_t>(output_size), stream, mr);
+  cudf::prefetch::detail::prefetch(*left_indices, stream);
+  cudf::prefetch::detail::prefetch(*right_indices, stream);
 
-  return join_indices;
+  if (join == join_kind::INNER_JOIN) {
+    launch_hash_csr_retrieve<false>(output_size,
+                                    partition_size,
+                                    offsets.data(),
+                                    probe_slots.data(),
+                                    _impl->csr_view(),
+                                    left_start_idx,
+                                    left_indices->data(),
+                                    right_indices->data(),
+                                    stream);
+  } else {
+    launch_hash_csr_retrieve<true>(output_size,
+                                   partition_size,
+                                   offsets.data(),
+                                   probe_slots.data(),
+                                   _impl->csr_view(),
+                                   left_start_idx,
+                                   left_indices->data(),
+                                   right_indices->data(),
+                                   stream);
+  }
+
+  return {std::move(left_indices), std::move(right_indices)};
 }
 
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

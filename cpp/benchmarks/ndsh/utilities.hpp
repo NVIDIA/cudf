@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -64,6 +64,19 @@ class table_with_names {
   std::vector<std::string> col_names;
 };
 
+enum class query_mode : int32_t { END_TO_END = 0, COMPUTE_ONLY = 1 };
+
+[[nodiscard]] query_mode query_mode_from_string(std::string const& str);
+
+/**
+ * @brief Select and copy named columns from a table
+ *
+ * @param table The input table
+ * @param columns The columns to copy
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> apply_projection(
+  std::unique_ptr<table_with_names> const& table, std::vector<std::string> const& columns);
+
 /**
  * @brief Inner join two tables and gather the result
  *
@@ -97,6 +110,54 @@ class table_with_names {
   cudf::null_equality compare_nulls = cudf::null_equality::EQUAL);
 
 /**
+ * @brief Apply a left join operation to two tables
+ *
+ * @param left_input The left input table
+ * @param right_input The right input table
+ * @param left_on The columns to join on in the left table
+ * @param right_on The columns to join on in the right table
+ * @param compare_nulls The null equality policy
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> apply_left_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls = cudf::null_equality::EQUAL);
+
+/**
+ * @brief Apply a left semi join operation to two tables
+ *
+ * @param left_input The left input table
+ * @param right_input The right input table
+ * @param left_on The columns to join on in the left table
+ * @param right_on The columns to join on in the right table
+ * @param compare_nulls The null equality policy
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> apply_left_semi_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls = cudf::null_equality::EQUAL);
+
+/**
+ * @brief Apply a left anti join operation to two tables
+ *
+ * @param left_input The left input table
+ * @param right_input The right input table
+ * @param left_on The columns to join on in the left table
+ * @param right_on The columns to join on in the right table
+ * @param compare_nulls The null equality policy
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> apply_left_anti_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls = cudf::null_equality::EQUAL);
+
+/**
  * @brief Apply a filter predicate to a table
  *
  * @param table The input table
@@ -113,6 +174,24 @@ class table_with_names {
  */
 [[nodiscard]] std::unique_ptr<table_with_names> apply_mask(
   std::unique_ptr<table_with_names> const& table, std::unique_ptr<cudf::column> const& mask);
+
+/**
+ * @brief Remove duplicate rows from a table
+ *
+ * @param table The input table
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> apply_distinct(
+  std::unique_ptr<table_with_names> const& table);
+
+/**
+ * @brief Copy a range of rows from a table
+ *
+ * @param table The input table
+ * @param begin The first row to copy
+ * @param end One past the last row to copy
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> apply_slice(
+  std::unique_ptr<table_with_names> const& table, cudf::size_type begin, cudf::size_type end);
 
 /**
  * Struct representing group by key columns, value columns, and the type of aggregations to perform

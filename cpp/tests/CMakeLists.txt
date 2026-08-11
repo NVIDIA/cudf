@@ -863,8 +863,3 @@ ConfigureTest(
   ROARING_DISABLE_AVX=1
   CROARING_COMPILER_SUPPORTS_AVX512=0
 )
-
-# ##################################################################################################
-# Install tests ####################################################################################
-# ##################################################################################################
-rapids_test_install_relocatable(INSTALL_COMPONENT_SET testing DESTINATION bin/gtests/libcudf)

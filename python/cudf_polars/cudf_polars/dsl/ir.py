@@ -2232,27 +2232,8 @@ class GroupBy(IR):
                 plc.types.NanEquality.ALL_EQUAL,
                 stream=df.stream,
             )
-            # The order we have
             have = plc.Table([key.obj for key in broadcasted[: len(keys)]])
-
-            # We know an inner join is OK because by construction
-            # want and have are permutations of each other.
-            left_order, right_order = plc.join.inner_join(
-                want, have, plc.types.NullEquality.EQUAL, stream=df.stream
-            )
-            # Now left_order is an arbitrary permutation of the ordering we
-            # want, and right_order is a matching permutation of the ordering
-            # we have. To get to the original ordering, we need
-            # left_order == iota(nrows), with right_order permuted
-            # appropriately. This can be obtained by sorting
-            # right_order by left_order.
-            (right_order,) = plc.sorting.sort_by_key(
-                plc.Table([right_order]),
-                plc.Table([left_order]),
-                [plc.types.Order.ASCENDING],
-                [plc.types.NullOrder.AFTER],
-                stream=df.stream,
-            ).columns()
+            right_order = cls._get_key_permutation_map(want, have, df.stream)
             ordered_table = plc.copying.gather(
                 plc.Table([col.obj for col in broadcasted]),
                 right_order,
@@ -2268,33 +2249,26 @@ class GroupBy(IR):
         return DataFrame(broadcasted, stream=df.stream).slice(zlice)
 
     @staticmethod
-    def _align_to_group_keys(
-        group_keys: plc.Table,
-        result_group_keys: plc.Table,
-        result: Column,
+    def _get_key_permutation_map(
+        target_keys: plc.Table,
+        source_keys: plc.Table,
         stream: Any,
-    ) -> Column:
-        """Align a grouped result to the group-key order used by this GroupBy."""
-        left_order, right_order = plc.join.inner_join(
-            group_keys,
-            result_group_keys,
+    ) -> plc.Column:
+        """Return a source gather map for key tables that are permutations."""
+        target_order, source_order = plc.join.inner_join(
+            target_keys,
+            source_keys,
             plc.types.NullEquality.EQUAL,
             stream=stream,
         )
-        (right_order,) = plc.sorting.sort_by_key(
-            plc.Table([right_order]),
-            plc.Table([left_order]),
+        (source_order,) = plc.sorting.sort_by_key(
+            plc.Table([source_order]),
+            plc.Table([target_order]),
             [plc.types.Order.ASCENDING],
             [plc.types.NullOrder.AFTER],
             stream=stream,
         ).columns()
-        (ordered_result,) = plc.copying.gather(
-            plc.Table([result.obj]),
-            right_order,
-            plc.copying.OutOfBoundsPolicy.DONT_CHECK,
-            stream=stream,
-        ).columns()
-        return Column(ordered_result, name=result.name, dtype=result.dtype)
+        return source_order
 
     @staticmethod
     def _evaluate_aggregation_requests(
@@ -2478,12 +2452,27 @@ class GroupBy(IR):
             if common_group_keys is None:
                 common_group_keys = group_keys
             else:
-                results = [
-                    cls._align_to_group_keys(
-                        common_group_keys, group_keys, result, df.stream
+                source_order = cls._get_key_permutation_map(
+                    common_group_keys,
+                    group_keys,
+                    df.stream,
+                )
+                aligned_results = []
+                for result in results:
+                    (aligned_result,) = plc.copying.gather(
+                        plc.Table([result.obj]),
+                        source_order,
+                        plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                        stream=df.stream,
+                    ).columns()
+                    aligned_results.append(
+                        Column(
+                            aligned_result,
+                            name=result.name,
+                            dtype=result.dtype,
+                        )
                     )
-                    for result in results
-                ]
+                results = aligned_results
             results_by_name.update(
                 (request.name, result)
                 for request, result in zip(group, results, strict=True)

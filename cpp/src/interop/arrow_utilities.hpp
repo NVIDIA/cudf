@@ -10,6 +10,8 @@
 
 #include <nanoarrow/nanoarrow.h>
 
+#include <cstdint>
+
 namespace cudf {
 namespace detail {
 
@@ -40,7 +42,7 @@ bool is_fixed_size_list(ArrowSchemaView const* arrow_view);
  * @brief Validated physical bounds for an Arrow fixed-size-list array
  */
 struct fixed_size_list_layout {
-  size_type width;       ///< Child elements per row
+  int32_t width;         ///< Child elements per row and LIST offset increment
   size_type num_rows;    ///< Number of output rows
   int64_t row_offset;    ///< First logical row in the Arrow array
   int64_t row_end;       ///< One-past-last logical row
@@ -54,19 +56,19 @@ struct fixed_size_list_layout {
  *
  * @throw cudf::data_type_error if `arrow_view` is not a fixed-size-list
  * @throw std::invalid_argument if the declared width is negative
- * @throw std::overflow_error if the declared width exceeds `size_type`
+ * @throw std::overflow_error if the declared width exceeds the INT32 LIST offset range
  *
  * @param arrow_view SchemaView to pull the fixed size from
  * @return Number of child elements per row
  */
-size_type fixed_size_list_width(ArrowSchemaView const* arrow_view);
+int32_t fixed_size_list_width(ArrowSchemaView const* arrow_view);
 
 /**
  * @brief Validate and compute fixed-size-list row and child bounds
  *
  * @throw std::invalid_argument if row metadata is negative
- * @throw std::overflow_error if Arrow bounds overflow `int64_t` or output lengths exceed
- * `size_type`
+ * @throw std::overflow_error if Arrow bounds overflow `int64_t`, output row counts exceed
+ * `size_type`, or synthesized LIST offsets exceed INT32
  *
  * @param arrow_view Fixed-size-list schema view
  * @param input Arrow array carrying row offset and length

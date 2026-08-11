@@ -12,6 +12,8 @@
 
 #include <nanoarrow/nanoarrow.hpp>
 
+#include <cstdint>
+
 namespace cudf {
 namespace detail {
 
@@ -61,7 +63,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
  * @return INT32 offsets column
  */
 std::unique_ptr<column> make_fixed_size_list_offsets(size_type size,
-                                                     size_type width,
+                                                     int32_t width,
                                                      rmm::cuda_stream_view stream,
                                                      rmm::device_async_resource_ref mr);
 

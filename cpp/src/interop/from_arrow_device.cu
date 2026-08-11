@@ -327,10 +327,13 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
     fixed_size ? get_fixed_size_list_layout(schema, input) : fixed_size_list_layout{};
 
   if (fixed_size) {
-    constexpr auto max_size = static_cast<int64_t>(std::numeric_limits<size_type>::max());
-    CUDF_EXPECTS(layout.row_end < max_size && layout.child_end <= max_size,
-                 "fixed-size-list device bounds exceed cuDF's maximum supported row count "
+    constexpr auto max_row_count = static_cast<int64_t>(std::numeric_limits<size_type>::max());
+    CUDF_EXPECTS(layout.row_end < max_row_count,
+                 "fixed-size-list device row bounds exceed cuDF's maximum supported row count "
                  "(cudf::size_type)",
+                 std::overflow_error);
+    CUDF_EXPECTS(layout.child_end <= std::numeric_limits<int32_t>::max(),
+                 "fixed-size-list device child bounds exceed the INT32 LIST offset range",
                  std::overflow_error);
     CUDF_EXPECTS(input->children[0]->length >= layout.child_end,
                  "fixed-size-list child is shorter than its parent layout requires",

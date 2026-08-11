@@ -71,17 +71,17 @@ bool is_fixed_size_list(ArrowSchemaView const* arrow_view)
   return arrow_view->type == NANOARROW_TYPE_FIXED_SIZE_LIST;
 }
 
-size_type fixed_size_list_width(ArrowSchemaView const* arrow_view)
+int32_t fixed_size_list_width(ArrowSchemaView const* arrow_view)
 {
   CUDF_EXPECTS(
     is_fixed_size_list(arrow_view), "Expected a fixed-size-list schema", cudf::data_type_error);
   CUDF_EXPECTS(arrow_view->fixed_size >= 0,
                "fixed-size-list width must be non-negative",
                std::invalid_argument);
-  CUDF_EXPECTS(arrow_view->fixed_size <= std::numeric_limits<size_type>::max(),
-               "fixed-size-list width exceeds cuDF's maximum supported row count (cudf::size_type)",
+  CUDF_EXPECTS(arrow_view->fixed_size <= std::numeric_limits<int32_t>::max(),
+               "fixed-size-list width exceeds the INT32 LIST offset range",
                std::overflow_error);
-  return static_cast<size_type>(arrow_view->fixed_size);
+  return static_cast<int32_t>(arrow_view->fixed_size);
 }
 
 fixed_size_list_layout get_fixed_size_list_layout(ArrowSchemaView const* arrow_view,
@@ -91,8 +91,8 @@ fixed_size_list_layout get_fixed_size_list_layout(ArrowSchemaView const* arrow_v
                "fixed-size-list offset and length must be non-negative",
                std::invalid_argument);
 
-  constexpr auto max_size = static_cast<int64_t>(std::numeric_limits<size_type>::max());
-  CUDF_EXPECTS(input->length < max_size,
+  constexpr auto max_row_count = static_cast<int64_t>(std::numeric_limits<size_type>::max());
+  CUDF_EXPECTS(input->length < max_row_count,
                "fixed-size-list length exceeds cuDF's maximum supported row count "
                "(cudf::size_type)",
                std::overflow_error);
@@ -112,7 +112,10 @@ fixed_size_list_layout get_fixed_size_list_layout(ArrowSchemaView const* arrow_v
                "fixed-size-list child bounds overflow Arrow's int64 representation",
                std::overflow_error);
   auto const child_length = input->length * width;
-  CUDF_EXPECTS(child_length <= max_size,
+  CUDF_EXPECTS(child_length <= std::numeric_limits<int32_t>::max(),
+               "fixed-size-list child elements exceed the INT32 LIST offset range",
+               std::overflow_error);
+  CUDF_EXPECTS(child_length <= max_row_count,
                "Number of fixed-size-list child elements exceeds cuDF's maximum supported "
                "row count (cudf::size_type)",
                std::overflow_error);

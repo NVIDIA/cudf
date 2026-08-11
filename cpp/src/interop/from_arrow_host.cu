@@ -433,15 +433,15 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> copy_offsets_column(
 }  // namespace
 
 std::unique_ptr<column> make_fixed_size_list_offsets(size_type size,
-                                                     size_type width,
+                                                     int32_t width,
                                                      rmm::cuda_stream_view stream,
                                                      rmm::device_async_resource_ref mr)
 {
   auto offsets =
     make_numeric_column(data_type{type_id::INT32}, size, mask_state::UNALLOCATED, stream, mr);
-  auto d_offsets = offsets->mutable_view().begin<size_type>();
+  auto d_offsets = offsets->mutable_view().begin<int32_t>();
   thrust::sequence(
-    rmm::exec_policy_nosync(stream, mr), d_offsets, d_offsets + size, size_type{0}, width);
+    rmm::exec_policy_nosync(stream, mr), d_offsets, d_offsets + size, int32_t{0}, width);
   return offsets;
 }
 

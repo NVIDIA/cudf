@@ -235,7 +235,7 @@ TEST_F(FromArrowStreamTest, FixedSizeListChunkedNullsTest)
   arrays.push_back(make_fixed_size_list_chunk(schema.get(), {5, 6, 7, 8}, 2, /*validity=*/{0, 1}));
 
   auto child   = cudf::test::fixed_width_column_wrapper<int64_t>{1, 2, 3, 4, 5, 6, 7, 8}.release();
-  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6, 8}.release();
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8}.release();
   std::vector<uint8_t> validity{1, 0, 0, 1};
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
@@ -256,8 +256,8 @@ TEST_F(FromArrowStreamTest, FixedSizeListChunkedNullsTest)
 
 TEST_F(FromArrowStreamTest, FixedSizeListSlicedTest)
 {
-  constexpr cudf::size_type width = 2;
-  auto schema                     = make_fixed_size_list_stream_schema(width);
+  constexpr int32_t width = 2;
+  auto schema             = make_fixed_size_list_stream_schema(width);
 
   std::vector<nanoarrow::UniqueArray> arrays;
   arrays.push_back(
@@ -277,12 +277,12 @@ TEST_F(FromArrowStreamTest, FixedSizeListSlicedTest)
 
 TEST_F(FromArrowStreamTest, FixedSizeListBoundaryAndMultiBlockTest)
 {
-  constexpr cudf::size_type width = 2;
-  auto schema                     = make_fixed_size_list_stream_schema(width);
+  constexpr int32_t width = 2;
+  auto schema             = make_fixed_size_list_stream_schema(width);
 
   std::vector<nanoarrow::UniqueArray> arrays;
   std::vector<int64_t> expected_values;
-  std::vector<cudf::size_type> expected_offsets{0};
+  std::vector<int32_t> expected_offsets{0};
   for (auto const num_rows : {cudf::size_type{1024}, cudf::size_type{1025}}) {
     std::vector<int64_t> values(num_rows * width);
     std::iota(values.begin(), values.end(), static_cast<int64_t>(expected_values.size()));
@@ -293,7 +293,7 @@ TEST_F(FromArrowStreamTest, FixedSizeListBoundaryAndMultiBlockTest)
     }
   }
 
-  auto expected_offsets_col = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+  auto expected_offsets_col = cudf::test::fixed_width_column_wrapper<int32_t>(
     expected_offsets.begin(), expected_offsets.end());
   auto expected_child =
     cudf::test::fixed_width_column_wrapper<int64_t>(expected_values.begin(), expected_values.end());

@@ -424,7 +424,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnNulls)
   constexpr cudf::size_type num_rows = 4;
   std::vector<uint8_t> validity{1, 0, 1, 0};
   auto child   = cudf::test::fixed_width_column_wrapper<int64_t>{1, 2, 3, 4, 5, 6, 7, 8}.release();
-  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6, 8}.release();
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8}.release();
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
   auto expected = cudf::make_lists_column(
@@ -460,22 +460,21 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnNulls)
 
 TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
 {
-  constexpr cudf::size_type width = 2;
+  constexpr int32_t width = 2;
 
   for (auto const num_rows : {cudf::size_type{1024}, cudf::size_type{1025}}) {
     SCOPED_TRACE(num_rows);
     std::vector<int64_t> values(num_rows * width);
     std::iota(values.begin(), values.end(), int64_t{0});
-    std::vector<cudf::size_type> offsets(num_rows + 1);
+    std::vector<int32_t> offsets(num_rows + 1);
     for (cudf::size_type i = 0; i <= num_rows; ++i) {
-      offsets[i] = i * width;
+      offsets[i] = static_cast<int32_t>(i) * width;
     }
 
     auto child =
       cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
     auto offsets_col =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end())
-        .release();
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
     auto expected = cudf::make_lists_column(
       num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
 

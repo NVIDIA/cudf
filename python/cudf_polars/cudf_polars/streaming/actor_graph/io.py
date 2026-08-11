@@ -12,6 +12,7 @@ import math
 from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
+from polars.io.plugins import IOSourceScanFunction
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
@@ -366,32 +367,26 @@ def _(
 
 def _find_rank_aware_source(scan_fn: Callable[..., Any]) -> RankAwareSource | None:
     """
-    Return the :class:`RankAwareSource` captured by a registered IO source function.
+    Return the :class:`RankAwareSource` registered by a Polars IO source function.
 
     Parameters
     ----------
     scan_fn
         Python scan function exported by Polars for a ``PythonScan`` node. For
         sources created with :func:`polars.io.plugins.register_io_source`, this
-        is the wrapper function that captures the original user-provided source.
+        satisfies :class:`polars.io.plugins.IOSourceScanFunction` and exposes
+        the user-provided source as ``io_source``.
 
     Returns
     -------
-    The captured `RankAwareSource`, or ``None`` if the IO source function does not
-    capture one directly (a plain or wrapped source, treated as rank-unaware).
-
-    Notes
-    -----
-    This reaches into Polars' ``register_io_source`` closure layout (the captured
-    source object). It is the only available hook today. When Polars exposes a
-    supported way to thread state into a source this should move to it. See
-    https://github.com/NVIDIA/cudf/issues/22917.
+    The registered `RankAwareSource`, or ``None`` if the scan function is not a
+    registered IO source or does not hold one directly (a plain or wrapped
+    source, treated as rank-unaware).
     """
-    for cell in getattr(scan_fn, "__closure__", ()):
-        source = cell.cell_contents
-        if isinstance(source, RankAwareSource):
-            return source
-    return None
+    if not isinstance(scan_fn, IOSourceScanFunction):
+        return None
+    source = scan_fn.io_source
+    return source if isinstance(source, RankAwareSource) else None
 
 
 async def _process_and_send_chunk(

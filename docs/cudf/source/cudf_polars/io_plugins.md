@@ -113,14 +113,13 @@ source = PartitionedFrame(pl.DataFrame({"a": range(10)}))
 lf = register_io_source(source, schema={"a": pl.Int64})
 ```
 
-Pass the `RankAwareSource` instance directly to `register_io_source`; do not
-wrap it in another callable. To inject rank information, cudf-polars must
-recover the `RankAwareSource` instance from the registered callable. Only an
-unwrapped instance is recognized; wrapping it in anything else (for example, a
-`functools.partial`, closure, lambda, or decorator) hides the instance, in which
-case the source is treated as rank-unaware and executes on rank 0 only.
-
-This limitation is tracked in [cudf#22917](https://github.com/NVIDIA/cudf/issues/22917).
+Pass the `RankAwareSource` instance directly to `register_io_source`. Do not
+wrap it in another callable. To inject rank information, cudf-polars reads the
+registered source back from Polars through `IOSourceScanFunction.io_source`,
+which holds exactly the object passed to `register_io_source`. Wrapping it in
+anything else (for example, a `functools.partial`, closure, lambda, or
+decorator) hides the instance, in which case the source is treated as
+rank-unaware and executes on rank 0 only.
 
 
 (io-plugins-sized-chunks)=

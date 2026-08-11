@@ -217,9 +217,9 @@ match_dictionaries_to_indices(std::vector<table_view> tables,
       std::move(idx_cols.begin(), idx_cols.end(), std::back_inserter(index_columns));
     }
   }
-  // All the new column_views are now included in updated_columns.
+  // All the new column_views are now included in updated_columns
 
-  // Rebuild the table_views from the column_views.
+  // Rebuild the table_views from the column_views
   std::vector<table_view> updated_tables;
   std::transform(updated_columns.begin(),
                  updated_columns.end(),

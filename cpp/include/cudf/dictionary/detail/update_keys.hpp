@@ -113,20 +113,20 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
   std::vector<table_view> tables, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
 
 /**
- * @brief Like match_dictionaries() but returns index columns in place of
- * dictionary columns.
+ * @brief Like match_dictionaries() but returns index columns in place of the
+ * dictionary columns
  *
  * Computes the merged unique key set across all input dictionaries, remaps each
  * dictionary's indices to that key set, and returns the resulting index columns
- * (with null masks). The merged key set itself is not returned.
+ * (with null masks). The merged keys are not returned.
  *
  * This is more efficient than match_dictionaries() when the caller only needs
- * to compare values by index and does not need the merged key set.
+ * to compare values by index and does not need the actual keys.
  *
- * @param input Span of dictionary column views to match.
- * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned columns' device memory.
- * @return One index column per input dictionary, in the same order as input.
+ * @param input Span of dictionary column views to match
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned columns' device memory
+ * @return One index column per input dictionary, in the same order as input
  */
 std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
   std::span<dictionary_column_view const> input,
@@ -134,18 +134,18 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
   rmm::device_async_resource_ref mr);
 
 /**
- * @brief Like match_dictionaries(tables) but substitutes index columns in place
- * of dictionary columns in the returned table_views.
+ * @brief Like match_dictionaries() but substitutes index columns in place
+ * of dictionary columns in the returned table_views
  *
- * For each dictionary column found across the input tables, computes the merged
+ * For each dictionary column found across the input `tables`, computes the merged
  * unique key set and remaps each column's indices to it. The returned table_views
  * reference these index columns (and the originals for non-dictionary columns).
- * The merged key sets are not returned.
+ * The merged keys are not returned.
  *
- * @param tables Vector of table_views containing dictionary columns to be matched.
- * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned columns' device memory.
- * @return Index column owners and updated table_views with index columns substituted.
+ * @param tables Vector of table_views containing dictionary columns to be matched
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned columns' device memory
+ * @return Index column owners and updated table_views with index columns substituted
  */
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
 match_dictionaries_to_indices(std::vector<table_view> tables,

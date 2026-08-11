@@ -32,8 +32,7 @@ inner_join(table_view const& left_input,
            rmm::cuda_stream_view stream,
            rmm::device_async_resource_ref mr)
 {
-  // Match dictionary key sets so indices are comparable across tables; the returned
-  // index columns are temporary and serve only as the join keys.
+  // match dictionary key sets so indices are comparable across tables
   auto matched = cudf::dictionary::detail::match_dictionaries_to_indices(
     {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
 
@@ -65,8 +64,7 @@ left_join(table_view const& left_input,
           rmm::cuda_stream_view stream,
           rmm::device_async_resource_ref mr)
 {
-  // Match dictionary key sets so indices are comparable across tables; the returned
-  // index columns are temporary and serve only as the join keys.
+  // match dictionary keys so indices are comparable across tables
   auto matched = cudf::dictionary::detail::match_dictionaries_to_indices(
     {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
 
@@ -89,8 +87,7 @@ full_join(table_view const& left_input,
           rmm::cuda_stream_view stream,
           rmm::device_async_resource_ref mr)
 {
-  // Match dictionary key sets so indices are comparable across tables; the returned
-  // index columns are temporary and serve only as the join keys.
+  // match dictionary key sets so indices are comparable across tables
   auto matched = cudf::dictionary::detail::match_dictionaries_to_indices(
     {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
 

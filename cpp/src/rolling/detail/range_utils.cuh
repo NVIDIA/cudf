@@ -359,6 +359,42 @@ current_row_distance_functor(Grouping,
   -> current_row_distance_functor<Grouping, OrderbyT>;
 
 /**
+ * @brief Per-row delta accessor that broadcasts a single scalar delta to every row.
+ *
+ * @tparam DeltaT type of the delta value.
+ */
+template <typename DeltaT>
+struct scalar_delta {
+  using value_type = DeltaT;  ///< Type of the delta value.
+  DeltaT const* data;         ///< Pointer to the single delta value.
+  /**
+   * @brief Return the (broadcast) delta for a row.
+   * @return The single scalar delta, regardless of the row index.
+   */
+  [[nodiscard]] __device__ DeltaT operator[](size_type) const { return data[0]; }
+};
+template <typename DeltaT>
+scalar_delta(DeltaT const*) -> scalar_delta<DeltaT>;
+
+/**
+ * @brief Per-row delta accessor that reads a distinct delta for each row from a column.
+ *
+ * @tparam DeltaT type of the delta value.
+ */
+template <typename DeltaT>
+struct column_delta {
+  using value_type = DeltaT;  ///< Type of the delta value.
+  DeltaT const* data;         ///< Pointer to the per-row delta values (one per orderby row).
+  /**
+   * @brief Return the delta for row `i`.
+   * @return The delta value at index `i`.
+   */
+  [[nodiscard]] __device__ DeltaT operator[](size_type i) const { return data[i]; }
+};
+template <typename DeltaT>
+column_delta(DeltaT const*) -> column_delta<DeltaT>;
+
+/**
  * @brief Functor to compute distance from current row for `bounded_open` and `bounded_closed`
  * windows.
  *
@@ -367,13 +403,15 @@ current_row_distance_functor(Grouping,
  *
  * @tparam Grouping type of object defining groups in the orderby column.
  * @tparam OrderbyT type of elements in the orderby columns.
- * @tparam DeltaT type of the elements in the scalar delta (returned
- * by `scalar.data()`).
+ * @tparam DeltaT type of the elements in the delta (returned by `scalar.data()` or the delta
+ * column's `data<DeltaT>()`).
  * @tparam WindowType type of window we're computing the distance for.
+ * @tparam DeltaAccessor accessor type (`scalar_delta` or `column_delta`) that yields the delta for
+ * a given row via `operator[]`.
  * @param groups object defining groups in the orderby column.
  * @param direction direction of the window `PRECEDING` or `FOLLOWING`.
  * @param order sort order of the orderby column.
- * @param row_delta pointer to row delta on device.
+ * @param row_delta accessor yielding the row delta on device.
  * @param begin iterator to the begin of orderby column on device.
  *
  * @note Let `x` be the value of the current row and `delta` the provided
@@ -390,7 +428,7 @@ template <typename Grouping,
           typename OrderbyT,
           typename DeltaT,
           typename WindowType,
-          bool PerRow = false>
+          typename DeltaAccessor>
 struct bounded_distance_functor {
   static_assert(cuda::std::is_same_v<WindowType, bounded_open> ||
                   cuda::std::is_same_v<WindowType, bounded_closed> ||
@@ -400,7 +438,7 @@ struct bounded_distance_functor {
   direction const direction;
   order const order;
   column_device_view::const_iterator<OrderbyT> const begin;
-  DeltaT const* row_delta;
+  DeltaAccessor const row_delta;
 
   /**
    * @brief Compute the offset to the end of the window.
@@ -421,9 +459,9 @@ struct bounded_distance_functor {
       return direction == direction::PRECEDING ? i - row_info.null_start() + 1
                                                : row_info.null_end() - i - 1;
     }
-    // For scalar deltas (PerRow == false) the same value is broadcast to every row (index 0); for
-    // column-valued deltas (PerRow == true) each row reads its own delta at index `i`.
-    DeltaT const delta                   = row_delta[PerRow ? i : size_type{0}];
+    // The delta accessor decides whether the same value is broadcast to every row (scalar delta)
+    // or each row reads its own delta at index `i` (column-valued delta).
+    DeltaT const delta                   = row_delta[i];
     auto const offset_value_did_overflow = [subtract = (order == order::ASCENDING) ==
                                                        (direction == direction::PRECEDING),
                                             delta,
@@ -554,20 +592,21 @@ struct range_window_clamper {
                                     stream);
   }
 
-  template <bool PerRow, typename Grouping, typename OrderbyT, typename DeltaT>
+  template <typename Grouping, typename OrderbyT, typename DeltaAccessor>
   void expand_bounded(Grouping grouping,
                       direction direction,
                       order order,
                       column_device_view::const_iterator<OrderbyT> begin,
-                      DeltaT const* row_delta,
+                      DeltaAccessor row_delta,
                       size_type size,
                       mutable_column_view& result,
                       cuda::stream_ref stream) const
   {
+    using DeltaT = typename DeltaAccessor::value_type;
     materialize_range_window_bounds(
       size,
       result.data<size_type>(),
-      bounded_distance_functor<Grouping, OrderbyT, DeltaT, WindowType, PerRow>{
+      bounded_distance_functor<Grouping, OrderbyT, DeltaT, WindowType, DeltaAccessor>{
         grouping, direction, order, begin, row_delta},
       stream);
   }
@@ -623,17 +662,35 @@ struct range_window_clamper {
                          "columns.");
         if constexpr (cudf::is_numeric_not_bool<OrderbyT>()) {
           auto const* d_row_delta = delta_col->data<OrderbyT>();
-          expand_bounded</*PerRow=*/true>(
-            grouping, direction, order, d_begin, d_row_delta, orderby.size(), result_view, stream);
+          expand_bounded(grouping,
+                         direction,
+                         order,
+                         d_begin,
+                         column_delta{d_row_delta},
+                         orderby.size(),
+                         result_view,
+                         stream);
         } else {
           auto const* d_row_delta = delta_col->data<typename OrderbyT::duration>();
-          expand_bounded</*PerRow=*/true>(
-            grouping, direction, order, d_begin, d_row_delta, orderby.size(), result_view, stream);
+          expand_bounded(grouping,
+                         direction,
+                         order,
+                         d_begin,
+                         column_delta{d_row_delta},
+                         orderby.size(),
+                         result_view,
+                         stream);
         }
       } else {
         auto const* d_row_delta = static_cast<ScalarT const*>(row_delta)->data();
-        expand_bounded</*PerRow=*/false>(
-          grouping, direction, order, d_begin, d_row_delta, orderby.size(), result_view, stream);
+        expand_bounded(grouping,
+                       direction,
+                       order,
+                       d_begin,
+                       scalar_delta{d_row_delta},
+                       orderby.size(),
+                       result_view,
+                       stream);
       }
     };
 

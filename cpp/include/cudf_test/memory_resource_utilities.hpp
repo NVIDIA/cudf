@@ -21,6 +21,7 @@
 #include <concepts>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <utility>
 
 namespace CUDF_EXPORT cudf {
@@ -30,9 +31,10 @@ namespace test {
  * @brief Exception-safe owner for a temporary current device resource.
  *
  * The installed resource and the previous resource are held by owning type-erased resource values.
- * Destruction restores the previous resource, including during stack unwinding. Because the current
- * resource is device-global state, scopes must not overlap concurrent work that changes or uses the
- * current resource.
+ * Destruction restores the previous resource, including during stack unwinding. The object is
+ * movable: the moved-from object no longer restores on destruction. Because the current resource is
+ * device-global state, scopes must not overlap concurrent work that changes or uses the current
+ * resource.
  */
 class scoped_current_device_resource {
  public:
@@ -48,11 +50,13 @@ class scoped_current_device_resource {
 
   scoped_current_device_resource(scoped_current_device_resource const&)            = delete;
   scoped_current_device_resource& operator=(scoped_current_device_resource const&) = delete;
-  scoped_current_device_resource(scoped_current_device_resource&&)                 = delete;
-  scoped_current_device_resource& operator=(scoped_current_device_resource&&)      = delete;
+  scoped_current_device_resource(scoped_current_device_resource&&) noexcept;
+  scoped_current_device_resource& operator=(scoped_current_device_resource&&) noexcept;
 
  private:
-  cuda::mr::any_resource<cuda::mr::device_accessible> _previous;
+  void restore() noexcept;
+
+  std::optional<cuda::mr::any_resource<cuda::mr::device_accessible>> _previous;
 };
 
 /** @brief Expected relationship between live and total output-resource allocations. */

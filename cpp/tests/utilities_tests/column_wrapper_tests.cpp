@@ -16,6 +16,8 @@
 
 #include <cuda/iterator>
 
+#include <optional>
+
 using cudf::test::expect_output_uses_distinct_resources;
 using cudf::test::temporary_allocation_expectation;
 
@@ -208,11 +210,11 @@ TEST(DictionaryColumnWrapperMemoryResourceTest, StringDistinctOutputAndTemporary
 /**
  * @brief Base fixture that instruments column-wrapper tests with a memory-resource harness.
  *
- * Each test instantiates a fresh harness. The failing current-device-resource scope is installed in
- * the fixture constructor (after `_harness`) so accidental fallback to the default MR fails the
- * test. Tests should construct wrappers with `resources()` and pass the released column to
- * `validate_with_harness()` before returning. `TearDown` asserts that no output or temporary
- * allocations remain live; the prior current resource is restored when the fixture is destroyed.
+ * Each test instantiates a fresh harness. The failing current-device-resource scope is installed
+ * after `_harness` so accidental fallback to the default MR fails the test. Tests should construct
+ * wrappers with `resources()` and pass the released column to `validate_with_harness()` before
+ * returning. `TearDown` asserts that no output or temporary allocations remain live; the prior
+ * current resource is restored when the optional scope is reset or destroyed.
  */
 struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixture {
   void TearDown() override { _harness.expect_no_live_allocations(this->stream()); }
@@ -220,6 +222,8 @@ struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixture {
   rmm::cuda_stream_view stream() const { return cudf::test::get_default_stream(); }
 
   cudf::memory_resources resources() { return _harness.resources(); }
+
+  void disable_current_device_resource_use() { _fail_on_current.reset(); }
 
   /**
    * @brief Validate that the harness owns the given result.
@@ -235,7 +239,7 @@ struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixture {
 
  private:
   cudf::test::memory_resource_test_harness _harness{};
-  cudf::test::scoped_current_device_resource _fail_on_current{
+  std::optional<cudf::test::scoped_current_device_resource> _fail_on_current{
     _harness.fail_on_current_device_resource_use()};
 };
 
@@ -431,6 +435,8 @@ TYPED_TEST(FixedWidthColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                                                  this->resources());
   cudf::column_view view = col;
 
+  // TODO: Remove once equality row preprocessing uses the supplied memory resources.
+  this->disable_current_device_resource_use();
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,
@@ -536,6 +542,8 @@ TYPED_TEST(StringsColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                          this->resources());
   cudf::column_view view = col;
 
+  // TODO: Remove once equality row preprocessing uses the supplied memory resources.
+  this->disable_current_device_resource_use();
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,

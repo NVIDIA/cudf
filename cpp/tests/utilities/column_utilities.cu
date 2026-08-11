@@ -542,6 +542,8 @@ struct column_comparator_impl {
     auto lhs_tview = table_view{{lhs}};
     auto rhs_tview = table_view{{rhs}};
 
+    // TODO: Pass `mr` once two_table_comparator / equality preprocessed_table::create accept
+    // memory_resources instead of allocating from the current device resource.
     auto const comparator =
       cudf::detail::row::equality::two_table_comparator{lhs_tview, rhs_tview, stream};
     auto const has_nulls = cudf::has_nulls(lhs_tview) or cudf::has_nulls(rhs_tview);
@@ -885,6 +887,9 @@ bool expect_columns_equal(cudf::column_view const& lhs,
                           rmm::cuda_stream_view stream,
                           cudf::memory_resources mr)
 {
+  // TODO: equality row preprocessing (two_table_comparator / preprocessed_table::create) still
+  // allocates from the current device resource; pass `mr` through once that path accepts
+  // memory_resources so callers need not disable failing current-resource scopes.
   check_non_empty_nulls(lhs, rhs, stream);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);

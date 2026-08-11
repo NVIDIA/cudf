@@ -21,7 +21,7 @@ namespace cudf::io::parquet::detail {
  * @param[in] dstv Pointer to row output data (string descriptor or 32-bit hash)
  */
 template <typename state_buf>
-inline __device__ void gpuOutputString(page_state_s* s, state_buf* sb, int src_pos, void* dstv)
+inline __device__ void gpuOutputString(auto* s, state_buf* sb, int src_pos, void* dstv)
 {
   auto [ptr, len] = gpuGetStringData(s, sb, src_pos);
   if (s->setup.col.is_strings_to_cat and s->setup.col.physical_type == Type::BYTE_ARRAY) {
@@ -112,10 +112,7 @@ inline __device__ void gpuStoreOutput(uint2* dst,
  * @param[out] dst Pointer to row output data
  */
 template <typename state_buf>
-inline __device__ void read_int96_timestamp(page_state_s* s,
-                                            state_buf* sb,
-                                            int src_pos,
-                                            int64_t* dst)
+inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
   using cuda::std::chrono::duration_cast;
 
@@ -133,7 +130,7 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
     dict_pos = src_pos;
     src8     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   ofs = 3 & reinterpret_cast<size_t>(src8);
   src8 -= ofs;  // align to 32-bit boundary
   ofs <<= 3;    // bytes -> bits
@@ -188,10 +185,7 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
  * @param[in] dst Pointer to row output data
  */
 template <typename state_buf>
-inline __device__ void read_int64_timestamp(page_state_s* s,
-                                            state_buf* sb,
-                                            int src_pos,
-                                            int64_t* dst)
+inline __device__ void read_int64_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
   uint8_t const* src8;
   uint32_t dict_pos, dict_size = s->stream.dict_size, ofs;
@@ -208,7 +202,7 @@ inline __device__ void read_int64_timestamp(page_state_s* s,
     dict_pos = src_pos;
     src8     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   ofs = 3 & reinterpret_cast<size_t>(src8);
   src8 -= ofs;  // align to 32-bit boundary
   ofs <<= 3;    // bytes -> bits
@@ -226,7 +220,7 @@ inline __device__ void read_int64_timestamp(page_state_s* s,
     val <<= 32;
     val |= v.x;
     // Output to desired clock rate
-    ts = apply_ts_scale(val, s->ts_scale);
+    ts = apply_ts_scale(val, s->output_cvt.ts_scale);
   } else {
     ts = 0;
   }
@@ -264,12 +258,9 @@ __device__ void gpuOutputByteArrayAsInt(char const* ptr, int32_t len, T* dst)
  * @param[in] dst Pointer to row output data
  */
 template <typename T, typename state_buf>
-__device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
-                                                   state_buf* sb,
-                                                   int src_pos,
-                                                   T* dst)
+__device__ void read_fixed_width_byte_array_as_int(auto* s, state_buf* sb, int src_pos, T* dst)
 {
-  uint32_t const dtype_len_in = s->dtype_len_in;
+  uint32_t const dtype_len_in = s->output_cvt.dtype_len_in;
   uint8_t const* data         = s->stream.dict_base ? s->stream.dict_base : s->stream.data_start;
   uint32_t const pos =
     (s->stream.dict_base
@@ -302,10 +293,7 @@ __device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
  * @param[in] dst Pointer to row output data
  */
 template <typename T, typename state_buf>
-inline __device__ void read_fixed_width_value_fast(page_state_s* s,
-                                                   state_buf* sb,
-                                                   int src_pos,
-                                                   T* dst)
+inline __device__ void read_fixed_width_value_fast(auto* s, state_buf* sb, int src_pos, T* dst)
 {
   uint8_t const* dict;
   uint32_t dict_pos, dict_size = s->stream.dict_size;
@@ -321,7 +309,7 @@ inline __device__ void read_fixed_width_value_fast(page_state_s* s,
     dict_pos = src_pos;
     dict     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   gpuStoreOutput(dst, dict, dict_pos, dict_size);
 }
 
@@ -336,7 +324,7 @@ inline __device__ void read_fixed_width_value_fast(page_state_s* s,
  */
 template <typename state_buf>
 inline __device__ void read_nbyte_fixed_width_value(
-  page_state_s* s, state_buf* sb, int src_pos, uint8_t* dst8, int len)
+  auto* s, state_buf* sb, int src_pos, uint8_t* dst8, int len)
 {
   uint8_t const* dict;
   uint32_t dict_pos, dict_size = s->stream.dict_size;
@@ -352,7 +340,7 @@ inline __device__ void read_nbyte_fixed_width_value(
     dict_pos = src_pos;
     dict     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   if (len & 3) {
     // Generic slow path
     for (unsigned int i = 0; i < len; i++) {

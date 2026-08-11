@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -27,7 +27,11 @@ for bench in *_NVBENCH; do
   if [[ -x "$bench" && -f "$bench" ]]; then
     start_time=$(date +%s)
     echo "Running $bench with --profile..."
-    "./$bench" --profile --devices 0 -q --rmm_mode cuda
+    args=(--profile --devices 0 -q --rmm_mode cuda)
+    if [[ "$bench" == NDSH_* ]]; then
+      args+=(--axis scale_factor=0.01)
+    fi
+    "./$bench" "${args[@]}"
     SUITEERROR=$?
     end_time=$(date +%s)
     duration=$((end_time - start_time))

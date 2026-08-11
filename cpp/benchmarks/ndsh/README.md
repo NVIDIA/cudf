@@ -8,4 +8,8 @@ comply with the TPC-H Benchmarks.
 
 ## Current Status
 
-For now, only Q1, Q5, Q6, Q9, and Q10 have been implemented
+All 22 NDS-H queries are implemented.
+
+The standard benchmark modes are `end_to_end`, which includes Parquet reads and query execution,
+and `compute_only`, which measures query execution using preloaded data. Q9 retains its additional
+engine and expression variants.

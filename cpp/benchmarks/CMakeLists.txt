@@ -55,6 +55,29 @@ target_include_directories(
          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
 )
 
+if(CUDF_BUILD_TESTS)
+  add_executable(NDSH_DATA_GENERATOR_TEST common/ndsh_data_generator/ndsh_data_generator_test.cpp)
+  set_target_properties(
+    NDSH_DATA_GENERATOR_TEST
+    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+               INSTALL_RPATH "\$ORIGIN/../../../lib"
+               CXX_STANDARD 20
+               CXX_STANDARD_REQUIRED ON
+  )
+  target_link_libraries(
+    NDSH_DATA_GENERATOR_TEST PRIVATE ndsh_data_generator cudf::cudftestutil_objects
+                                     $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+  rapids_cuda_set_runtime(NDSH_DATA_GENERATOR_TEST USE_STATIC ON)
+  rapids_test_add(
+    NAME NDSH_DATA_GENERATOR_TEST
+    COMMAND NDSH_DATA_GENERATOR_TEST
+    GPUS 1
+    PERCENT 15
+    INSTALL_COMPONENT_SET testing
+  )
+endif()
+
 # ##################################################################################################
 # * compiler function -----------------------------------------------------------------------------
 

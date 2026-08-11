@@ -3,19 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cudf_test/base_fixture.hpp>
-#include <cudf_test/column_utilities.hpp>
-#include <cudf_test/column_wrapper.hpp>
+`#include` <cudf_test/base_fixture.hpp>
+`#include` <cudf_test/column_utilities.hpp>
+`#include` <cudf_test/column_wrapper.hpp>
+`#include` <cudf_test/cudf_gtest.hpp>
 
-#include <cudf/column/column_factories.hpp>
-#include <cudf/io/experimental/variant.hpp>
-#include <cudf/io/experimental/variant_spec.hpp>
-#include <cudf/lists/lists_column_view.hpp>
-#include <cudf/structs/structs_column_view.hpp>
-#include <cudf/utilities/span.hpp>
+`#include` <cudf/column/column_factories.hpp>
+`#include` <cudf/io/experimental/variant.hpp>
+`#include` <cudf/io/experimental/variant_spec.hpp>
+`#include` <cudf/lists/lists_column_view.hpp>
+`#include` <cudf/strings/strings_column_view.hpp>
+`#include` <cudf/structs/structs_column_view.hpp>
+`#include` <cudf/utilities/span.hpp>
 
-#include <string>
-#include <vector>
+`#include` <cstdint>
+`#include` <memory>
+`#include` <string>
+`#include` <vector>
 
 namespace {
 

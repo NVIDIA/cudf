@@ -5,6 +5,7 @@
 
 #include "delta_binary.cuh"
 #include "io/utilities/block_utils.cuh"
+#include "page_state_composed.cuh"
 #include "page_string_utils.cuh"
 #include "parquet_gpu.hpp"
 
@@ -338,15 +339,15 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
                              kernel_error::pointer error_code)
 {
   __shared__ __align__(16) delta_binary_decoder db_state;
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16) page_state_buffers_s<delta_nz_buf_size, 1, 1> state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
-  auto* const db        = &db_state;
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const db     = &db_state;
 
   // Exit early if the page is pruned
   if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
@@ -370,10 +371,10 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // copying logic from gpuDecodePageData.
-  PageNestingDecodeInfo const* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
 
   // Get the level decode buffers for this page
   PageInfo* pp       = &pages[page_idx];
@@ -479,7 +480,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
   if (has_repetition) {
     // Zero-fill null positions after decoding valid values
-    auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
+    auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
       zero_fill_null_positions_shared<decode_block_size>(s,
@@ -511,10 +512,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                                  kernel_error::pointer error_code)
 {
   __shared__ __align__(16) delta_byte_array_decoder db_state;
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16) page_state_buffers_s<delta_nz_buf_size, 1, 1> state_buffers;
 
-  page_state_s* const s = &state_g;
+  auto* const s         = &state_g;
   auto* const sb        = &state_buffers;
   int const page_idx    = cg::this_grid().block_rank();
   auto const block      = cg::this_thread_block();
@@ -549,7 +550,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // choose a character parallel string copy when the average string is longer than a warp
   auto const use_char_ll =
@@ -557,7 +558,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     (s->setup.page.str_bytes / s->setup.page.num_valids) > cudf::detail::warp_size;
 
   // copying logic from decode_page_data.
-  PageNestingDecodeInfo const* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
 
   // Get the level decode buffers for this page
   PageInfo* pp       = &pages[page_idx];
@@ -603,8 +604,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // if this is a bounds page and nested, then we need to skip up front. non-nested will work
   // its way through the page.
-  int string_pos            = has_repetition ? s->setup.page.start_val : 0;
-  auto const is_bounds_pg   = is_bounds_page(s, min_row, num_rows, has_repetition);
+  int string_pos = has_repetition ? s->setup.page.start_val : 0;
+  auto const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
   bool const is_skip_resume = is_bounds_pg and string_pos > 0;
 
   // Number of values produced per main-loop iteration (see decode_delta_binary_kernel for why
@@ -687,7 +689,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   }
 
   // Zero-fill null positions after decoding valid values
-  auto const& ni = s->nesting_info[leaf_level_index];
+  auto const& ni = s->nesting.nesting_info[leaf_level_index];
   if (ni.valid_map != nullptr) {
     int const num_values = ni.valid_map_offset - init_valid_map_offset;
     zero_fill_null_positions_shared<decode_block_size>(s,
@@ -732,17 +734,17 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                                         kernel_error::pointer error_code)
 {
   __shared__ __align__(16) delta_binary_decoder db_state;
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16) page_state_buffers_s<delta_nz_buf_size, 1, 1> state_buffers;
   __shared__ __align__(8) uint8_t const* page_string_data;
   __shared__ size_t string_offset;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
-  auto* const db        = &db_state;
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const db     = &db_state;
   if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
   [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
 
@@ -771,10 +773,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // copying logic from gpuDecodePageData.
-  PageNestingDecodeInfo const* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
 
   // Get the level decode buffers for this page
   PageInfo* pp       = &pages[page_idx];
@@ -810,7 +812,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   // if this is a bounds page, then we need to decode up to the first mini-block
   // that has a value we need, and set string_offset to the position of the first value in the
   // string data block.
-  auto const is_bounds_pg   = is_bounds_page(s, min_row, num_rows, has_repetition);
+  auto const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
   bool const is_skip_resume = is_bounds_pg and s->setup.page.start_val > 0;
 
   // Only nested pages resume the decoder mid-page; flat pages re-init it below and can keep the

@@ -47,7 +47,7 @@ constexpr int delta_length_block_size  = 32;
  */
 template <typename level_t>
 __device__ cuda::std::pair<int, int> page_bounds(
-  page_state_s* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
+  auto* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
 {
   using block_reduce = cub::BlockReduce<int, preprocess_block_size>;
   using block_scan   = cub::BlockScan<int, preprocess_block_size>;
@@ -60,7 +60,7 @@ __device__ cuda::std::pair<int, int> page_bounds(
   auto const t     = block.thread_rank();
 
   int const max_depth = s->setup.col.max_nesting_depth;
-  int const max_def   = s->nesting_info[max_depth - 1].max_def_level;
+  int const max_def   = s->nesting.nesting_info[max_depth - 1].max_def_level;
 
   auto const pp = &s->setup.page;
   // Clamp to decoded level count; for chunked reads we may have decoded fewer values than
@@ -516,12 +516,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                                     size_t num_rows,
                                     bool all_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   if (t == 0) {
     // don't clobber these if they're already computed from the index
@@ -554,7 +554,8 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     return;
   }
 
-  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) { return; }
@@ -643,12 +644,13 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
       }
     }
   } else {
-    bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+    bool const is_bounds_pg =
+      is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
     // if we have size info, then we only need to do this for bounds pages
     if (pp->has_value_info && !is_bounds_pg) {
       // check if we need to store values from the index
-      if (t == 0 && is_page_contained(s, min_row, num_rows)) {
+      if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
         pp->str_bytes = pp->str_bytes_from_index;
       }
       return;
@@ -723,12 +725,13 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
     return;
   }
 
-  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) {
     // check if we need to store values from the index
-    if (t == 0 && is_page_contained(s, min_row, num_rows)) {
+    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
       pp->str_bytes = pp->str_bytes_from_index;
     }
     return;
@@ -842,12 +845,13 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     return;
   }
 
-  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) {
     // check if we need to store values from the index
-    if (t == 0 && is_page_contained(s, min_row, num_rows)) {
+    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
       pp->str_bytes = pp->str_bytes_from_index;
     }
     return;

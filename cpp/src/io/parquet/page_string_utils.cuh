@@ -94,11 +94,11 @@ __device__ inline void block_excl_sum(size_type* arr, size_type length, size_typ
  * @brief Converts string sizes to offsets if this is not a large string column.
  */
 template <int block_size, bool has_lists>
-__device__ void convert_small_string_lengths_to_offsets(page_state_s const* const state)
+__device__ void convert_small_string_lengths_to_offsets(auto const* const state)
 {
   // If this is a large string column. In the
   // latter case, offsets will be computed during string column creation.
-  auto& ni        = state->nesting_info[state->setup.col.max_nesting_depth - 1];
+  auto& ni        = state->nesting.nesting_info[state->setup.col.max_nesting_depth - 1];
   int value_count = ni.value_count;
 
   // if no repetition we haven't calculated start/end bounds and instead just skipped
@@ -118,11 +118,11 @@ __device__ void convert_small_string_lengths_to_offsets(page_state_s const* cons
  * construction
  */
 template <bool has_lists>
-inline __device__ void compute_initial_large_strings_offset(page_state_s const* const state,
+inline __device__ void compute_initial_large_strings_offset(auto const* const state,
                                                             size_t& initial_str_offset)
 {
   // Values decoded by this page.
-  int value_count = state->nesting_info[state->setup.col.max_nesting_depth - 1].value_count;
+  int value_count = state->nesting.nesting_info[state->setup.col.max_nesting_depth - 1].value_count;
 
   // if no repetition we haven't calculated start/end bounds and instead just skipped
   // values until we reach first_row. account for that here.
@@ -190,7 +190,7 @@ template <int block_size,
           bool split_decode_t,
           copy_mode copy_mode_t,
           typename state_buf>
-__device__ size_t decode_strings(page_state_s* s,
+__device__ size_t decode_strings(auto* s,
                                  state_buf* const sb,
                                  int start,
                                  int end,
@@ -202,7 +202,7 @@ __device__ size_t decode_strings(page_state_s* s,
   int const leaf_level_index    = s->setup.col.max_nesting_depth - 1;
   int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
-  auto const& ni = s->nesting_info[leaf_level_index];
+  auto const& ni = s->nesting.nesting_info[leaf_level_index];
 
   // decode values
   int pos = start;

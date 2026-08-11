@@ -1260,18 +1260,4 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
     .get_parquet_metadatas();
 }
 
-[[nodiscard]] std::vector<parquet::FileMetaData> clone_parquet_metadatas(
-  host_span<parquet::FileMetaData const*> sources)
-{
-  CUDF_FUNC_RANGE();
-
-  std::vector<parquet::FileMetaData> result;
-  result.reserve(sources.size());
-  for (auto const* src : sources) {
-    CUDF_EXPECTS(src != nullptr, "Null FileMetaData pointer");
-    result.push_back(*src);
-  }
-  return result;
-}
-
 }  // namespace cudf::io::parquet::detail

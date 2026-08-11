@@ -266,19 +266,6 @@ parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> con
 std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<datasource> const> sources);
 
-/**
- * @brief Deep-copy FileMetaData objects from a span of pointers
- *
- * Used when handing cached footers into the parquet reader so the clone can
- * run without the Python GIL (Cython calls this under `nogil`).
- *
- * @param sources Non-owning pointers to FileMetaData objects to clone
- *
- * @return Deep copies of each pointed-to FileMetaData
- */
-[[nodiscard]] std::vector<parquet::FileMetaData> clone_parquet_metadatas(
-  host_span<parquet::FileMetaData const*> sources);
-
 }  // namespace parquet::detail
 }  // namespace io
 }  // namespace CUDF_EXPORT cudf

@@ -356,7 +356,21 @@ from pylibcudf.libcudf.utilities.span cimport host_span
 
 ctypedef const FileMetaData* const_FileMetaData_ptr
 
-cdef extern from "cudf/io/detail/parquet.hpp" namespace "cudf::io::parquet::detail" nogil:
-    cdef vector[FileMetaData] clone_parquet_metadatas(
+cdef extern from *:
+    """
+    #include <cudf/io/parquet_metadata.hpp>
+    #include <cudf/utilities/span.hpp>
+    #include <vector>
+
+    std::vector<cudf::io::parquet::FileMetaData> copy_parquet_metadatas(
+        cudf::host_span<cudf::io::parquet::FileMetaData const* const> sources)
+    {
+        std::vector<cudf::io::parquet::FileMetaData> result;
+        result.reserve(sources.size());
+        for (auto const* src : sources) { result.push_back(*src); }
+        return result;
+    }
+    """
+    cdef vector[FileMetaData] copy_parquet_metadatas(
         host_span[const_FileMetaData_ptr] sources
-    ) except +libcudf_exception_handler
+    ) except +libcudf_exception_handler nogil

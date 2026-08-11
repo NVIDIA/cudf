@@ -28,7 +28,7 @@ from pylibcudf.libcudf.expressions cimport expression
 from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
 from pylibcudf.libcudf.io.parquet cimport (
     chunked_parquet_reader as cpp_chunked_parquet_reader,
-    clone_parquet_metadatas,
+    copy_parquet_metadatas,
     const_FileMetaData_ptr,
     parquet_reader_options,
     read_parquet as cpp_read_parquet,
@@ -635,7 +635,7 @@ cdef class ChunkedParquetReader:
                 metadata_holders, sources.size()
             )
             with nogil:
-                c_metadatas = clone_parquet_metadatas(
+                c_metadatas = copy_parquet_metadatas(
                     host_span[const_FileMetaData_ptr](
                         <const_FileMetaData_ptr*>metadata_ptrs.data(),
                         metadata_ptrs.size(),
@@ -737,7 +737,7 @@ cpdef read_parquet(
         metadata_holders = tuple(parquet_metadatas)
         metadata_ptrs = _parquet_metadata_ptrs(metadata_holders, sources.size())
         with nogil:
-            c_metadatas = clone_parquet_metadatas(
+            c_metadatas = copy_parquet_metadatas(
                 host_span[const_FileMetaData_ptr](
                     <const_FileMetaData_ptr*>metadata_ptrs.data(),
                     metadata_ptrs.size(),

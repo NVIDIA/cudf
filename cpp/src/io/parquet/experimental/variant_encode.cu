@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/experimental/variant.hpp>
@@ -83,17 +84,22 @@ __device__ cuda::std::optional<int64_t> try_parse_int64(cudf::string_view s)
   }
   if (i >= n || data[i] < '0' || data[i] > '9') { return cuda::std::nullopt; }
 
-  int64_t result = 0;
+  // Accumulate as a negative value to correctly represent INT64_MIN.
+  constexpr int64_t INT64_MIN_VAL = int64_t{-9223372036854775807LL - 1};
+  int64_t result                  = 0;
   while (i < n) {
     char c = data[i];
     if (c < '0' || c > '9') { return cuda::std::nullopt; }
     int64_t d = c - '0';
-    // Overflow guard: result * 10 + d > INT64_MAX
-    if (result > (int64_t{9223372036854775807LL} - d) / 10) { return cuda::std::nullopt; }
-    result = result * 10 + d;
+    if (result < (INT64_MIN_VAL + d) / 10) { return cuda::std::nullopt; }
+    result = result * 10 - d;
     ++i;
   }
-  return negative ? -result : result;
+  if (!negative) {
+    if (result == INT64_MIN_VAL) { return cuda::std::nullopt; }
+    return -result;
+  }
+  return result;
 }
 
 __device__ double parse_float64(cudf::string_view s)
@@ -169,7 +175,7 @@ __device__ size_type encoded_field_size(cudf::string_view raw)
   if (raw == cudf::string_view("null", 4)) { return 1; }
   if (raw == cudf::string_view("true", 4) || raw == cudf::string_view("false", 5)) { return 1; }
 
-  if (raw.size_bytes() > 0 && raw.data()[0] == '"') {
+  if (raw.size_bytes() >= 2 && raw.data()[0] == '"') {
     // JSON string: strip surrounding quotes
     size_type str_len = static_cast<size_type>(raw.size_bytes()) - 2;
     if (str_len <= 63) { return 1 + str_len; }  // SHORT_STRING
@@ -201,7 +207,7 @@ __device__ uint8_t* write_field_value(uint8_t* out, cudf::string_view raw)
     return out;
   }
 
-  if (raw.size_bytes() > 0 && raw.data()[0] == '"') {
+  if (raw.size_bytes() >= 2 && raw.data()[0] == '"') {
     auto const* str_start = raw.data() + 1;
     size_type str_len     = static_cast<size_type>(raw.size_bytes()) - 2;
 
@@ -227,11 +233,18 @@ __device__ uint8_t* write_field_value(uint8_t* out, cudf::string_view raw)
     return out + sizeof(double);
   }
 
-  *out++       = make_prim_header(primitive_type::INT64);
-  auto parsed  = try_parse_int64(raw);
-  int64_t ival = parsed.has_value() ? *parsed : int64_t{0};
-  cuda::std::memcpy(out, &ival, sizeof(int64_t));
-  return out + sizeof(int64_t);
+  auto parsed = try_parse_int64(raw);
+  if (parsed.has_value()) {
+    *out++       = make_prim_header(primitive_type::INT64);
+    int64_t ival = *parsed;
+    cuda::std::memcpy(out, &ival, sizeof(int64_t));
+    return out + sizeof(int64_t);
+  }
+  // Failed to parse as INT64 (e.g. out-of-range): fall back to FLOAT64.
+  *out++     = make_prim_header(primitive_type::FLOAT64);
+  double val = parse_float64(raw);
+  cuda::std::memcpy(out, &val, sizeof(double));
+  return out + sizeof(double);
 }
 
 // ─── kernels ──────────────────────────────────────────────────────────────────
@@ -423,7 +436,8 @@ std::unique_ptr<column> make_constant_metadata_column(std::vector<uint8_t> const
   if (total_bytes > 0) {
     auto* dst = static_cast<uint8_t*>(child_data.data());
     // Copy host blob to device once, then tile it for each non-null row
-    rmm::device_uvector<uint8_t> d_blob(blob.size(), stream, mr);
+    rmm::device_uvector<uint8_t> d_blob(
+      blob.size(), stream, cudf::get_current_device_resource_ref());
     cudf::detail::cuda_memcpy_async(device_span<uint8_t>{d_blob.data(), d_blob.size()},
                                     host_span<uint8_t const>{blob.data(), blob.size()},
                                     stream);
@@ -454,7 +468,6 @@ std::unique_ptr<column> make_constant_metadata_column(std::vector<uint8_t> const
     list_null_mask = cudf::detail::copy_bitmask(input_null_mask, 0, num_rows, stream, mr);
   }
 
-  stream.synchronize();
   return make_lists_column(
     num_rows, std::move(offsets_col), std::move(child_col), null_count, std::move(list_null_mask));
 }
@@ -484,7 +497,7 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
     std::vector<std::unique_ptr<column>> empty_children;
     empty_children.push_back(std::move(empty_meta));
     empty_children.push_back(std::move(empty_val));
-    return cudf::make_structs_column(0, std::move(empty_children), 0, {});
+    return cudf::make_structs_column(0, std::move(empty_children), 0, {}, stream, mr);
   }
 
   // ── Sort field names ──────────────────────────────────────────────────────
@@ -501,7 +514,8 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
     sorted_names[i]         = std::string(column_names[sort_indices[i]]);
   }
 
-  auto d_sorted_to_original = cudf::detail::make_device_uvector(h_sorted_to_original, stream, mr);
+  auto d_sorted_to_original = cudf::detail::make_device_uvector(
+    h_sorted_to_original, stream, cudf::get_current_device_resource_ref());
 
   // ── Extract field values with get_json_object ─────────────────────────────
   cudf::get_json_object_options opts;
@@ -513,7 +527,8 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   for (size_type i = 0; i < num_fields; ++i) {
     std::string path = "$." + std::string(column_names[i]);
     cudf::string_scalar path_scalar(path, true, stream, cudf::get_current_device_resource_ref());
-    extracted_cols.push_back(cudf::get_json_object(input, path_scalar, opts, stream, mr));
+    extracted_cols.push_back(cudf::get_json_object(
+      input, path_scalar, opts, stream, cudf::get_current_device_resource_ref()));
   }
 
   // ── Build device array of column_device_views ─────────────────────────────
@@ -528,14 +543,16 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
     dv_holders.push_back(column_device_view::create(col->view(), stream));
     h_views.push_back(*dv_holders.back());
   }
-  auto d_views = cudf::detail::make_device_uvector(h_views, stream, mr);
+  auto d_views =
+    cudf::detail::make_device_uvector(h_views, stream, cudf::get_current_device_resource_ref());
 
   // ── Input null mask ───────────────────────────────────────────────────────
   bitmask_type const* input_null_mask = input.null_mask();
   size_type const null_count          = input.null_count();
 
   // ── Compute per-row value blob sizes ─────────────────────────────────────
-  rmm::device_uvector<size_type> value_sizes(num_rows, stream, mr);
+  rmm::device_uvector<size_type> value_sizes(
+    num_rows, stream, cudf::get_current_device_resource_ref());
   {
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
     compute_value_sizes_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
@@ -550,7 +567,7 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
     cudf::detail::cuda_memcpy_async(device_span<size_type>{value_offsets.data(), 1},
                                     host_span<size_type const>{&zero, 1},
                                     stream);
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr),
+    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            value_sizes.begin(),
                            value_sizes.end(),
                            value_offsets.begin() + 1);

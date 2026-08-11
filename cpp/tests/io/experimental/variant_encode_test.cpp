@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/io/experimental/variant.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -35,6 +36,20 @@ std::unique_ptr<cudf::column> encode(std::vector<std::string> const& json_rows,
     input_col = w.release();
   }
   cudf::strings_column_view scv{input_col->view()};
+  std::vector<std::string> names(col_names);
+  return cudf::io::parquet::experimental::encode_strings_to_variant(scv, names);
+}
+
+// Encode json_rows[offset .. offset+size) via a sliced strings_column_view.
+std::unique_ptr<cudf::column> encode_sliced(std::vector<std::string> const& json_rows,
+                                            std::vector<std::string> const& col_names,
+                                            cudf::size_type offset,
+                                            cudf::size_type size)
+{
+  cudf::test::strings_column_wrapper w(json_rows.begin(), json_rows.end());
+  auto full_col            = w.release();
+  cudf::column_view sliced = cudf::slice(full_col->view(), {offset, offset + size})[0];
+  cudf::strings_column_view scv{sliced};
   std::vector<std::string> names(col_names);
   return cudf::io::parquet::experimental::encode_strings_to_variant(scv, names);
 }
@@ -100,9 +115,8 @@ TEST_F(EncodeStringsToVariantTest, SingleRowFloat)
   auto variant = encode({R"({"f":3.14})"}, {"f"});
 
   auto floats = extract_float64(variant->view(), "$.f");
-  // Check that we get a non-null row
-  EXPECT_EQ(floats->null_count(), 0);
-  EXPECT_EQ(floats->size(), 1);
+  cudf::test::fixed_width_column_wrapper<double> expected{3.14};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*floats, expected);
 }
 
 TEST_F(EncodeStringsToVariantTest, SingleRowFloatExponent)
@@ -110,8 +124,8 @@ TEST_F(EncodeStringsToVariantTest, SingleRowFloatExponent)
   auto variant = encode({R"({"f":1.5e2})"}, {"f"});
 
   auto floats = extract_float64(variant->view(), "$.f");
-  EXPECT_EQ(floats->null_count(), 0);
-  EXPECT_EQ(floats->size(), 1);
+  cudf::test::fixed_width_column_wrapper<double> expected{150.0};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*floats, expected);
 }
 
 TEST_F(EncodeStringsToVariantTest, SingleRowBoolTrue)
@@ -141,6 +155,18 @@ TEST_F(EncodeStringsToVariantTest, SingleRowShortString)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
 }
 
+TEST_F(EncodeStringsToVariantTest, SingleRowShortStringBoundary)
+{
+  // 63 bytes is the maximum for the SHORT_STRING encoding path
+  std::string boundary_str(63, 'x');
+  auto json    = R"({"s":")" + boundary_str + R"("})";
+  auto variant = encode({json}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{boundary_str};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
 TEST_F(EncodeStringsToVariantTest, SingleRowLongString)
 {
   // Strings > 63 bytes use the LONG_STRING encoding path
@@ -153,14 +179,54 @@ TEST_F(EncodeStringsToVariantTest, SingleRowLongString)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
 }
 
+TEST_F(EncodeStringsToVariantTest, SingleRowShortStringNonAscii)
+{
+  // "café" – é is U+00E9, encoded as 2 UTF-8 bytes (0xC3 0xA9), total 5 bytes
+  auto variant = encode({u8R"({"s":"café"})"}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{u8"café"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, SingleRowLongStringNonAscii)
+{
+  // 35 × "é" (2 UTF-8 bytes each) = 70 bytes → LONG_STRING path
+  std::string non_ascii_long;
+  for (int i = 0; i < 35; ++i) {
+    non_ascii_long += "\xC3\xA9";  // UTF-8 for é
+  }
+  auto json    = R"({"s":")" + non_ascii_long + R"("})";
+  auto variant = encode({json}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{non_ascii_long};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
 TEST_F(EncodeStringsToVariantTest, SingleRowNullValue)
 {
   // JSON null value → VARIANT null; cast_variant returns null for that row
   auto variant = encode({R"({"a":null})"}, {"a"});
 
   auto ints = extract_int64(variant->view(), "$.a");
-  // null JSON value encodes as VARIANT null, which cast_variant cannot cast to INT64
-  EXPECT_EQ(ints->size(), 1);
+  cudf::test::fixed_width_column_wrapper<int64_t> expected({0}, {false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*ints, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, SlicedInputView)
+{
+  // Build a 5-row column and encode only rows 1–3 via a sliced strings_column_view.
+  auto variant =
+    encode_sliced({R"({"a":0})", R"({"a":10})", R"({"a":20})", R"({"a":30})", R"({"a":40})"},
+                  {"a"},
+                  /*offset=*/1,
+                  /*size=*/3);
+
+  ASSERT_EQ(variant->size(), 3);
+  auto a_vals = extract_int64(variant->view(), "$.a");
+  cudf::test::fixed_width_column_wrapper<int64_t> expected{10, 20, 30};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*a_vals, expected);
 }
 
 // ─── multi-field tests ────────────────────────────────────────────────────────
@@ -240,6 +306,31 @@ TEST_F(EncodeStringsToVariantTest, MultipleRows)
   cudf::test::strings_column_wrapper exp_b{"foo", "bar", "baz"};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*a_vals, exp_a);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*b_vals, exp_b);
+}
+
+TEST_F(EncodeStringsToVariantTest, MultipleRowsManyBlocks)
+{
+  // 512 rows ensures work is spread across multiple CUDA blocks (typically 256 threads each).
+  constexpr int N = 512;
+  std::vector<std::string> json_rows;
+  json_rows.reserve(N);
+  for (int i = 0; i < N; ++i) {
+    json_rows.push_back(R"({"a":)" + std::to_string(i) + R"(})");
+  }
+
+  auto variant = encode(json_rows, {"a"});
+  ASSERT_EQ(variant->size(), N);
+
+  auto a_vals = extract_int64(variant->view(), "$.a");
+  ASSERT_EQ(a_vals->size(), N);
+  EXPECT_EQ(a_vals->null_count(), 0);
+
+  std::vector<int64_t> exp_vals(N);
+  for (int i = 0; i < N; ++i) {
+    exp_vals[i] = i;
+  }
+  cudf::test::fixed_width_column_wrapper<int64_t> expected(exp_vals.begin(), exp_vals.end());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*a_vals, expected);
 }
 
 TEST_F(EncodeStringsToVariantTest, MultipleRowsDifferentFieldsPresent)

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "UNSPECIFIED",
     "Cluster",
     "ConfigOptions",
     "DaskContext",
@@ -60,7 +61,40 @@ __all__ = [
     "SPMDContext",
     "StreamingExecutor",
     "StreamingFallbackMode",
+    "Unspecified",
 ]
+
+
+class Unspecified:
+    """
+    Sentinel value meaning "fall back to environment variable, then built-in default".
+
+    The singleton instance :data:`UNSPECIFIED` is used as the default for every
+    :class:`StreamingOptions` field.  When a field is still ``UNSPECIFIED`` after
+    construction (i.e. neither an explicit value nor an environment variable was provided),
+    the underlying library applies its own built-in default.
+    """
+
+    _instance: Unspecified | None = None
+
+    def __new__(cls) -> Unspecified:
+        """Return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        """Return ``"UNSPECIFIED"``."""
+        return "UNSPECIFIED"
+
+
+UNSPECIFIED = Unspecified()
+"""Singleton sentinel for all :class:`StreamingOptions` fields.
+
+A field set to ``UNSPECIFIED`` after construction means no explicit value and no
+matching environment variable was found; the underlying library will apply its own
+built-in default.
+"""
 
 
 def _env_get_int(name: str, default: int) -> int:
@@ -261,11 +295,11 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    prefetch_file_metadata: bool = dataclasses.field(
+    prefetch_file_metadata: bool | Unspecified = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__PREFETCH_FILE_METADATA",
             _bool_converter,
-            default=True,
+            default=UNSPECIFIED,
         )
     )
     use_jit_filter: bool = dataclasses.field(
@@ -289,7 +323,7 @@ class ParquetOptions:
             raise TypeError("max_footer_samples must be an int")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.prefetch_file_metadata, bool):
+        if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
             raise TypeError("prefetch_file_metadata must be a bool")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
@@ -960,19 +994,31 @@ class ConfigOptions(Generic[ExecutorType]):
         if user_parquet_options is None:
             user_parquet_options = {}
 
+        # Engine-dependent default: only prefetch for the streaming executor.
+        # Skipped if the user or the environment has already set a value.
+        prefetch_default = user_executor == "streaming"
+        prefetch_env_set = (
+            os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
+            is not None
+        )
+
         if isinstance(user_parquet_options, dict):
             user_parquet_options = dict(user_parquet_options)
-            # Set the engine-dependent default, but don't override any user-provided values
-            # in-memory or via the environment.
-            if "prefetch_file_metadata" not in user_parquet_options and (
-                os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
-                is None
+            if (
+                "prefetch_file_metadata" not in user_parquet_options
+                and not prefetch_env_set
             ):
-                user_parquet_options["prefetch_file_metadata"] = (
-                    user_executor == "streaming"
-                )
+                user_parquet_options["prefetch_file_metadata"] = prefetch_default
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
+            if (
+                isinstance(user_parquet_options.prefetch_file_metadata, Unspecified)
+                and not prefetch_env_set
+            ):
+                user_parquet_options = dataclasses.replace(
+                    user_parquet_options,
+                    prefetch_file_metadata=prefetch_default,
+                )
             parquet_options = user_parquet_options
         # This is set in polars, and so can't be overridden by the environment
         user_raise_on_fail = engine.config.get("raise_on_fail", False)

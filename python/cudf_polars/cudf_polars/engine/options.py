@@ -18,7 +18,7 @@ from rapidsmpf.utils.string import parse_boolean
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
 )
-from cudf_polars.utils.config import MemoryResourceConfig
+from cudf_polars.utils.config import UNSPECIFIED, MemoryResourceConfig, Unspecified
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,38 +35,6 @@ __all__: list[str] = [
     "StreamingOptions",
     "Unspecified",
 ]
-
-
-class Unspecified:
-    """
-    Sentinel value meaning "fall back to environment variable, then built-in default".
-
-    The singleton instance :data:`UNSPECIFIED` is used as the default for every
-    :class:`StreamingOptions` field.  When a field is still ``UNSPECIFIED`` after
-    construction (i.e. neither an explicit value nor an environment variable was provided),
-    the underlying library applies its own built-in default.
-    """
-
-    _instance: Unspecified | None = None
-
-    def __new__(cls) -> Unspecified:
-        """Return the singleton instance."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __repr__(self) -> str:
-        """Return ``"UNSPECIFIED"``."""
-        return "UNSPECIFIED"
-
-
-UNSPECIFIED = Unspecified()
-"""Singleton sentinel for all :class:`StreamingOptions` fields.
-
-A field set to ``UNSPECIFIED`` after construction means no explicit value and no
-matching environment variable was found; the underlying library will apply its own
-built-in default.
-"""
 
 
 def _opt(

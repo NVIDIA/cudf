@@ -86,6 +86,15 @@ std::unique_ptr<column> make_range_window(
 
   return std::visit(
     [&](auto const& window_bound) -> std::unique_ptr<column> {
+      auto const* delta_col = window_bound.delta_column();
+      // Type-independent invariants for a per-row delta column are enforced once here, regardless
+      // of the orderby type. The orderby-type-specific type relationship is checked per-type in
+      // range_window_clamper::operator().
+      if (delta_col != nullptr) {
+        CUDF_EXPECTS(delta_col->size() == orderby.size(),
+                     "Delta column must have the same number of rows as the orderby column.");
+        CUDF_EXPECTS(!delta_col->has_nulls(), "Delta column must not contain nulls.");
+      }
       return dispatch_range_window(window_bound,
                                    orderby,
                                    direction,
@@ -93,6 +102,7 @@ std::unique_ptr<column> make_range_window(
                                    grouping,
                                    nulls_at_start,
                                    window_bound.delta(),
+                                   delta_col,
                                    stream,
                                    mr);
     },

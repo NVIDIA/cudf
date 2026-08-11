@@ -48,7 +48,7 @@ using unused_state_buf = page_state_buffers_s<0, 0, 0>;
  * @param block The cooperative thread block
  */
 template <typename level_t>
-__device__ void update_page_sizes(page_state_s* s,
+__device__ void update_page_sizes(auto* s,
                                   int target_value_count,
                                   level_t const* const rep,
                                   level_t const* const def,
@@ -100,7 +100,7 @@ __device__ void update_page_sizes(page_state_s* s,
       block.sync();
 
       // get absolute thread leaf index
-      int const is_new_leaf = (d >= s->nesting_info[max_depth - 1].max_def_level);
+      int const is_new_leaf = (d >= s->nesting.nesting_info[max_depth - 1].max_def_level);
       int thread_leaf_count, block_leaf_count;
       block_scan(temp_storage.scan_storage)
         .InclusiveSum(is_new_leaf, thread_leaf_count, block_leaf_count);
@@ -170,7 +170,7 @@ __device__ void update_page_sizes(page_state_s* s,
  * @param[in] block The current thread block cooperative group
  */
 __device__ void compute_page_sizes_for_pruned_pages(PageInfo* page,
-                                                    page_state_s* const state,
+                                                    auto* const state,
                                                     bool has_repetition,
                                                     bool is_base_pass,
                                                     cg::thread_block const& block)
@@ -248,13 +248,13 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                             size_t num_rows,
                             bool is_base_pass)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
-  page_state_s* const s = &state_g;
-  auto const block      = cg::this_thread_block();
-  int const page_idx    = cg::this_grid().block_rank();
-  int const t           = block.thread_rank();
-  PageInfo* pp          = &pages[page_idx];
+  auto* const s      = &state_g;
+  auto const block   = cg::this_thread_block();
+  int const page_idx = cg::this_grid().block_rank();
+  int const t        = block.thread_rank();
+  PageInfo* pp       = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -288,7 +288,8 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
 
   // in the trim pass, for anything with lists, we only need to fully process bounding pages (those
   // at the beginning or the end of the row bounds)
-  if (!is_base_pass && !is_bounds_page(s, min_row, num_rows, has_repetition)) {
+  if (!is_base_pass &&
+      !is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition)) {
     int depth = 0;
     while (depth < s->setup.page.num_output_nesting_levels) {
       auto const thread_depth = depth + t;
@@ -296,7 +297,8 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
         // if we are not a bounding page (as checked above) then we are either
         // returning all rows/values from this page, or 0 of them
         pp->nesting[thread_depth].batch_size =
-          (s->setup.num_rows == 0 && !is_page_contained(s, min_row, num_rows))
+          (s->setup.num_rows == 0 &&
+           !is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows))
             ? 0
             : pp->nesting[thread_depth].size;
       }
@@ -391,11 +393,11 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
 {
   __shared__ __align__(16) level_scan_state state_g;
 
-  level_scan_state* const s = &state_g;
-  auto const block          = cg::this_thread_block();
-  int const page_idx        = cg::this_grid().block_rank();
-  int const t               = block.thread_rank();
-  PageInfo* pp              = &pages[page_idx];
+  auto* const s      = &state_g;
+  auto const block   = cg::this_thread_block();
+  int const page_idx = cg::this_grid().block_rank();
+  int const t        = block.thread_rank();
+  PageInfo* pp       = &pages[page_idx];
 
   // Return early if this page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }

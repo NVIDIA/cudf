@@ -5,6 +5,7 @@
 
 #include "page_data.cuh"
 #include "page_decode.cuh"
+#include "page_state_composed.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
@@ -50,16 +51,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                                 cudf::device_span<bool const> page_mask,
                                 kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16)
     page_state_buffers_s<rolling_buf_size, rolling_buf_size, rolling_buf_size>
       state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
 
   // Exit early if the page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }
@@ -93,7 +94,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     return;
   }
 
-  PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Get the level decode buffers for this page
   PageInfo* pp       = &pages[page_idx];
@@ -104,7 +105,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
@@ -224,7 +225,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   // Zero-fill null positions after decoding valid values
   if (has_repetition) {
     int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-    auto const& ni             = s->nesting_info[leaf_level_index];
+    auto const& ni             = s->nesting.nesting_info[leaf_level_index];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
       zero_fill_null_positions_shared<decode_block_size>(s,
@@ -264,16 +265,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                    cudf::device_span<bool const> page_mask,
                    kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16)
     page_state_buffers_s<rolling_buf_size, rolling_buf_size, rolling_buf_size>
       state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
   int out_warp_id;
 
   // Exit early if the page is pruned
@@ -296,11 +297,11 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   bool const process_nulls  = should_process_nulls(s);
 
-  PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   if (s->stream.dict_base) {
     out_warp_id = (s->stream.dict_bits > 0) ? 2 : 1;
@@ -475,7 +476,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const is_string =
     ((dtype == Type::BYTE_ARRAY) && !is_decimal) || (dtype == Type::FIXED_LEN_BYTE_ARRAY);
   if (is_string || has_repetition) {
-    auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
+    auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
       zero_fill_null_positions_shared<decode_block_size>(s,

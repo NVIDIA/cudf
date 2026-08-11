@@ -91,11 +91,11 @@ void ndsh_q13(nvbench::state& state)
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
-  auto const mem_stats_logger = cudf::memory_stats_logger();
   std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
   if (mode == query_mode::COMPUTE_ONLY) { tables = load_ndsh_q13(sources); }
-  std::unique_ptr<table_with_names> result;
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    std::unique_ptr<table_with_names> result;
     if (mode == query_mode::END_TO_END) {
       auto input = load_ndsh_q13(sources);
       result     = execute_ndsh_q13(input);
@@ -103,9 +103,16 @@ void ndsh_q13(nvbench::state& state)
       result = execute_ndsh_q13(tables);
     }
   });
-  result->to_parquet("q13.parquet");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  std::unique_ptr<table_with_names> result;
+  if (mode == query_mode::END_TO_END) {
+    auto input = load_ndsh_q13(sources);
+    result     = execute_ndsh_q13(input);
+  } else {
+    result = execute_ndsh_q13(tables);
+  }
+  result->to_parquet("q13.parquet");
 }
 
 NVBENCH_BENCH(ndsh_q13)

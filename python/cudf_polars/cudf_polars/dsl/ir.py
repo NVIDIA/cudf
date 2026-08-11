@@ -2156,6 +2156,127 @@ class GroupBy(IR):
             self.zlice,
         )
 
+    @classmethod
+    @log_do_evaluate
+    @nvtx_annotate_cudf_polars(message="GroupBy")
+    def do_evaluate(
+        cls,
+        schema: Schema,
+        keys_in: Sequence[expr.NamedExpr],
+        agg_requests: Sequence[expr.NamedExpr],
+        maintain_order: bool,  # noqa: FBT001
+        zlice: Zlice | None,
+        df: DataFrame,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Evaluate and return a dataframe."""
+        keys = broadcast(
+            *(k.evaluate(df) for k in keys_in),
+            target_length=df.num_rows,
+            stream=df.stream,
+        )
+        keys_are_sorted = (
+            plc.types.Sorted.YES
+            if all(k.is_sorted for k in keys)
+            else plc.types.Sorted.NO
+        )
+        grouper = plc.groupby.GroupBy(
+            plc.Table([k.obj for k in keys]),
+            null_handling=plc.types.NullPolicy.INCLUDE,
+            keys_are_sorted=keys_are_sorted,
+            column_order=[k.order for k in keys],
+            null_precedence=[k.null_order for k in keys],
+        )
+        requests: list[expr.NamedExpr] = []
+        sorted_requests: list[expr.NamedExpr] = []
+        for request in agg_requests:
+            value = request.value
+            if isinstance(value, expr.SortedAgg):
+                sorted_requests.append(request)
+            else:
+                requests.append(request)
+        group_keys, results = cls._evaluate_aggregation_requests(
+            schema, keys, grouper, requests, df
+        )
+        sorted_group_keys, sorted_results = cls._evaluate_sorted_aggregations(
+            sorted_requests, keys, df
+        )
+        if sorted_group_keys is not None:
+            if group_keys is None:
+                group_keys = sorted_group_keys
+            else:
+                sorted_results = [
+                    cls._align_to_group_keys(
+                        group_keys, sorted_group_keys, result, df.stream
+                    )
+                    for result in sorted_results
+                ]
+        if group_keys is None:
+            group_keys = cls._collect_group_keys(grouper, keys[0], df.stream)
+        results_by_name = {
+            request.name: result
+            for request, result in itertools.chain(
+                zip(requests, results, strict=True),
+                zip(sorted_requests, sorted_results, strict=True),
+            )
+        }
+        results = [results_by_name[request.name] for request in agg_requests]
+        result_keys = [
+            Column(grouped_key, name=key.name, dtype=key.dtype)
+            for key, grouped_key in zip(keys, group_keys.columns(), strict=True)
+        ]
+        if keys_are_sorted:
+            result_keys = [
+                col.sorted_like(key) for col, key in zip(result_keys, keys, strict=True)
+            ]
+        broadcasted = broadcast(*result_keys, *results, stream=df.stream)
+        # Handle order preservation of groups
+        if maintain_order and not keys_are_sorted:
+            # The order we want
+            want = plc.stream_compaction.stable_distinct(
+                plc.Table([k.obj for k in keys]),
+                list(range(group_keys.num_columns())),
+                plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+                plc.types.NullEquality.EQUAL,
+                plc.types.NanEquality.ALL_EQUAL,
+                stream=df.stream,
+            )
+            # The order we have
+            have = plc.Table([key.obj for key in broadcasted[: len(keys)]])
+
+            # We know an inner join is OK because by construction
+            # want and have are permutations of each other.
+            left_order, right_order = plc.join.inner_join(
+                want, have, plc.types.NullEquality.EQUAL, stream=df.stream
+            )
+            # Now left_order is an arbitrary permutation of the ordering we
+            # want, and right_order is a matching permutation of the ordering
+            # we have. To get to the original ordering, we need
+            # left_order == iota(nrows), with right_order permuted
+            # appropriately. This can be obtained by sorting
+            # right_order by left_order.
+            (right_order,) = plc.sorting.sort_by_key(
+                plc.Table([right_order]),
+                plc.Table([left_order]),
+                [plc.types.Order.ASCENDING],
+                [plc.types.NullOrder.AFTER],
+                stream=df.stream,
+            ).columns()
+            ordered_table = plc.copying.gather(
+                plc.Table([col.obj for col in broadcasted]),
+                right_order,
+                plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                stream=df.stream,
+            )
+            broadcasted = [
+                Column(reordered, name=old.name, dtype=old.dtype)
+                for reordered, old in zip(
+                    ordered_table.columns(), broadcasted, strict=True
+                )
+            ]
+        return DataFrame(broadcasted, stream=df.stream).slice(zlice)
+
     @staticmethod
     def _align_to_group_keys(
         group_keys: plc.Table,
@@ -2397,127 +2518,6 @@ class GroupBy(IR):
         return common_group_keys, [
             results_by_name[request.name] for request in sorted_requests
         ]
-
-    @classmethod
-    @log_do_evaluate
-    @nvtx_annotate_cudf_polars(message="GroupBy")
-    def do_evaluate(
-        cls,
-        schema: Schema,
-        keys_in: Sequence[expr.NamedExpr],
-        agg_requests: Sequence[expr.NamedExpr],
-        maintain_order: bool,  # noqa: FBT001
-        zlice: Zlice | None,
-        df: DataFrame,
-        *,
-        context: IRExecutionContext,
-    ) -> DataFrame:
-        """Evaluate and return a dataframe."""
-        keys = broadcast(
-            *(k.evaluate(df) for k in keys_in),
-            target_length=df.num_rows,
-            stream=df.stream,
-        )
-        keys_are_sorted = (
-            plc.types.Sorted.YES
-            if all(k.is_sorted for k in keys)
-            else plc.types.Sorted.NO
-        )
-        grouper = plc.groupby.GroupBy(
-            plc.Table([k.obj for k in keys]),
-            null_handling=plc.types.NullPolicy.INCLUDE,
-            keys_are_sorted=keys_are_sorted,
-            column_order=[k.order for k in keys],
-            null_precedence=[k.null_order for k in keys],
-        )
-        requests: list[expr.NamedExpr] = []
-        sorted_requests: list[expr.NamedExpr] = []
-        for request in agg_requests:
-            value = request.value
-            if isinstance(value, expr.SortedAgg):
-                sorted_requests.append(request)
-            else:
-                requests.append(request)
-        group_keys, results = cls._evaluate_aggregation_requests(
-            schema, keys, grouper, requests, df
-        )
-        sorted_group_keys, sorted_results = cls._evaluate_sorted_aggregations(
-            sorted_requests, keys, df
-        )
-        if sorted_group_keys is not None:
-            if group_keys is None:
-                group_keys = sorted_group_keys
-            else:
-                sorted_results = [
-                    cls._align_to_group_keys(
-                        group_keys, sorted_group_keys, result, df.stream
-                    )
-                    for result in sorted_results
-                ]
-        if group_keys is None:
-            group_keys = cls._collect_group_keys(grouper, keys[0], df.stream)
-        results_by_name = {
-            request.name: result
-            for request, result in itertools.chain(
-                zip(requests, results, strict=True),
-                zip(sorted_requests, sorted_results, strict=True),
-            )
-        }
-        results = [results_by_name[request.name] for request in agg_requests]
-        result_keys = [
-            Column(grouped_key, name=key.name, dtype=key.dtype)
-            for key, grouped_key in zip(keys, group_keys.columns(), strict=True)
-        ]
-        if keys_are_sorted:
-            result_keys = [
-                col.sorted_like(key) for col, key in zip(result_keys, keys, strict=True)
-            ]
-        broadcasted = broadcast(*result_keys, *results, stream=df.stream)
-        # Handle order preservation of groups
-        if maintain_order and not keys_are_sorted:
-            # The order we want
-            want = plc.stream_compaction.stable_distinct(
-                plc.Table([k.obj for k in keys]),
-                list(range(group_keys.num_columns())),
-                plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
-                plc.types.NullEquality.EQUAL,
-                plc.types.NanEquality.ALL_EQUAL,
-                stream=df.stream,
-            )
-            # The order we have
-            have = plc.Table([key.obj for key in broadcasted[: len(keys)]])
-
-            # We know an inner join is OK because by construction
-            # want and have are permutations of each other.
-            left_order, right_order = plc.join.inner_join(
-                want, have, plc.types.NullEquality.EQUAL, stream=df.stream
-            )
-            # Now left_order is an arbitrary permutation of the ordering we
-            # want, and right_order is a matching permutation of the ordering
-            # we have. To get to the original ordering, we need
-            # left_order == iota(nrows), with right_order permuted
-            # appropriately. This can be obtained by sorting
-            # right_order by left_order.
-            (right_order,) = plc.sorting.sort_by_key(
-                plc.Table([right_order]),
-                plc.Table([left_order]),
-                [plc.types.Order.ASCENDING],
-                [plc.types.NullOrder.AFTER],
-                stream=df.stream,
-            ).columns()
-            ordered_table = plc.copying.gather(
-                plc.Table([col.obj for col in broadcasted]),
-                right_order,
-                plc.copying.OutOfBoundsPolicy.DONT_CHECK,
-                stream=df.stream,
-            )
-            broadcasted = [
-                Column(reordered, name=old.name, dtype=old.dtype)
-                for reordered, old in zip(
-                    ordered_table.columns(), broadcasted, strict=True
-                )
-            ]
-        return DataFrame(broadcasted, stream=df.stream).slice(zlice)
 
 
 def _strip_predicate_casts(node: expr.Expr) -> expr.Expr:

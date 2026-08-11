@@ -230,7 +230,7 @@ def decompose_single_agg(
                     is_top=False,
                     context=context,
                 )
-                if any(has_agg for _, has_agg in child_aggs):
+                if any(nested_agg for _, nested_agg in child_aggs):
                     raise NotImplementedError(
                         "Nested aggs in sorted groupby aggregation not supported"
                     )

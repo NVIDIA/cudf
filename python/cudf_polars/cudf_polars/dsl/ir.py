@@ -2199,19 +2199,9 @@ class GroupBy(IR):
         group_keys, results = cls._evaluate_aggregation_requests(
             schema, keys, grouper, requests, df
         )
-        sorted_group_keys, sorted_results = cls._evaluate_sorted_aggregations(
-            sorted_requests, keys, df
+        group_keys, sorted_results = cls._evaluate_sorted_aggregations(
+            sorted_requests, keys, df, target_group_keys=group_keys
         )
-        if sorted_group_keys is not None:
-            if group_keys is None:
-                group_keys = sorted_group_keys
-            else:
-                sorted_results = [
-                    cls._align_to_group_keys(
-                        group_keys, sorted_group_keys, result, df.stream
-                    )
-                    for result in sorted_results
-                ]
         if group_keys is None:
             group_keys = cls._collect_group_keys(grouper, keys[0], df.stream)
         results_by_name = {
@@ -2389,10 +2379,12 @@ class GroupBy(IR):
         sorted_requests: Sequence[expr.NamedExpr],
         keys: Sequence[Column],
         df: DataFrame,
+        *,
+        target_group_keys: plc.Table | None = None,
     ) -> tuple[plc.Table | None, list[Column]]:
         """Evaluate grouped first/last aggregations with explicit ordering."""
         if not sorted_requests:
-            return None, []
+            return target_group_keys, []
 
         request_groups: dict[
             tuple[Any, tuple[expr.Expr, ...]], list[expr.NamedExpr]
@@ -2404,7 +2396,7 @@ class GroupBy(IR):
                 (request.value.options, tuple(by_exprs)), []
             ).append(request)
 
-        common_group_keys: plc.Table | None = None
+        common_group_keys = target_group_keys
         results_by_name: dict[str, Column] = {}
         key_order = [key.order for key in keys]
         key_null_order = [key.null_order for key in keys]

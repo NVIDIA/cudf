@@ -731,11 +731,18 @@ TEST_F(ExtractVariantFieldTest, EmptyArrayIndexing)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, null_expected);
   }
 
-  // Truncated counts/tables, decreasing offsets, and offsets beyond the values region yield null.
-  for (auto const& value : std::vector<std::vector<uint8_t>>{{0x13},
-                                                             {0x03, 0x01, 0x00},
-                                                             {0x03, 0x01, 0x02, 0x01, 0x0c, 42},
-                                                             {0x03, 0x01, 0x00, 0x03, 0x0c, 42}}) {
+  // Truncated counts/tables, decreasing offsets, offsets beyond the values region, and an
+  // element end that escapes the terminal offset all yield null.
+  for (auto const& value : std::vector<std::vector<uint8_t>>{
+         {0x13},
+         {0x03, 0x01, 0x00},
+         {0x03, 0x01, 0x02, 0x01, 0x0c, 42},
+         {0x03, 0x01, 0x00, 0x03, 0x0c, 42},
+         // 2-element array: offsets[0]=0, offsets[1]=5, terminal offsets[2]=1.
+         // 5 physical value bytes are present (passes the old physical-extent check),
+         // but the terminal offset declares only 1 value byte, so element 0's end (5)
+         // escapes the declared boundary → malformed.
+         {0x03, 0x02, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}}) {
     auto malformed_col = wrap_single_variant(build_metadata({}), value);
     auto got           = cudf::io::parquet::experimental::extract_variant_field(
       malformed_col, "$[0]", i8, nullptr, stream);
@@ -823,6 +830,13 @@ TEST_F(ExtractVariantFieldTest, MalformedVariantDataYieldsNull)
     {"object declares more fields than the value buffer holds",
      build_metadata({"x"}),
      {make_variant_object_header(), 0xFF}},
+    // Two-key dict: offsets[0]=0, offsets[1]=1 ("x" is key 0), terminal offsets[2]=0.
+    // 2 physical string bytes are present so the old per-entry check passes (1 <= 2),
+    // but the terminal offset declares the string region as 0 bytes.  The key "x"
+    // matches at i=0 before the terminal is consulted → must be malformed.
+    {"metadata terminal offset below first key's declared end",
+     {0x01, 0x02, 0x00, 0x01, 0x00, 'x', 'y'},
+     build_single_field_object(0, enc_int32(42))},
   };
 
   for (auto const& c : cases) {

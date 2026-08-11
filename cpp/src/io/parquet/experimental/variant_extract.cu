@@ -257,10 +257,19 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
   if (!start_off.has_value()) { return {cuda::std::nullopt, op_status::malformed_variant}; }
   auto const strings_base   = offsets_start + static_cast<size_type>(offsets_bytes);
   auto const strings_extent = meta_len - strings_base;
+  // Read the terminal offset offsets[num_entries] before scanning entries. An early key match
+  // must be bounded by this declared extent, not the physical buffer, so validate it upfront.
+  auto const terminal_off_pos =
+    offsets_start + static_cast<uint64_t>(num_entries.value()) * offset_size;
+  auto const terminal_off = read_uint64(meta, terminal_off_pos, offset_size);
+  if (!terminal_off.has_value() || cuda::std::cmp_greater(terminal_off.value(), strings_extent)) {
+    return {cuda::std::nullopt, op_status::malformed_variant};
+  }
+  auto const strings_declared = static_cast<size_type>(terminal_off.value());
   for (size_type i = 0; i < num_entries.value(); ++i) {
     auto const end_off = read_uint64(meta, offsets_start + (i + 1) * offset_size, offset_size);
     if (!end_off.has_value()) { return {cuda::std::nullopt, op_status::malformed_variant}; }
-    if (end_off.value() < start_off.value() || end_off.value() > strings_extent) {
+    if (end_off.value() < start_off.value() || end_off.value() > strings_declared) {
       return {cuda::std::nullopt, op_status::malformed_variant};
     }
     cudf::string_view const entry{
@@ -412,6 +421,15 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_array_e
   }
   size_type const values_base = offsets_start + static_cast<size_type>(offsets_bytes);
   auto const values_extent    = value_size - values_base;
+  // Read the terminal offset offsets[num_elements]; it is the spec-declared bound on the
+  // values region and must be used instead of the physical extent so that an element whose
+  // offset escapes the declared boundary is caught as malformed even when physical bytes
+  // are present beyond it.
+  auto const terminal_off_pos = offsets_start + static_cast<uint64_t>(num_elements) * offset_size;
+  auto const terminal_off     = read_uint64(value, terminal_off_pos, offset_size);
+  if (!terminal_off.has_value() || cuda::std::cmp_greater(*terminal_off, values_extent)) {
+    return {{}, op_status::malformed_variant};
+  }
 
   auto const start_offset_pos = offsets_start + static_cast<uint64_t>(index) * offset_size;
   auto const end_offset_pos   = offsets_start + (static_cast<uint64_t>(index) + 1) * offset_size;
@@ -425,7 +443,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_array_e
   }
   auto const element_start = *start_offset;
   auto const element_end   = *end_offset;
-  if (element_end < element_start || cuda::std::cmp_greater(element_end, values_extent)) {
+  if (element_end < element_start || cuda::std::cmp_greater(element_end, *terminal_off)) {
     return {{}, op_status::malformed_variant};
   }
   return {value.subspan(values_base + element_start, element_end - element_start),

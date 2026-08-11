@@ -46,6 +46,5 @@ cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
     ) except +libcudf_exception_handler
 
     cdef vector[FileMetaData] read_parquet_footers(
-        host_span[const_unique_ptr_datasource] sources,
-        bool read_page_indexes
+        host_span[const_unique_ptr_datasource] sources
     ) except +libcudf_exception_handler

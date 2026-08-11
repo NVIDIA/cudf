@@ -285,22 +285,14 @@ parquet_metadata read_parquet_metadata(source_info const& src_info);
 /**
  * @brief Constructs FileMetaData objects from parquet dataset
  *
- * By default (`read_page_indexes == true`), page indexes (`ColumnIndex` / `OffsetIndex`) are
- * deserialized into each column chunk when present. Page indexes are not required by
- * `read_parquet`; pass `false` when reusing footers only with `read_parquet` or
- * `chunked_parquet_reader` to avoid the cost of materializing and later deep-cloning them.
- * Hybrid-scan callers that need page-level stats can either keep the default or call
- * `setup_page_index` separately.
- *
  * @ingroup io_readers
  *
  * @param sources Input `datasource` objects to read the dataset from
- * @param read_page_indexes If true, deserialize page indexes into each column chunk when present
  *
  * @return List of FileMetaData objects, one per parquet source
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
-  std::span<std::unique_ptr<cudf::io::datasource> const> sources, bool read_page_indexes = true);
+  std::span<std::unique_ptr<cudf::io::datasource> const> sources);
 
 /** @} */  // end of group
 }  // namespace io

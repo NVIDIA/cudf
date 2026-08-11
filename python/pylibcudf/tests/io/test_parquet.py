@@ -318,11 +318,9 @@ def test_read_parquet_from_device_buffers(
     assert_table_and_meta_eq(expected, res, check_field_nullability=False)
 
 
-@pytest.mark.parametrize("read_page_indexes", [False, True])
 def test_read_parquet_with_pre_materialized_metadata(
     table_data: tuple[plc.io.types.TableWithMetadata, pa.Table],
     binary_source_or_sink: str | os.PathLike[str] | io.BytesIO,
-    read_page_indexes: bool,
 ) -> None:
     _, pa_table = table_data
     source = make_source(
@@ -332,7 +330,7 @@ def test_read_parquet_with_pre_materialized_metadata(
     options = plc.io.parquet.ParquetReaderOptions.builder(source_info).build()
 
     parquet_metadatas = plc.io.parquet_metadata.read_parquet_footers(
-        source_info, read_page_indexes=read_page_indexes
+        source_info
     )
     result = plc.io.parquet.read_parquet(
         options, parquet_metadatas=parquet_metadatas

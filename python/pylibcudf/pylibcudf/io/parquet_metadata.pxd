@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
 
 from pylibcudf.io.types cimport SourceInfo
@@ -98,4 +97,4 @@ cdef class RowGroup:
     cdef RowGroup from_cpp(cpp_RowGroup row_group)
 
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info)
-cpdef list read_parquet_footers(SourceInfo src_info, bool read_page_indexes=*)
+cpdef list read_parquet_footers(SourceInfo src_info)

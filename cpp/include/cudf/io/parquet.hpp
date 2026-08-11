@@ -1018,8 +1018,7 @@ table_with_metadata read_parquet(
  * The following code snippet demonstrates how to read a dataset from a file:
  * @code
  *  auto sources = cudf::io::make_datasources(cudf::io::source_info("dataset.parquet"));
- *  // Pass read_page_indexes=false when reusing only with read_parquet (page indexes optional).
- *  auto metadatas = cudf::io::read_parquet_footers(sources, false);
+ *  auto metadatas = cudf::io::read_parquet_footers(sources);
  *  auto options = cudf::io::parquet_reader_options::builder();
  *  auto result  = cudf::io::read_parquet(std::move(sources), std::move(metadatas), options);
  * @endcode

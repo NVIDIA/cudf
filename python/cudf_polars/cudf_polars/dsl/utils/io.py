@@ -90,16 +90,13 @@ def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetI
         else:
             sizes.append(None)
 
-    # Page indexes are not required by read_parquet; omit them to keep prefetched
-    # metadata lean for reuse/clone.
     metadata = plc.io.parquet_metadata.read_parquet_footers(
         plc.io.types.SourceInfo(
             [
                 plc.io.types.FilepathSource(path, size)
                 for path, size in zip(paths, sizes, strict=True)
             ]
-        ),
-        read_page_indexes=False,
+        )
     )
 
     return [

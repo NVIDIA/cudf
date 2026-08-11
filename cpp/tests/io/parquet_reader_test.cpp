@@ -3159,57 +3159,6 @@ TEST_F(ParquetMetadataReaderTest, PreMaterializedMetadata)
   test_parquet_metadata(3);
 }
 
-TEST_F(ParquetMetadataReaderTest, ReadParquetFootersPageIndexes)
-{
-  // Page indexes are only deserialized when BYTE_ARRAY columns are present.
-  auto const num_rows = 2000;
-  auto str_iter       = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return "str_" + std::to_string(i); });
-  cudf::test::strings_column_wrapper str_col(str_iter, str_iter + num_rows);
-  table_view input_table({str_col});
-
-  auto filepath = temp_env->get_temp_filepath("ReadParquetFootersPageIndexes.parquet");
-  cudf::io::parquet_writer_options out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input_table)
-      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
-      .row_group_size_rows(500)
-      .build();
-  cudf::io::write_parquet(out_opts);
-
-  auto const source_info = cudf::io::source_info{filepath};
-  auto datasources       = cudf::io::make_datasources(source_info);
-
-  // Explicit false omits page indexes (lean path for read_parquet reuse).
-  {
-    auto metadatas = cudf::io::read_parquet_footers(datasources, false);
-    EXPECT_EQ(metadatas.size(), 1);
-    ASSERT_FALSE(metadatas.front().row_groups.empty());
-    ASSERT_FALSE(metadatas.front().row_groups.front().columns.empty());
-    EXPECT_FALSE(metadatas.front().row_groups.front().columns.front().offset_index.has_value());
-    EXPECT_FALSE(metadatas.front().row_groups.front().columns.front().column_index.has_value());
-    // File still records page-index byte ranges when written with column stats.
-    EXPECT_GT(metadatas.front().row_groups.front().columns.front().column_index_offset, 0);
-    EXPECT_GT(metadatas.front().row_groups.front().columns.front().column_index_length, 0);
-
-    auto const options = cudf::io::parquet_reader_options::builder(source_info).build();
-    auto sources_copy  = cudf::io::make_datasources(source_info);
-    auto const read =
-      cudf::io::read_parquet(std::move(sources_copy), std::move(metadatas), options);
-    auto const expected = cudf::io::read_parquet(options);
-    CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), read.tbl->view());
-  }
-
-  // Default (true) materializes page indexes when present.
-  {
-    auto metadatas = cudf::io::read_parquet_footers(datasources);
-    EXPECT_EQ(metadatas.size(), 1);
-    ASSERT_FALSE(metadatas.front().row_groups.empty());
-    ASSERT_FALSE(metadatas.front().row_groups.front().columns.empty());
-    EXPECT_TRUE(metadatas.front().row_groups.front().columns.front().offset_index.has_value());
-    EXPECT_TRUE(metadatas.front().row_groups.front().columns.front().column_index.has_value());
-  }
-}
-
 TEST_F(ParquetMetadataReaderTest, Nested)
 {
   auto const num_rows       = 1200;

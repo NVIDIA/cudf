@@ -3,7 +3,6 @@
 
 from cython.operator cimport dereference
 from libc.stdint cimport uint8_t
-from libcpp cimport bool
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.string cimport string
 from libcpp.utility cimport move
@@ -650,22 +649,14 @@ cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
     return ParquetMetadata.from_metadata(c_result)
 
 
-cpdef list read_parquet_footers(SourceInfo src_info, bool read_page_indexes=True):
+cpdef list read_parquet_footers(SourceInfo src_info):
     """
     Read parquet file footers as ``FileMetaData`` objects.
-
-    By default, page indexes (``ColumnIndex`` / ``OffsetIndex``) are deserialized
-    when present. They are not required by
-    :func:`~pylibcudf.io.parquet.read_parquet`; pass ``read_page_indexes=False``
-    when reusing footers only with ``read_parquet`` or ``ChunkedParquetReader``
-    to avoid materializing (and later deep-cloning) them.
 
     Parameters
     ----------
     src_info : SourceInfo
         Dataset source.
-    read_page_indexes : bool, default True
-        If True, deserialize page indexes into each column chunk when present.
 
     Returns
     -------
@@ -676,15 +667,13 @@ cpdef list read_parquet_footers(SourceInfo src_info, bool read_page_indexes=True
     cdef vector[cpp_FileMetaData] c_result
     cdef vector[unique_ptr[cpp_FileMetaData]] owned
     cdef size_t i, n
-    cdef bool c_read_page_indexes = read_page_indexes
     with nogil:
         sources = make_datasources(src_info.c_obj)
         c_result = cpp_parquet_metadata.read_parquet_footers(
             host_span[const_unique_ptr_datasource](
                 <const_unique_ptr_datasource*>sources.data(),
                 sources.size(),
-            ),
-            c_read_page_indexes,
+            )
         )
         n = c_result.size()
         owned.reserve(n)

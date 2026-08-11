@@ -45,7 +45,7 @@ void filtered_join::insert_right_table_flat(rmm::cuda_stream_view stream)
     iter, set_ref.rebind_operators(cuco::insert), stream);
 }
 
-void distinct_filtered_join::query_right_table_flat(
+void filtered_join::query_right_table_flat(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,

@@ -9,6 +9,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
@@ -37,10 +38,10 @@ using cudf::detail::row::lhs_index_type;
 using cudf::detail::row::rhs_index_type;
 
 /**
- * @brief Base class providing common functionality for filtered join operations.
+ * @brief Implementation of filtered join using set hash tables.
  *
- * This abstract class implements the core components needed for hash-based semi
- * and anti join operations.
+ * Implements hash-based semi and anti joins using set semantics, where duplicate
+ * keys are not stored in the hash table.
  */
 class filtered_join {
  public:
@@ -121,7 +122,7 @@ class filtered_join {
   };
 
   /**
-   * @brief Constructor for filtered_join base class
+   * @brief Constructor for filtered_join
    *
    * Initializes the hash table with the right table and prepares it for join operations.
    *
@@ -138,27 +139,50 @@ class filtered_join {
                 cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * Virtual semi join function overridden in derived classes
+   * @brief Returns indices of left table rows that have matching keys in the right table
    */
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
-    cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) = 0;
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
+    cudf::table_view const& left, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
 
   /**
-   * Virtual anti join function overridden in derived classes
+   * @brief Returns indices of left table rows that do not have matching keys in the right table
    */
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
+    cudf::table_view const& left, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+
+ private:
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_anti_join(
     cudf::table_view const& left,
+    join_kind kind,
     rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) = 0;
+    rmm::device_async_resource_ref mr);
 
-  /**
-   * Virtual abstract base class destructor
-   */
-  virtual ~filtered_join() = default;
+  // Queries the hash table for every left row and writes the matches to contains_map.
+  template <int32_t CGSize, typename Iterator, typename Ref>
+  void query_right_table(cudf::table_view const& left,
+                         Iterator left_iter,
+                         Ref query_ref,
+                         cudf::device_span<bool> contains_map,
+                         rmm::cuda_stream_view stream);
 
- protected:
+  void query_right_table_primitive(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    rmm::cuda_stream_view stream);
+
+  void query_right_table_flat(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    rmm::cuda_stream_view stream);
+
+  void query_right_table_nested(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    rmm::cuda_stream_view stream);
+
   enum class row_operator_mode : uint8_t { PRIMITIVE, FLAT, NESTED };
 
   // Key type used in the hash table
@@ -196,7 +220,6 @@ class filtered_join {
   void insert_right_table_flat(rmm::cuda_stream_view stream);
   void insert_right_table_nested(rmm::cuda_stream_view stream);
 
- private:
   /**
    * @brief Calculates the required storage size for the hash table
    *

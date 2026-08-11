@@ -230,6 +230,26 @@ def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@skip_rolling_expr_136_to_138
+def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A", "B", "B", "B"],
+            "ts": [1, 2, 4, 1, 3, 4],
+            "x": [100, 200, 300, 400, 500, 600],
+        }
+    ).sort("g", "ts")
+    q = df.select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g").alias("sum"),
+        pl.col("x").min().rolling("ts", period="2i").over("g").alias("min"),
+        pl.col("x").max().rolling("ts", period="2i").over("g").alias("max"),
+        pl.col("x").mean().rolling("ts", period="2i").over("g").alias("mean"),
+        pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
+        pl.len().rolling("ts", period="2i").over("g").alias("len"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "expr",
     [

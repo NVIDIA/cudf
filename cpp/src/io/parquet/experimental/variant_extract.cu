@@ -297,7 +297,9 @@ __device__ cuda::std::optional<size_type> find_key_in_metadata(device_span<uint8
  * @return The encoded bytes of the field value, or an empty span if `val` is not an object, the
  *         field is absent, or the blob is malformed
  */
-__device__ device_span<uint8_t const> locate_object_field(device_span<uint8_t const> val, int id)
+__device__ device_span<uint8_t const> locate_object_field(device_span<uint8_t const> val,
+                                                          int id,
+                                                          bool is_sorted)
 {
   auto const val_len = static_cast<size_type>(val.size());
   if (val_len < 1) { return {}; }
@@ -324,20 +326,46 @@ __device__ device_span<uint8_t const> locate_object_field(device_span<uint8_t co
   // Maximum legitimate field-offset value: bytes available after values_base
   auto const values_extent = val_len - values_base;
 
-  // Find the matching field ID and its start offset
+  // Find the matching field ID and its start offset.
+  // When is_sorted, field_ids[0..N-1] are monotonically increasing (the metadata dictionary is
+  // sorted by key name, so ID order == name order), enabling binary search.
+  // Not using thrust::lower_bound since it does not propagate entry read failures.
   bool found           = false;
   uint64_t match_start = 0;
-  for (size_type i = 0; i < num_fields.value(); ++i) {
-    auto const current_id = read_uint64(val, ids_start + i * id_size, id_size);
-    if (!current_id.has_value()) { return {}; }
-    if (cuda::std::cmp_not_equal(current_id.value(), id)) { continue; }
+  if (is_sorted) {
+    size_type lo = 0;
+    size_type hi = num_fields.value();
+    while (lo < hi) {
+      size_type const mid   = lo + (hi - lo) / 2;
+      auto const current_id = read_uint64(val, ids_start + mid * id_size, id_size);
+      if (!current_id.has_value()) { return {}; }
+      if (cuda::std::cmp_equal(current_id.value(), id)) {
+        auto const match_offset = read_uint64(val, offsets_start + mid * offset_size, offset_size);
+        if (!match_offset.has_value()) { return {}; }
+        if (match_offset.value() > values_extent) { return {}; }
+        match_start = match_offset.value();
+        found       = true;
+        break;
+      }
+      if (cuda::std::cmp_less(current_id.value(), id)) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+  } else {
+    for (size_type i = 0; i < num_fields.value(); ++i) {
+      auto const current_id = read_uint64(val, ids_start + i * id_size, id_size);
+      if (!current_id.has_value()) { return {}; }
+      if (cuda::std::cmp_not_equal(current_id.value(), id)) { continue; }
 
-    auto const match_offset = read_uint64(val, offsets_start + i * offset_size, offset_size);
-    if (!match_offset.has_value()) { return {}; }
-    if (match_offset.value() > values_extent) { return {}; }
-    match_start = match_offset.value();
-    found       = true;
-    break;
+      auto const match_offset = read_uint64(val, offsets_start + i * offset_size, offset_size);
+      if (!match_offset.has_value()) { return {}; }
+      if (match_offset.value() > values_extent) { return {}; }
+      match_start = match_offset.value();
+      found       = true;
+      break;
+    }
   }
   if (!found) { return {}; }
 
@@ -519,6 +547,7 @@ __device__ device_span<uint8_t const> resolve_path(device_span<uint8_t const> me
                                                    device_span<uint8_t const> val,
                                                    column_device_view path)
 {
+  bool const is_sorted               = !meta.empty() && ((meta[0] >> 4) & 0x01);
   device_span<uint8_t const> sub_val = val;
   for (size_type i = 0; i < path.size(); ++i) {
     auto const step = path.element<cudf::string_view>(i);
@@ -530,7 +559,7 @@ __device__ device_span<uint8_t const> resolve_path(device_span<uint8_t const> me
     } else {
       auto const field_id = find_key_in_metadata(meta, step);
       if (!field_id.has_value()) { return {}; }
-      sub_val = locate_object_field(sub_val, field_id.value());
+      sub_val = locate_object_field(sub_val, field_id.value(), is_sorted);
     }
     if (sub_val.empty()) { return {}; }
   }

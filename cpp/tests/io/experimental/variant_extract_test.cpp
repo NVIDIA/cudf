@@ -837,6 +837,10 @@ TEST_F(ExtractVariantFieldTest, MalformedVariantDataYieldsNull)
     {"metadata terminal offset below first key's declared end",
      {0x01, 0x02, 0x00, 0x01, 0x00, 'x', 'y'},
      build_single_field_object(0, enc_int32(42))},
+    // Single-key dict where offsets[0] != 0. The Parquet VARIANT spec requires offsets[0] == 0;
+    // a non-zero first offset makes the string region ill-defined.
+    // Layout: num_entries=1, offsets[0]=1 (invalid), offsets[1]=2, string bytes "x".
+    {"metadata first offset non-zero", {0x01, 0x01, 0x01, 0x02, 'x'}, valid_object},
   };
 
   for (auto const& c : cases) {
@@ -1903,13 +1907,22 @@ TEST_F(CastVariantStatusTest, BoolStatusTracking)
 
 TEST_F(CastVariantStatusTest, StringStatusTracking)
 {
-  // Status for string target: short_string, variant_null, type_mismatch, malformed long_string
+  // Status for string target: short_string, variant_null, type_mismatch, malformed long_string,
+  // truncated short_string, and unrecognized primitive id.
   auto stream = cudf::test::get_default_stream();
+
+  // A SHORT_STRING header that claims 5 bytes of content but provides none.
+  std::vector<uint8_t> const truncated_short_string{make_variant_short_string_header(5)};
+
+  // An unrecognized primitive type id (0x3F maps to the value_header field of a PRIMITIVE byte
+  // and does not correspond to any defined primitive_type enum value).
+  std::vector<uint8_t> const unknown_primitive_id{
+    make_variant_header(variant_basic_type::PRIMITIVE, 0x3F)};
 
   std::vector<std::vector<uint8_t>> const val_rows{
     enc_short_string("hi"),  // success
     enc_null(),              // variant_null
-    enc_int32(5),            // type_mismatch
+    enc_int32(5),            // type_mismatch (recognized non-string primitive)
     // malformed long_string: header + declares 10 bytes but only 2 present
     {make_variant_primitive(cudf::io::parquet::experimental::variant_primitive_type::LONG_STRING),
      0x0A,
@@ -1918,9 +1931,11 @@ TEST_F(CastVariantStatusTest, StringStatusTracking)
      0x00,
      'a',
      'b'},
+    truncated_short_string,  // malformed: SHORT_STRING with truncated payload
+    unknown_primitive_id,    // malformed: unrecognized primitive id
   };
   auto col =
-    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(4, build_metadata({})), val_rows);
+    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(6, build_metadata({})), val_rows);
   auto values = cudf::structs_column_view{col}.get_sliced_child(1, stream);
 
   std::unique_ptr<cudf::column> status;
@@ -1928,8 +1943,9 @@ TEST_F(CastVariantStatusTest, StringStatusTracking)
     values, cudf::data_type{cudf::type_id::STRING}, {}, &status, stream, cmr());
 
   ASSERT_NE(status, nullptr);
-  expect_status_values(*status, {ST_SUCCESS, ST_VNULL, ST_MISMATCH, ST_MALFORMED});
-  EXPECT_EQ(got->null_count(), 3);  // all but row 0 are null
+  expect_status_values(
+    *status, {ST_SUCCESS, ST_VNULL, ST_MISMATCH, ST_MALFORMED, ST_MALFORMED, ST_MALFORMED});
+  EXPECT_EQ(got->null_count(), 5);  // all but row 0 are null
 }
 
 TEST_F(CastVariantStatusTest, EmptyInput)

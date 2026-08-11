@@ -254,7 +254,10 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
   }
 
   auto start_off = read_uint64(meta, offsets_start, offset_size);
-  if (!start_off.has_value()) { return {cuda::std::nullopt, op_status::malformed_variant}; }
+  // Parquet VARIANT spec requires offsets[0] == 0; any other value is malformed.
+  if (!start_off.has_value() || start_off.value() != 0) {
+    return {cuda::std::nullopt, op_status::malformed_variant};
+  }
   auto const strings_base   = offsets_start + static_cast<size_type>(offsets_bytes);
   auto const strings_extent = meta_len - strings_base;
   // Read the terminal offset offsets[num_entries] before scanning entries. An early key match
@@ -829,11 +832,21 @@ __device__ op_status cast_status_for_string(device_span<uint8_t const> val)
   if (val.empty()) { return op_status::malformed_variant; }
   if (is_variant_null(val)) { return op_status::variant_null; }
   if (decode_string(val).has_value()) { return op_status::success; }
+  // decode_string failed. Classify the failure:
+  //   SHORT_STRING with truncated payload  → malformed_variant (valid encoding type, bad payload)
+  //   LONG_STRING (PRIMITIVE header)       → malformed_variant (already confirmed truncated above)
+  //   Other recognized primitive type      → type_mismatch (well-formed but wrong type)
+  //   Unrecognized primitive/basic type    → malformed_variant
   auto const btype = decode_basic_type(val[0]);
-  if (btype == basic_type::PRIMITIVE &&
-      variant_value_header(val[0]) == static_cast<uint8_t>(primitive_type::LONG_STRING)) {
-    return op_status::malformed_variant;
+  if (btype == basic_type::SHORT_STRING) { return op_status::malformed_variant; }
+  if (btype == basic_type::PRIMITIVE) {
+    auto const ptype = static_cast<primitive_type>(variant_value_header(val[0]));
+    // LONG_STRING is a recognized string type whose payload was truncated.
+    if (ptype == primitive_type::LONG_STRING) { return op_status::malformed_variant; }
+    return is_recognized_primitive_type(ptype) ? op_status::type_mismatch
+                                               : op_status::malformed_variant;
   }
+  // OBJECT, ARRAY, or other non-primitive basic types: well-formed, just not a string.
   return op_status::type_mismatch;
 }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -88,11 +88,11 @@ TYPED_TEST(InterleaveColumnsTest, OneColumnEmpty)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> a{};
+  cudf::test::fixed_width_column_wrapper<T> a({});
 
   cudf::table_view in(std::vector<cudf::column_view>{a});
 
-  auto expected = cudf::test::fixed_width_column_wrapper<T>();
+  auto expected = cudf::test::fixed_width_column_wrapper<T>({});
   auto actual   = cudf::interleave_columns(in);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, actual->view());
@@ -102,13 +102,13 @@ TYPED_TEST(InterleaveColumnsTest, ThreeColumnsEmpty)
 {
   using T = TypeParam;
 
-  cudf::test::fixed_width_column_wrapper<T> a{};
-  cudf::test::fixed_width_column_wrapper<T> b{};
-  cudf::test::fixed_width_column_wrapper<T> c{};
+  cudf::test::fixed_width_column_wrapper<T> a({});
+  cudf::test::fixed_width_column_wrapper<T> b({});
+  cudf::test::fixed_width_column_wrapper<T> c({});
 
   cudf::table_view in(std::vector<cudf::column_view>{a, b, c});
 
-  auto expected = cudf::test::fixed_width_column_wrapper<T>();
+  auto expected = cudf::test::fixed_width_column_wrapper<T>({});
   auto actual   = cudf::interleave_columns(in);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, actual->view());

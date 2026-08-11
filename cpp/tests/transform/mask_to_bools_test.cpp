@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2023, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@ struct MaskToBools : public cudf::test::BaseFixture {};
 
 TEST_F(MaskToBools, NullDataWithZeroLength)
 {
-  auto expected = cudf::test::fixed_width_column_wrapper<bool>();
+  auto expected = cudf::test::fixed_width_column_wrapper<bool>({});
   auto out      = cudf::mask_to_bools(nullptr, 0, 0);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, out->view());
@@ -25,14 +25,14 @@ TEST_F(MaskToBools, NullDataWithZeroLength)
 
 TEST_F(MaskToBools, NullDataWithNonZeroLength)
 {
-  auto expected = cudf::test::fixed_width_column_wrapper<bool>();
+  auto expected = cudf::test::fixed_width_column_wrapper<bool>({});
 
   EXPECT_THROW(cudf::mask_to_bools(nullptr, 0, 2), cudf::logic_error);
 }
 
 TEST_F(MaskToBools, ImproperBitRange)
 {
-  auto expected = cudf::test::fixed_width_column_wrapper<bool>();
+  auto expected = cudf::test::fixed_width_column_wrapper<bool>({});
 
   EXPECT_THROW(cudf::mask_to_bools(nullptr, 2, 1), cudf::logic_error);
 }

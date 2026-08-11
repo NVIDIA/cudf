@@ -347,22 +347,11 @@ template <typename ElementTo, typename SourceElementT = ElementTo>
 class fixed_width_column_wrapper : public detail::column_wrapper {
  public:
   /**
-   * @brief Initializes an empty column with proper dtype
-   *
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
+   * @brief Default constructor initializes an empty column with proper dtype
    */
-  fixed_width_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                             cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : column_wrapper{}
+  fixed_width_column_wrapper() : column_wrapper{}
   {
-    std::vector<ElementTo> empty;
-    wrapped.reset(new cudf::column{
-      cudf::data_type{cudf::type_to_id<ElementTo>()},
-      0,
-      detail::make_elements<ElementTo, SourceElementT>(empty.begin(), empty.end(), stream, mr),
-      rmm::device_buffer{},
-      0});
+    wrapped = cudf::make_empty_column(cudf::type_to_id<ElementTo>());
   }
 
   /**
@@ -426,10 +415,7 @@ class fixed_width_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename InputIterator,
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename InputIterator, typename ValidityIterator>
   fixed_width_column_wrapper(InputIterator begin,
                              InputIterator end,
                              ValidityIterator v,
@@ -517,10 +503,7 @@ class fixed_width_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename ValidityIterator,
-    typename ElementFrom,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename ValidityIterator, typename ElementFrom>
   fixed_width_column_wrapper(std::initializer_list<ElementFrom> element_list,
                              ValidityIterator v,
                              rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -818,15 +801,10 @@ class strings_column_wrapper : public detail::column_wrapper {
  public:
   /**
    * @brief Default constructor initializes an empty column of strings
-   *
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
    */
-  // Non-explicit so `{}` can copy-initialize empty string columns (e.g. nested in structs).
-  strings_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                         cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : strings_column_wrapper(std::initializer_list<std::string>{}, stream, mr)
+  strings_column_wrapper() : column_wrapper{}
   {
+    wrapped = cudf::make_empty_column(cudf::type_id::STRING);
   }
 
   /**
@@ -904,10 +882,7 @@ class strings_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename StringsIterator,
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename StringsIterator, typename ValidityIterator>
   strings_column_wrapper(StringsIterator begin,
                          StringsIterator end,
                          ValidityIterator v,
@@ -973,9 +948,7 @@ class strings_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename ValidityIterator>
   strings_column_wrapper(std::initializer_list<std::string> strings,
                          ValidityIterator v,
                          rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -1063,17 +1036,9 @@ class dictionary_column_wrapper : public detail::column_wrapper {
 
   /**
    * @brief Default constructor initializes an empty column with dictionary type.
-   *
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
    */
-  // Non-explicit so `{}` can copy-initialize empty dictionary columns.
-  dictionary_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                            cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : column_wrapper{}
+  dictionary_column_wrapper() : column_wrapper{}
   {
-    static_cast<void>(stream);
-    static_cast<void>(mr);
     wrapped = cudf::make_empty_column(cudf::type_id::DICTIONARY32);
   }
 
@@ -1139,10 +1104,7 @@ class dictionary_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename InputIterator,
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename InputIterator, typename ValidityIterator>
   dictionary_column_wrapper(InputIterator begin,
                             InputIterator end,
                             ValidityIterator v,
@@ -1230,10 +1192,7 @@ class dictionary_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename ValidityIterator,
-    typename ElementFrom,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename ValidityIterator, typename ElementFrom>
   dictionary_column_wrapper(std::initializer_list<ElementFrom> element_list,
                             ValidityIterator v,
                             rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -1311,16 +1270,8 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
 
   /**
    * @brief Default constructor initializes an empty dictionary column of strings
-   *
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
    */
-  // Non-explicit so `{}` can copy-initialize empty dictionary columns.
-  dictionary_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                            cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : dictionary_column_wrapper(std::initializer_list<std::string>{}, stream, mr)
-  {
-  }
+  dictionary_column_wrapper() : dictionary_column_wrapper(std::initializer_list<std::string>{}) {}
 
   /**
    * @brief Construct a non-nullable dictionary column of strings from the range
@@ -1388,10 +1339,7 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename StringsIterator,
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename StringsIterator, typename ValidityIterator>
   dictionary_column_wrapper(StringsIterator begin,
                             StringsIterator end,
                             ValidityIterator v,
@@ -1447,9 +1395,7 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename ValidityIterator>
   dictionary_column_wrapper(std::initializer_list<std::string> strings,
                             ValidityIterator v,
                             rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -1604,11 +1550,9 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename Element = T,
-    typename ValidityIterator,
-    std::enable_if_t<cudf::is_fixed_width<Element>() &&
-                     !std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename Element = T,
+            typename ValidityIterator,
+            std::enable_if_t<cudf::is_fixed_width<Element>()>* = nullptr>
   lists_column_wrapper(std::initializer_list<SourceElementT> elements,
                        ValidityIterator v,
                        rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -1640,12 +1584,10 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename Element = T,
-    typename InputIterator,
-    typename ValidityIterator,
-    std::enable_if_t<cudf::is_fixed_width<Element>() &&
-                     !std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename Element = T,
+            typename InputIterator,
+            typename ValidityIterator,
+            std::enable_if_t<cudf::is_fixed_width<Element>()>* = nullptr>
   lists_column_wrapper(InputIterator begin,
                        InputIterator end,
                        ValidityIterator v,
@@ -1705,11 +1647,9 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename Element = T,
-    typename ValidityIterator,
-    std::enable_if_t<std::is_same_v<Element, cudf::string_view> &&
-                     !std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename Element = T,
+            typename ValidityIterator,
+            std::enable_if_t<std::is_same_v<Element, cudf::string_view>>* = nullptr>
   lists_column_wrapper(std::initializer_list<std::string> elements,
                        ValidityIterator v,
                        rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -1763,15 +1703,14 @@ class lists_column_wrapper : public detail::column_wrapper {
    * // []
    * lists_column_wrapper l{};
    * @endcode
-   *
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
    */
-  lists_column_wrapper(rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                       cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
-    : column_wrapper{}
+  lists_column_wrapper() : column_wrapper{}
   {
-    build_from_non_nested(make_empty_column(cudf::type_to_id<T>()), stream, mr);
+    // Mark as a root so nesting unwraps to the empty child, matching
+    // build_from_non_nested on an empty leaf.
+    root    = true;
+    depth   = 0;
+    wrapped = make_empty_lists_column(data_type{type_to_id<T>()});
   }
 
   /**
@@ -1801,9 +1740,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <
-    typename ValidityIterator,
-    std::enable_if_t<!std::is_convertible_v<ValidityIterator&, cudf::memory_resources>>* = nullptr>
+  template <typename ValidityIterator>
   lists_column_wrapper(std::initializer_list<lists_column_wrapper<T, SourceElementT>> elements,
                        ValidityIterator v,
                        rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
@@ -1833,16 +1770,14 @@ class lists_column_wrapper : public detail::column_wrapper {
     cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
   {
     cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets({0, 0}, stream, mr);
-    cudf::test::fixed_width_column_wrapper<int> values(stream, mr);
+    cudf::test::fixed_width_column_wrapper<int> values{};
     return lists_column_wrapper<T>(
       1,
       offsets.release(),
       values.release(),
       valid ? 0 : 1,
       valid ? rmm::device_buffer{}
-            : cudf::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr.get_output_mr()),
-      stream,
-      mr);
+            : cudf::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr.get_output_mr()));
   }
 
  private:
@@ -1854,18 +1789,13 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param values The column of values bounded by the offsets
    * @param null_count The number of null list entries
    * @param null_mask The bits specifying the null lists in device memory
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources associated with the adopted constituent parts
    */
   lists_column_wrapper(size_type num_rows,
                        std::unique_ptr<cudf::column>&& offsets,
                        std::unique_ptr<cudf::column>&& values,
                        size_type null_count,
-                       rmm::device_buffer&& null_mask,
-                       rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                       cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+                       rmm::device_buffer&& null_mask)
   {
-    static_cast<void>(mr);
     // construct the list column
     wrapped = make_lists_column(
       num_rows, std::move(offsets), std::move(values), null_count, std::move(null_mask));
@@ -1891,8 +1821,8 @@ class lists_column_wrapper : public detail::column_wrapper {
    */
   void build_from_nested(std::initializer_list<lists_column_wrapper<T, SourceElementT>> elements,
                          std::vector<bool> const& v,
-                         rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                         cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+                         rmm::cuda_stream_view stream,
+                         cudf::memory_resources mr)
   {
     auto valids = cudf::detail::make_counting_transform_iterator(
       0, [&v](auto i) { return v.empty() ? true : v[i]; });
@@ -1909,8 +1839,8 @@ class lists_column_wrapper : public detail::column_wrapper {
     int32_t const expected_depth   = hierarchy_and_depth.second;
 
     // preprocess columns so that every column_view in 'cols' is an equivalent hierarchy
-    auto [cols, stubs] =
-      preprocess_columns(elements, expected_hierarchy, expected_depth, stream, mr);
+    auto [cols, stubs] = preprocess_columns(
+      elements, expected_hierarchy, expected_depth, stream, mr.get_temporary_mr());
 
     // generate offsets
     size_type count = 0;
@@ -1965,8 +1895,8 @@ class lists_column_wrapper : public detail::column_wrapper {
    *
    */
   void build_from_non_nested(std::unique_ptr<column> c,
-                             rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                             cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+                             rmm::cuda_stream_view stream,
+                             cudf::memory_resources mr)
   {
     CUDF_EXPECTS(c->type().id() == type_id::EMPTY || !cudf::is_nested(c->type()),
                  "Unexpected type");
@@ -2021,15 +1951,14 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param col Input column to be normalized
    * @param expected_hierarchy Input column which represents the expected hierarchy
    * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used for temporary normalized copies
+   * @param temp_mr Device memory resource used for temporary normalized copies
    *
    * @return A new column representing a normalized copy of col
    */
-  std::unique_ptr<column> normalize_column(
-    column_view const& col,
-    column_view const& expected_hierarchy,
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  std::unique_ptr<column> normalize_column(column_view const& col,
+                                           column_view const& expected_hierarchy,
+                                           rmm::cuda_stream_view stream,
+                                           rmm::device_async_resource_ref temp_mr)
   {
     // if are at the bottom of the short column, it must be empty
     if (col.type().id() != type_id::LIST) {
@@ -2040,21 +1969,22 @@ class lists_column_wrapper : public detail::column_wrapper {
     }
 
     lists_column_view lcv(col);
-    return make_lists_column(
-      col.size(),
-      std::make_unique<column>(lcv.offsets(), stream, mr.get_temporary_mr()),
-      normalize_column(
-        lists_column_view(col).child(), lists_column_view(expected_hierarchy).child(), stream, mr),
-      col.null_count(),
-      cudf::copy_bitmask(col, stream, mr.get_temporary_mr()));
+    return make_lists_column(col.size(),
+                             std::make_unique<column>(lcv.offsets(), stream, temp_mr),
+                             normalize_column(lists_column_view(col).child(),
+                                              lists_column_view(expected_hierarchy).child(),
+                                              stream,
+                                              temp_mr),
+                             col.null_count(),
+                             cudf::copy_bitmask(col, stream, temp_mr));
   }
 
   std::pair<std::vector<column_view>, std::vector<std::unique_ptr<column>>> preprocess_columns(
     std::initializer_list<lists_column_wrapper<T, SourceElementT>> const& elements,
     column_view& expected_hierarchy,
     int expected_depth,
-    rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-    cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+    rmm::cuda_stream_view stream,
+    rmm::device_async_resource_ref temp_mr)
   {
     std::vector<std::unique_ptr<column>> stubs;
     std::vector<column_view> cols;
@@ -2087,7 +2017,7 @@ class lists_column_wrapper : public detail::column_wrapper {
             CUDF_EXPECTS(l.wrapped->size() == 0, "Mismatch in column types!");
             stubs.push_back(empty_like(expected_hierarchy));
           } else {
-            stubs.push_back(normalize_column(l.get_view(), expected_hierarchy, stream, mr));
+            stubs.push_back(normalize_column(l.get_view(), expected_hierarchy, stream, temp_mr));
           }
           return *(stubs.back());
         }
@@ -2225,8 +2155,7 @@ class structs_column_wrapper : public detail::column_wrapper {
    * @param mr Memory resources used to allocate the returned column
    */
   template <typename V,
-            std::enable_if_t<!std::is_convertible_v<V&, cudf::memory_resources> &&
-                             !std::is_convertible_v<V&, rmm::cuda_stream_view>>* = nullptr>
+            std::enable_if_t<!std::is_convertible_v<V&, rmm::cuda_stream_view>>* = nullptr>
   structs_column_wrapper(
     std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
     V validity_iter,
@@ -2248,8 +2177,8 @@ class structs_column_wrapper : public detail::column_wrapper {
  private:
   void init(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
             std::vector<bool> const& validity,
-            rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-            cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+            rmm::cuda_stream_view stream,
+            cudf::memory_resources mr)
   {
     size_type num_rows = child_columns.empty() ? 0 : child_columns[0]->size();
 
@@ -2277,8 +2206,8 @@ class structs_column_wrapper : public detail::column_wrapper {
   template <typename V>
   void init(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
             V validity_iterator,
-            rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-            cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+            rmm::cuda_stream_view stream,
+            cudf::memory_resources mr)
   {
     size_type const num_rows = child_columns.empty() ? 0 : child_columns[0]->size();
 

@@ -674,7 +674,7 @@ __device__ inline void decode(float * output, float input){
 
   // empty column
   {
-    auto a_empty                   = cudf::test::fixed_width_column_wrapper<float>().release();
+    auto a_empty                   = cudf::test::fixed_width_column_wrapper<float>({}).release();
     auto a_encoded                 = cudf::dictionary::encode(a_empty->view());
     cudf::transform_input inputs[] = {*a_encoded};
 

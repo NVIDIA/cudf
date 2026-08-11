@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -62,7 +62,7 @@ TYPED_TEST(SequenceTypedTestFixture, EmptyOutput)
 
   cudf::size_type num_els = 0;
 
-  cudf::test::fixed_width_column_wrapper<T> expected_w{};
+  cudf::test::fixed_width_column_wrapper<T> expected_w({});
 
   auto result = cudf::sequence(num_els, init, step);
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,8 +30,8 @@ TEST_F(DLPackTest, ToDLPack)
 TEST_F(DLPackTest, FromDLPack)
 {
   using unique_managed_tensor = std::unique_ptr<DLManagedTensor, dlpack_deleter>;
-  cudf::test::fixed_width_column_wrapper<int32_t> col1{};
-  cudf::test::fixed_width_column_wrapper<int32_t> col2{};
+  cudf::test::fixed_width_column_wrapper<int32_t> col1({});
+  cudf::test::fixed_width_column_wrapper<int32_t> col2({});
   cudf::table_view input({col1, col2});
   unique_managed_tensor tensor(cudf::to_dlpack(input, cudf::test::get_default_stream()));
   auto result = cudf::from_dlpack(tensor.get(), cudf::test::get_default_stream());

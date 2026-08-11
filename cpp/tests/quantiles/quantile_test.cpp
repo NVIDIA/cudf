@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -413,7 +413,7 @@ TYPED_TEST(QuantileTest, TestInterpolateExtremaLow)
 
 TYPED_TEST(QuantileTest, TestEmpty)
 {
-  auto input    = cudf::test::fixed_width_column_wrapper<TypeParam>();
+  auto input    = cudf::test::fixed_width_column_wrapper<TypeParam>({});
   auto expected = cudf::test::fixed_width_column_wrapper<double>({0, 0}, {false, false});
   auto actual   = cudf::quantile(input, {0.5, 0.25});
 }
@@ -429,7 +429,7 @@ TYPED_TEST_SUITE(QuantileUnsupportedTypesTest, UnsupportedTestTypes);
 
 TYPED_TEST(QuantileUnsupportedTypesTest, TestZeroElements)
 {
-  cudf::test::fixed_width_column_wrapper<TypeParam> input{};
+  cudf::test::fixed_width_column_wrapper<TypeParam> input({});
 
   EXPECT_THROW(cudf::quantile(input, {0}), cudf::logic_error);
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -63,8 +63,8 @@ TEST_F(DLPackUntypedTests, EmptyTableToDlpack)
 
 TEST_F(DLPackUntypedTests, EmptyColsToDlpack)
 {
-  cudf::test::fixed_width_column_wrapper<int32_t> col1{};
-  cudf::test::fixed_width_column_wrapper<int32_t> col2{};
+  cudf::test::fixed_width_column_wrapper<int32_t> col1({});
+  cudf::test::fixed_width_column_wrapper<int32_t> col2({});
   cudf::table_view input({col1, col2});
   unique_managed_tensor tensor(cudf::to_dlpack(input));
   validate_dtype<int32_t>(tensor->dl_tensor.dtype);

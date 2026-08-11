@@ -71,7 +71,7 @@ TEST(StringsColumnWrapperMemoryResourceTest, DistinctOutputAndTemporaryResources
   auto const validity = std::vector<bool>{true, false, true, false};
 
   expect_output_uses_distinct_resources(
-    [&](auto mr) { return cudf::test::strings_column_wrapper(stream, mr); });
+    [&]([[maybe_unused]] auto mr) { return cudf::test::strings_column_wrapper{}; });
 
   expect_output_uses_distinct_resources([&](auto mr) {
     return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), stream, mr);
@@ -154,9 +154,8 @@ TEST(DictionaryColumnWrapperMemoryResourceTest, FixedWidthDistinctOutputAndTempo
 
 TEST(DictionaryColumnWrapperMemoryResourceTest, EmptyStringDictionaryPreservesChildTypes)
 {
-  expect_output_uses_distinct_resources([&](auto mr) {
-    auto wrapper =
-      cudf::test::dictionary_column_wrapper<std::string>(cudf::test::get_default_stream(), mr);
+  expect_output_uses_distinct_resources([&]([[maybe_unused]] auto mr) {
+    auto wrapper    = cudf::test::dictionary_column_wrapper<std::string>();
     auto dictionary = cudf::dictionary_column_view{static_cast<cudf::column_view>(wrapper)};
 
     EXPECT_EQ(0, static_cast<cudf::column_view>(wrapper).size());
@@ -272,7 +271,7 @@ TYPED_TEST(FixedWidthColumnWrapperTest, EmptyIterator)
 }
 TYPED_TEST(FixedWidthColumnWrapperTest, EmptyList)
 {
-  cudf::test::fixed_width_column_wrapper<TypeParam> col(this->stream(), this->resources());
+  cudf::test::fixed_width_column_wrapper<TypeParam> col{};
   cudf::column_view view = col;
   EXPECT_EQ(view.size(), 0);
   EXPECT_EQ(view.head(), nullptr);
@@ -490,7 +489,7 @@ TYPED_TEST_SUITE(StringsColumnWrapperTest, cudf::test::StringTypes);
 
 TYPED_TEST(StringsColumnWrapperTest, EmptyList)
 {
-  cudf::test::strings_column_wrapper col(this->stream(), this->resources());
+  cudf::test::strings_column_wrapper col;
   cudf::column_view view = col;
   EXPECT_EQ(view.size(), 0);
   EXPECT_EQ(view.head(), nullptr);

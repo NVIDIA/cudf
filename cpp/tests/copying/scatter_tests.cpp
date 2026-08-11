@@ -220,7 +220,7 @@ TYPED_TEST(ScatterDataTypeTests, EmptyScatterMap)
   cudf::test::fixed_width_column_wrapper<TypeParam, int32_t> source({1, 2, 3, 4, 5, 6});
   cudf::test::fixed_width_column_wrapper<TypeParam, int32_t> target(
     {10, 20, 30, 40, 50, 60, 70, 80});
-  cudf::test::fixed_width_column_wrapper<int32_t> scatter_map{};
+  cudf::test::fixed_width_column_wrapper<int32_t> scatter_map({});
 
   auto const source_table = cudf::table_view({source, source});
   auto const target_table = cudf::table_view({target, target});
@@ -241,7 +241,7 @@ TYPED_TEST(ScatterDataTypeTests, EmptyScalarScatterMap)
 
   cudf::test::fixed_width_column_wrapper<TypeParam, int32_t> target(
     {10, 20, 30, 40, 50, 60, 70, 80});
-  cudf::test::fixed_width_column_wrapper<int32_t> scatter_map{};
+  cudf::test::fixed_width_column_wrapper<int32_t> scatter_map({});
 
   auto const target_table = cudf::table_view({target});
 

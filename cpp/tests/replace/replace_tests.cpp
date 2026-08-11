@@ -615,7 +615,7 @@ TEST_F(ReplaceDictionaryTest, EmptyReplacement)
   cudf::test::fixed_width_column_wrapper<double> input_w(
     {1.0, 2.0, 1.0, 2.0, 0.0, 3.0, 4.0, 4.0, 3.0}, {1, 1, 1, 1, 0, 1, 1, 1, 1});
   auto input = cudf::dictionary::encode(input_w);
-  cudf::test::fixed_width_column_wrapper<double> empty_w{};
+  cudf::test::fixed_width_column_wrapper<double> empty_w({});
   auto empty  = cudf::dictionary::encode(empty_w);
   auto result = cudf::find_and_replace_all(input->view(), empty->view(), empty->view());
 

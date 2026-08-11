@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -90,8 +90,8 @@ TEST_F(HashPartition, ZeroPartitions)
 
 TEST_F(HashPartition, ZeroRows)
 {
-  fixed_width_column_wrapper<float> floats{};
-  fixed_width_column_wrapper<int16_t> integers{};
+  fixed_width_column_wrapper<float> floats({});
+  fixed_width_column_wrapper<int16_t> integers({});
   strings_column_wrapper strings;
   auto input = cudf::table_view({floats, integers, strings});
 

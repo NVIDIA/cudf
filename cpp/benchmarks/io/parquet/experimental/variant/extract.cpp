@@ -19,6 +19,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -113,6 +114,26 @@ std::vector<uint8_t> build_hit_value(std::string const& type_str, int nesting)
   return val;
 }
 
+// Build the miss-row value blob: a valid VARIANT that won't match the target path or type.
+// For extract_variant_field rows: a 1-level object keyed on "z" (field ID = nesting in the
+// dictionary), so traversal fails at the first key lookup while the row remains non-null.
+// For cast_variant rows (nesting=0, non-array): a different primitive type so the cast returns
+// null.
+std::vector<uint8_t> build_miss_value(int nesting, bool is_array, std::string const& type_str)
+{
+  if (nesting == 0 && !is_array) {
+    // Wrong-type primitive for the cast path.
+    if (type_str == "bool") {
+      std::vector<uint8_t> out{0x14};
+      append_le(out, 0u, 4);
+      return out;
+    }
+    return {0x04};  // BOOLEAN_TRUE
+  }
+  // "z" is always the last key in the dictionary, at field ID = nesting.
+  return wrap_in_object(static_cast<uint8_t>(nesting), build_leaf_value(type_str));
+}
+
 // Build a VARIANT struct column (STRUCT<list<uint8>, list<uint8>>) from per-row byte vectors.
 std::unique_ptr<cudf::column> build_variant_column(
   std::vector<std::vector<uint8_t>> const& meta_rows,
@@ -143,7 +164,7 @@ std::unique_ptr<cudf::column> build_variant_column(
                                                    rmm::device_buffer{},
                                                    0);
 
-    return cudf::make_lists_column(n, std::move(off_col), std::move(data_col), 0, {}, stream, mr);
+    return cudf::make_lists_column(n, std::move(off_col), std::move(data_col), 0, {});
   };
 
   std::vector<std::unique_ptr<cudf::column>> children;
@@ -152,15 +173,16 @@ std::unique_ptr<cudf::column> build_variant_column(
   return cudf::make_structs_column(n, std::move(children), 0, {}, stream, mr);
 }
 
-// Keys for the shared metadata dictionary: a=0, b=1, c=2, d=3, e=4 (already lexicographically
-// sorted).
+// Keys for the shared metadata dictionary: a=0, b=1, ... plus "z" for miss rows.
+// "z" is appended last; lexicographic order is preserved.
 std::vector<std::string> get_dict_keys(int nesting)
 {
   std::vector<std::string> keys;
-  keys.reserve(nesting);
+  keys.reserve(nesting + 1);
   for (int i = 0; i < nesting; ++i) {
     keys.emplace_back(1, static_cast<char>('a' + i));
   }
+  keys.emplace_back("z");
   return keys;
 }
 
@@ -204,12 +226,12 @@ static void bench_variant_extract(nvbench::state& state)
 
   // Build per-row blobs.
   // hit_rate% of rows contain the correctly typed value at the target path.
-  // Miss rows use a VARIANT null (0x00) which resolves to null on any cast or path traversal.
+  // Miss rows hold a valid VARIANT with a wrong key ("z") or wrong primitive type so extraction
+  // returns null without short-circuiting on a trivial null input.
   auto const keys      = get_dict_keys(nesting);
   auto const meta_blob = build_metadata(keys);
   auto const hit_val   = build_hit_value(type_str, nesting);
-  // VARIANT null: header 0x00 (physical_type=NULLVAL, basic=PRIMITIVE)
-  std::vector<uint8_t> const miss_val{0x00};
+  auto const miss_val  = build_miss_value(nesting, is_array, type_str);
 
   std::vector<std::vector<uint8_t>> meta_rows(num_rows, meta_blob);
   std::vector<std::vector<uint8_t>> val_rows(num_rows);

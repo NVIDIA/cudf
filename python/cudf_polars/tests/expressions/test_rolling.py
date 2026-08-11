@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
@@ -182,6 +183,50 @@ def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
         out=pl.col("null_windows").sum().rolling("orderby", period="2i", closed="both")
     )
     # Expected: [null, null, 5, 5, 5, 1]
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
+    df = (
+        pl.LazyFrame(
+            {
+                "ric": ["A", "A", "A", "B", "B", "B"],
+                "ts": [
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 1),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 2),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                ],
+                "price": [10.0, 11.0, 12.0, 20.0, 21.0, 22.0],
+                "volume": [100, 200, 300, 400, 500, 600],
+            }
+        )
+        .with_columns(notional=pl.col("price") * pl.col("volume"))
+        .sort("ric", "ts")
+    )
+    q = df.with_columns(
+        volume_before=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        notional_before=pl.col("notional")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        volume_after=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", closed="right")
+        .over("ric"),
+    ).select(
+        "ric",
+        "ts",
+        "volume_before",
+        "notional_before",
+        "volume_after",
+    )
     assert_gpu_result_equal(q, engine=engine)
 
 

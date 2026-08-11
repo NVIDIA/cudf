@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 import polars as pl
@@ -98,6 +100,53 @@ def test_over_select(engine, expr):
         }
     )
     assert_gpu_result_equal(df.select(expr), engine=engine, check_row_order=True)
+
+
+@pytest.mark.skipif(
+    not POLARS_VERSION_LT_136 and POLARS_VERSION_LT_139,
+    reason="Rolling window expressions are not accessible in polars 1.36-1.38",
+)
+def test_rolling_sum_over(engine):
+    df = (
+        pl.LazyFrame(
+            {
+                "ric": ["A", "A", "A", "B", "B", "B"],
+                "ts": [
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 1),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 2),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                ],
+                "price": [10.0, 11.0, 12.0, 20.0, 21.0, 22.0],
+                "volume": [100, 200, 300, 400, 500, 600],
+            }
+        )
+        .with_columns(notional=pl.col("price") * pl.col("volume"))
+        .sort("ric", "ts")
+    )
+    q = df.with_columns(
+        volume_before=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        notional_before=pl.col("notional")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        volume_after=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", closed="right")
+        .over("ric"),
+    ).select(
+        "ric",
+        "ts",
+        "volume_before",
+        "notional_before",
+        "volume_after",
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=True)
 
 
 @pytest.mark.parametrize("strategy", ["forward", "backward"])

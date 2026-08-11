@@ -1216,30 +1216,32 @@ def _(
             translator.translate_expr(n=n, schema=schema) for n in node.partition_by
         ]
 
-        child_deps = [
-            v.children[0].children[0]
+        child_deps: list[expr.Expr] = []
+        for ne in named_aggs:
+            v = ne.value
             if (
                 isinstance(v, expr.UnaryFunction)
                 and v.name == "fill_null_with_strategy"
                 and isinstance(v.children[0], expr.UnaryFunction)
                 and v.children[0].name == "cum_sum"
-            )
-            else v.children[0]
-            for ne in named_aggs
-            for v in (ne.value,)
-            if isinstance(v, expr.Agg)
-            or (
+            ):
+                child_deps.append(v.children[0].children[0])
+            elif isinstance(v, expr.RollingWindow):
+                child_deps.append(v.children[0])
+                child_deps.append(expr.Col(schema[v.orderby], v.orderby))
+            elif isinstance(v, expr.Agg) or (
                 isinstance(v, expr.UnaryFunction)
                 and v.name
                 in {
                     "rank",
                     "fill_null_with_strategy",
                     "cum_sum",
+                    "diff",
                     "shift",
                     "shift_and_fill",
                 }
-            )
-        ]
+            ):
+                child_deps.append(v.children[0])
         children = (*by_exprs, *((order_by_expr,) if has_order_by else ()), *child_deps)
         return expr.GroupedWindow(
             dtype,

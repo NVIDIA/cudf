@@ -710,12 +710,14 @@ static __device__ void encode_null_mask(orcenc_state_s* s,
  *
  * @param[in] chunks encoder chunks device array [column][rowgroup]
  * @param[in, out] streams chunk streams device array [column][rowgroup]
+ * @param[in] base_epoch Instant that encoded timestamps are stored relative to
  */
 // blockDim {`encode_block_size`,1,1}
 template <int block_size>
 CUDF_KERNEL void __launch_bounds__(block_size)
   encode_column_data_kernel(device_2dspan<encoder_chunk const> chunks,
-                            device_2dspan<encoder_chunk_streams> streams)
+                            device_2dspan<encoder_chunk_streams> streams,
+                            duration_s base_epoch)
 {
   __shared__ __align__(16) orcenc_state_s state_g;
   __shared__ union {
@@ -803,7 +805,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
             int32_t ts_scale    = cudf::detail::powers_of_ten[9 - min(s->chunk.scale, 9)];
             int64_t seconds     = ts / ts_scale;
             int64_t nanos       = (ts - seconds * ts_scale);
-            s->vals.i64[nz_idx] = seconds - orc_utc_epoch;
+            s->vals.i64[nz_idx] = seconds - base_epoch.count();
             if (nanos != 0) {
               // Trailing zeroes are encoded in the lower 3-bits
               uint32_t zeroes = 0;
@@ -1298,11 +1300,12 @@ CUDF_KERNEL void decimal_sizes_to_offsets_kernel(device_2dspan<rowgroup_rows con
 
 void encode_orc_column_data(device_2dspan<encoder_chunk const> chunks,
                             device_2dspan<encoder_chunk_streams> streams,
+                            duration_s base_epoch,
                             rmm::cuda_stream_view stream)
 {
   auto const num_blocks = chunks.size().first * chunks.size().second;
   encode_column_data_kernel<encode_block_size>
-    <<<num_blocks, encode_block_size, 0, stream.value()>>>(chunks, streams);
+    <<<num_blocks, encode_block_size, 0, stream.value()>>>(chunks, streams, base_epoch);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

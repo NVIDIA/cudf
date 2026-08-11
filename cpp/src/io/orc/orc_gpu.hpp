@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -333,10 +333,12 @@ void decode_column_data(column_desc* chunks,
  *
  * @param[in] chunks  encoder chunk device array [column][rowgroup]
  * @param[in, out] streams chunk streams device array [column][rowgroup]
+ * @param[in] base_epoch Instant that encoded timestamps are stored relative to
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void encode_orc_column_data(device_2dspan<encoder_chunk const> chunks,
                             device_2dspan<encoder_chunk_streams> streams,
+                            duration_s base_epoch,
                             rmm::cuda_stream_view stream);
 
 /**
@@ -461,12 +463,14 @@ void orc_init_statistics_buffersize(statistics_merge_group* groups,
  * @param[in,out] groups Statistics merge groups
  * @param[in,out] chunks Statistics data
  * @param[in] statistics_count Number of statistics buffers
+ * @param[in] timestamps_are_utc Whether the written timestamps are relative to UTC
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void orc_encode_statistics(uint8_t* blob_bfr,
                            statistics_merge_group* groups,
                            statistics_chunk const* chunks,
                            uint32_t statistics_count,
+                           bool timestamps_are_utc,
                            rmm::cuda_stream_view stream);
 
 /**

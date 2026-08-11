@@ -16,6 +16,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/wrappers/durations.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
@@ -192,6 +193,19 @@ struct encoded_footer_statistics {
   std::vector<col_stats_blob> file_level;
 };
 
+/**
+ * @brief Timezone that the written timestamps are relative to.
+ */
+struct writer_timezone {
+  // Recorded in the stripe footers as `writerTimezone`
+  std::string name;
+  // Instant that encoded timestamps are stored relative to: the ORC epoch as wall-clock time in
+  // `name`. Equal to `orc_utc_epoch` when writing UTC.
+  duration_s base_epoch;
+
+  [[nodiscard]] bool is_utc() const { return name == "UTC" or name.empty(); }
+};
+
 enum class writer_state {
   NO_DATA_WRITTEN,  // No table data has been written to the sink; if the writer is closed or
                     // destroyed in this state, it should not write the footer.
@@ -321,6 +335,7 @@ class writer::impl {
                                                // indicate that we are guaranteeing a single table
                                                // write. This enables some internal optimizations.
   std::map<std::string, std::string> const _kv_meta;  // Optional user metadata.
+  writer_timezone const _timezone;
   std::unique_ptr<data_sink> const _out_sink;
 
   // Debug parameter---currently not yet supported to be user-specified.

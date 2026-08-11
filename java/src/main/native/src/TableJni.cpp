@@ -2566,6 +2566,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                               jintArray j_precisions,
                                               jbooleanArray j_is_map,
                                               jint j_stripe_size_rows,
+                                              jstring j_writer_timezone,
                                               jobject consumer,
                                               jobject host_memory_allocator)
 {
@@ -2573,12 +2574,14 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
   JNI_NULL_CHECK(env, j_col_nullability, "null nullability", 0);
   JNI_NULL_CHECK(env, j_metadata_keys, "null metadata keys", 0);
   JNI_NULL_CHECK(env, j_metadata_values, "null metadata values", 0);
+  JNI_NULL_CHECK(env, j_writer_timezone, "null writer timezone", 0);
   JNI_NULL_CHECK(env, consumer, "null consumer", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
     using namespace cudf::io;
     using namespace cudf::jni;
+    cudf::jni::native_jstring writer_timezone(env, j_writer_timezone);
     table_input_metadata metadata;
     // ORC has no `j_is_int96`, but `createTableMetaData` needs a lvalue.
     jbooleanArray j_is_int96 = NULL;
@@ -2623,6 +2626,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                         .key_value_metadata(kv_metadata)
                                         .compression_statistics(stats)
                                         .stripe_size_rows(j_stripe_size_rows)
+                                        .writer_timezone(writer_timezone.get())
                                         .build();
     auto writer_ptr                          = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret = new cudf::jni::native_orc_writer_handle(
@@ -2644,12 +2648,14 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                                                    jintArray j_precisions,
                                                                    jbooleanArray j_is_map,
                                                                    jint j_stripe_size_rows,
+                                                                   jstring j_writer_timezone,
                                                                    jstring j_output_path)
 {
   JNI_NULL_CHECK(env, j_col_names, "null columns", 0);
   JNI_NULL_CHECK(env, j_col_nullability, "null nullability", 0);
   JNI_NULL_CHECK(env, j_metadata_keys, "null metadata keys", 0);
   JNI_NULL_CHECK(env, j_metadata_values, "null metadata values", 0);
+  JNI_NULL_CHECK(env, j_writer_timezone, "null writer timezone", 0);
   JNI_NULL_CHECK(env, j_output_path, "null output path", 0);
   JNI_TRY
   {
@@ -2657,6 +2663,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
     using namespace cudf::io;
     using namespace cudf::jni;
     cudf::jni::native_jstring output_path(env, j_output_path);
+    cudf::jni::native_jstring writer_timezone(env, j_writer_timezone);
     table_input_metadata metadata;
     // ORC has no `j_is_int96`, but `createTableMetaData` needs a lvalue.
     jbooleanArray j_is_int96 = NULL;
@@ -2697,6 +2704,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                         .key_value_metadata(kv_metadata)
                                         .compression_statistics(stats)
                                         .stripe_size_rows(j_stripe_size_rows)
+                                        .writer_timezone(writer_timezone.get())
                                         .build();
     auto writer_ptr = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret =

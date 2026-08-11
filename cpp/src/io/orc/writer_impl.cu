@@ -16,6 +16,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/timezone.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -854,6 +855,7 @@ encoded_data encode_columns(orc_table_view const& orc_table,
                             file_segmentation const& segmentation,
                             orc_streams const& streams,
                             uint32_t uncomp_block_align,
+                            duration_s base_epoch,
                             rmm::cuda_stream_view stream)
 {
   auto const num_columns = orc_table.num_columns();
@@ -1052,7 +1054,7 @@ encoded_data encode_columns(orc_table_view const& orc_table,
                                  stream);
     }
 
-    encode_orc_column_data(chunks, chunk_streams, stream);
+    encode_orc_column_data(chunks, chunk_streams, base_epoch, stream);
   }
   chunk_streams.device_to_host(stream);
 
@@ -1160,6 +1162,7 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
   cudf::detail::hostdevice_vector<statistics_merge_group>& stats_merge_groups,
   device_span<statistics_chunk const> stat_chunks,
   int num_stat_blobs,
+  bool timestamps_are_utc,
   rmm::cuda_stream_view stream)
 {
   // figure out the buffer size needed for protobuf format
@@ -1181,6 +1184,7 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
                         stats_merge_groups.device_ptr(),
                         stat_chunks.data(),
                         num_stat_blobs,
+                        timestamps_are_utc,
                         stream);
   stats_merge_groups.device_to_host_async(stream);
   blobs.device_to_host(stream);
@@ -1211,12 +1215,14 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
  * @param stats_freq Frequency of statistics to be included in the output file
  * @param orc_table Table information to be written
  * @param segmentation stripe and rowgroup ranges
+ * @param timestamps_are_utc Whether the written timestamps are relative to UTC
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The statistic information
  */
 intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
                                                orc_table_view const& orc_table,
                                                file_segmentation const& segmentation,
+                                               bool timestamps_are_utc,
                                                rmm::cuda_stream_view stream)
 {
   auto const num_rowgroup_blobs     = segmentation.rowgroups.count();
@@ -1310,8 +1316,8 @@ intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
   auto rowgroup_blobs = [&]() -> std::vector<col_stats_blob> {
     if (not is_granularity_rowgroup) { return {}; }
 
-    cudf::detail::hostdevice_vector<uint8_t> blobs =
-      allocate_and_encode_blobs(rowgroup_merge, rowgroup_chunks, num_rowgroup_blobs, stream);
+    cudf::detail::hostdevice_vector<uint8_t> blobs = allocate_and_encode_blobs(
+      rowgroup_merge, rowgroup_chunks, num_rowgroup_blobs, timestamps_are_utc, stream);
 
     std::vector<col_stats_blob> rowgroup_blobs(num_rowgroup_blobs);
     for (size_t i = 0; i < num_rowgroup_blobs; i++) {
@@ -1334,11 +1340,13 @@ intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
  *
  * @param footer ORC footer containing stripe and type information
  * @param per_chunk_stats Persisted per-chunk statistics from `gather_statistic_blobs`
+ * @param timestamps_are_utc Whether the written timestamps are relative to UTC
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The encoded statistic blobs
  */
 encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
                                                  persisted_statistics& per_chunk_stats,
+                                                 bool timestamps_are_utc,
                                                  rmm::cuda_stream_view stream)
 {
   auto stripe_size_iter = thrust::make_transform_iterator(per_chunk_stats.stripe_stat_merge.begin(),
@@ -1371,8 +1379,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
     stats_merge.host_to_device_async(stream);
 
     // Encode and return
-    cudf::detail::hostdevice_vector<uint8_t> hd_file_blobs =
-      allocate_and_encode_blobs(stats_merge, d_stat_chunks, num_file_blobs, stream);
+    cudf::detail::hostdevice_vector<uint8_t> hd_file_blobs = allocate_and_encode_blobs(
+      stats_merge, d_stat_chunks, num_file_blobs, timestamps_are_utc, stream);
 
     // Copy blobs to host (actual size)
     std::vector<col_stats_blob> file_blobs(num_file_blobs);
@@ -1445,7 +1453,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
     file_stat_chunks, stat_chunks.data(), d_file_stats_merge, num_file_blobs, stream);
 
   cudf::detail::hostdevice_vector<uint8_t> blobs =
-    allocate_and_encode_blobs(stats_merge, stat_chunks, num_blobs, stream);
+    allocate_and_encode_blobs(stats_merge, stat_chunks, num_blobs, timestamps_are_utc, stream);
 
   auto stripe_stat_merge = stats_merge.host_ptr();
 
@@ -2329,6 +2337,7 @@ struct stripe_stream_size_less {
  * @param table_meta The table metadata
  * @param max_stripe_size Maximum size of stripes in the output file
  * @param row_index_stride The row index stride
+ * @param timezone Timezone that the written timestamps are relative to
  * @param enable_dictionary Whether dictionary is enabled
  * @param sort_dictionaries Whether to sort the dictionaries
  * @param compression The compression format
@@ -2344,6 +2353,7 @@ auto convert_table_to_orc_data(table_view const& input,
                                table_input_metadata const& table_meta,
                                stripe_size_limits max_stripe_size,
                                size_type row_index_stride,
+                               writer_timezone const& timezone,
                                bool enable_dictionary,
                                bool sort_dictionaries,
                                compression_type compression,
@@ -2381,8 +2391,13 @@ auto convert_table_to_orc_data(table_view const& input,
                                 enable_dictionary,
                                 compression,
                                 write_mode);
-  auto enc_data = encode_columns(
-    orc_table, std::move(dec_chunk_sizes), segmentation, streams, block_align, stream);
+  auto enc_data = encode_columns(orc_table,
+                                 std::move(dec_chunk_sizes),
+                                 segmentation,
+                                 streams,
+                                 block_align,
+                                 timezone.base_epoch,
+                                 stream);
 
   stripe_dicts.on_encode_complete(stream);
 
@@ -2478,7 +2493,8 @@ auto convert_table_to_orc_data(table_view const& input,
 
   auto bounce_buffer = cudf::detail::make_pinned_vector_async<uint8_t>(max_out_stream_size, stream);
 
-  auto intermediate_stats = gather_statistic_blobs(stats_freq, orc_table, segmentation, stream);
+  auto intermediate_stats =
+    gather_statistic_blobs(stats_freq, orc_table, segmentation, timezone.is_utc(), stream);
 
   return std::tuple{std::move(enc_data),
                     std::move(segmentation),
@@ -2492,6 +2508,27 @@ auto convert_table_to_orc_data(table_view const& input,
                     std::move(stripes),
                     std::move(stripe_dicts.views),
                     std::move(bounce_buffer)};
+}
+
+/**
+ * @brief Resolves the timezone option into the epoch that timestamps are encoded relative to.
+ *
+ * ORC timestamps are wall-clock values: they are stored relative to the ORC epoch as it occurs in
+ * the writer's timezone, which is what lets a reader in that timezone recover the original value.
+ * This mirrors how the reader derives its epoch in `decode_column_data`, so that the two agree on
+ * the meaning of `writerTimezone`.
+ *
+ * @throw cudf::logic_error if `timezone` does not resolve to a TZif file
+ */
+writer_timezone resolve_timezone(std::string timezone)
+{
+  static constexpr duration_s orc_epoch{orc_utc_epoch};
+  writer_timezone tz{std::move(timezone), orc_epoch};
+  if (not tz.is_utc()) {
+    tz.base_epoch =
+      orc_epoch - cudf::detail::get_ut_offset(std::nullopt, tz.name, timestamp_s{orc_epoch});
+  }
+  return tz;
 }
 
 }  // namespace
@@ -2510,6 +2547,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _sort_dictionaries{options.get_enable_dictionary_sort()},
     _single_write_mode(mode),
     _kv_meta(options.get_key_value_metadata()),
+    _timezone(resolve_timezone(options.get_writer_timezone())),
     _out_sink(std::move(sink))
 {
   if (options.get_metadata()) {
@@ -2533,6 +2571,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _sort_dictionaries{options.get_enable_dictionary_sort()},
     _single_write_mode(mode),
     _kv_meta(options.get_key_value_metadata()),
+    _timezone(resolve_timezone(options.get_writer_timezone())),
     _out_sink(std::move(sink))
 {
   if (options.get_metadata()) {
@@ -2571,6 +2610,7 @@ void writer::impl::write(table_view const& input)
                               *_table_meta,
                               _max_stripe_size,
                               _row_index_stride,
+                              _timezone,
                               _enable_dictionary,
                               _sort_dictionaries,
                               _compression,
@@ -2683,7 +2723,7 @@ void writer::impl::write_orc_data_to_sink(encoded_data const& enc_data,
         (sf.columns[i].kind == DICTIONARY_V2)
           ? orc_table.column(i - 1).host_stripe_dict(stripe_id).entry_count
           : 0;
-      if (orc_table.column(i - 1).orc_kind() == TIMESTAMP) { sf.writerTimezone = "UTC"; }
+      if (orc_table.column(i - 1).orc_kind() == TIMESTAMP) { sf.writerTimezone = _timezone.name; }
     }
 
     protobuf_writer pbw;
@@ -2778,7 +2818,8 @@ void writer::impl::close()
 
   if (_stats_freq != statistics_freq::STATISTICS_NONE) {
     // Write column statistics
-    auto statistics = finish_statistic_blobs(_footer, _persisted_stripe_statistics, _stream);
+    auto statistics =
+      finish_statistic_blobs(_footer, _persisted_stripe_statistics, _timezone.is_utc(), _stream);
 
     // File-level statistics
     {

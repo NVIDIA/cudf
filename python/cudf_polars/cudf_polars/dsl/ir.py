@@ -2203,7 +2203,7 @@ class GroupBy(IR):
             sorted_requests, keys, df, target_group_keys=group_keys
         )
         if group_keys is None:
-            group_keys = cls._collect_group_keys(grouper, keys[0], df.stream)
+            group_keys, _ = grouper.aggregate([], stream=df.stream)
         results_by_name = {
             request.name: result
             for request, result in itertools.chain(
@@ -2295,24 +2295,6 @@ class GroupBy(IR):
             stream=stream,
         ).columns()
         return Column(ordered_result, name=result.name, dtype=result.dtype)
-
-    @staticmethod
-    def _collect_group_keys(
-        grouper: plc.groupby.GroupBy,
-        key: Column,
-        stream: Any,
-    ) -> plc.Table:
-        """Collect group keys when the GroupBy has no aggregation requests."""
-        group_keys, _ = grouper.aggregate(
-            [
-                plc.groupby.GroupByRequest(
-                    key.obj,
-                    [plc.aggregation.count(null_handling=plc.types.NullPolicy.INCLUDE)],
-                )
-            ],
-            stream=stream,
-        )
-        return group_keys
 
     @staticmethod
     def _evaluate_aggregation_requests(

@@ -121,7 +121,7 @@ namespace io::parquet::experimental {
  * @param values `list<uint8>` column of VARIANT-encoded value bytes
  * @param stream CUDA stream
  * @param mr Device memory resource
- * @return `INT32` column of `variant_logical_type` values cast to `int32_t`
+ * @return `UINT8` column of `variant_logical_type` values cast to `uint8_t`
  *
  * @throws std::invalid_argument if `values` is not a `list<uint8>` column
  */

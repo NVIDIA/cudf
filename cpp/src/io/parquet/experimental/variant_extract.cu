@@ -1005,7 +1005,7 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
 {
   validate_variant_child(values);
   size_type const num_rows = values.size();
-  if (num_rows == 0) { return make_empty_column(data_type{type_id::INT32}); }
+  if (num_rows == 0) { return make_empty_column(data_type{type_id::UINT8}); }
 
   auto val_device_view = column_device_view::create(values, stream);
   cudf::lists_column_device_view val_lists_device_view(*val_device_view);
@@ -1015,23 +1015,23 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
   auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
 
-  rmm::device_buffer data{static_cast<std::size_t>(num_rows) * sizeof(int32_t), stream, mr};
+  rmm::device_buffer data{static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr};
 
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>(0),
     cuda::counting_iterator<size_type>(num_rows),
-    static_cast<int32_t*>(data.data()),
-    [values = val_lists_device_view, d_null_mask] __device__(size_type row) -> int32_t {
+    static_cast<uint8_t*>(data.data()),
+    [values = val_lists_device_view, d_null_mask] __device__(size_type row) -> uint8_t {
       if (!cudf::bit_is_set(d_null_mask, row)) { return 0; }
       auto const ltype = logical_type_of(list_row_span(values, row));
-      if (ltype.has_value()) { return static_cast<int32_t>(ltype.value()); }
+      if (ltype.has_value()) { return static_cast<uint8_t>(ltype.value()); }
       cudf::clear_bit(d_null_mask, row);
       return 0;
     });
 
   auto const null_count = num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
-  return std::make_unique<column>(data_type{type_id::INT32},
+  return std::make_unique<column>(data_type{type_id::UINT8},
                                   num_rows,
                                   std::move(data),
                                   null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},

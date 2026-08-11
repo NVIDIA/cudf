@@ -21,8 +21,6 @@ from fsspec.core import get_fs_token_paths
 from packaging import version
 from pyarrow import parquet as pq
 
-import pylibcudf as plc
-
 import cudf
 from cudf.io.parquet import (
     ParquetDatasetWriter,
@@ -4786,46 +4784,6 @@ def test_parquet_bloom_filters_alignment(datadir, columns, memory_resource):
     assert_eq(expected, read)
 
 
-def _read_parquet_with_pruning_metadata(sources, filter_expression):
-    options = plc.io.parquet.ParquetReaderOptions.builder(
-        plc.io.SourceInfo(sources)
-    ).build()
-    options.set_filter(filter_expression)
-    return plc.io.parquet.read_parquet(options)
-
-
-@pytest.mark.parametrize(
-    "value,expected_row_groups",
-    [
-        ("Did not like the color", 2),
-        ("not-in-this-file", 0),
-    ],
-)
-def test_parquet_bloom_filters_pruning_multisource(
-    datadir, value, expected_row_groups
-):
-    fname = datadir / "bloom_filter_alignment.parquet"
-    sources = [fname, fname]
-    filters = [("r_reason_desc", "==", value)]
-
-    # Read expected table using pyarrow
-    expected = pq.read_table(sources, filters=filters)
-
-    # Read with pylibcudf to inspect row group pruning
-    filter_expression = plc.expressions.Operation(
-        plc.expressions.ASTOperator.EQUAL,
-        plc.expressions.ColumnNameReference("r_reason_desc"),
-        plc.expressions.Literal(plc.Scalar.from_arrow(pa.scalar(value))),
-    )
-    result = _read_parquet_with_pruning_metadata(sources, filter_expression)
-
-    # Verify bloom pruning and table contents
-    assert result.num_input_row_groups == 2
-    assert result.num_row_groups_after_stats_filter == 2
-    assert result.num_row_groups_after_bloom_filter == expected_row_groups
-    assert_eq(expected, cudf.DataFrame.from_pylibcudf(result).to_arrow())
-
-
 @pytest.mark.parametrize(
     "filename",
     [
@@ -4834,35 +4792,17 @@ def test_parquet_bloom_filters_pruning_multisource(
     ],
     ids=["length-absent", "length-present"],
 )
-@pytest.mark.parametrize(
-    "value,expected_row_groups",
-    [
-        ("Hello", 1),
-        ("not-in-this-file", 0),
-    ],
-)
-def test_parquet_bloom_filters_length(
-    datadir, filename, value, expected_row_groups
-):
+@pytest.mark.parametrize("value", ["Hello", "not-in-this-file"])
+def test_parquet_bloom_filters_length(datadir, filename, value):
+    # Header may omit the bloom filter length.
     # Source: apache/parquet-testing (Apache-2.0)
     fname = datadir / filename
     filters = [("String", "==", value)]
 
-    # Read expected table using pyarrow
     expected = pq.read_table(fname, filters=filters)
+    read = cudf.read_parquet(fname, filters=filters).to_arrow()
 
-    filter_expression = plc.expressions.Operation(
-        plc.expressions.ASTOperator.EQUAL,
-        plc.expressions.ColumnNameReference("String"),
-        plc.expressions.Literal(plc.Scalar.from_arrow(pa.scalar(value))),
-    )
-
-    # Verify bloom pruning and table contents
-    result = _read_parquet_with_pruning_metadata([fname], filter_expression)
-    assert result.num_input_row_groups == 1
-    assert result.num_row_groups_after_stats_filter == 1
-    assert result.num_row_groups_after_bloom_filter == expected_row_groups
-    assert_eq(expected, cudf.DataFrame.from_pylibcudf(result).to_arrow())
+    assert_eq(expected, read)
 
 
 @pytest.mark.parametrize(

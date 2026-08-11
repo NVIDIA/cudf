@@ -6,6 +6,7 @@
 #include "delta_binary.cuh"
 #include "error.hpp"
 #include "page_decode.cuh"
+#include "page_state_composed.cuh"
 #include "page_string_utils.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
@@ -45,7 +46,7 @@ constexpr int delta_length_block_size  = 32;
  */
 template <typename level_t>
 __device__ cuda::std::pair<int, int> page_bounds(
-  page_state_s* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
+  auto* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
 {
   using block_reduce = cub::BlockReduce<int, preprocess_block_size>;
   using block_scan   = cub::BlockScan<int, preprocess_block_size>;
@@ -58,7 +59,7 @@ __device__ cuda::std::pair<int, int> page_bounds(
   auto const t     = block.thread_rank();
 
   int const max_depth = s->setup.col.max_nesting_depth;
-  int const max_def   = s->nesting_info[max_depth - 1].max_def_level;
+  int const max_def   = s->nesting.nesting_info[max_depth - 1].max_def_level;
 
   auto const pp = &s->setup.page;
   // Clamp to decoded level count; for chunked reads we may have decoded fewer values than
@@ -511,12 +512,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                                     size_t num_rows,
                                     bool all_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   if (t == 0) {
     // don't clobber these if they're already computed from the index
@@ -599,12 +600,12 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
                                          size_t min_row,
                                          size_t num_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) string_size_scan_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -630,7 +631,7 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
   // if data size is known, can short circuit here
   if (chunks[pp->chunk_idx].physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
     if (t == 0) {
-      pp->str_bytes = pp->num_valids * s->dtype_len_in;
+      pp->str_bytes = pp->num_valids * s->output_cvt.dtype_len_in;
 
       // only need temp space if we're skipping values
       if (start_value > 0) {
@@ -638,7 +639,7 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
         delta_binary_decoder db;
         db.init_binary_block(s->stream.data_start, s->stream.data_end);
         // save enough for one mini-block plus some extra to save the last_string
-        pp->temp_string_size = s->dtype_len_in * (db.values_per_mb + 1);
+        pp->temp_string_size = s->output_cvt.dtype_len_in * (db.values_per_mb + 1);
       }
     }
   } else {
@@ -696,13 +697,13 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
   using cudf::detail::warp_size;
   using WarpReduce = cub::WarpReduce<uleb128_t>;
   __shared__ typename WarpReduce::TempStorage temp_storage;
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) string_size_scan_state state_g;
   __shared__ __align__(16) delta_binary_decoder string_lengths;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -812,12 +813,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                                    size_t min_row,
                                    size_t num_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) string_size_scan_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -855,7 +856,7 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
   size_t str_bytes = 0;
   // short circuit for FIXED_LEN_BYTE_ARRAY
   if (col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-    str_bytes = pp->num_valids * s->dtype_len_in;
+    str_bytes = pp->num_valids * s->output_cvt.dtype_len_in;
   } else {
     // now process string info in the range [start_value, end_value)
     // set up for decoding strings...can be either plain or dictionary
@@ -1104,7 +1105,7 @@ inline __device__ bool prefetch_string_data(int t,
  * @param error_code Error code to set if a string length overruns the page
  */
 template <int32_t block_size, size_t prefetch_size>
-inline __device__ void read_string_offsets_buffered(page_state_s* s,
+inline __device__ void read_string_offsets_buffered(auto* s,
                                                     size_t num_values_to_process,
                                                     uint32_t* str_offsets,
                                                     kernel_error::pointer error_code)
@@ -1197,7 +1198,7 @@ inline __device__ void read_string_offsets_buffered(page_state_s* s,
  * @param error_code Error code to set if a string length overruns the page
  */
 template <int32_t block_size>
-inline __device__ void read_string_offsets_sequential(page_state_s* s,
+inline __device__ void read_string_offsets_sequential(auto* s,
                                                       size_t num_values_to_process,
                                                       uint32_t* str_offsets,
                                                       kernel_error::pointer error_code)
@@ -1304,8 +1305,8 @@ CUDF_KERNEL void preprocess_string_offsets_kernel(
           decode_kernel_mask::STRING_STREAM_SPLIT_NESTED,
           decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
 
-  __shared__ __align__(16) page_state_s state_g;
-  page_state_s* const s = &state_g;
+  __shared__ __align__(16) string_offset_scan_state state_g;
+  auto* const s = &state_g;
   if (!setup_local_page_info(s,
                              pp,
                              chunks,

@@ -55,8 +55,7 @@ namespace cudf::detail {
  * @param order Sort order of the order-by column
  * @param grouping Preprocessed grouping information, if any
  * @param nulls_at_start Whether nulls are ordered before non-null values
- * @param row_delta Must be null for an unbounded window
- * @param delta_col Must be null for an unbounded window
+ * @param delta Must hold `std::monostate` (no delta) for an unbounded window
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column containing the window size for each row
@@ -68,8 +67,7 @@ namespace cudf::detail {
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  column_view const* delta_col,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
@@ -82,8 +80,7 @@ namespace cudf::detail {
  * @param order Sort order of the order-by column
  * @param grouping Preprocessed grouping information, if any
  * @param nulls_at_start Whether nulls are ordered before non-null values
- * @param row_delta Must be null for a current-row window
- * @param delta_col Must be null for a current-row window
+ * @param delta Must hold `std::monostate` (no delta) for a current-row window
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column containing the window size for each row
@@ -95,8 +92,7 @@ namespace cudf::detail {
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  column_view const* delta_col,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
@@ -109,8 +105,7 @@ namespace cudf::detail {
  * @param order Sort order of the order-by column
  * @param grouping Preprocessed grouping information, if any
  * @param nulls_at_start Whether nulls are ordered before non-null values
- * @param row_delta Must be non-null and contain the bounded-window delta
- * @param delta_col Must be null for a scalar-valued bounded-closed window
+ * @param delta Must hold a non-null `scalar const*` with the bounded-window delta
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column containing the window size for each row
@@ -122,8 +117,7 @@ namespace cudf::detail {
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  column_view const* delta_col,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
@@ -136,8 +130,7 @@ namespace cudf::detail {
  * @param order Sort order of the order-by column
  * @param grouping Preprocessed grouping information, if any
  * @param nulls_at_start Whether nulls are ordered before non-null values
- * @param row_delta Must be non-null and contain the bounded-window delta
- * @param delta_col Must be null for a scalar-valued bounded-open window
+ * @param delta Must hold a non-null `scalar const*` with the bounded-window delta
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column containing the window size for each row
@@ -149,8 +142,7 @@ namespace cudf::detail {
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  column_view const* delta_col,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
@@ -163,8 +155,7 @@ namespace cudf::detail {
  * @param order Sort order of the order-by column
  * @param grouping Preprocessed grouping information, if any
  * @param nulls_at_start Whether nulls are ordered before non-null values
- * @param row_delta Must be null for a column-valued window
- * @param delta_col Must be non-null and contain one delta per orderby row
+ * @param delta Must hold a `column_view` with one delta per orderby row
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column containing the window size for each row
@@ -176,8 +167,7 @@ namespace cudf::detail {
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  column_view const* delta_col,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
@@ -190,8 +180,7 @@ namespace cudf::detail {
  * @param order Sort order of the order-by column
  * @param grouping Preprocessed grouping information, if any
  * @param nulls_at_start Whether nulls are ordered before non-null values
- * @param row_delta Must be null for a column-valued window
- * @param delta_col Must be non-null and contain one delta per orderby row
+ * @param delta Must hold a `column_view` with one delta per orderby row
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column containing the window size for each row
@@ -203,8 +192,7 @@ namespace cudf::detail {
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  column_view const* delta_col,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 

@@ -33,6 +33,18 @@ namespace CUDF_EXPORT cudf {
  */
 
 /**
+ * @brief Normalized delta source for a single range-window endpoint.
+ *
+ * A range-window endpoint carries at most one delta, and each endpoint kind supplies it
+ * differently: `bounded_closed`/`bounded_open` hold a single scalar delta (exposed as a
+ * `cudf::scalar const*`), the column-valued endpoints hold a per-row delta `cudf::column_view`, and
+ * `unbounded`/`current_row` carry no delta at all (`std::monostate`). Every window tag exposes its
+ * delta uniformly through `delta()`, so a single typed value is threaded through the dispatch stack
+ * instead of a pair of nullable pointers.
+ */
+using range_window_delta = std::variant<std::monostate, cudf::scalar const*, cudf::column_view>;
+
+/**
  * @brief Strongly typed wrapper for bounded closed rolling windows.
  *
  * @param delta The scalar delta from the current row. Must be valid,
@@ -54,15 +66,10 @@ struct bounded_closed {
    */
   bounded_closed(cudf::scalar const& delta) : delta_{delta} {}
   /**
-   * @brief Return pointer to the row delta scalar.
-   * @return pointer to scalar, not null.
+   * @brief Return the window's delta source.
+   * @return the scalar delta.
    */
-  [[nodiscard]] cudf::scalar const* delta() const noexcept { return &delta_; }
-  /**
-   * @brief Return a null per-row delta column.
-   * @return nullptr
-   */
-  [[nodiscard]] cudf::column_view const* delta_column() const noexcept { return nullptr; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return &delta_; }
 };
 
 /**
@@ -88,15 +95,10 @@ struct bounded_open {
   bounded_open(cudf::scalar const& delta) : delta_{delta} {}
 
   /**
-   * @brief Return pointer to the row delta scalar.
-   * @return pointer to scalar, not null.
+   * @brief Return the window's delta source.
+   * @return the scalar delta.
    */
-  [[nodiscard]] cudf::scalar const* delta() const noexcept { return &delta_; }
-  /**
-   * @brief Return a null per-row delta column.
-   * @return nullptr
-   */
-  [[nodiscard]] cudf::column_view const* delta_column() const noexcept { return nullptr; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return &delta_; }
 };
 
 /**
@@ -124,15 +126,10 @@ struct bounded_closed_column {
    */
   bounded_closed_column(cudf::column_view delta) : delta_{delta} {}
   /**
-   * @brief Return a null row delta scalar.
-   * @return nullptr
+   * @brief Return the window's delta source.
+   * @return the per-row delta column.
    */
-  [[nodiscard]] cudf::scalar const* delta() const noexcept { return nullptr; }
-  /**
-   * @brief Return pointer to the per-row delta column.
-   * @return pointer to column_view, not null.
-   */
-  [[nodiscard]] cudf::column_view const* delta_column() const noexcept { return &delta_; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return delta_; }
 };
 
 /**
@@ -154,15 +151,10 @@ struct bounded_open_column {
    */
   bounded_open_column(cudf::column_view delta) : delta_{delta} {}
   /**
-   * @brief Return a null row delta scalar.
-   * @return nullptr
+   * @brief Return the window's delta source.
+   * @return the per-row delta column.
    */
-  [[nodiscard]] cudf::scalar const* delta() const noexcept { return nullptr; }
-  /**
-   * @brief Return pointer to the per-row delta column.
-   * @return pointer to column_view, not null.
-   */
-  [[nodiscard]] cudf::column_view const* delta_column() const noexcept { return &delta_; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return delta_; }
 };
 
 /**
@@ -172,15 +164,10 @@ struct bounded_open_column {
  */
 struct unbounded {
   /**
-   * @brief Return a null row delta
-   * @return nullptr
+   * @brief Return an empty delta source.
+   * @return a monostate (no delta).
    */
-  [[nodiscard]] constexpr cudf::scalar const* delta() const noexcept { return nullptr; }
-  /**
-   * @brief Return a null per-row delta column.
-   * @return nullptr
-   */
-  [[nodiscard]] constexpr cudf::column_view const* delta_column() const noexcept { return nullptr; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return std::monostate{}; }
 };
 /**
  * @brief Strongly typed wrapper for current_row rolling windows.
@@ -189,15 +176,10 @@ struct unbounded {
  */
 struct current_row {
   /**
-   * @brief Return a null row delta
-   * @return nullptr
+   * @brief Return an empty delta source.
+   * @return a monostate (no delta).
    */
-  [[nodiscard]] constexpr cudf::scalar const* delta() const noexcept { return nullptr; }
-  /**
-   * @brief Return a null per-row delta column.
-   * @return nullptr
-   */
-  [[nodiscard]] constexpr cudf::column_view const* delta_column() const noexcept { return nullptr; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return std::monostate{}; }
 };
 
 /**

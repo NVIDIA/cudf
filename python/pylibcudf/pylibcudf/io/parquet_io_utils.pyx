@@ -91,6 +91,10 @@ cpdef list fetch_byte_ranges_to_device(
             _mr.get_mr(),
         )
 
+    if fetched.first.size() != 1:
+        raise RuntimeError(
+            f"Expected exactly one device buffer, got {fetched.first.size()}"
+        )
     cdef DeviceBuffer owner = DeviceBuffer.c_from_unique_ptr(
         make_unique[device_buffer](move(fetched.first[0])),
         _stream,

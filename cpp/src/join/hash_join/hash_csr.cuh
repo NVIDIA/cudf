@@ -18,32 +18,32 @@ constexpr size_type hash_csr_empty_slot               = size_type{-1};
 constexpr std::uint64_t hash_csr_empty_entry          = std::numeric_limits<std::uint64_t>::max();
 constexpr std::uint64_t hash_csr_empty_build_position = std::numeric_limits<std::uint64_t>::max();
 
-__device__ inline std::uint64_t pack_hash_csr_entry(hash_value_type hash, size_type row)
+static __device__ std::uint64_t pack_hash_csr_entry(hash_value_type hash, size_type row)
 {
   return (static_cast<std::uint64_t>(hash) << 32) | static_cast<std::uint32_t>(row);
 }
 
-__device__ inline hash_value_type unpack_hash_csr_hash(std::uint64_t value)
+static __device__ hash_value_type unpack_hash_csr_hash(std::uint64_t value)
 {
   return static_cast<hash_value_type>(value >> 32);
 }
 
-__device__ inline size_type unpack_hash_csr_row(std::uint64_t value)
+static __device__ size_type unpack_hash_csr_row(std::uint64_t value)
 {
   return static_cast<size_type>(static_cast<std::uint32_t>(value));
 }
 
-__device__ inline std::uint64_t pack_hash_csr_build_position(std::uint32_t slot, size_type rank)
+static __device__ std::uint64_t pack_hash_csr_build_position(std::uint32_t slot, size_type rank)
 {
   return (static_cast<std::uint64_t>(slot) << 32) | static_cast<std::uint32_t>(rank);
 }
 
-__device__ inline std::uint32_t unpack_hash_csr_build_slot(std::uint64_t value)
+static __device__ std::uint32_t unpack_hash_csr_build_slot(std::uint64_t value)
 {
   return static_cast<std::uint32_t>(value >> 32);
 }
 
-__device__ inline size_type unpack_hash_csr_build_rank(std::uint64_t value)
+static __device__ size_type unpack_hash_csr_build_rank(std::uint64_t value)
 {
   return static_cast<size_type>(static_cast<std::uint32_t>(value));
 }

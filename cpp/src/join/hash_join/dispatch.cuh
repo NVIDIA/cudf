@@ -81,8 +81,7 @@ class hash_csr_pair_equal {
   {
   }
 
-  __device__ __forceinline__ bool operator()(probe_key_type const& lhs,
-                                             probe_key_type const& rhs) const noexcept
+  __device__ bool operator()(probe_key_type const& lhs, probe_key_type const& rhs) const noexcept
   {
     using detail::row::lhs_index_type;
     using detail::row::rhs_index_type;
@@ -101,8 +100,7 @@ class primitive_hash_csr_pair_equal {
   {
   }
 
-  __device__ __forceinline__ bool operator()(probe_key_type const& lhs,
-                                             probe_key_type const& rhs) const noexcept
+  __device__ bool operator()(probe_key_type const& lhs, probe_key_type const& rhs) const noexcept
   {
     return _check_row_equality(lhs.second, rhs.second);
   }

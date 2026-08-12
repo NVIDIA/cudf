@@ -135,11 +135,11 @@ void launch_hash_csr_build_count(size_type num_rows,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-inline void launch_hash_csr_build_fill(size_type num_rows,
-                                       std::uint64_t const* build_positions,
-                                       size_type const* cumulative_ends,
-                                       size_type* values,
-                                       rmm::cuda_stream_view stream)
+[[maybe_unused]] static void launch_hash_csr_build_fill(size_type num_rows,
+                                                        std::uint64_t const* build_positions,
+                                                        size_type const* cumulative_ends,
+                                                        size_type* values,
+                                                        rmm::cuda_stream_view stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
@@ -208,7 +208,9 @@ void hash_csr_exclusive_scan(InputIterator input,
                                                stream.value()));
 }
 
-inline void hash_csr_inclusive_sum(size_type* values, size_type size, rmm::cuda_stream_view stream)
+[[maybe_unused]] static void hash_csr_inclusive_sum(size_type* values,
+                                                    size_type size,
+                                                    rmm::cuda_stream_view stream)
 {
   auto const mr = cudf::get_current_device_resource_ref();
   std::size_t temp_storage_bytes{};
@@ -219,10 +221,10 @@ inline void hash_csr_inclusive_sum(size_type* values, size_type size, rmm::cuda_
     temp_storage.data(), temp_storage_bytes, values, values, size, stream.value()));
 }
 
-inline std::int64_t hash_csr_scan_counts(size_type const* counts,
-                                         size_type num_rows,
-                                         std::int64_t* offsets,
-                                         rmm::cuda_stream_view stream)
+[[maybe_unused]] static std::int64_t hash_csr_scan_counts(size_type const* counts,
+                                                          size_type num_rows,
+                                                          std::int64_t* offsets,
+                                                          rmm::cuda_stream_view stream)
 {
   auto const mr = cudf::get_current_device_resource_ref();
   cudf::detail::device_scalar<std::int64_t> output_size(stream, mr);
@@ -239,9 +241,9 @@ struct hash_csr_count_to_int64 {
   }
 };
 
-inline std::int64_t hash_csr_reduce_counts(size_type const* counts,
-                                           size_type num_rows,
-                                           rmm::cuda_stream_view stream)
+[[maybe_unused]] static std::int64_t hash_csr_reduce_counts(size_type const* counts,
+                                                            size_type num_rows,
+                                                            rmm::cuda_stream_view stream)
 {
   if (num_rows == 0) { return 0; }
   auto const mr = cudf::get_current_device_resource_ref();
@@ -256,7 +258,7 @@ inline std::int64_t hash_csr_reduce_counts(size_type const* counts,
   return result.value(stream);
 }
 
-__device__ inline size_type hash_csr_find_probe_row_in_range(std::int64_t const* offsets,
+static __device__ size_type hash_csr_find_probe_row_in_range(std::int64_t const* offsets,
                                                              size_type first_probe,
                                                              size_type last_probe,
                                                              std::int64_t output_index)

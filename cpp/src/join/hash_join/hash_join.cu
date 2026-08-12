@@ -132,7 +132,10 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   };
   dispatch_hash_csr_comparator(
     right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
-  hash_csr_inclusive_sum(_impl->cumulative_ends.data(), _impl->capacity, stream);
+  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
+                                       cudf::get_current_device_resource_ref()};
+  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
+    _impl->cumulative_ends.data(), _impl->cumulative_ends.data(), _impl->capacity, env));
   launch_hash_csr_build_fill(right.num_rows(),
                              build_positions.data(),
                              _impl->cumulative_ends.data(),

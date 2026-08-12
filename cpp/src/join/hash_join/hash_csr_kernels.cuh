@@ -188,28 +188,6 @@ void launch_hash_csr_probe_count(size_type num_rows,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-template <typename InputIterator, typename OutputIterator, typename InitialValue>
-void hash_csr_exclusive_scan(InputIterator input,
-                             OutputIterator output,
-                             size_type num_items,
-                             InitialValue initial_value,
-                             rmm::cuda_stream_view stream)
-{
-  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
-                                       cudf::get_current_device_resource_ref()};
-  CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveScan(
-    input, output, cuda::std::plus<>{}, initial_value, num_items, env));
-}
-
-[[maybe_unused]] static void hash_csr_inclusive_sum(size_type* values,
-                                                    size_type size,
-                                                    rmm::cuda_stream_view stream)
-{
-  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
-                                       cudf::get_current_device_resource_ref()};
-  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(values, values, size, env));
-}
-
 [[maybe_unused]] static std::int64_t hash_csr_scan_counts(size_type const* counts,
                                                           size_type num_rows,
                                                           std::int64_t* offsets,
@@ -219,7 +197,9 @@ void hash_csr_exclusive_scan(InputIterator input,
   cudf::detail::device_scalar<std::int64_t> output_size(stream, mr);
   auto output = cudf::detail::make_sizes_to_offsets_iterator(
     offsets, offsets + num_rows + 1, output_size.data());
-  hash_csr_exclusive_scan(counts, output, num_rows + 1, std::int64_t{0}, stream);
+  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()}, mr};
+  CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveScan(
+    counts, output, cuda::std::plus<>{}, std::int64_t{0}, num_rows + 1, env));
   return output_size.value(stream);
 }
 

@@ -70,7 +70,8 @@ target_compile_options(
 )
 target_sources(
   libcudf_streaming_test_sources
-  PRIVATE streaming/test_bloom_filter.cu
+  PRIVATE streaming/test_approx_distinct_count.cpp
+          streaming/test_bloom_filter.cu
           streaming/test_bloom_filter_config.cpp
           streaming/test_table_chunk.cpp
           streaming/test_read_parquet.cpp

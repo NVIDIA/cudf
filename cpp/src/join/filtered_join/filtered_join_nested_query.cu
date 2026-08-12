@@ -26,7 +26,7 @@
 
 namespace cudf::detail {
 
-void distinct_filtered_join::query_right_table_nested(
+void filtered_join::query_right_table_nested(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,

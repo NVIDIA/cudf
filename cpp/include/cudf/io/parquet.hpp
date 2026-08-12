@@ -110,6 +110,8 @@ class parquet_reader_options {
   type_id _decimal_width{type_id::EMPTY};
   // Whether to use JIT compilation for filtering
   bool _use_jit_filter = false;
+  // Whether to output flat string columns as DICT32 encoded columns
+  bool _output_dict_columns = false;
   // Whether column name matching is case sensitive. In case of multiple
   // case-insensitive matches, the first matched column is selected
   bool _case_sensitive_names = true;
@@ -339,6 +341,20 @@ class parquet_reader_options {
   {
     return _prepend_row_index_column;
   }
+
+  /**
+   * @brief Returns whether the reader returns flat string columns as DICTIONARY32 encoded columns
+   *
+   * When true, the reader outputs STRING columns as DICTIONARY32 encoded columns. A DICTIONARY32
+   * column consists of an INT32 indices child and a STRING keys child.
+   *
+   * When AST/JIT filters are set, the direct transcode fast path is disabled.
+   * String columns are materialized, then operated on by the filter. The filtered results are then
+   * encoded as DICTIONARY32 columns.
+   *
+   * @return `true` if the reader returns flat string columns as DICTIONARY32 encoded columns
+   */
+  [[nodiscard]] bool is_enabled_output_dict_columns() const { return _output_dict_columns; }
 
   /**
    * @brief Set a new source location
@@ -633,6 +649,13 @@ class parquet_reader_options {
    * @param val Boolean indicating whether to prepend the row index column.
    */
   void enable_prepend_row_index_column(bool val) { _prepend_row_index_column = val; }
+
+  /**
+   * @brief Sets to enable/disable trying to output DICTIONARY32 columns for flat string columns.
+   *
+   * @param val Boolean indicating whether to output DICTIONARY32 columns for flat string columns
+   */
+  void enable_output_dict_columns(bool val) { _output_dict_columns = val; }
 };
 
 /**
@@ -928,6 +951,23 @@ class parquet_reader_options_builder {
   parquet_reader_options_builder& prepend_row_index_column(bool val)
   {
     options.enable_prepend_row_index_column(val);
+    return *this;
+  }
+
+  /**
+   * @brief Sets options for enabling/disabling output of DICTIONARY32 columns for flat string
+   * columns.
+   *
+   * @param val Boolean value whether to output flat string columns as DICTIONARY32 encoded columns
+   *
+   * @note When enabled, the output columns will be of type DICTIONARY32. When disabled, the output
+   * columns will be of type STRING.
+   *
+   * @return this for chaining
+   */
+  parquet_reader_options_builder& output_dict_columns(bool val)
+  {
+    options.enable_output_dict_columns(val);
     return *this;
   }
 

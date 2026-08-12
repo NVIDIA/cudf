@@ -22,6 +22,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda_runtime.h>
 
@@ -45,9 +46,12 @@ constexpr int LEVEL_DECODE_BUF_SIZE = 2048;
 template <int rolling_size>
 CUDF_HOST_DEVICE constexpr int rolling_index(int index)
 {
-  // Cannot divide by 0. But `rolling_size` will be 0 for unused arrays, so this case will never
-  // actual be executed.
-  if constexpr (rolling_size == 0) {
+  // rolling_size == 0 marks unused arrays (never actually indexed).
+  // rolling_size == INT_MAX is used by paths that treat the output buffer as
+  // non-rolling (e.g. chunked-expand level decoding), and we short-circuit
+  // both cases to avoid a modulo (which for non-power-of-two divisors would
+  // compile to a real integer division on device).
+  if constexpr (rolling_size == 0 || rolling_size == cuda::std::numeric_limits<int>::max()) {
     return index;
   } else {
     return index % rolling_size;
@@ -82,6 +86,17 @@ CUDF_HOST_DEVICE constexpr bool is_supported_encoding(Encoding enc)
     case Encoding::BYTE_STREAM_SPLIT: return true;
     default: return false;
   }
+}
+
+/**
+ * @brief Whether a page encoding references a dictionary page.
+ *
+ * Both PLAIN_DICTIONARY (legacy) and RLE_DICTIONARY mark a data page whose values are indices into
+ * the column chunk's dictionary page.
+ */
+CUDF_HOST_DEVICE constexpr bool is_dictionary_encoding(Encoding enc)
+{
+  return enc == Encoding::PLAIN_DICTIONARY or enc == Encoding::RLE_DICTIONARY;
 }
 
 /**
@@ -223,7 +238,8 @@ enum class decode_kernel_mask {
   STRING_STREAM_SPLIT = (1 << 23),  // Run decode kernel for BYTE_STREAM_SPLIT string data
   STRING_STREAM_SPLIT_NESTED =
     (1 << 24),  // Run decode kernel for nested BYTE_STREAM_SPLIT string data
-  STRING_STREAM_SPLIT_LIST = (1 << 25)  // Run decode kernel for list BYTE_STREAM_SPLIT string data
+  STRING_STREAM_SPLIT_LIST = (1 << 25),  // Run decode kernel for list BYTE_STREAM_SPLIT string data
+  DICT_INT32               = (1 << 26),  // Run decode kernel for dict string → INT32 indices
 };
 
 constexpr uint32_t STRINGS_MASK_NON_DELTA = BitOr(decode_kernel_mask::STRING,
@@ -589,8 +605,8 @@ struct EncColumnChunk {
   size_type num_dict_entries;  //!< Total number of entries in dictionary
   size_type
     uniq_data_size;  //!< Size of dictionary page (set of all unique values) if dict enc is used
-  size_type plain_data_size;  //!< Size of data in this chunk if plain encoding is used
-  size_type* dict_data;       //!< Dictionary data (unique row indices)
+  size_t plain_data_size;  //!< Size of data in this chunk if plain encoding is used
+  size_type* dict_data;    //!< Dictionary data (unique row indices)
   size_type* dict_index;  //!< Index of value in dictionary page. column[dict_data[dict_index[row]]]
   uint8_t dict_rle_bits;  //!< Bit size for encoding dictionary indices
   bool use_dictionary;    //!< True if the chunk uses dictionary encoding
@@ -664,7 +680,7 @@ struct EncPage {
 /**
  * @brief Test if the given column chunk is in a string column
  */
-__device__ constexpr bool is_string_col(ColumnChunkDesc const& chunk)
+CUDF_HOST_DEVICE constexpr bool is_string_col(ColumnChunkDesc const& chunk)
 {
   // return true for non-hashed byte_array and fixed_len_byte_array that isn't representing
   // a decimal.

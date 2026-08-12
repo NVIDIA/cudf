@@ -52,6 +52,7 @@ from pylibcudf.libcudf.io.types import (
     quote_style as QuoteStyle,  # no-cython-lint
     statistics_freq as StatisticsFreq,  # no-cython-lint
 )
+from pylibcudf.column import Column
 from pylibcudf.span import Span
 
 __all__ = [
@@ -304,7 +305,7 @@ cdef class TableInputMetadata:
         self.c_obj = table_input_metadata(table.view())
 
     @property
-    def column_metadata(self):
+    def column_metadata(self) -> list[ColumnInMetadata]:
         return [
             ColumnInMetadata.from_libcudf(&self.c_obj.column_metadata[i], self)
             for i in range(self.c_obj.column_metadata.size())
@@ -353,7 +354,7 @@ cdef class TableWithMetadata:
         return col_name_infos
 
     @property
-    def columns(self):
+    def columns(self) -> tuple[Column, ...]:
         """
         Return a tuple containing the columns of the table
         """
@@ -366,7 +367,9 @@ cdef class TableWithMetadata:
             names.append((child, grandchildren))
         return names
 
-    def column_names(self, include_children=False):
+    def column_names(
+        self, include_children=False
+    ) -> list[str] | list[ColumnNameSpec]:
         """
         Return a list containing the column names of the table
         """
@@ -383,7 +386,7 @@ cdef class TableWithMetadata:
         return names
 
     @property
-    def child_names(self):
+    def child_names(self) -> ChildNameSpec:
         """
         Return a dictionary mapping the names of columns with children
         to the names of their child columns. Columns without children
@@ -415,7 +418,7 @@ cdef class TableWithMetadata:
         return out
 
     @property
-    def per_file_user_data(self):
+    def per_file_user_data(self) -> list[Mapping[bytes, bytes]]:
         """
         Returns a list containing a dict
         containing file-format specific metadata,
@@ -424,7 +427,7 @@ cdef class TableWithMetadata:
         return self.metadata.per_file_user_data
 
     @property
-    def num_rows_per_source(self):
+    def num_rows_per_source(self) -> list[int]:
         """
         Returns a list containing the number
         of rows for each file being read in.
@@ -433,7 +436,7 @@ cdef class TableWithMetadata:
 
     # The following functions are currently only for Parquet reader
     @property
-    def num_input_row_groups(self):
+    def num_input_row_groups(self) -> int:
         """
         Returns the total number of input
         Parquet row groups across all data sources.
@@ -441,7 +444,7 @@ cdef class TableWithMetadata:
         return self.metadata.num_input_row_groups
 
     @property
-    def num_row_groups_after_stats_filter(self):
+    def num_row_groups_after_stats_filter(self) -> int | None:
         """
         Returns the number of remaining Parquet row groups
         after stats filter. None if no filtering done.
@@ -451,7 +454,7 @@ cdef class TableWithMetadata:
         return None
 
     @property
-    def num_row_groups_after_bloom_filter(self):
+    def num_row_groups_after_bloom_filter(self) -> int | None:
         """
         Returns the number of remaining Parquet row groups
         after bloom filter. None if no filtering done.

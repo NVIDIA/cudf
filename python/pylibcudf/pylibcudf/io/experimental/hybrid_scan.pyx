@@ -98,7 +98,9 @@ cdef class HybridScanReader:
         )
 
     @staticmethod
-    def from_parquet_metadata(c_FileMetaData metadata, ParquetReaderOptions options):
+    def from_parquet_metadata(
+        c_FileMetaData metadata, ParquetReaderOptions options
+    ) -> HybridScanReader:
         """Create a HybridScanReader from pre-populated metadata.
 
         Parameters
@@ -119,7 +121,7 @@ cdef class HybridScanReader:
         )
         return reader
 
-    def parquet_metadata(self):
+    def parquet_metadata(self) -> FileMetaData:
         """Get the Parquet file footer metadata.
 
         Returns
@@ -129,7 +131,7 @@ cdef class HybridScanReader:
         """
         return c_FileMetaData.from_cpp(self.c_obj.get()[0].parquet_metadata())
 
-    def page_index_byte_range(self):
+    def page_index_byte_range(self) -> ByteRangeInfo:
         """Get the byte range of the page index.
 
         Returns
@@ -142,7 +144,7 @@ cdef class HybridScanReader:
 
     def setup_page_index(
         self, const uint8_t[::1] page_index_bytes: Buffer
-    ):
+    ) -> None:
         """Setup the page index within the Parquet file metadata.
 
         Parameters
@@ -154,7 +156,7 @@ cdef class HybridScanReader:
             host_span[const_uint8_t](&page_index_bytes[0], len(page_index_bytes))
         )
 
-    def all_row_groups(self, ParquetReaderOptions options):
+    def all_row_groups(self, ParquetReaderOptions options) -> list[int]:
         """Get all available row groups from the parquet file.
 
         Parameters
@@ -172,7 +174,9 @@ cdef class HybridScanReader:
         )
         return list(row_groups)
 
-    def total_rows_in_row_groups(self, list row_group_indices: list[int]):
+    def total_rows_in_row_groups(
+        self, list row_group_indices: list[int]
+    ) -> int:
         """Get the total number of top-level rows in the row groups.
 
         Parameters
@@ -190,7 +194,7 @@ cdef class HybridScanReader:
             std_span[const_size_type](indices_vec.data(), indices_vec.size())
         )
 
-    def reset_column_selection(self):
+    def reset_column_selection(self) -> None:
         """Reset the column selection state.
 
         Resets the internal column selection state forcing re-selection of columns in
@@ -203,7 +207,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
-    ):
+    ) -> list[int]:
         """Filter row groups using column chunk statistics.
 
         Parameters
@@ -237,7 +241,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices: list[int],
         ParquetReaderOptions options
-    ):
+    ) -> tuple[list[ByteRangeInfo], list[ByteRangeInfo]]:
         """Get byte ranges of bloom filters and dictionary pages.
 
         Parameters
@@ -273,7 +277,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
-    ):
+    ) -> list[int]:
         """Filter row groups using column chunk dictionary pages.
 
         Parameters
@@ -316,7 +320,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
-    ):
+    ) -> list[int]:
         """Filter row groups using column chunk bloom filters.
 
         Parameters
@@ -359,7 +363,7 @@ cdef class HybridScanReader:
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> Column:
         """Build a boolean column indicating surviving rows from page stats.
 
         Parameters
@@ -394,7 +398,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices: list[int],
         ParquetReaderOptions options
-    ):
+    ) -> list[ByteRangeInfo]:
         """Get byte ranges of column chunks of filter columns.
 
         Parameters
@@ -426,7 +430,7 @@ cdef class HybridScanReader:
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> TableWithMetadata:
         """Materialize filter columns and update the row mask.
 
         Parameters
@@ -478,7 +482,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices: list[int],
         ParquetReaderOptions options
-    ):
+    ) -> list[ByteRangeInfo]:
         """Get byte ranges of column chunks of payload columns.
 
         Parameters
@@ -510,7 +514,7 @@ cdef class HybridScanReader:
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> TableWithMetadata:
         """Materialize payload columns and apply the row mask.
 
         Parameters
@@ -562,7 +566,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices: list[int],
         ParquetReaderOptions options
-    ):
+    ) -> list[ByteRangeInfo]:
         """Get byte ranges of column chunks of all columns.
 
         Parameters
@@ -592,7 +596,7 @@ cdef class HybridScanReader:
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> TableWithMetadata:
         """Materialize all columns.
 
         Parameters
@@ -643,7 +647,7 @@ cdef class HybridScanReader:
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> None:
         """Setup chunking information for filter columns.
 
         Parameters
@@ -694,7 +698,7 @@ cdef class HybridScanReader:
     def materialize_filter_columns_chunk(
         self,
         Column row_mask
-    ):
+    ) -> TableWithMetadata:
         """Materialize a chunk of filter columns.
 
         Parameters
@@ -726,7 +730,7 @@ cdef class HybridScanReader:
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> None:
         """Setup chunking information for payload columns.
 
         Parameters
@@ -777,7 +781,7 @@ cdef class HybridScanReader:
     def materialize_payload_columns_chunk(
         self,
         Column row_mask,
-    ):
+    ) -> TableWithMetadata:
         """Materialize a chunk of payload columns.
 
         Parameters
@@ -802,7 +806,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices: list[int],
         size_t pass_read_limit,
-    ):
+    ) -> list[list[int]]:
         """Partition row groups into passes such that the GPU memory required to
         materialize a pass is bounded by the specified limit.
 
@@ -836,7 +840,7 @@ cdef class HybridScanReader:
             pass_read_limit
         )
 
-    def has_next_table_chunk(self):
+    def has_next_table_chunk(self) -> bool:
         """Check if there is any parquet data left to read.
 
         Returns

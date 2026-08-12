@@ -54,7 +54,7 @@ cdef class AvroReaderOptions:
         avro_builder.source = source
         return avro_builder
 
-    cpdef void set_columns(self, list col_names):
+    cpdef void set_columns(self, list col_names: list[str]):
         """
         Set names of the column to be read.
 
@@ -90,7 +90,7 @@ cdef class AvroReaderOptions:
 
 
 cdef class AvroReaderOptionsBuilder:
-    cpdef AvroReaderOptionsBuilder columns(self, list col_names):
+    cpdef AvroReaderOptionsBuilder columns(self, list col_names: list[str]):
         """
         Set names of the column to be read.
 

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Sequence
 from libc.stdint cimport uintptr_t
 from libcpp.memory cimport make_unique
 from libcpp.pair cimport pair
@@ -193,7 +194,11 @@ cpdef DeviceBuffer create_null_mask(
     return buffer_to_python(move(db), _stream, mr)
 
 
-cpdef tuple bitmask_and(columns, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
+cpdef tuple bitmask_and(
+    columns: Sequence[Column],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Performs bitwise AND of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_and`.
@@ -227,7 +232,11 @@ cpdef tuple bitmask_and(columns, object stream: CudaStreamLike | None = None, De
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
-cpdef tuple bitmask_or(columns, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
+cpdef tuple bitmask_or(
+    columns: Sequence[Column],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Performs bitwise OR of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_or`.

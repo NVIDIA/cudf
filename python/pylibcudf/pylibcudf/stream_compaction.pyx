@@ -44,7 +44,7 @@ __all__ = [
 
 cpdef Table drop_nulls(
     Table source_table,
-    list keys,
+    list keys: list[int],
     size_type keep_threshold,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -84,7 +84,7 @@ cpdef Table drop_nulls(
 
 cpdef Table drop_nans(
     Table source_table,
-    list keys,
+    list keys: list[int],
     size_type keep_threshold,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -198,7 +198,7 @@ cpdef Table apply_deletion_mask(
 
 cpdef Table unique(
     Table input,
-    list keys,
+    list keys: list[int],
     duplicate_keep_option keep,
     null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
@@ -247,7 +247,7 @@ cpdef Table unique(
 
 cpdef Table distinct(
     Table input,
-    list keys,
+    list keys: list[int],
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
@@ -337,7 +337,7 @@ cpdef Column distinct_indices(
 
 cpdef Table stable_distinct(
     Table input,
-    list keys,
+    list keys: list[int],
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,

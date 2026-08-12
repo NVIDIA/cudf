@@ -37,8 +37,8 @@ __all__ = [
 
 cpdef Column sorted_order(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -82,8 +82,8 @@ cpdef Column sorted_order(
 
 cpdef Column stable_sorted_order(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -182,7 +182,10 @@ cpdef Column rank(
 
 
 cpdef bool is_sorted(
-    Table tbl, list column_order, list null_precedence, object stream: CudaStreamLike | None = None
+    Table tbl,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
+    object stream: CudaStreamLike | None = None,
 ):
     """Checks if the table is sorted.
 
@@ -224,8 +227,8 @@ cpdef Table segmented_sort_by_key(
     Table values,
     Table keys,
     Column segment_offsets,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -279,8 +282,8 @@ cpdef Table stable_segmented_sort_by_key(
     Table values,
     Table keys,
     Column segment_offsets,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -334,8 +337,8 @@ cpdef Table stable_segmented_sort_by_key(
 cpdef Table sort_by_key(
     Table values,
     Table keys,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -384,8 +387,8 @@ cpdef Table sort_by_key(
 cpdef Table stable_sort_by_key(
     Table values,
     Table keys,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -433,8 +436,8 @@ cpdef Table stable_sort_by_key(
 
 cpdef Table sort(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -478,8 +481,8 @@ cpdef Table sort(
 
 cpdef Table stable_sort(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):

@@ -161,7 +161,7 @@ cdef class HybridScanReader:
         )
         return list(row_groups)
 
-    def total_rows_in_row_groups(self, list row_group_indices):
+    def total_rows_in_row_groups(self, list row_group_indices: list[int]):
         """Get the total number of top-level rows in the row groups.
 
         Parameters
@@ -189,7 +189,7 @@ cdef class HybridScanReader:
 
     def filter_row_groups_with_stats(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
     ):
@@ -224,7 +224,7 @@ cdef class HybridScanReader:
 
     def secondary_filters_byte_ranges(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options
     ):
         """Get byte ranges of bloom filters and dictionary pages.
@@ -259,7 +259,7 @@ cdef class HybridScanReader:
     def filter_row_groups_with_dictionary_pages(
         self,
         list dictionary_page_data,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
     ):
@@ -302,7 +302,7 @@ cdef class HybridScanReader:
     def filter_row_groups_with_bloom_filters(
         self,
         list bloom_filter_data,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
     ):
@@ -344,7 +344,7 @@ cdef class HybridScanReader:
 
     def build_row_mask_with_page_index_stats(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -381,7 +381,7 @@ cdef class HybridScanReader:
 
     def filter_column_chunks_byte_ranges(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options
     ):
         """Get byte ranges of column chunks of filter columns.
@@ -408,7 +408,7 @@ cdef class HybridScanReader:
 
     def materialize_filter_columns(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         list column_chunk_data,
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
@@ -465,7 +465,7 @@ cdef class HybridScanReader:
 
     def payload_column_chunks_byte_ranges(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options
     ):
         """Get byte ranges of column chunks of payload columns.
@@ -492,7 +492,7 @@ cdef class HybridScanReader:
 
     def materialize_payload_columns(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         list column_chunk_data,
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
@@ -549,7 +549,7 @@ cdef class HybridScanReader:
 
     def all_column_chunks_byte_ranges(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         ParquetReaderOptions options
     ):
         """Get byte ranges of column chunks of all columns.
@@ -576,7 +576,7 @@ cdef class HybridScanReader:
 
     def materialize_all_columns(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         list column_chunk_data,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
@@ -625,7 +625,7 @@ cdef class HybridScanReader:
         self,
         size_t chunk_read_limit,
         size_t pass_read_limit,
-        list row_group_indices,
+        list row_group_indices: list[int],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
         list column_chunk_data,
@@ -708,7 +708,7 @@ cdef class HybridScanReader:
         self,
         size_t chunk_read_limit,
         size_t pass_read_limit,
-        list row_group_indices,
+        list row_group_indices: list[int],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
         list column_chunk_data,
@@ -789,7 +789,7 @@ cdef class HybridScanReader:
 
     def construct_row_group_passes(
         self,
-        list row_group_indices,
+        list row_group_indices: list[int],
         size_t pass_read_limit,
     ):
         """Partition row groups into passes such that the GPU memory required to

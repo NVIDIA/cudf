@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from cython.operator cimport dereference
 
 from cpython.pycapsule cimport (
@@ -77,7 +78,7 @@ cdef class Table:
     """
     __hash__ = None
 
-    def __init__(self, columns, num_rows=None):
+    def __init__(self, columns: Sequence[Column], num_rows=None):
         columns = tuple(columns)
         if not all(isinstance(c, Column) for c in columns):
             raise ValueError("All columns must be pylibcudf Column objects")

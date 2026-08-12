@@ -88,7 +88,7 @@ cdef class CsvReaderOptions:
         """
         self.c_obj.set_header(header)
 
-    cpdef void set_names(self, list col_names):
+    cpdef void set_names(self, list col_names: list[str]):
         """
         Sets names of the column.
 
@@ -121,7 +121,7 @@ cdef class CsvReaderOptions:
         """
         self.c_obj.set_prefix(prefix.encode())
 
-    cpdef void set_use_cols_indexes(self, list col_indices):
+    cpdef void set_use_cols_indexes(self, list col_indices: list[int]):
         """
         Sets indexes of columns to read.
 
@@ -139,7 +139,7 @@ cdef class CsvReaderOptions:
             vec.push_back(i)
         self.c_obj.set_use_cols_indexes(vec)
 
-    cpdef void set_use_cols_names(self, list col_names):
+    cpdef void set_use_cols_names(self, list col_names: list[str]):
         """
         Sets names of the columns to be read.
 
@@ -202,7 +202,7 @@ cdef class CsvReaderOptions:
         """
         self.c_obj.set_comment(ord(comment))
 
-    cpdef void set_parse_dates(self, list val):
+    cpdef void set_parse_dates(self, list val: list[int | str]):
         """
         Sets indexes or names of columns to read as datetime.
 
@@ -228,7 +228,7 @@ cdef class CsvReaderOptions:
             self.c_obj.set_parse_dates(vec_str)
             self.c_obj.set_parse_dates(vec_int)
 
-    cpdef void set_parse_hex(self, list val):
+    cpdef void set_parse_hex(self, list val: list[int | str]):
         """
         Sets indexes or names of columns to parse as hexadecimal.
 
@@ -255,7 +255,7 @@ cdef class CsvReaderOptions:
             self.c_obj.set_parse_hex(vec_str)
             self.c_obj.set_parse_hex(vec_int)
 
-    cpdef void set_dtypes(self, object types):
+    cpdef void set_dtypes(self, object types: dict[str, DataType] | list[DataType]):
         """
         Sets per-column types.
 
@@ -282,7 +282,7 @@ cdef class CsvReaderOptions:
         else:
             raise TypeError("Must pass an dict or list")
 
-    cpdef void set_true_values(self, list true_values):
+    cpdef void set_true_values(self, list true_values: list[str]):
         """
         Sets additional values to recognize as boolean true values.
 
@@ -300,7 +300,7 @@ cdef class CsvReaderOptions:
             vec.push_back(val.encode())
         self.c_obj.set_true_values(vec)
 
-    cpdef void set_false_values(self, list false_values):
+    cpdef void set_false_values(self, list false_values: list[str]):
         """
         Sets additional values to recognize as boolean false values.
 
@@ -318,7 +318,7 @@ cdef class CsvReaderOptions:
             vec.push_back(val.encode())
         self.c_obj.set_false_values(vec)
 
-    cpdef void set_na_values(self, list na_values):
+    cpdef void set_na_values(self, list na_values: list[str]):
         """
         Sets additional values to recognize as null values.
 

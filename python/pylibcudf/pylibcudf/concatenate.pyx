@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -21,7 +22,11 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["concatenate"]
 
-cpdef concatenate(objects, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
+cpdef concatenate(
+    objects: Sequence[Column] | Sequence[Table],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Concatenate columns or tables.
 
     Parameters

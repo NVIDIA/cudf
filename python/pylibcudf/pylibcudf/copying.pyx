@@ -452,7 +452,11 @@ cpdef Column shift(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef list slice(ColumnOrTable input, list indices, object stream: CudaStreamLike | None = None):
+cpdef list slice(
+    ColumnOrTable input,
+    list indices: list[int],
+    object stream: CudaStreamLike | None = None,
+):
     """Slice input according to indices.
 
     For details on the implementation, see :cpp:func:`slice`.
@@ -509,7 +513,11 @@ cpdef list slice(ColumnOrTable input, list indices, object stream: CudaStreamLik
         ]
 
 
-cpdef list split(ColumnOrTable input, list splits, object stream: CudaStreamLike | None = None):
+cpdef list split(
+    ColumnOrTable input,
+    list splits: list[int],
+    object stream: CudaStreamLike | None = None,
+):
     """Split input into multiple.
 
     For details on the implementation, see :cpp:func:`split`.

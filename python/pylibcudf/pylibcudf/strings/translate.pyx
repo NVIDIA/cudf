@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Mapping
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
 from libcpp.utility cimport move
@@ -46,7 +47,10 @@ cdef vector[pair[char_utf8, char_utf8]] _table_to_c_table(dict table):
 
 
 cpdef Column translate(
-    Column input, dict chars_table, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
+    Column input,
+    dict chars_table: Mapping[int | str, int | str],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
 ):
     """
     Translates individual characters within each string.
@@ -88,7 +92,7 @@ cpdef Column translate(
 
 cpdef Column filter_characters(
     Column input,
-    dict characters_to_filter,
+    dict characters_to_filter: Mapping[int | str, int | str],
     filter_type keep_characters,
     Scalar replacement,
     object stream: CudaStreamLike | None = None,

@@ -71,7 +71,7 @@ cdef class ParseOptions:
     def __init__(
         self,
         *,
-        byte_range=None,
+        byte_range: tuple[int, int] | None = None,
         strip_delimiters=False,
     ):
         self.c_options = cpp_text.parse_options()

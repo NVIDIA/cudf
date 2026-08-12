@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterable
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
@@ -28,7 +29,7 @@ __all__ = ["quantile", "quantiles"]
 
 cpdef Column quantile(
     Column input,
-    vector[double] q,
+    vector[double] q: Iterable[float],
     interpolation interp = interpolation.LINEAR,
     Column ordered_indices = None,
     bool exact=True,
@@ -98,7 +99,7 @@ cpdef Column quantile(
 
 cpdef Table quantiles(
     Table input,
-    vector[double] q,
+    vector[double] q: Iterable[float],
     interpolation interp = interpolation.NEAREST,
     sorted is_input_sorted = sorted.NO,
     list column_order = None,

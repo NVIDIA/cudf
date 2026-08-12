@@ -20,10 +20,10 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["merge"]
 
 cpdef Table merge (
-    list tables_to_merge,
-    list key_cols,
-    list column_order,
-    list null_precedence,
+    list tables_to_merge: list[Table],
+    list key_cols: list[int],
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from cython.operator cimport dereference
 
 from libcpp.memory cimport unique_ptr
@@ -293,7 +294,7 @@ cpdef Column mask_to_bools(
 
 
 cpdef Column transform(
-    inputs,
+    inputs: Sequence[Column],
     str transform_udf,
     DataType output_type,
     bool is_ptx,

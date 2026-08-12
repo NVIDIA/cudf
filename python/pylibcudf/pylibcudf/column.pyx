@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterable, Sequence
 from cython.operator cimport dereference
 
 from cpython.exc cimport PyErr_Occurred
@@ -364,7 +365,7 @@ cdef class Column:
     def __init__(
         self, DataType data_type not None, size_type size, object data,
         object mask, size_type null_count, size_type offset,
-        children, bint validate=True
+        children: Iterable[Column], bint validate=True
     ):
         children = list(children)
         if not all(isinstance(c, Column) for c in children):
@@ -622,7 +623,7 @@ cdef class Column:
         DeviceBuffer buff,
         DataType dtype,
         size_type size,
-        children,
+        children: Iterable[Column],
     ):
         """
         Create a Column from an RMM DeviceBuffer.

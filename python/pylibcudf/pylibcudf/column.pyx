@@ -992,7 +992,11 @@ cdef class Column:
         return nested
 
     @classmethod
-    def from_array_interface(cls, obj, object stream: CudaStreamLike | None = None):
+    def from_array_interface(
+        cls,
+        obj: SupportsArrayInterface,
+        object stream: CudaStreamLike | None = None,
+    ):
         """
         Create a Column from an object implementing the NumPy Array Interface.
 
@@ -1046,7 +1050,11 @@ cdef class Column:
         )
 
     @classmethod
-    def from_cuda_array_interface(cls, obj, object stream: CudaStreamLike | None = None):
+    def from_cuda_array_interface(
+        cls,
+        obj: SupportsCudaArrayInterface,
+        object stream: CudaStreamLike | None = None,
+    ):
         """
         Create a Column from an object implementing the CUDA Array Interface.
 
@@ -1085,7 +1093,11 @@ cdef class Column:
         )
 
     @classmethod
-    def from_array(cls, obj, object stream: CudaStreamLike | None = None):
+    def from_array(
+        cls,
+        obj: SupportsCudaArrayInterface | SupportsArrayInterface,
+        object stream: CudaStreamLike | None = None,
+    ):
         """
         Create a Column from any object which supports the NumPy
         or CUDA array interface.

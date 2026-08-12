@@ -7,6 +7,8 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/tdigest/tdigest_column_view.hpp>
 
+#include <cstdint>
+
 namespace cudf {
 namespace tdigest {
 namespace detail {

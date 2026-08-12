@@ -222,7 +222,7 @@ struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixture {
 
   cudf::memory_resources resources() { return _harness.resources(); }
 
-  void disable_current_device_resource_use() { _fail_on_current.reset(); }
+  void enable_current_device_resource_use() { _fail_on_current.reset(); }
 
   /**
    * @brief Validate that the harness owns the given result.
@@ -435,7 +435,7 @@ TYPED_TEST(FixedWidthColumnWrapperTest, NullablePairListConstructorAllNullMatch)
   cudf::column_view view = col;
 
   // TODO: Remove once equality row preprocessing uses the supplied memory resources.
-  this->disable_current_device_resource_use();
+  this->enable_current_device_resource_use();
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,
@@ -542,7 +542,7 @@ TYPED_TEST(StringsColumnWrapperTest, NullablePairListConstructorAllNullMatch)
   cudf::column_view view = col;
 
   // TODO: Remove once equality row preprocessing uses the supplied memory resources.
-  this->disable_current_device_resource_use();
+  this->enable_current_device_resource_use();
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,

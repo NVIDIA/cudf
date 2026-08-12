@@ -166,7 +166,9 @@ rmm::device_buffer make_elements(InputIterator begin,
   auto transform_begin = thrust::make_transform_iterator(begin, transformer);
   auto const size      = cudf::distance(begin, end);
   auto const elements  = thrust::host_vector<ElementTo>(transform_begin, transform_begin + size);
-  return rmm::device_buffer{elements.data(), size * sizeof(ElementTo), stream, mr.get_output_mr()};
+  rmm::device_buffer buffer{elements.data(), size * sizeof(ElementTo), stream, mr.get_output_mr()};
+  stream.synchronize();  // wait for async H2D before host source is destroyed
+  return buffer;
 }
 
 // The two signatures below are identical to the above overload apart from
@@ -200,7 +202,9 @@ rmm::device_buffer make_elements(InputIterator begin,
   auto transform_begin = thrust::make_transform_iterator(begin, transformer);
   auto const size      = cudf::distance(begin, end);
   auto const elements  = thrust::host_vector<RepType>(transform_begin, transform_begin + size);
-  return rmm::device_buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
+  rmm::device_buffer buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
+  stream.synchronize();  // wait for async H2D before host source is destroyed
+  return buffer;
 }
 
 /**
@@ -235,7 +239,9 @@ rmm::device_buffer make_elements(InputIterator begin,
   auto transformer_begin = thrust::make_transform_iterator(begin, to_rep);
   auto const size        = cudf::distance(begin, end);
   auto const elements = thrust::host_vector<RepType>(transformer_begin, transformer_begin + size);
-  return rmm::device_buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
+  rmm::device_buffer buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
+  stream.synchronize();  // wait for async H2D before host source is destroyed
+  return buffer;
 }
 //! @endcond
 
@@ -295,10 +301,11 @@ std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(
   cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
 {
   auto [null_mask, null_count] = make_null_mask_vector(begin, end);
-  auto d_mask                  = rmm::device_buffer{null_mask.data(),
-                                   cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)),
-                                   stream,
-                                   mr.get_output_mr()};
+  rmm::device_buffer d_mask{null_mask.data(),
+                            cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)),
+                            stream,
+                            mr.get_output_mr()};
+  stream.synchronize();  // wait for async H2D before host source is destroyed
   return {std::move(d_mask), null_count};
 }
 
@@ -616,13 +623,9 @@ class fixed_point_column_wrapper : public detail::column_wrapper {
     auto const elements  = thrust::host_vector<Rep>(begin, end);
     auto const id        = type_to_id<numeric::fixed_point<Rep, numeric::Radix::BASE_10>>();
     auto const data_type = cudf::data_type{id, static_cast<int32_t>(scale)};
-
-    wrapped.reset(new cudf::column{
-      data_type,
-      size,
-      rmm::device_buffer{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()},
-      rmm::device_buffer{},
-      0});
+    rmm::device_buffer data{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()};
+    wrapped.reset(new cudf::column{data_type, size, std::move(data), rmm::device_buffer{}, 0});
+    stream.synchronize();  // wait for async H2D before host source is destroyed
   }
 
   /**
@@ -692,12 +695,10 @@ class fixed_point_column_wrapper : public detail::column_wrapper {
     auto const id                = type_to_id<numeric::fixed_point<Rep, numeric::Radix::BASE_10>>();
     auto const data_type         = cudf::data_type{id, static_cast<int32_t>(scale)};
     auto [null_mask, null_count] = detail::make_null_mask(v, v + size, stream, mr);
-    wrapped.reset(new cudf::column{
-      data_type,
-      size,
-      rmm::device_buffer{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()},
-      std::move(null_mask),
-      null_count});
+    rmm::device_buffer data{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()};
+    wrapped.reset(
+      new cudf::column{data_type, size, std::move(data), std::move(null_mask), null_count});
+    stream.synchronize();  // wait for async H2D before host source is destroyed
   }
 
   /**

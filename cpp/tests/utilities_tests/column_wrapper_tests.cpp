@@ -16,8 +16,6 @@
 
 #include <cuda/iterator>
 
-#include <optional>
-
 using cudf::test::expect_output_uses_distinct_resources;
 using cudf::test::temporary_allocation_expectation;
 
@@ -206,24 +204,7 @@ TEST(DictionaryColumnWrapperMemoryResourceTest, StringDistinctOutputAndTemporary
     uses_temporary);
 }
 
-/**
- * @brief Base fixture that instruments column-wrapper tests with a memory-resource harness.
- *
- * Each test instantiates a fresh harness. The failing current-device-resource scope is installed
- * after `_harness` so accidental fallback to the default MR fails the test. Tests should construct
- * wrappers with `resources()` and pass the released column to `validate_with_harness()` before
- * returning. `TearDown` asserts that no output or temporary allocations remain live; the prior
- * current resource is restored when the optional scope is reset or destroyed.
- */
-struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixture {
-  void TearDown() override { _harness.expect_no_live_allocations(this->stream()); }
-
-  rmm::cuda_stream_view stream() const { return cudf::test::get_default_stream(); }
-
-  cudf::memory_resources resources() { return _harness.resources(); }
-
-  void enable_current_device_resource_use() { _fail_on_current.reset(); }
-
+struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixtureWithHarness {
   /**
    * @brief Validate that the harness owns the given result.
    *
@@ -235,11 +216,6 @@ struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixture {
   {
     _harness.expect_resource_usage(col->alloc_size(), {}, this->stream());
   }
-
- private:
-  cudf::test::memory_resource_test_harness _harness{};
-  std::optional<cudf::test::scoped_current_device_resource> _fail_on_current{
-    _harness.fail_on_current_device_resource_use()};
 };
 
 template <typename T>

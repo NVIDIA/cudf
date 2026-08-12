@@ -2039,6 +2039,12 @@ class lists_column_wrapper : public detail::column_wrapper {
 };
 
 /**
+ * @brief True when `T` is convertible to `rmm::cuda_stream_view`.
+ */
+template <typename T>
+concept convertible_to_cuda_stream_view = std::is_convertible_v<T&, rmm::cuda_stream_view>;
+
+/**
  * @brief `column_wrapper` derived class for wrapping columns of structs.
  */
 class structs_column_wrapper : public detail::column_wrapper {
@@ -2155,13 +2161,13 @@ class structs_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename V,
-            std::enable_if_t<!std::is_convertible_v<V&, rmm::cuda_stream_view>>* = nullptr>
+  template <typename V>
   structs_column_wrapper(
     std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
     V validity_iter,
     rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
     cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+    requires(!convertible_to_cuda_stream_view<V>)
   {
     std::vector<std::unique_ptr<cudf::column>> child_columns;
     child_columns.reserve(child_column_wrappers.size());

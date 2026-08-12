@@ -31,6 +31,7 @@ from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span, host_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from pylibcudf.utils import CudaStreamLike
 
 from pylibcudf.span import is_span
 from pylibcudf.io.parquet_metadata import FileMetaData
@@ -190,7 +191,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices,
         ParquetReaderOptions options,
-        object stream=None
+        object stream: CudaStreamLike | None = None
     ):
         """Filter row groups using column chunk statistics.
 
@@ -260,7 +261,7 @@ cdef class HybridScanReader:
         list dictionary_page_data,
         list row_group_indices,
         ParquetReaderOptions options,
-        object stream=None
+        object stream: CudaStreamLike | None = None
     ):
         """Filter row groups using column chunk dictionary pages.
 
@@ -303,7 +304,7 @@ cdef class HybridScanReader:
         list bloom_filter_data,
         list row_group_indices,
         ParquetReaderOptions options,
-        object stream=None
+        object stream: CudaStreamLike | None = None
     ):
         """Filter row groups using column chunk bloom filters.
 
@@ -345,7 +346,7 @@ cdef class HybridScanReader:
         self,
         list row_group_indices,
         ParquetReaderOptions options,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         """Build a boolean column indicating surviving rows from page stats.
@@ -412,7 +413,7 @@ cdef class HybridScanReader:
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
         ParquetReaderOptions options,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         """Materialize filter columns and update the row mask.
@@ -496,7 +497,7 @@ cdef class HybridScanReader:
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
         ParquetReaderOptions options,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         """Materialize payload columns and apply the row mask.
@@ -578,7 +579,7 @@ cdef class HybridScanReader:
         list row_group_indices,
         list column_chunk_data,
         ParquetReaderOptions options,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         """Materialize all columns.
@@ -629,7 +630,7 @@ cdef class HybridScanReader:
         cpp_use_data_page_mask mask_data_pages,
         list column_chunk_data,
         ParquetReaderOptions options,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         """Setup chunking information for filter columns.
@@ -712,7 +713,7 @@ cdef class HybridScanReader:
         cpp_use_data_page_mask mask_data_pages,
         list column_chunk_data,
         ParquetReaderOptions options,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         """Setup chunking information for payload columns.

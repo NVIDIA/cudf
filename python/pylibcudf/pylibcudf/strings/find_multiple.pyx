@@ -10,6 +10,7 @@ from pylibcudf.libcudf.strings cimport find_multiple as cpp_find_multiple
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.table cimport Table
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -19,7 +20,7 @@ __all__ = ["find_multiple", "contains_multiple"]
 cpdef Column find_multiple(
     Column input,
     Column targets,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -62,7 +63,7 @@ cpdef Column find_multiple(
 cpdef Table contains_multiple(
     Column input,
     Column targets,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

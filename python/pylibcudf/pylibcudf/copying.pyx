@@ -40,6 +40,7 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _as_vector, _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -65,7 +66,7 @@ cpdef Table gather(
     Table source_table,
     Column gather_map,
     out_of_bounds_policy bounds_policy,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Select rows from source_table according to the provided gather_map.
@@ -117,7 +118,7 @@ cpdef Table scatter(
     TableOrListOfScalars source,
     Column scatter_map,
     Table target_table,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Scatter from source into target_table according to scatter_map.
@@ -195,7 +196,7 @@ cpdef Table scatter(
 
 
 cpdef ColumnOrTable empty_like(
-    ColumnOrTable input, object stream=None, DeviceMemoryResource mr=None
+    ColumnOrTable input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Create an empty column or table with the same type as ``input``.
 
@@ -236,7 +237,7 @@ cpdef Column allocate_like(
     Column input_column,
     mask_allocation_policy policy,
     size=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Allocate a column with the same type as input_column.
@@ -286,7 +287,7 @@ cpdef Column copy_range_in_place(
     size_type input_begin,
     size_type input_end,
     size_type target_begin,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Copy a range of elements from input_column to target_column.
 
@@ -344,7 +345,7 @@ cpdef Column copy_range(
     size_type input_begin,
     size_type input_end,
     size_type target_begin,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copy a range of elements from input_column to target_column.
@@ -404,7 +405,7 @@ cpdef Column shift(
     Column input,
     size_type offset,
     Scalar fill_value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Shift the elements of input by offset.
@@ -451,7 +452,7 @@ cpdef Column shift(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef list slice(ColumnOrTable input, list indices, object stream=None):
+cpdef list slice(ColumnOrTable input, list indices, object stream: CudaStreamLike | None = None):
     """Slice input according to indices.
 
     For details on the implementation, see :cpp:func:`slice`.
@@ -508,7 +509,7 @@ cpdef list slice(ColumnOrTable input, list indices, object stream=None):
         ]
 
 
-cpdef list split(ColumnOrTable input, list splits, object stream=None):
+cpdef list split(ColumnOrTable input, list splits, object stream: CudaStreamLike | None = None):
     """Split input into multiple.
 
     For details on the implementation, see :cpp:func:`split`.
@@ -561,7 +562,7 @@ cpdef Column copy_if_else(
     LeftCopyIfElseOperand lhs,
     RightCopyIfElseOperand rhs,
     Column boolean_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copy elements from lhs or rhs into a new column according to boolean_mask.
@@ -656,7 +657,7 @@ cpdef Table boolean_mask_scatter(
     TableOrListOfScalars input,
     Table target,
     Column boolean_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Scatter rows from input into target according to boolean_mask.
@@ -733,7 +734,7 @@ cpdef Table boolean_mask_scatter(
 cpdef Scalar get_element(
     Column input_column,
     size_type index,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Get the element at index from input_column.

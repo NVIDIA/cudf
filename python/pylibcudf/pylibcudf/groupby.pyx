@@ -28,6 +28,7 @@ from .column cimport Column
 from .table cimport Table
 from .types cimport null_order, null_policy, order, sorted
 from .utils cimport _as_vector, _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -163,7 +164,7 @@ cdef class GroupBy:
         return group_keys, results
 
     cpdef tuple aggregate(
-        self, list requests, object stream=None, DeviceMemoryResource mr=None
+        self, list requests, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
     ):
         """Compute aggregations on columns.
 
@@ -204,7 +205,7 @@ cdef class GroupBy:
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
     cpdef tuple scan(
-        self, list requests, object stream=None, DeviceMemoryResource mr=None
+        self, list requests, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
     ):
         """Compute scans on columns.
 
@@ -248,7 +249,7 @@ cdef class GroupBy:
         Table values,
         list offset,
         list fill_values,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         """Compute shifts on columns.
@@ -300,7 +301,7 @@ cdef class GroupBy:
         self,
         Table value,
         list replace_policies,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         """Replace nulls in columns.
@@ -341,7 +342,7 @@ cdef class GroupBy:
         )
 
     cpdef tuple get_groups(
-        self, Table values=None, object stream=None, DeviceMemoryResource mr=None
+        self, Table values=None, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
     ):
         """Get the grouped keys and values labels for each row.
 

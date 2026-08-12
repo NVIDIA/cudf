@@ -31,6 +31,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .column cimport Column
 from .scalar cimport Scalar
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -51,7 +52,7 @@ __all__ = [
 cpdef Column extract_datetime_component(
     Column input,
     datetime_component component,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -89,7 +90,7 @@ cpdef Column extract_datetime_component(
 cpdef Column ceil_datetimes(
     Column input,
     rounding_frequency freq,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -125,7 +126,7 @@ cpdef Column ceil_datetimes(
 cpdef Column floor_datetimes(
     Column input,
     rounding_frequency freq,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -161,7 +162,7 @@ cpdef Column floor_datetimes(
 cpdef Column round_datetimes(
     Column input,
     rounding_frequency freq,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -197,7 +198,7 @@ cpdef Column round_datetimes(
 cpdef Column add_calendrical_months(
     Column input,
     ColumnOrScalar months,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -247,7 +248,7 @@ cpdef Column add_calendrical_months(
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column day_of_year(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Computes the day number since the start of
@@ -280,7 +281,7 @@ cpdef Column day_of_year(
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column is_leap_year(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Check if the year of the given date is a leap year.
@@ -312,7 +313,7 @@ cpdef Column is_leap_year(
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column last_day_of_month(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Computes the last day of the month.
@@ -344,7 +345,7 @@ cpdef Column last_day_of_month(
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column extract_quarter(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns the quarter (ie. a value from {1, 2, 3, 4})
@@ -376,7 +377,7 @@ cpdef Column extract_quarter(
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column days_in_month(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Extract the number of days in the month.

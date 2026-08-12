@@ -12,6 +12,7 @@ from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.table cimport Table
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -33,7 +34,7 @@ cpdef Table split(
     Column strings_column,
     Scalar delimiter,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -87,7 +88,7 @@ cpdef Table rsplit(
     Column strings_column,
     Scalar delimiter,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -140,7 +141,7 @@ cpdef Column split_record(
     Column strings,
     Scalar delimiter,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -190,7 +191,7 @@ cpdef Column rsplit_record(
     Column strings,
     Scalar delimiter,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -241,7 +242,7 @@ cpdef Table split_re(
     Column input,
     RegexProgram prog,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -288,7 +289,7 @@ cpdef Table rsplit_re(
     Column input,
     RegexProgram prog,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -336,7 +337,7 @@ cpdef Column split_record_re(
     Column input,
     RegexProgram prog,
     size_type maxsplit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -380,7 +381,7 @@ cpdef Column split_record_re(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column rsplit_record_re(
-    Column input, RegexProgram prog, size_type maxsplit, object stream=None,
+    Column input, RegexProgram prog, size_type maxsplit, object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -425,7 +426,7 @@ cpdef Column rsplit_record_re(
 
 
 cpdef Column split_part(
-    Column input, Scalar delimiter, size_type index, object stream=None,
+    Column input, Scalar delimiter, size_type index, object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     cdef unique_ptr[column] c_result

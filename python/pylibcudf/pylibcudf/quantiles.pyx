@@ -21,6 +21,7 @@ from .column cimport Column
 from .table cimport Table
 from .types cimport interpolation
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["quantile", "quantiles"]
@@ -31,7 +32,7 @@ cpdef Column quantile(
     interpolation interp = interpolation.LINEAR,
     Column ordered_indices = None,
     bool exact=True,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes quantiles with interpolation.
@@ -102,7 +103,7 @@ cpdef Table quantiles(
     sorted is_input_sorted = sorted.NO,
     list column_order = None,
     list null_precedence = None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes row quantiles with interpolation.

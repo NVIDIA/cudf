@@ -18,6 +18,7 @@ from pylibcudf.libcudf.unary import \
 from .column cimport Column
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -33,7 +34,7 @@ __all__ = [
 ]
 
 cpdef Column unary_operation(
-    Column input, unary_operator op, object stream=None, DeviceMemoryResource mr=None
+    Column input, unary_operator op, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Perform a unary operation on a column.
 
@@ -70,7 +71,7 @@ cpdef Column unary_operation(
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef Column is_null(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_null(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Check whether elements of a column are null.
 
     For details, see :cpp:func:`is_null`.
@@ -102,7 +103,7 @@ cpdef Column is_null(Column input, object stream=None, DeviceMemoryResource mr=N
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef Column is_valid(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_valid(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Check whether elements of a column are valid.
 
     For details, see :cpp:func:`is_valid`.
@@ -135,7 +136,7 @@ cpdef Column is_valid(Column input, object stream=None, DeviceMemoryResource mr=
 
 
 cpdef Column cast(
-    Column input, DataType data_type, object stream=None, DeviceMemoryResource mr=None
+    Column input, DataType data_type, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Cast a column to a different data type.
 
@@ -173,7 +174,7 @@ cpdef Column cast(
 
 
 cpdef Column bit_cast(
-    Column input, DataType data_type, object stream=None, DeviceMemoryResource mr=None
+    Column input, DataType data_type, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Bit-cast a column to a different data type.
 
@@ -210,7 +211,7 @@ cpdef Column bit_cast(
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef Column is_nan(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_nan(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Check whether elements of a column are nan.
 
     For details, see :cpp:func:`is_nan`.
@@ -242,7 +243,7 @@ cpdef Column is_nan(Column input, object stream=None, DeviceMemoryResource mr=No
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef Column is_not_nan(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_not_nan(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Check whether elements of a column are not nan.
 
     For details, see :cpp:func:`is_not_nan`.

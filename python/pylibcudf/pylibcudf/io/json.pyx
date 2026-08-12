@@ -46,6 +46,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.types cimport DataType
 
 from pylibcudf.utils cimport _get_stream
+from pylibcudf.utils import CudaStreamLike
 
 from cython.operator import dereference
 
@@ -706,7 +707,7 @@ cdef class JsonReaderOptionsBuilder:
 cpdef tuple chunked_read_json(
     JsonReaderOptions options,
     int chunk_size=100_000_000,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None,
 ):
     """
@@ -775,7 +776,7 @@ cpdef tuple chunked_read_json(
 
 cpdef TableWithMetadata read_json(
     JsonReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None
 ):
     """
@@ -814,7 +815,7 @@ cpdef TableWithMetadata read_json_from_string_column(
     list dtypes = None,
     compression_type compression = compression_type.NONE,
     json_recovery_mode_t recovery_mode = json_recovery_mode_t.RECOVER_WITH_NULL,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None
 ):
     """
@@ -1096,7 +1097,7 @@ cdef class JsonWriterOptionsBuilder:
         return json_options
 
 
-cpdef void write_json(JsonWriterOptions options, object stream = None):
+cpdef void write_json(JsonWriterOptions options, object stream: CudaStreamLike | None = None):
     """
     Writes a set of columns to JSON format.
 

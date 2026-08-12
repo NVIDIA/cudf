@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -9,6 +9,7 @@ from libcpp.utility cimport move
 
 from pylibcudf.column cimport Column
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from pylibcudf.libcudf.column.column cimport column
@@ -194,7 +195,7 @@ cpdef Column multibyte_split(
     DataChunkSource source,
     str delimiter,
     ParseOptions options=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

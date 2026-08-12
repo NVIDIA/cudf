@@ -15,6 +15,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["contains", "lower_bound", "upper_bound"]
@@ -24,7 +25,7 @@ cpdef Column lower_bound(
     Table needles,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Find smallest indices in haystack where needles may be inserted to retain order.
@@ -78,7 +79,7 @@ cpdef Column upper_bound(
     Table needles,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Find largest indices in haystack where needles may be inserted to retain order.
@@ -128,7 +129,7 @@ cpdef Column upper_bound(
 
 
 cpdef Column contains(
-    Column haystack, Column needles, object stream=None, DeviceMemoryResource mr=None
+    Column haystack, Column needles, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Check whether needles are present in haystack.
 

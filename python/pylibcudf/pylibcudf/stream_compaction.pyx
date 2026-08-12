@@ -26,6 +26,7 @@ from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -45,7 +46,7 @@ cpdef Table drop_nulls(
     Table source_table,
     list keys,
     size_type keep_threshold,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table based on the presence of nulls.
@@ -85,7 +86,7 @@ cpdef Table drop_nans(
     Table source_table,
     list keys,
     size_type keep_threshold,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table based on the presence of NaNs.
@@ -124,7 +125,7 @@ cpdef Table drop_nans(
 cpdef Table apply_boolean_mask(
     Table source_table,
     Column boolean_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table based on a boolean mask.
@@ -161,7 +162,7 @@ cpdef Table apply_boolean_mask(
 cpdef Table apply_deletion_mask(
     Table source_table,
     Column deletion_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table using a deletion mask.
@@ -200,7 +201,7 @@ cpdef Table unique(
     list keys,
     duplicate_keep_option keep,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filter duplicate consecutive rows from the input table.
@@ -250,7 +251,7 @@ cpdef Table distinct(
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Get the distinct rows from the input table.
@@ -297,7 +298,7 @@ cpdef Column distinct_indices(
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Get the indices of the distinct rows from the input table.
@@ -340,7 +341,7 @@ cpdef Table stable_distinct(
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Get the distinct rows from the input table, preserving input order.
@@ -386,7 +387,7 @@ cpdef Table filter(
     Table predicate_table,
     Expression predicate_expr,
     Table filter_table,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters a table using a predicate expression.

@@ -15,6 +15,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["Inclusive", "label_bins"]
@@ -25,7 +26,7 @@ cpdef Column label_bins(
     inclusive left_inclusive,
     Column right_edges,
     inclusive right_inclusive,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Labels elements based on membership in the specified bins.

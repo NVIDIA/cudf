@@ -17,6 +17,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -38,7 +39,7 @@ cpdef Column sorted_order(
     Table source_table,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the row indices required to sort the table.
@@ -83,7 +84,7 @@ cpdef Column stable_sorted_order(
     Table source_table,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the row indices required to sort the table,
@@ -132,7 +133,7 @@ cpdef Column rank(
     null_policy null_handling,
     null_order null_precedence,
     bool percentage,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the rank of each element in the column.
@@ -181,7 +182,7 @@ cpdef Column rank(
 
 
 cpdef bool is_sorted(
-    Table tbl, list column_order, list null_precedence, object stream=None
+    Table tbl, list column_order, list null_precedence, object stream: CudaStreamLike | None = None
 ):
     """Checks if the table is sorted.
 
@@ -225,7 +226,7 @@ cpdef Table segmented_sort_by_key(
     Column segment_offsets,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sorts the table by key, within segments.
@@ -280,7 +281,7 @@ cpdef Table stable_segmented_sort_by_key(
     Column segment_offsets,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sorts the table by key preserving order of equal elements,
@@ -335,7 +336,7 @@ cpdef Table sort_by_key(
     Table keys,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sorts the table by key.
@@ -385,7 +386,7 @@ cpdef Table stable_sort_by_key(
     Table keys,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sorts the table by key preserving order of equal elements.
@@ -434,7 +435,7 @@ cpdef Table sort(
     Table source_table,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sorts the table.
@@ -479,7 +480,7 @@ cpdef Table stable_sort(
     Table source_table,
     list column_order,
     list null_precedence,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sorts the table preserving order of equal elements.
@@ -524,7 +525,7 @@ cpdef Column top_k(
     Column col,
     size_type k,
     order sort_order = order.DESCENDING,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -569,7 +570,7 @@ cpdef Column top_k_order(
     Column col,
     size_type k,
     order sort_order = order.DESCENDING,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

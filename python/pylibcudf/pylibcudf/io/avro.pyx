@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.string cimport string
@@ -19,6 +19,7 @@ from pylibcudf.libcudf.io.avro cimport (
 from pylibcudf.libcudf.types cimport size_type
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 
 
 __all__ = ["read_avro", "AvroReaderOptions", "AvroReaderOptionsBuilder"]
@@ -153,7 +154,7 @@ cdef class AvroReaderOptionsBuilder:
 
 cpdef TableWithMetadata read_avro(
     AvroReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

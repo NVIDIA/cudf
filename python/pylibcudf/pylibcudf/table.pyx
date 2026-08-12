@@ -34,6 +34,7 @@ from pylibcudf.libcudf.types cimport size_type
 from .column cimport Column
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from pylibcudf._interop_helpers cimport (
     _release_schema,
     _release_array,
@@ -127,7 +128,7 @@ cdef class Table:
     def from_arrow(
         obj: ArrowLike,
         dtype: DataType | None = None,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ) -> Table:
         """
@@ -359,7 +360,7 @@ cdef class Table:
         """The shape of this table"""
         return (self.num_rows(), self.num_columns())
 
-    cpdef Table copy(self, object stream=None, DeviceMemoryResource mr=None):
+    cpdef Table copy(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """Create a deep copy of the table.
 
         Parameters
@@ -404,7 +405,7 @@ cdef class Table:
 
         return PyCapsule_New(<void*>raw_schema_ptr, "arrow_schema", _release_schema)
 
-    def _to_host_array(self, object stream):
+    def _to_host_array(self, object stream: CudaStreamLike):
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()

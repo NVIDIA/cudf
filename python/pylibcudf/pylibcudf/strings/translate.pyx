@@ -12,6 +12,7 @@ from pylibcudf.libcudf.strings cimport translate as cpp_translate
 from pylibcudf.libcudf.types cimport char_utf8
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -45,7 +46,7 @@ cdef vector[pair[char_utf8, char_utf8]] _table_to_c_table(dict table):
 
 
 cpdef Column translate(
-    Column input, dict chars_table, object stream=None, DeviceMemoryResource mr=None
+    Column input, dict chars_table, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Translates individual characters within each string.
@@ -90,7 +91,7 @@ cpdef Column filter_characters(
     dict characters_to_filter,
     filter_type keep_characters,
     Scalar replacement,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

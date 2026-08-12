@@ -19,6 +19,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from ..utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["slice_strings"]
@@ -28,7 +29,7 @@ cpdef Column slice_strings(
     ColumnOrScalar start=None,
     ColumnOrScalar stop=None,
     Scalar step=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a slice operation on a strings column.

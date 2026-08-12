@@ -37,6 +37,7 @@ from .gpumemoryview cimport gpumemoryview
 from .table cimport Table
 from .span import is_span
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -165,7 +166,7 @@ cdef class ChunkedPack:
     def create(
         Table input,
         size_t user_buffer_size,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource temp_mr=None,
     ):
         """
@@ -319,7 +320,7 @@ cdef class ChunkedPack:
         )
 
 
-cpdef PackedColumns pack(Table input, object stream=None, DeviceMemoryResource mr=None):
+cpdef PackedColumns pack(Table input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Deep-copy a table into a serialized contiguous memory format.
 
     Later use `unpack` or `unpack_from_memoryviews` to unpack the serialized
@@ -361,7 +362,7 @@ cpdef PackedColumns pack(Table input, object stream=None, DeviceMemoryResource m
     return PackedColumns.from_libcudf(move(pack), _stream, mr)
 
 
-cpdef Table unpack(PackedColumns input, object stream=None):
+cpdef Table unpack(PackedColumns input, object stream: CudaStreamLike | None = None):
     """Deserialize the result of `pack`.
 
     Copies the result of a serialized table into a table.
@@ -390,7 +391,7 @@ cpdef Table unpack(PackedColumns input, object stream=None):
 cpdef Table unpack_from_memoryviews(
     memoryview metadata,
     object gpu_data,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
 ):
     """Deserialize the result of `pack`.
 

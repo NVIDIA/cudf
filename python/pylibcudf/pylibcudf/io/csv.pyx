@@ -34,6 +34,7 @@ from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 
 __all__ = [
     "read_csv",
@@ -673,7 +674,7 @@ cdef class CsvReaderOptionsBuilder:
 
 cpdef TableWithMetadata read_csv(
     CsvReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -902,7 +903,7 @@ cdef class CsvWriterOptionsBuilder:
 
 cpdef void write_csv(
     CsvWriterOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
 ):
     """
     Write to CSV format.

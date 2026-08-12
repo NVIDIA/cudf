@@ -56,6 +56,7 @@ from pylibcudf.types cimport DataType
 from pylibcudf.variant cimport get_if, holds_alternative
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 
 
 __all__ = [
@@ -446,7 +447,7 @@ cdef class OrcReaderOptionsBuilder:
 
 
 cpdef TableWithMetadata read_orc(
-    OrcReaderOptions options, object stream = None, DeviceMemoryResource mr=None
+    OrcReaderOptions options, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Read from ORC format.
@@ -477,7 +478,7 @@ cpdef TableWithMetadata read_orc(
 
 cpdef ParsedOrcStatistics read_parsed_orc_statistics(
     SourceInfo source_info,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """
     Read ORC statistics from a source.
@@ -670,7 +671,7 @@ cdef class OrcWriterOptionsBuilder:
         return orc_options
 
 
-cpdef void write_orc(OrcWriterOptions options, object stream = None):
+cpdef void write_orc(OrcWriterOptions options, object stream: CudaStreamLike | None = None):
     """
     Write to ORC format.
 
@@ -726,7 +727,7 @@ cdef class OrcChunkedWriter:
             self.c_obj.get()[0].write(c_table)
 
     @staticmethod
-    def from_options(ChunkedOrcWriterOptions options, object stream = None):
+    def from_options(ChunkedOrcWriterOptions options, object stream: CudaStreamLike | None = None):
         """
         Creates a chunked ORC writer from options
 

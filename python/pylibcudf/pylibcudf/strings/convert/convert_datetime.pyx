@@ -10,6 +10,7 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_datetime as cpp_convert_datetime,
 )
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -22,7 +23,7 @@ cpdef Column to_timestamps(
     Column input,
     DataType timestamp_type,
     str format,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -71,7 +72,7 @@ cpdef Column from_timestamps(
     Column timestamps,
     str format,
     Column input_strings_names,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -120,7 +121,7 @@ cpdef Column from_timestamps(
 cpdef Column is_timestamp(
     Column input,
     str format,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

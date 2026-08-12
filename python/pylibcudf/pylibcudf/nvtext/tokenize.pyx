@@ -22,6 +22,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -42,7 +43,7 @@ cdef class TokenizeVocabulary:
 
     For details, see :cpp:class:`cudf::nvtext::tokenize_vocabulary`.
     """
-    def __cinit__(self, Column vocab, object stream=None, DeviceMemoryResource mr=None):
+    def __cinit__(self, Column vocab, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         cdef column_view c_vocab = vocab.view()
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
@@ -55,7 +56,7 @@ cdef class TokenizeVocabulary:
 cpdef Column tokenize_scalar(
     Column input,
     Scalar delimiter=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -100,7 +101,7 @@ cpdef Column tokenize_scalar(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column tokenize_column(
-    Column input, Column delimiters, object stream=None, DeviceMemoryResource mr=None
+    Column input, Column delimiters, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a single column of strings by tokenizing the input
@@ -142,7 +143,7 @@ cpdef Column tokenize_column(
 cpdef Column count_tokens_scalar(
     Column input,
     Scalar delimiter=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -187,7 +188,7 @@ cpdef Column count_tokens_scalar(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column count_tokens_column(
-    Column input, Column delimiters, object stream=None, DeviceMemoryResource mr=None
+    Column input, Column delimiters, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns the number of tokens in each string of a strings column
@@ -227,7 +228,7 @@ cpdef Column count_tokens_column(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column character_tokenize(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a single column of strings by converting
@@ -261,7 +262,7 @@ cpdef Column detokenize(
     Column input,
     Column row_indices,
     Scalar separator=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -314,7 +315,7 @@ cpdef Column tokenize_with_vocabulary(
     TokenizeVocabulary vocabulary,
     Scalar delimiter,
     size_type default_id=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

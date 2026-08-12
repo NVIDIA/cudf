@@ -50,6 +50,7 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type, type_id
 from pylibcudf.table cimport Table
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -602,7 +603,7 @@ cdef class ChunkedParquetReader:
     def __init__(
         self,
         ParquetReaderOptions options,
-        object stream = None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr = None,
         size_t chunk_read_limit=0,
         size_t pass_read_limit=1024000000,
@@ -683,7 +684,7 @@ cdef class ChunkedParquetReader:
 
 cpdef read_parquet(
     ParquetReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
     object parquet_metadatas=None,
 ):
@@ -784,7 +785,7 @@ cdef class ChunkedParquetWriter:
             self.c_obj.get()[0].write(c_table, partitions)
 
     @staticmethod
-    def from_options(ChunkedParquetWriterOptions options, object stream = None):
+    def from_options(ChunkedParquetWriterOptions options, object stream: CudaStreamLike | None = None):
         """
         Creates a chunked Parquet writer from options
 
@@ -1380,7 +1381,7 @@ cdef class ParquetWriterOptionsBuilder:
         return parquet_options
 
 
-cpdef memoryview write_parquet(ParquetWriterOptions options, object stream = None):
+cpdef memoryview write_parquet(ParquetWriterOptions options, object stream: CudaStreamLike | None = None):
     """
     Writes a set of columns to parquet format.
 

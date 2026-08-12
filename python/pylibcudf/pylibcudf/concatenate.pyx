@@ -16,11 +16,12 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["concatenate"]
 
-cpdef concatenate(objects, object stream=None, DeviceMemoryResource mr=None):
+cpdef concatenate(objects, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Concatenate columns or tables.
 
     Parameters

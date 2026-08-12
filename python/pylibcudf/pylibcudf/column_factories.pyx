@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
@@ -20,6 +20,7 @@ from .types cimport DataType, type_id
 
 from .types import MaskState, TypeId
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -35,7 +36,7 @@ __all__ = [
 
 cpdef Column make_empty_column(
     MakeEmptyColumnOperand type_or_id,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates an empty column of the specified type.
@@ -83,7 +84,7 @@ cpdef Column make_numeric_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates an empty numeric column.
@@ -122,7 +123,7 @@ cpdef Column make_fixed_point_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -158,7 +159,7 @@ cpdef Column make_timestamp_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -194,7 +195,7 @@ cpdef Column make_duration_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -230,7 +231,7 @@ cpdef Column make_fixed_width_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -264,7 +265,7 @@ cpdef Column make_fixed_width_column(
 
 cpdef Column make_empty_lists_column(
     DataType child_type,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates an empty column of the specified type.

@@ -22,6 +22,7 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -128,7 +129,7 @@ cpdef Table grouped_range_rolling_window(
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
     list requests,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -194,7 +195,7 @@ cpdef Column rolling_window(
     WindowType following_window,
     size_type min_periods,
     Aggregation agg,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a rolling window operation on a column
@@ -290,7 +291,7 @@ cpdef tuple make_range_windows(
     null_order null_order,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

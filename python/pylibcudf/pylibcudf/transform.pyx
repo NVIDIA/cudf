@@ -31,6 +31,7 @@ from .expressions cimport Expression
 from .gpumemoryview cimport gpumemoryview
 from .types cimport DataType, null_aware, output_nullability
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 ctypedef const cpp_transform.transform_input const_transform_input
@@ -50,7 +51,7 @@ __all__ = [
 
 cpdef tuple[gpumemoryview, int] nans_to_nulls(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a null mask preserving existing nulls and converting nans to null.
@@ -92,7 +93,7 @@ cpdef tuple[gpumemoryview, int] nans_to_nulls(
 
 cpdef Column column_nans_to_nulls(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column with nans converted to nulls.
@@ -129,7 +130,7 @@ cpdef Column column_nans_to_nulls(
 
 
 cpdef Column compute_column(
-    Table input, Expression expr, object stream=None, DeviceMemoryResource mr=None
+    Table input, Expression expr, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Create a column by evaluating an expression on a table.
 
@@ -166,7 +167,7 @@ cpdef Column compute_column(
 
 
 cpdef Column compute_column_jit(
-    Table input, Expression expr, object stream=None, DeviceMemoryResource mr=None
+    Table input, Expression expr, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Create a column by evaluating an expression on a table
@@ -206,7 +207,7 @@ cpdef Column compute_column_jit(
 
 cpdef tuple[gpumemoryview, int] bools_to_mask(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a bitmask from a column of boolean elements
@@ -249,7 +250,7 @@ cpdef Column mask_to_bools(
     Py_ssize_t bitmask,
     int begin_bit,
     int end_bit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates a boolean column from given bitmask.
@@ -298,7 +299,7 @@ cpdef Column transform(
     bool is_ptx,
     null_aware is_null_aware,
     output_nullability null_policy,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a new column by applying a transform function against
@@ -400,7 +401,7 @@ cpdef Column transform(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef tuple[Table, Column] encode(
-    Table input, object stream=None, DeviceMemoryResource mr=None
+    Table input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Encode the rows of the given table as integers.
 
@@ -437,7 +438,7 @@ cpdef tuple[Table, Column] encode(
 cpdef Table one_hot_encode(
     Column input,
     Column categories,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Encodes `input` by generating a new column

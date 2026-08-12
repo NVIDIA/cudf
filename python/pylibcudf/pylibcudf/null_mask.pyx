@@ -21,6 +21,7 @@ from .span import is_span as py_is_span
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -43,7 +44,7 @@ cdef DeviceBuffer buffer_to_python(
 
 cpdef DeviceBuffer copy_bitmask(
     Column col,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copies ``col``'s bitmask into a ``DeviceBuffer``.
@@ -81,7 +82,7 @@ cpdef DeviceBuffer copy_bitmask_from_bitmask(
     object bitmask,
     size_type begin_bit,
     size_type end_bit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copies a portion of a bitmask into a ``DeviceBuffer``.
@@ -154,7 +155,7 @@ cpdef size_t bitmask_allocation_size_bytes(size_type number_of_bits):
 cpdef DeviceBuffer create_null_mask(
     size_type size,
     mask_state state = mask_state.UNINITIALIZED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Creates a ``DeviceBuffer`` for use as a null value indicator bitmask of a
@@ -192,7 +193,7 @@ cpdef DeviceBuffer create_null_mask(
     return buffer_to_python(move(db), _stream, mr)
 
 
-cpdef tuple bitmask_and(columns, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple bitmask_and(columns, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Performs bitwise AND of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_and`.
@@ -226,7 +227,7 @@ cpdef tuple bitmask_and(columns, object stream=None, DeviceMemoryResource mr=Non
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
-cpdef tuple bitmask_or(columns, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple bitmask_or(columns, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Performs bitwise OR of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_or`.
@@ -262,7 +263,7 @@ cpdef size_type null_count(
     object bitmask,
     size_type start,
     size_type stop,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Given a validity bitmask, counts the number of null elements.
 
@@ -304,7 +305,7 @@ cpdef size_type index_of_first_set_bit(
     object bitmask,
     size_type start,
     size_type stop,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Given a validity bitmask, returns the index of the first valid element
     relative to ``start``.

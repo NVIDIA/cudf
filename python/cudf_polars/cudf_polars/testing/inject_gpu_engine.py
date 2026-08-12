@@ -137,6 +137,7 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 
 EXPECTED_FAILURES: Mapping[str, str] = {
+    "tests/unit/constructors/test_series.py::test_series_init_np_temporal_with_nat_15518": "DeprecationWarning from Numpy: https://github.com/pola-rs/polars/pull/28782",
     "tests/unit/io/test_csv.py::test_read_csv_only_loads_selected_columns": "Memory usage won't be correct due to GPU",
     "tests/unit/io/test_delta.py::test_scan_delta_version": "Need to expose hive partitioning",
     "tests/unit/io/test_delta.py::test_scan_delta_relative": "Need to expose hive partitioning",

@@ -38,10 +38,7 @@ from pylibcudf.io.parquet_metadata import FileMetaData
 
 import pylibcudf.libcudf.io.hybrid_scan
 
-try:
-    from collections.abc import Buffer
-except ImportError:
-    from typing_extensions import Buffer
+from typing_extensions import Buffer
 
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
 

@@ -11,7 +11,6 @@
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/unary.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -83,23 +82,15 @@ std::unique_ptr<table_with_names> execute_ndsh_q6(std::unique_ptr<table_with_nam
   auto lineitem = std::make_unique<table_with_names>(std::make_unique<cudf::table>(input->table()),
                                                      input->column_names());
 
-  // Cast the discount and quantity columns to float32 and append to lineitem table
-  auto discout_float =
-    cudf::cast(lineitem->column("l_discount"), cudf::data_type{cudf::type_id::FLOAT32});
-  auto quantity_float =
-    cudf::cast(lineitem->column("l_quantity"), cudf::data_type{cudf::type_id::FLOAT32});
-
-  (*lineitem).append(discout_float, "l_discount_float").append(quantity_float, "l_quantity_float");
-
   // Apply the filters
-  auto const discount_ref = cudf::ast::column_reference(lineitem->column_id("l_discount_float"));
-  auto const quantity_ref = cudf::ast::column_reference(lineitem->column_id("l_quantity_float"));
+  auto const discount_ref = cudf::ast::column_reference(lineitem->column_id("l_discount"));
+  auto const quantity_ref = cudf::ast::column_reference(lineitem->column_id("l_quantity"));
 
-  auto discount_lower               = cudf::numeric_scalar<float_t>(0.05);
+  auto discount_lower               = cudf::numeric_scalar<double>(0.05);
   auto const discount_lower_literal = cudf::ast::literal(discount_lower);
-  auto discount_upper               = cudf::numeric_scalar<float_t>(0.07);
+  auto discount_upper               = cudf::numeric_scalar<double>(0.07);
   auto const discount_upper_literal = cudf::ast::literal(discount_upper);
-  auto quantity_upper               = cudf::numeric_scalar<float_t>(24);
+  auto quantity_upper               = cudf::numeric_scalar<int8_t>(24);
   auto const quantity_upper_literal = cudf::ast::literal(quantity_upper);
 
   auto const discount_pred_a = cudf::ast::operation(

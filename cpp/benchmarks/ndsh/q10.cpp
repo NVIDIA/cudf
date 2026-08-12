@@ -54,7 +54,8 @@
  *     c_address,
  *     c_comment
  * order by
- *     revenue desc;
+ *     revenue desc
+ * limit 20;
  */
 
 /**
@@ -156,9 +157,13 @@ std::unique_ptr<table_with_names> execute_ndsh_q10(
       {
         {"revenue", {{cudf::aggregation::Kind::SUM, "revenue"}}},
       }});
+  auto const projected = apply_projection(
+    groupedby_table,
+    {"c_custkey", "c_name", "revenue", "c_acctbal", "n_name", "c_address", "c_phone", "c_comment"});
 
   // Perform the order by operation
-  return apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
+  auto const ordered = apply_orderby(projected, {"revenue"}, {cudf::order::DESCENDING});
+  return apply_slice(ordered, 0, 20);
 }
 
 void ndsh_q10(nvbench::state& state)

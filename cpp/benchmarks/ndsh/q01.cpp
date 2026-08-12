@@ -153,10 +153,21 @@ std::unique_ptr<table_with_names> execute_ndsh_q1(std::unique_ptr<table_with_nam
           {cudf::aggregation::Kind::COUNT_ALL, "count_order"}}},
       }});
 
+  auto const projected = apply_projection(groupedby_table,
+                                          {"l_returnflag",
+                                           "l_linestatus",
+                                           "sum_qty",
+                                           "sum_base_price",
+                                           "sum_disc_price",
+                                           "sum_charge",
+                                           "avg_qty",
+                                           "avg_price",
+                                           "avg_disc",
+                                           "count_order"});
+
   // Perform the order by operation
-  return apply_orderby(groupedby_table,
-                       {"l_returnflag", "l_linestatus"},
-                       {cudf::order::ASCENDING, cudf::order::ASCENDING});
+  return apply_orderby(
+    projected, {"l_returnflag", "l_linestatus"}, {cudf::order::ASCENDING, cudf::order::ASCENDING});
 }
 
 void ndsh_q1(nvbench::state& state)

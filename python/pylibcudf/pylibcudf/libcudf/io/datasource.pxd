@@ -13,8 +13,8 @@ cdef extern from "cudf/io/datasource.hpp" \
 
     cdef cppclass datasource:
         cppclass buffer:
-            const uint8_t* data() noexcept
-            size_t size() noexcept
+            const uint8_t* data() const noexcept
+            size_t size() const noexcept
 
     cdef vector[unique_ptr[datasource]] make_datasources(
         source_info info

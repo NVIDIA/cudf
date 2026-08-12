@@ -8,6 +8,8 @@
 #include <cudf/hashing.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/atomic>
+
 #include <cstdint>
 #include <limits>
 
@@ -63,10 +65,11 @@ struct hash_csr_map_view {
     auto const desired = pack_hash_csr_entry(key.hash, key.row);
     for (std::uint32_t step = 0; step < capacity; ++step) {
       auto const slot = (static_cast<std::uint32_t>(key.hash) + step) & mask;
-      auto const old  = atomicCAS(reinterpret_cast<unsigned long long*>(entries + slot),
-                                 static_cast<unsigned long long>(hash_csr_empty_entry),
-                                 static_cast<unsigned long long>(desired));
-      if (old == hash_csr_empty_entry) { return slot; }
+      auto entry_ref  = cuda::atomic_ref<std::uint64_t, cuda::thread_scope_device>{entries[slot]};
+      auto old        = hash_csr_empty_entry;
+      if (entry_ref.compare_exchange_strong(old, desired, cuda::memory_order_relaxed)) {
+        return slot;
+      }
       if (unpack_hash_csr_hash(old) == key.hash &&
           equal(key, hash_csr_key_type{unpack_hash_csr_hash(old), unpack_hash_csr_row(old)})) {
         return slot;

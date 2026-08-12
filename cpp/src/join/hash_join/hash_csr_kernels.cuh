@@ -58,7 +58,8 @@ CUDF_KERNEL void hash_csr_build_count_kernel(size_type num_rows,
       build_positions[index] = hash_csr_empty_build_position;
       continue;
     }
-    auto const rank        = atomicAdd(slot_counts + slot, size_type{1});
+    auto slot_count_ref = cuda::atomic_ref<size_type, cuda::thread_scope_device>{slot_counts[slot]};
+    auto const rank     = slot_count_ref.fetch_add(size_type{1}, cuda::memory_order_relaxed);
     build_positions[index] = pack_hash_csr_build_position(slot, rank);
   }
 }
@@ -109,9 +110,15 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
       match_counts[index] = is_outer ? cuda::std::max(count, size_type{1}) : count;
     }
 
-    if (found && matched_slots != nullptr &&
-        atomicCAS(matched_slots + slot, std::uint32_t{0}, std::uint32_t{1}) == 0) {
-      atomicAdd(matched_build_rows, static_cast<unsigned long long>(count));
+    if (found && matched_slots != nullptr) {
+      auto matched_slot_ref =
+        cuda::atomic_ref<std::uint32_t, cuda::thread_scope_device>{matched_slots[slot]};
+      auto expected = std::uint32_t{0};
+      if (matched_slot_ref.compare_exchange_strong(
+            expected, std::uint32_t{1}, cuda::memory_order_relaxed)) {
+        cuda::atomic_ref<unsigned long long, cuda::thread_scope_device>{*matched_build_rows}
+          .fetch_add(static_cast<unsigned long long>(count), cuda::memory_order_relaxed);
+      }
     }
   }
 }

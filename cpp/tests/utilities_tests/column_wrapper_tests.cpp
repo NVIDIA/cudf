@@ -515,6 +515,9 @@ TYPED_TEST(StringsColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                          this->resources());
   cudf::column_view view = col;
 
+  // TODO: has_nonempty_nulls (via count_if/transform_reduce) still allocates temporaries from the
+  // current device resource for strings columns.
+  this->disable_current_device_resource_use();
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,

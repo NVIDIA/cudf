@@ -16,13 +16,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
-
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_scan.cuh>
+#include <cuda/execution>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstdint>
@@ -187,38 +187,19 @@ void hash_csr_exclusive_scan(InputIterator input,
                              InitialValue initial_value,
                              rmm::cuda_stream_view stream)
 {
-  auto const mr = cudf::get_current_device_resource_ref();
-  std::size_t temp_storage_bytes{};
-  CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveScan(nullptr,
-                                               temp_storage_bytes,
-                                               input,
-                                               output,
-                                               cuda::std::plus<>{},
-                                               initial_value,
-                                               num_items,
-                                               stream.value()));
-  rmm::device_buffer temp_storage(temp_storage_bytes, stream, mr);
-  CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveScan(temp_storage.data(),
-                                               temp_storage_bytes,
-                                               input,
-                                               output,
-                                               cuda::std::plus<>{},
-                                               initial_value,
-                                               num_items,
-                                               stream.value()));
+  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
+                                       cudf::get_current_device_resource_ref()};
+  CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveScan(
+    input, output, cuda::std::plus<>{}, initial_value, num_items, env));
 }
 
 [[maybe_unused]] static void hash_csr_inclusive_sum(size_type* values,
                                                     size_type size,
                                                     rmm::cuda_stream_view stream)
 {
-  auto const mr = cudf::get_current_device_resource_ref();
-  std::size_t temp_storage_bytes{};
-  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
-    nullptr, temp_storage_bytes, values, values, size, stream.value()));
-  rmm::device_buffer temp_storage(temp_storage_bytes, stream, mr);
-  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
-    temp_storage.data(), temp_storage_bytes, values, values, size, stream.value()));
+  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
+                                       cudf::get_current_device_resource_ref()};
+  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(values, values, size, env));
 }
 
 [[maybe_unused]] static std::int64_t hash_csr_scan_counts(size_type const* counts,
@@ -249,12 +230,8 @@ struct hash_csr_count_to_int64 {
   auto const mr = cudf::get_current_device_resource_ref();
   auto input    = cuda::transform_iterator{counts, hash_csr_count_to_int64{}};
   cudf::detail::device_scalar<std::int64_t> result(stream, mr);
-  std::size_t temp_storage_bytes{};
-  CUDF_CUDA_TRY(cub::DeviceReduce::Sum(
-    nullptr, temp_storage_bytes, input, result.data(), num_rows, stream.value()));
-  rmm::device_buffer temp_storage(temp_storage_bytes, stream, mr);
-  CUDF_CUDA_TRY(cub::DeviceReduce::Sum(
-    temp_storage.data(), temp_storage_bytes, input, result.data(), num_rows, stream.value()));
+  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()}, mr};
+  CUDF_CUDA_TRY(cub::DeviceReduce::Sum(input, result.data(), num_rows, env));
   return result.value(stream);
 }
 

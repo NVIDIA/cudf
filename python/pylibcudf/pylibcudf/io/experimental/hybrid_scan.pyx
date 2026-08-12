@@ -825,6 +825,7 @@ cdef class HybridScanReader:
 
         self._stream = _get_stream(stream)
         self.mr = _get_memory_resource(mr)
+        # keep reference to avoid use-after-free of device spans
         self._filter_chunk_data = column_chunk_data
 
         cdef column_view mask_view = row_mask.view()

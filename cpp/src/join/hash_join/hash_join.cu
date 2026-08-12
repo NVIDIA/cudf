@@ -103,7 +103,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _right{right},
     _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)},
     _impl{std::make_unique<impl>(
-      hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, mr)}
+      hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, std::move(mr))}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);

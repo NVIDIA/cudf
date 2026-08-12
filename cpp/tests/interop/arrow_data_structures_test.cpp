@@ -21,6 +21,12 @@ struct ArrowColumnTest : public cudf::test::BaseFixture {};
 
 namespace {
 
+void set_fixed_size_list_type(ArrowSchema* schema)
+{
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeFixedSize(schema, NANOARROW_TYPE_FIXED_SIZE_LIST, 3));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT64));
+}
+
 nanoarrow::UniqueSchema make_fixed_size_list_schema(bool wrap_in_struct)
 {
   nanoarrow::UniqueSchema schema;
@@ -32,9 +38,17 @@ nanoarrow::UniqueSchema make_fixed_size_list_schema(bool wrap_in_struct)
     list_schema = schema->children[0];
   }
 
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaSetTypeFixedSize(list_schema, NANOARROW_TYPE_FIXED_SIZE_LIST, 3));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(list_schema->children[0], NANOARROW_TYPE_INT64));
+  set_fixed_size_list_type(list_schema);
+  return schema;
+}
+
+nanoarrow::UniqueSchema make_fixed_size_list_dictionary_schema()
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema.get(), NANOARROW_TYPE_INT32));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaAllocateDictionary(schema.get()));
+  set_fixed_size_list_type(schema->dictionary);
   return schema;
 }
 
@@ -196,6 +210,16 @@ TEST_F(ArrowColumnTest, ToFromHost)
 TEST_F(ArrowColumnTest, FixedSizeListDeviceInputRejected)
 {
   auto schema = make_fixed_size_list_schema(false);
+  auto array  = make_empty_device_array();
+
+  EXPECT_THROW(
+    { static_cast<void>(cudf::interop::arrow_column(std::move(*schema.get()), std::move(array))); },
+    cudf::data_type_error);
+}
+
+TEST_F(ArrowColumnTest, DictionaryFixedSizeListDeviceInputRejected)
+{
+  auto schema = make_fixed_size_list_dictionary_schema();
   auto array  = make_empty_device_array();
 
   EXPECT_THROW(

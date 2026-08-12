@@ -132,7 +132,7 @@ class alignas(16) column_device_view_base {
    * This function will only participate in overload resolution if `is_rep_layout_compatible<T>()`
    * or `std::is_same_v<T,void>` are true.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,
@@ -638,7 +638,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * a column, and instead, accessing the elements should be done via
    * `data<T>()`.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,

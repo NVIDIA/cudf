@@ -12,7 +12,7 @@ cdef extern from "cudf/io/datasource.hpp" \
         namespace "cudf::io" nogil:
 
     cdef cppclass datasource:
-        cdef cppclass buffer:
+        cppclass buffer:
             const uint8_t* data() noexcept
             size_t size() noexcept
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +58,6 @@ class sort_merge_join {
    * @brief Returns the row indices for an inner join.
    *
    * @param left The left table
-   * @param is_left_sorted Enum to indicate if left table is pre-sorted
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the join indices' device memory
    * @return A pair of device vectors [`left_indices`, `right_indices`]
@@ -66,7 +65,6 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(table_view const& left,
-             sorted is_left_sorted,
              rmm::cuda_stream_view stream,
              rmm::device_async_resource_ref mr) const;
 
@@ -74,7 +72,6 @@ class sort_merge_join {
    * @brief Returns the row indices for a left join.
    *
    * @param left The left table
-   * @param is_left_sorted Enum to indicate if left table is pre-sorted
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the join indices' device memory
    * @return A pair of device vectors [`left_indices`, `right_indices`]
@@ -82,7 +79,6 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(table_view const& left,
-            sorted is_left_sorted,
             rmm::cuda_stream_view stream,
             rmm::device_async_resource_ref mr) const;
 
@@ -90,16 +86,12 @@ class sort_merge_join {
    * @brief Returns context information about matches between the left and right tables.
    *
    * @param left The left table to join with the pre-processed right table
-   * @param is_left_sorted Enum to indicate if left table is pre-sorted
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    * @return A unique_ptr to join_match_context
    */
   std::unique_ptr<join_match_context> inner_join_match_context(
-    table_view const& left,
-    sorted is_left_sorted,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const;
+    table_view const& left, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -217,7 +209,13 @@ class sort_merge_join {
   };
 
   preprocessed_table preprocessed_right;  ///< Preprocessed right table
-  null_equality compare_nulls;            ///< Null comparison mode
+  std::unique_ptr<rmm::device_uvector<size_type>>
+    right_run_rows;  ///< First row of each key run; the first `num_right_runs` entries are valid
+  std::unique_ptr<rmm::device_uvector<size_type>>
+    right_run_offsets;  ///< Start of each run in sorted order; the first `num_right_runs + 1`
+                        ///< entries are valid, including the row-count sentinel
+  size_type num_right_runs{};   ///< Number of distinct key runs in the processed right table
+  null_equality compare_nulls;  ///< Null comparison mode
 
   /**
    * @brief Post-process left and right tables after the merge operation
@@ -237,7 +235,6 @@ class sort_merge_join {
    * @brief Core merge operation implementation for the sort-merge join algorithm.
    *
    * @tparam MergeOperation Functor type that implements the specific join operation
-   * @param preprocessed_left The preprocessed left table
    * @param right_view The preprocessed right table view
    * @param left_view The preprocessed left table view
    * @param op The merge operation functor to execute during the merge
@@ -245,8 +242,7 @@ class sort_merge_join {
    * @return The result of the merge operation as defined by the MergeOperation functor
    */
   template <typename MergeOperation>
-  auto invoke_merge(preprocessed_table const& preprocessed_left,
-                    table_view right_view,
+  auto invoke_merge(table_view right_view,
                     table_view left_view,
                     MergeOperation&& op,
                     rmm::cuda_stream_view stream) const;

@@ -56,7 +56,7 @@ class column_view_base {
    * This function will only participate in overload resolution if `is_rep_layout_compatible<T>()`
    * or `std::is_same_v<T,void>` are true.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,
@@ -560,7 +560,7 @@ class mutable_column_view : public detail::column_view_base {
    * @note It should be rare to need to access the `head<T>()` allocation of a
    * column, and instead, accessing the elements should be done via `data<T>()`.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,

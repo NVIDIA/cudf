@@ -74,6 +74,12 @@ cdef class HybridScanMetadata:
     >>> reader = plc.io.experimental.HybridScanReader.from_metadata(metadata)
     """
 
+    def __init__(self):
+        raise ValueError(
+            "HybridScanMetadata cannot be constructed directly. "
+            "Use from_footer_bytes() or from_parquet_metadata()."
+        )
+
     @staticmethod
     def from_footer_bytes(
         const uint8_t[::1] footer_bytes,
@@ -189,7 +195,7 @@ cdef class HybridScanReader:
         return reader
 
     @staticmethod
-    def from_metadata(HybridScanMetadata metadata):
+    def from_metadata(HybridScanMetadata metadata not None):
         """Create a HybridScanReader that shares pre-parsed metadata.
 
         Constructs a lightweight reader that borrows ``metadata`` instead of
@@ -490,7 +496,7 @@ cdef class HybridScanReader:
         cdef unique_ptr[column] c_result
         with nogil:
             c_result = move(self.c_obj.get()[0].build_all_true_row_mask(
-                host_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 _stream.view().value(),
                 mr.get_mr()
             ))

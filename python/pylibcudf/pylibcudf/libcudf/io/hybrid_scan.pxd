@@ -102,7 +102,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         ) except +libcudf_exception_handler
 
         unique_ptr[column] build_all_true_row_mask(
-            host_span[const_size_type] row_group_indices,
+            std_span[const_size_type] row_group_indices,
             cudaStream_t stream,
             device_async_resource_ref mr
         ) except +libcudf_exception_handler

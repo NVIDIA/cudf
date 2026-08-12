@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -84,7 +84,7 @@ void nvbench_sort_merge_inner_join(nvbench::state& state,
           cudf::inner_join(remapped_probe_view, remapped_build_view, NullEquality);
       } else if constexpr (Algorithm == join_t::SORT_MERGE) {
         auto smj = cudf::sort_merge_join(remapped_build_view, cudf::sorted::NO, NullEquality);
-        [[maybe_unused]] auto result = smj.inner_join(remapped_probe_view, cudf::sorted::NO);
+        [[maybe_unused]] auto result = smj.inner_join(remapped_probe_view);
       }
     });
   } else {
@@ -94,7 +94,7 @@ void nvbench_sort_merge_inner_join(nvbench::state& state,
         [[maybe_unused]] auto result = cudf::inner_join(probe_keys, build_keys, NullEquality);
       } else if constexpr (Algorithm == join_t::SORT_MERGE) {
         auto smj = cudf::sort_merge_join(build_keys, cudf::sorted::NO, NullEquality);
-        [[maybe_unused]] auto result = smj.inner_join(probe_keys, cudf::sorted::NO);
+        [[maybe_unused]] auto result = smj.inner_join(probe_keys);
       }
     });
   }

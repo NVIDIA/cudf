@@ -131,18 +131,23 @@ __device__ double parse_float64(cudf::string_view s)
   }
 
   if (i < n && (data[i] == 'e' || data[i] == 'E')) {
-    ++i;
+    +i;
     bool exp_neg = false;
     if (i < n && data[i] == '-') {
       exp_neg = true;
-      ++i;
+      +i;
     } else if (i < n && data[i] == '+') {
-      ++i;
+      +i;
     }
     int exp = 0;
     while (i < n && data[i] >= '0' && data[i] <= '9') {
-      exp = exp * 10 + (data[i] - '0');
-      ++i;
+      if (exp < 1000) { exp = exp * 10 + (data[i] - '0'); }
+      +i;
+    }
+    // Anything beyond the double range saturates.
+    if (exp > 400) {
+      return (exp_neg ? 0.0 : cuda::std::numeric_limits<double>::infinity()) *
+             (negative ? -1.0 : 1.0);
     }
     double factor = 1.0;
     for (int j = 0; j < exp; ++j) {
@@ -506,6 +511,13 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   std::sort(sort_indices.begin(), sort_indices.end(), [&](size_t a, size_t b) {
     return column_names[a] < column_names[b];
   });
+  CUDF_EXPECTS(std::adjacent_find(sort_indices.begin(),
+                                  sort_indices.end(),
+                                  [&](size_t a, size_t b) {
+                                    return column_names[a] == column_names[b];
+                                  }) == sort_indices.end(),
+               "encode_strings_to_variant does not accept duplicate field names",
+               std::invalid_argument);
   // sorted_to_original[i] = original column index of the i-th sorted key
   std::vector<int32_t> h_sorted_to_original(num_fields);
   std::vector<std::string> sorted_names(num_fields);
@@ -525,6 +537,9 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   std::vector<std::unique_ptr<column>> extracted_cols;
   extracted_cols.reserve(num_fields);
   for (size_type i = 0; i < num_fields; ++i) {
+    CUDF_EXPECTS(column_names[i].find_first_of(".[") == std::string::npos,
+                 "encode_strings_to_variant does not support field names containing '.' or '['",
+                 std::invalid_argument);
     std::string path = "$." + std::string(column_names[i]);
     cudf::string_scalar path_scalar(path, true, stream, cudf::get_current_device_resource_ref());
     extracted_cols.push_back(cudf::get_json_object(

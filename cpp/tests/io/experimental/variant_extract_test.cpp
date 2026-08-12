@@ -1459,7 +1459,7 @@ TEST_F(InvalidInputShapeTest, CastVariantRejectsNullableIncomingStatus)
   auto values =
     list_u8({make_variant_primitive(variant_primitive_type::INT32), 0x01, 0x00, 0x00, 0x00});
   // Incoming status with a null entry (row 0 is null) — must be rejected.
-  // Use uint8_t{0} (== op_status::success) directly; ST_SUCCESS is not in scope here.
+  // Use uint8_t{0} (== op_status::SUCCESS) directly; ST_SUCCESS is not in scope here.
   std::vector<uint8_t> const sv{uint8_t{0}};
   std::vector<bool> const sv_valid{false};
   cudf::test::fixed_width_column_wrapper<uint8_t> nullable_status(
@@ -1540,12 +1540,12 @@ static void expect_status_values(cudf::column_view const& status,
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(status, exp);
 }
 
-constexpr uint8_t ST_SUCCESS   = static_cast<uint8_t>(op_status::success);
-constexpr uint8_t ST_ROW_NULL  = static_cast<uint8_t>(op_status::row_null);
-constexpr uint8_t ST_MISSING   = static_cast<uint8_t>(op_status::missing_path);
-constexpr uint8_t ST_VNULL     = static_cast<uint8_t>(op_status::variant_null);
-constexpr uint8_t ST_MISMATCH  = static_cast<uint8_t>(op_status::type_mismatch);
-constexpr uint8_t ST_MALFORMED = static_cast<uint8_t>(op_status::malformed_variant);
+constexpr uint8_t ST_SUCCESS   = static_cast<uint8_t>(op_status::SUCCESS);
+constexpr uint8_t ST_ROW_NULL  = static_cast<uint8_t>(op_status::ROW_NULL);
+constexpr uint8_t ST_MISSING   = static_cast<uint8_t>(op_status::MISSING_PATH);
+constexpr uint8_t ST_VNULL     = static_cast<uint8_t>(op_status::VARIANT_NULL);
+constexpr uint8_t ST_MISMATCH  = static_cast<uint8_t>(op_status::TYPE_MISMATCH);
+constexpr uint8_t ST_MALFORMED = static_cast<uint8_t>(op_status::MALFORMED_VARIANT);
 
 // ---------------------------------------------------------------------------
 // GetVariantField status tests

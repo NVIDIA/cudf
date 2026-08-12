@@ -223,6 +223,11 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS``.
         Default: ``8``.
         Category: executor.
+    max_concurrent_io_tasks
+        Maximum concurrent IO tasks for each scan node.
+        Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
+        Default: ``2``.
+        Category: executor.
     fallback_mode
         Fallback behavior (``"warn"``, ``"raise"``, ``"silent"``).
         Env: ``CUDF_POLARS__EXECUTOR__FALLBACK_MODE``.
@@ -339,6 +344,9 @@ class StreamingOptions:
     # ---- Executor ----
     num_py_executors: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", int
+    )
+    max_concurrent_io_tasks: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", int
     )
     fallback_mode: str | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__FALLBACK_MODE"
@@ -532,6 +540,7 @@ class StreamingOptions:
             unbounded_file_read_cache=_get("unbounded_file_read_cache"),
             hardware_binding=_get("hardware_binding"),
             num_py_executors=_get("num_py_executors"),
+            max_concurrent_io_tasks=_get("max_concurrent_io_tasks"),
             fallback_mode=_get("fallback_mode"),
             max_rows_per_partition=_get("max_rows_per_partition"),
             broadcast_limit=_get("broadcast_limit"),
@@ -694,6 +703,16 @@ class StreamingOptions:
                 Max workers for the Python ThreadPoolExecutor inside RapidsMPF.
                 Env: CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS.
                 Built-in default: 8."""),
+        )
+        g.add_argument(
+            "--max-concurrent-io-tasks",
+            dest="max_concurrent_io_tasks",
+            default=None,
+            type=int,
+            help=textwrap.dedent("""\
+                Maximum concurrent IO tasks for each scan node.
+                Env: CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS.
+                Built-in default: 2."""),
         )
         g.add_argument(
             "--raise-on-fail",

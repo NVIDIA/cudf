@@ -12,6 +12,45 @@
 
 #include <nvbench/nvbench.cuh>
 
+/**
+ * @file q18.cpp
+ * @brief Implement query 18 of the NDS-H benchmark.
+ *
+ * select
+ *     c_name,
+ *     c_custkey,
+ *     o_orderkey,
+ *     o_orderdate,
+ *     o_totalprice,
+ *     sum(l_quantity)
+ * from
+ *     customer,
+ *     orders,
+ *     lineitem
+ * where
+ *     o_orderkey in (
+ *         select
+ *             l_orderkey
+ *         from
+ *             lineitem
+ *         group by
+ *             l_orderkey having
+ *                 sum(l_quantity) > 300
+ *     )
+ *     and c_custkey = o_custkey
+ *     and o_orderkey = l_orderkey
+ * group by
+ *     c_name,
+ *     c_custkey,
+ *     o_orderkey,
+ *     o_orderdate,
+ *     o_totalprice
+ * order by
+ *     o_totalprice desc,
+ *     o_orderdate
+ * limit 100;
+ */
+
 std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q18(
   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {

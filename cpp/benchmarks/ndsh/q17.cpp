@@ -14,6 +14,29 @@
 
 #include <nvbench/nvbench.cuh>
 
+/**
+ * @file q17.cpp
+ * @brief Implement query 17 of the NDS-H benchmark.
+ *
+ * select
+ *     round(sum(l_extendedprice) / 7.0, 2) as avg_yearly
+ * from
+ *     lineitem,
+ *     part
+ * where
+ *     p_partkey = l_partkey
+ *     and p_brand = 'Brand#23'
+ *     and p_container = 'MED BOX'
+ *     and l_quantity < (
+ *         select
+ *             0.2 * avg(l_quantity)
+ *         from
+ *             lineitem
+ *         where
+ *             l_partkey = p_partkey
+ *     );
+ */
+
 std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q17(
   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {

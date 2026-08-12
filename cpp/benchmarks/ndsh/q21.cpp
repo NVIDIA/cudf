@@ -13,6 +13,52 @@
 
 #include <nvbench/nvbench.cuh>
 
+/**
+ * @file q21.cpp
+ * @brief Implement query 21 of the NDS-H benchmark.
+ *
+ * select
+ *     s_name,
+ *     count(*) as numwait
+ * from
+ *     supplier,
+ *     lineitem l1,
+ *     orders,
+ *     nation
+ * where
+ *     s_suppkey = l1.l_suppkey
+ *     and o_orderkey = l1.l_orderkey
+ *     and o_orderstatus = 'F'
+ *     and l1.l_receiptdate > l1.l_commitdate
+ *     and exists (
+ *         select
+ *             *
+ *         from
+ *             lineitem l2
+ *         where
+ *             l2.l_orderkey = l1.l_orderkey
+ *             and l2.l_suppkey <> l1.l_suppkey
+ *     )
+ *     and not exists (
+ *         select
+ *             *
+ *         from
+ *             lineitem l3
+ *         where
+ *             l3.l_orderkey = l1.l_orderkey
+ *             and l3.l_suppkey <> l1.l_suppkey
+ *             and l3.l_receiptdate > l3.l_commitdate
+ *     )
+ *     and s_nationkey = n_nationkey
+ *     and n_name = 'SAUDI ARABIA'
+ * group by
+ *     s_name
+ * order by
+ *     numwait desc,
+ *     s_name
+ * limit 100;
+ */
+
 std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q21(
   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {

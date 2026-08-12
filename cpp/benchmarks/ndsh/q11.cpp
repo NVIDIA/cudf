@@ -17,6 +17,36 @@
 
 #include <nvbench/nvbench.cuh>
 
+/**
+ * @file q11.cpp
+ * @brief Implement query 11 of the NDS-H benchmark.
+ *
+ * select
+ *     ps_partkey,
+ *     round(sum(ps_supplycost * ps_availqty), 2) as value
+ * from
+ *     partsupp, supplier, nation
+ * where
+ *     ps_suppkey = s_suppkey
+ *     and s_nationkey = n_nationkey
+ *     and n_name = 'GERMANY'
+ * group by
+ *     ps_partkey
+ * having
+ *     sum(ps_supplycost * ps_availqty) > (
+ *         select
+ *             sum(ps_supplycost * ps_availqty) * (0.0001 / scale_factor)
+ *         from
+ *             partsupp, supplier, nation
+ *         where
+ *             ps_suppkey = s_suppkey
+ *             and s_nationkey = n_nationkey
+ *             and n_name = 'GERMANY'
+ *     )
+ * order by
+ *     value desc;
+ */
+
 std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q11(
   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {

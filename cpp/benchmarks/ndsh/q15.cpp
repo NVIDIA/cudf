@@ -14,6 +14,43 @@
 
 #include <nvbench/nvbench.cuh>
 
+/**
+ * @file q15.cpp
+ * @brief Implement query 15 of the NDS-H benchmark.
+ *
+ * with revenue (supplier_no, total_revenue) as (
+ *     select
+ *         l_suppkey,
+ *         sum(l_extendedprice * (1 - l_discount))
+ *     from
+ *         lineitem
+ *     where
+ *         l_shipdate >= date '1996-01-01'
+ *         and l_shipdate < date '1996-01-01' + interval '3' month
+ *     group by
+ *         l_suppkey
+ * )
+ * select
+ *     s_suppkey,
+ *     s_name,
+ *     s_address,
+ *     s_phone,
+ *     total_revenue
+ * from
+ *     supplier,
+ *     revenue
+ * where
+ *     s_suppkey = supplier_no
+ *     and total_revenue = (
+ *         select
+ *             max(total_revenue)
+ *         from
+ *             revenue
+ *     )
+ * order by
+ *     s_suppkey;
+ */
+
 std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q15(
   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {

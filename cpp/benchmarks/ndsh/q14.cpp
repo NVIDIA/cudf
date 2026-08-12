@@ -17,6 +17,25 @@
 
 #include <nvbench/nvbench.cuh>
 
+/**
+ * @file q14.cpp
+ * @brief Implement query 14 of the NDS-H benchmark.
+ *
+ * select
+ *     round(100.00 * sum(case
+ *         when p_type like 'PROMO%'
+ *             then l_extendedprice * (1 - l_discount)
+ *         else 0
+ *     end) / sum(l_extendedprice * (1 - l_discount)), 2) as promo_revenue
+ * from
+ *     lineitem,
+ *     part
+ * where
+ *     l_partkey = p_partkey
+ *     and l_shipdate >= date '1995-09-01'
+ *     and l_shipdate < date '1995-09-01' + interval '1' month;
+ */
+
 std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q14(
   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {

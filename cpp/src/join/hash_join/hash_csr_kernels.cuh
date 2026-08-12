@@ -10,6 +10,7 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/utilities/bit.hpp>
@@ -30,9 +31,9 @@
 
 namespace cudf::detail {
 
-constexpr thread_index_type hash_csr_block_size       = 256;
-constexpr thread_index_type hash_csr_warp_size        = 32;
-constexpr thread_index_type hash_csr_warps_per_block  = hash_csr_block_size / hash_csr_warp_size;
+constexpr thread_index_type hash_csr_block_size = 256;
+constexpr thread_index_type hash_csr_warps_per_block =
+  hash_csr_block_size / cudf::detail::warp_size;
 constexpr thread_index_type hash_csr_outputs_per_lane = 32;
 
 template <typename Equal, typename Hasher>
@@ -264,8 +265,8 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
                                           size_type* left_indices,
                                           size_type* right_indices)
 {
-  auto const lane_id       = static_cast<thread_index_type>(threadIdx.x) % hash_csr_warp_size;
-  auto const warp_in_block = static_cast<thread_index_type>(threadIdx.x) / hash_csr_warp_size;
+  auto const lane_id       = static_cast<thread_index_type>(threadIdx.x) % cudf::detail::warp_size;
+  auto const warp_in_block = static_cast<thread_index_type>(threadIdx.x) / cudf::detail::warp_size;
   auto const global_warp =
     static_cast<std::int64_t>(blockIdx.x) * hash_csr_warps_per_block + warp_in_block;
   auto const range_begin = outputs_per_warp * global_warp;
@@ -282,7 +283,7 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
 
 #pragma unroll
   for (thread_index_type item = 0; item < hash_csr_outputs_per_lane; ++item) {
-    auto const output_index = range_begin + lane_id + item * hash_csr_warp_size;
+    auto const output_index = range_begin + lane_id + item * cudf::detail::warp_size;
     if (output_index < range_end) {
       auto const probe_row =
         first_probe == last_probe
@@ -316,7 +317,7 @@ void launch_hash_csr_retrieve(std::int64_t output_size,
   if (output_size == 0) { return; }
   auto const min_blocks = size_type{2} * cudf::detail::num_multiprocessors();
   constexpr auto outputs_per_block =
-    hash_csr_warps_per_block * hash_csr_warp_size * hash_csr_outputs_per_lane;
+    hash_csr_warps_per_block * cudf::detail::warp_size * hash_csr_outputs_per_lane;
   auto const requested_blocks = (output_size + outputs_per_block - 1) / outputs_per_block;
   auto const num_blocks =
     static_cast<std::uint32_t>(cuda::std::max<std::int64_t>(requested_blocks, min_blocks));

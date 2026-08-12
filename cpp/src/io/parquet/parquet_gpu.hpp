@@ -22,6 +22,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda_runtime.h>
 
@@ -45,9 +46,12 @@ constexpr int LEVEL_DECODE_BUF_SIZE = 2048;
 template <int rolling_size>
 CUDF_HOST_DEVICE constexpr int rolling_index(int index)
 {
-  // Cannot divide by 0. But `rolling_size` will be 0 for unused arrays, so this case will never
-  // actual be executed.
-  if constexpr (rolling_size == 0) {
+  // rolling_size == 0 marks unused arrays (never actually indexed).
+  // rolling_size == INT_MAX is used by paths that treat the output buffer as
+  // non-rolling (e.g. chunked-expand level decoding), and we short-circuit
+  // both cases to avoid a modulo (which for non-power-of-two divisors would
+  // compile to a real integer division on device).
+  if constexpr (rolling_size == 0 || rolling_size == cuda::std::numeric_limits<int>::max()) {
     return index;
   } else {
     return index % rolling_size;

@@ -710,10 +710,6 @@ def test_groupby_sum_decimal_null_group(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@pytest.mark.xfail(
-    raises=AssertionError,
-    reason="https://github.com/rapidsai/cudf/issues/19610",
-)
 def test_groupby_literal_agg(engine: pl.GPUEngine):
     df = pl.LazyFrame({"c0": [True, False]})
     q = df.group_by("c0").agg(pl.lit(1).is_not_null())
@@ -727,3 +723,22 @@ def test_groupby_empty_keys_raises(engine: pl.GPUEngine):
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "series",
+    [
+        pl.Series("foo", [[]], dtype=pl.List(pl.Int64())),
+        pl.Series("foo", [[[], [1]]], dtype=pl.List(pl.List(pl.Int64()))),
+        pl.Series("foo", [[1, 2, 3]], dtype=pl.List(pl.Int64())),
+        pl.Series("foo", [[[1, 2], [4]]], dtype=pl.List(pl.List(pl.Int64()))),
+        pl.Series(
+            "foo",
+            [[[[1], [2]], [[3], [4]]]],
+            dtype=pl.List(pl.List(pl.List(pl.Int64()))),
+        ),
+    ],
+)
+def test_groupby_agg_list_literal(engine: pl.GPUEngine, series: pl.Series) -> None:
+    q = pl.LazyFrame({"a": [1, 1, 2]}).group_by("a").agg(series)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

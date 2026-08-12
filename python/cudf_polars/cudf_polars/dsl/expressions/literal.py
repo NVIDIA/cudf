@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -77,13 +77,20 @@ class Literal(Expr):
 
 
 class LiteralColumn(Expr):
-    __slots__ = ("value",)
-    _non_child = ("dtype", "value")
+    __slots__ = ("is_scalar", "value")
+    _non_child = ("dtype", "value", "is_scalar")
     value: pl.Series
+    is_scalar: bool
 
-    def __init__(self, dtype: DataType, value: pl.Series) -> None:
+    def __init__(
+        self, dtype: DataType, value: pl.Series, *, is_scalar: bool = False
+    ) -> None:
+        # is_scalar records whether this originated from a scalar literal
+        # rather than a column. In a groupby aggregation a column literal is
+        # imploded into a list per group, while a scalar is broadcast.
         self.dtype = dtype
         self.value = value
+        self.is_scalar = is_scalar
         self.children = ()
         self.is_pointwise = True
 

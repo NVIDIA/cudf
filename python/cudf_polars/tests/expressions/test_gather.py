@@ -76,12 +76,7 @@ def test_gather_out_of_bounds(engine_raise_on_fail: pl.GPUEngine, negative):
     "lit",
     [
         pl.lit(7),
-        pytest.param(
-            pl.lit([7]),
-            marks=pytest.mark.xfail(
-                reason="List literal loses nesting in gather: https://github.com/rapidsai/cudf/issues/19610"
-            ),
-        ),
+        pl.lit([7]),
         pl.lit([[7]]),
         pl.lit(pl.Series([7, 8, 9])),
     ],

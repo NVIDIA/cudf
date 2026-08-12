@@ -911,12 +911,6 @@ def translate_named_expr(
     )
 
 
-def _contains_nested_lists(val: Any) -> bool:
-    if not val:
-        return False
-    return any(isinstance(_, list) for _ in val)
-
-
 @singledispatch
 def _translate_expr(
     node: Any, translator: Translator, dtype: DataType, schema: Schema
@@ -1318,11 +1312,12 @@ def _(
         return expr.LiteralColumn(dtype, pl.Series._from_pyseries(node.value))
     if dtype.id() == plc.TypeId.LIST:  # pragma: no cover
         # TODO: Remove once pylibcudf.Scalar supports lists
-        if _contains_nested_lists(node.value):
-            return expr.LiteralColumn(
-                dtype, pl.Series([node.value], dtype=dtype.polars_type)
-            )
-        return expr.LiteralColumn(dtype, pl.Series(node.value))
+        # Scalar list literals are stored as a single-row column because
+        # pylibcudf.Scalar does not yet support list values. Wrapping
+        # node.value in a list preserves the list nesting (cudf#19610).
+        return expr.LiteralColumn(
+            dtype, pl.Series([node.value], dtype=dtype.polars_type), is_scalar=True
+        )
     if dtype.id() == plc.TypeId.STRUCT:
         raise NotImplementedError("Struct literals are not supported")
     return expr.Literal(dtype, node.value)

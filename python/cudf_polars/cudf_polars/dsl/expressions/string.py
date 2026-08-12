@@ -39,6 +39,13 @@ __all__ = ["StringFunction"]
 JsonDecodeType = list[tuple[str, plc.DataType, "JsonDecodeType"]]
 
 
+def _flatten_list_literal(column: plc.Column) -> plc.Column:
+    """Return the inner values of a single-row list literal."""
+    if column.type().id() == plc.TypeId.LIST:
+        return column.children()[1]
+    return column
+
+
 def _dtypes_for_json_decode(dtype: DataType) -> JsonDecodeType:
     """Get the dtypes for json decode."""
     # Type checker doesn't narrow polars_type through dtype.id() check
@@ -262,10 +269,19 @@ class StringFunction(Expr):
                 raise NotImplementedError("replace_many only supports literal inputs")
             target = self.children[1]
             # Above, we raise NotImplementedError if the target is not a Literal,
-            # so we can safely access .value here.
-            if (isinstance(target, Literal) and target.value == "") or (
-                isinstance(target, LiteralColumn) and (target.value == "").any()
-            ):
+            # so we can safely access .value here. A list literal is stored as a
+            # single-row list column, so explode to inspect its values.
+            if isinstance(target, LiteralColumn):
+                target_values = (
+                    target.value.explode()
+                    if target.dtype.id() == plc.TypeId.LIST
+                    else target.value
+                )
+                has_empty_target = (target_values == "").any()
+            else:
+                assert isinstance(target, Literal)
+                has_empty_target = target.value == ""
+            if has_empty_target:
                 raise NotImplementedError(
                     "libcudf replace_many is implemented differently from polars "
                     "for empty strings"
@@ -473,7 +489,7 @@ class StringFunction(Expr):
             (ascii_case_insensitive,) = self.options
             child, arg = self.children
             plc_column = child.evaluate(df, context=context).obj
-            plc_targets = arg.evaluate(df, context=context).obj
+            plc_targets = _flatten_list_literal(arg.evaluate(df, context=context).obj)
             if plc_column.size() == 0:
                 # contains_multiple launches a kernel with grid_1d sized
                 # against the input rows, which asserts num_blocks > 0.
@@ -1004,7 +1020,10 @@ class StringFunction(Expr):
             col_column, col_target, col_repl = columns
             return Column(
                 plc.strings.replace.replace_multiple(
-                    col_column.obj, col_target.obj, col_repl.obj, stream=df.stream
+                    col_column.obj,
+                    _flatten_list_literal(col_target.obj),
+                    _flatten_list_literal(col_repl.obj),
+                    stream=df.stream,
                 ),
                 dtype=self.dtype,
             )

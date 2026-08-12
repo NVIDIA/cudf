@@ -209,7 +209,17 @@ def decompose_single_agg(
         )
     if isinstance(agg, expr.Len):
         return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
-    if isinstance(agg, (expr.Literal, expr.LiteralColumn)):
+    if isinstance(agg, expr.Literal):
+        return [], named_expr
+    if isinstance(agg, expr.LiteralColumn):
+        if not agg.is_scalar:
+            # A column literal is imploded into a single list per group,
+            # adding a nesting level, then broadcast to each group. A scalar
+            # literal is broadcast unchanged.
+            imploded = agg.value.implode()
+            named_expr = named_expr.reconstruct(
+                expr.LiteralColumn(DataType(imploded.dtype), imploded, is_scalar=True)
+            )
         return [], named_expr
     if isinstance(agg, expr.Agg):
         if agg.name == "quantile":
@@ -468,6 +478,13 @@ def decompose_single_agg(
             # post-evaluation (if outside an aggregation).
             return (
                 aggs,
+                named_expr.reconstruct(agg.reconstruct([p.value for p in posts])),
+            )
+        elif not aggs:
+            # A pointwise expression over only literals is broadcast to each
+            # group rather than collected into a per-group list.
+            return (
+                [],
                 named_expr.reconstruct(agg.reconstruct([p.value for p in posts])),
             )
         else:

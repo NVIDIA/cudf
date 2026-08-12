@@ -14,7 +14,7 @@ group by
 having
     sum(ps_supplycost * ps_availqty) > (
         select
-            sum(ps_supplycost * ps_availqty) * 0.01
+            sum(ps_supplycost * ps_availqty) * (0.0001 / $scale_factor)
         from
             partsupp,
             supplier,

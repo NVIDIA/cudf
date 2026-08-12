@@ -25,6 +25,7 @@ fi
 
 EXITCODE=0
 validation_dir="$(mktemp -d)"
+ndsh_scale_factor=1
 trap 'rm -rf "${validation_dir}"' EXIT
 # Run all nvbench benchmarks with --profile and rmm_mode=cuda
 for bench in *_NVBENCH; do
@@ -33,8 +34,8 @@ for bench in *_NVBENCH; do
     echo "Running $bench with --profile..."
     args=(--profile --devices 0 -q --rmm_mode cuda)
     if [[ "$bench" == NDSH_* ]]; then
-      args+=(--axis scale_factor=0.01)
-      if [[ "$bench" =~ ^NDSH_Q(01|02|03|04|05|06|07|08|09|10|11|12|13|14|15|16|17|18|19|20|21|22)_NVBENCH$ ]]; then
+      args+=(--axis "scale_factor=${ndsh_scale_factor}")
+      if [[ "$bench" =~ ^NDSH_Q([0-9]{2})_NVBENCH$ ]]; then
         args+=(--output_directory "${validation_dir}/q${BASH_REMATCH[1]}")
       fi
     fi
@@ -53,7 +54,8 @@ done
 
 python "${repo_root}/ci/validate_ndsh_benchmarks.py" \
   --output-dir "${validation_dir}" \
-  --sql-dir "${repo_root}/cpp/libcudf_streaming/benchmarks/streaming/ndsh/sql"
+  --sql-dir "${repo_root}/cpp/libcudf_streaming/benchmarks/streaming/ndsh/sql" \
+  --scale-factor "${ndsh_scale_factor}"
 
 echo "Test script exiting with value: $EXITCODE"
 exit ${EXITCODE}

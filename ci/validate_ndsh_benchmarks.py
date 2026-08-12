@@ -57,7 +57,7 @@ def values_equal(actual, expected):
     return actual == expected
 
 
-def validate_query(query_name, sql_dir, output_dir):
+def validate_query(query_name, sql_dir, output_dir, scale_factor=0.01):
     connection = duckdb.connect()
     for path in (output_dir / query_name / "input").glob("*.parquet"):
         table_name = path.stem.replace('"', '""')
@@ -67,7 +67,12 @@ def validate_query(query_name, sql_dir, output_dir):
             f"SELECT * FROM read_parquet('{parquet_path}')"
         )
 
-    expected = connection.execute((sql_dir / f"{query_name}.sql").read_text())
+    parameters = (
+        {"scale_factor": scale_factor} if query_name == "q11" else None
+    )
+    expected = connection.execute(
+        (sql_dir / f"{query_name}.sql").read_text(), parameters
+    )
     expected_names = [column[0] for column in expected.description]
     expected_rows = expected.fetchall()
 
@@ -104,11 +109,14 @@ def main():
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--sql-dir", type=Path, required=True)
+    parser.add_argument("--scale-factor", type=float, default=0.01)
     args = parser.parse_args()
 
     failed = False
     for query_name in QUERIES:
-        error = validate_query(query_name, args.sql_dir, args.output_dir)
+        error = validate_query(
+            query_name, args.sql_dir, args.output_dir, args.scale_factor
+        )
         if error is None:
             print(f"{query_name}: PASSED")
         else:

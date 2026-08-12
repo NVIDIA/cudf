@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/utilities/export.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -13,7 +14,8 @@
 #include <string>
 #include <vector>
 
-namespace cudf::io::parquet::detail {
+namespace CUDF_EXPORT cudf {
+namespace io::parquet::detail {
 
 /**
  * @brief Class for parsing Parquet's Thrift Compact Protocol encoded metadata
@@ -43,6 +45,10 @@ class CompactProtocolWriter {
   size_t write(ColumnOrder const&);
   size_t write(PageEncodingStats const&);
   size_t write(SortingColumn const&);
+  size_t write(DataPageHeader const&);
+  size_t write(DictionaryPageHeader const&);
+  size_t write(DataPageHeaderV2 const&);
+  size_t write(PageHeader const&);
 
  protected:
   std::vector<uint8_t>& m_buf;
@@ -117,4 +123,5 @@ template <>
 inline void CompactProtocolFieldWriter::field_int_list<int64_t>(int field,
                                                                 std::vector<int64_t> const& val);
 
-}  // namespace cudf::io::parquet::detail
+}  // namespace io::parquet::detail
+}  // namespace CUDF_EXPORT cudf

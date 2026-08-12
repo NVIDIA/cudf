@@ -175,6 +175,9 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     return keys;
   });
 
+  // TODO: Overload function to accept multiple vectors to do the concatenate at once, with a 2D
+  // kernel. The keys concatenate below and the indices concatenate further down are two separate
+  // launches over the same set of input columns and could be fused into a single batched call.
   // first, concatenate all the keys
   auto all_keys =
     cudf::detail::concatenate(keys_views, stream, cudf::get_current_device_resource_ref());

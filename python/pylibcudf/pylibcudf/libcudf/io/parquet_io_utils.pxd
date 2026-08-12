@@ -44,7 +44,7 @@ cdef extern from * nogil:
             host_span[const_byte_range_info] byte_ranges,
             cuda_stream_view stream,
             device_async_resource_ref mr,
-        ) except +
+        ) except +libcudf_exception_handler
 
 cdef extern from "cudf/io/parquet_io_utils.hpp" \
         namespace "cudf::io::parquet" nogil:

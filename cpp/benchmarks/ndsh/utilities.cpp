@@ -8,6 +8,7 @@
 #include <benchmarks/common/ndsh_data_generator/ndsh_data_generator.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
 #include <benchmarks/common/table_utilities.hpp>
+#include <benchmarks/fixture/nvbench_fixture.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
@@ -28,6 +29,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <iterator>
 #include <numeric>
 #include <unordered_set>
@@ -605,4 +607,28 @@ void generate_parquet_data_sources(double scale_factor,
     auto region = cudf::datagen::generate_region(stream, managed_pool_mr);
     write_to_parquet_device_buffer(region, SCHEMAS.at("region"), sources.at("region"));
   }
+
+  if (write_ndsh_results()) {
+    auto const input_directory =
+      std::filesystem::path{cudf::benchmark_output_directory()} / "input";
+    std::filesystem::create_directories(input_directory);
+    for (auto& [name, source] : sources) {
+      auto const path = input_directory / (name + ".parquet");
+      if (not std::filesystem::exists(path)) {
+        read_parquet(source.make_source_info())->to_parquet(path.string());
+      }
+    }
+  }
+}
+
+bool write_ndsh_results() { return not cudf::benchmark_output_directory().empty(); }
+
+void write_ndsh_result(table_with_names const& result, std::string const& query_name)
+{
+  static std::unordered_set<std::string> written_results;
+  if (not written_results.insert(query_name).second) { return; }
+  auto const result_directory =
+    std::filesystem::path{cudf::benchmark_output_directory()} / "results";
+  std::filesystem::create_directories(result_directory);
+  result.to_parquet((result_directory / (query_name + ".parquet")).string());
 }

@@ -287,3 +287,7 @@ void write_to_parquet_device_buffer(std::unique_ptr<cudf::table> const& table,
 void generate_parquet_data_sources(double scale_factor,
                                    std::vector<std::string> const& table_names,
                                    std::unordered_map<std::string, cuio_source_sink_pair>& sources);
+
+[[nodiscard]] bool write_ndsh_results();
+
+void write_ndsh_result(table_with_names const& result, std::string const& query_name);

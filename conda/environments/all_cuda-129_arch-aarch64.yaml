@@ -32,6 +32,7 @@ dependencies:
 - dask-cuda==26.10.*,>=0.0.0a0
 - dlpack>=0.8,<1.0
 - doxygen=1.9.1
+- duckdb
 - fastavro>=0.22.9
 - flatbuffers==24.3.25
 - fsspec>=0.6.0

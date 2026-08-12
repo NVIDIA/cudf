@@ -191,6 +191,7 @@ void ndsh_q10(nvbench::state& state)
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  if (not write_ndsh_results()) { return; }
   std::unique_ptr<table_with_names> result;
   if (mode == query_mode::END_TO_END) {
     auto input = load_ndsh_q10(sources);
@@ -198,7 +199,7 @@ void ndsh_q10(nvbench::state& state)
   } else {
     result = execute_ndsh_q10(tables);
   }
-  result->to_parquet("q10.parquet");
+  write_ndsh_result(*result, "q10");
 }
 
 NVBENCH_BENCH(ndsh_q10)

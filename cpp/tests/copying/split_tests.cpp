@@ -955,6 +955,8 @@ void split_structs(bool include_validity, SplitFunc Split, CompareFunc Compare, 
 template <typename SplitFunc, typename CompareFunc>
 void split_structs_no_children(SplitFunc Split, CompareFunc Compare, bool split = true)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = cudf::get_current_device_resource_ref();
   // no nulls
   {
     auto struct_column = cudf::make_structs_column(4, {}, 0, rmm::device_buffer{});
@@ -978,14 +980,14 @@ void split_structs_no_children(SplitFunc Split, CompareFunc Compare, bool split 
   // all nulls
   {
     std::vector<bool> struct_validity{false, false, false, false};
-    auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end());
+    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
+      struct_validity.begin(), struct_validity.end(), stream, mr);
     auto struct_column = cudf::make_structs_column(4, {}, null_count, std::move(null_mask));
 
     if (split) {
       std::vector<bool> expected_validity{false, false};
-      std::tie(null_mask, null_count) =
-        cudf::test::detail::make_null_mask(expected_validity.begin(), expected_validity.end());
+      std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(
+        expected_validity.begin(), expected_validity.end(), stream, mr);
       auto expected = cudf::make_structs_column(2, {}, null_count, std::move(null_mask));
 
       // split
@@ -1026,14 +1028,14 @@ void split_structs_no_children(SplitFunc Split, CompareFunc Compare, bool split 
   // all nulls, empty output column
   {
     std::vector<bool> struct_validity{false, false, false, false};
-    auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end());
+    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
+      struct_validity.begin(), struct_validity.end(), stream, mr);
     auto struct_column = cudf::make_structs_column(4, {}, null_count, std::move(null_mask));
 
     if (split) {
       std::vector<bool> expected_validity0{false, false, false, false};
-      std::tie(null_mask, null_count) =
-        cudf::test::detail::make_null_mask(expected_validity0.begin(), expected_validity0.end());
+      std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(
+        expected_validity0.begin(), expected_validity0.end(), stream, mr);
       auto expected0 = cudf::make_structs_column(4, {}, null_count, std::move(null_mask));
 
       auto expected1 = cudf::make_structs_column(0, {}, 0, rmm::device_buffer{});
@@ -1126,6 +1128,9 @@ void split_nested_struct_of_list(SplitFunc Split, CompareFunc Compare, bool spli
 template <typename SplitFunc, typename CompareFunc>
 void split_nested_list_of_structs(SplitFunc Split, CompareFunc Compare, bool split = true)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = cudf::get_current_device_resource_ref();
+
   // List<Struct<List<>>
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
 
@@ -1259,7 +1264,7 @@ void split_nested_list_of_structs(SplitFunc Split, CompareFunc Compare, bool spl
                                                                 outer_offsets.end());
   std::vector<bool> outer_validity{true, true, true, false, true, true, false};
   auto [outer_null_mask, outer_null_count] =
-    cudf::test::detail::make_null_mask(outer_validity.begin(), outer_validity.end());
+    cudf::test::detail::make_null_mask(outer_validity.begin(), outer_validity.end(), stream, mr);
   auto outer_list = [&] {
     auto tmp = make_lists_column(static_cast<cudf::size_type>(outer_validity.size()),
                                  outer_offsets_col.release(),
@@ -1675,6 +1680,8 @@ TEST_F(ContiguousSplitUntypedTest, ProgressiveSizesChunked)
 
 TEST_F(ContiguousSplitUntypedTest, ValidityRepartition)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // it is tricky to actually get the internal repartitioning/load-balancing code to add new splits
   // inside a validity buffer.  Under almost all situations, the fraction of bytes that validity
   // represents is so small compared to the bytes for all other data, that those buffers end up not
@@ -1686,7 +1693,8 @@ TEST_F(ContiguousSplitUntypedTest, ValidityRepartition)
   });
   cudf::size_type const num_rows = 2000000;
   auto col                       = cudf::sequence(num_rows, cudf::numeric_scalar<int8_t>{0});
-  auto [null_mask, null_count]   = cudf::test::detail::make_null_mask(rvalids, rvalids + num_rows);
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(rvalids, rvalids + num_rows, stream, mr);
   col->set_null_mask(std::move(null_mask), null_count);
 
   cudf::table_view t({*col});
@@ -1701,13 +1709,16 @@ TEST_F(ContiguousSplitUntypedTest, ValidityRepartition)
 
 TEST_F(ContiguousSplitUntypedTest, ValidityRepartitionChunked)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   srand(0);
   auto rvalids                   = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
     return static_cast<float>(rand()) / static_cast<float>(RAND_MAX) < 0.5f ? 0 : 1;
   });
   cudf::size_type const num_rows = 2000000;
   auto col                       = cudf::sequence(num_rows, cudf::numeric_scalar<int8_t>{0});
-  auto [null_mask, null_count]   = cudf::test::detail::make_null_mask(rvalids, rvalids + num_rows);
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(rvalids, rvalids + num_rows, stream, mr);
   col->set_null_mask(std::move(null_mask), null_count);
 
   cudf::table_view t({*col});

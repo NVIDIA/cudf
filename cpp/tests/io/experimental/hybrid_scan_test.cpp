@@ -443,6 +443,8 @@ TEST_F(HybridScanTest, MaterializeListsOfStrings)
 
 TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   std::mt19937 gen(0x5ca1e);
   auto constexpr num_rows = num_ordered_rows;
 
@@ -472,9 +474,7 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
     cudf::io::write_parquet(write_options);
   }
 
-  auto const stream = cudf::get_default_stream();
-  auto const mr     = cudf::get_current_device_resource_ref();
-  auto aligned_mr   = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
+  auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
 
   // Helper to validate monotonic string and list offsets
   auto const expect_monotonic_offsets = [](auto& self, cudf::column_view const& column) -> void {
@@ -600,6 +600,8 @@ TEST_F(HybridScanTest, MaterializeStructs)
 
 TEST_F(HybridScanTest, MaterializeListsOfStructs)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   std::mt19937 gen(0xcaLL);
 
   auto constexpr num_concat = 2;
@@ -634,7 +636,7 @@ TEST_F(HybridScanTest, MaterializeListsOfStructs)
   auto col1_offsets_col  = cudf::test::fixed_width_column_wrapper<int32_t>(
     col1_offsets_iter, col1_offsets_iter + num_rows + 1);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
+    cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows, stream, mr);
   auto col1 = cudf::make_lists_column(
     num_rows, col1_offsets_col.release(), std::move(struct1), null_count, std::move(null_mask));
 
@@ -663,7 +665,7 @@ TEST_F(HybridScanTest, MaterializeListsOfStructs)
   auto col2_offsets_col  = cudf::test::fixed_width_column_wrapper<int32_t>(
     col2_offsets_iter, col2_offsets_iter + num_rows + 1);
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
+    cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows, stream, mr);
   auto col2 = cudf::make_lists_column(
     num_rows, col2_offsets_col.release(), std::move(struct2), null_count, std::move(null_mask));
 
@@ -672,6 +674,8 @@ TEST_F(HybridScanTest, MaterializeListsOfStructs)
 
 TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   std::mt19937 gen(0xcaffe);
 
   auto constexpr num_rows = num_ordered_rows;
@@ -707,7 +711,7 @@ TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets_iter, offsets_iter + num_rows + 1);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
+    cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows, stream, mr);
   auto col2 = cudf::make_lists_column(
     num_rows, offsets_col.release(), bools_col.release(), null_count, std::move(null_mask));
   // list<list<bool(nullable)>(nullable)>(nullable)
@@ -725,7 +729,7 @@ TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
                                                                     offset_iter + num_rows + 1);
     auto [null_mask, null_count] = [&]() {
       if (is_nullable) {
-        return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
+        return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows, stream, mr);
       } else {
         return std::make_pair(rmm::device_buffer{}, 0);
       }
@@ -773,8 +777,8 @@ TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
     0, [](cudf::size_type idx) { return idx * string_per_row; });
   cudf::test::fixed_width_column_wrapper<cudf::size_type> list_offsets(
     offset_iter, offset_iter + (num_rows * lists_per_list) + 1);
-  std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(list_valids, list_valids + (num_rows * lists_per_list));
+  std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(
+    list_valids, list_valids + (num_rows * lists_per_list), stream, mr);
 
   auto list_col = cudf::make_lists_column(num_rows * lists_per_list,
                                           list_offsets.release(),
@@ -789,7 +793,7 @@ TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
   auto list_list_valids =
     cudf::detail::make_counting_transform_iterator(0, [&](int index) { return index % 80; });
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(list_list_valids, list_list_valids + num_rows);
+    cudf::test::detail::make_null_mask(list_list_valids, list_list_valids + num_rows, stream, mr);
 
   auto col9 = cudf::make_lists_column(
     num_rows, list_list_offsets.release(), std::move(list_col), null_count, std::move(null_mask));

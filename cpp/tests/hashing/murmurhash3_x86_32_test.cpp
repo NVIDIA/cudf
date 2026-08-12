@@ -192,26 +192,28 @@ TEST_F(MurmurHashTest, NullableList)
 
 TEST_F(MurmurHashTest, ListOfStruct)
 {
-  auto col1 = cudf::test::fixed_width_column_wrapper<int32_t>{
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto col1         = cudf::test::fixed_width_column_wrapper<int32_t>{
     {-1, -1, 0, 2, 2, 2, 1, 2, 0, 2, 0, 2, 0, 2, 0, 0, 1, 2},
     {true,
-     true,
-     true,
-     true,
-     true,
-     false,
-     true,
-     true,
-     true,
-     true,
-     true,
-     true,
-     true,
-     true,
-     true,
-     true,
-     false,
-     false}};
+             true,
+             true,
+             true,
+             true,
+             false,
+             true,
+             true,
+             true,
+             true,
+             true,
+             true,
+             true,
+             true,
+             true,
+             true,
+             false,
+             false}};
   auto col2 = cudf::test::strings_column_wrapper{
     {"x", "x", "a", "a", "b", "b", "a", "b", "a", "b", "a", "c", "a", "c", "a", "c", "b", "b"},
     {true,
@@ -273,7 +275,7 @@ TEST_F(MurmurHashTest, ListOfStruct)
                                          true,
                                          true};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
+    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end(), stream, mr);
   auto list_column = cudf::make_lists_column(
     17, offsets.release(), struct_col.release(), null_count, std::move(null_mask));
 
@@ -323,6 +325,8 @@ TEST_F(MurmurHashTest, ListOfStruct)
 
 TEST_F(MurmurHashTest, ListOfEmptyStruct)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // []
   // []
   // Null
@@ -340,7 +344,7 @@ TEST_F(MurmurHashTest, ListOfEmptyStruct)
   auto struct_validity = std::vector<bool>{
     false, false, false, false, false, false, false, false, true, true, true, true, true, true};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end());
+    cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end(), stream, mr);
   auto struct_col = cudf::make_structs_column(14, {}, null_count, std::move(null_mask));
 
   auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
@@ -348,7 +352,7 @@ TEST_F(MurmurHashTest, ListOfEmptyStruct)
   auto list_nullmask = std::vector<bool>{
     true, true, false, false, true, true, true, true, true, true, true, true, true};
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
+    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end(), stream, mr);
   auto list_column = cudf::make_lists_column(
     13, offsets.release(), std::move(struct_col), null_count, std::move(null_mask));
 
@@ -372,6 +376,8 @@ TEST_F(MurmurHashTest, ListOfEmptyStruct)
 
 TEST_F(MurmurHashTest, EmptyDeepList)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // List<List<int>>, where all lists are empty
   // []
   // []
@@ -384,7 +390,7 @@ TEST_F(MurmurHashTest, EmptyDeepList)
   auto offsets       = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0};
   auto list_nullmask = std::vector<bool>{true, true, false, false};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
+    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end(), stream, mr);
   auto list_column = cudf::make_lists_column(
     4, offsets.release(), list1.release(), null_count, std::move(null_mask));
 

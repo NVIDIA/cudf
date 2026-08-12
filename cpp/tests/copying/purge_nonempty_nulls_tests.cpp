@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -336,6 +336,8 @@ TEST_F(PurgeNonEmptyNullsTest, ListOfStrings)
 // List<string>.
 TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   auto strings =
     cudf::test::strings_column_wrapper{
       {"1", "22", "3", "44", "5", "66", "7", "8888", "9", "1010"},  //<--- "8888" will be
@@ -359,8 +361,9 @@ TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
   );
 
   // Construct a list column from the strings column.
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(no_nulls(), no_nulls() + 4);
-  auto const lists             = cudf::make_lists_column(4,
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(no_nulls(), no_nulls() + 4, stream, mr);
+  auto const lists = cudf::make_lists_column(4,
                                              offsets_col_t{0, 4, 5, 7, 10}.release(),
                                              std::move(strings),
                                              null_count,
@@ -409,6 +412,8 @@ TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
 // Struct<List<T>>.
 TEST_F(PurgeNonEmptyNullsTest, StructOfList)
 {
+  auto const stream        = cudf::test::get_default_stream();
+  auto mr                  = this->mr();
   auto const structs_input = [] {
     auto child = LCW<T>{{{{1, 2, 3, 4}, null_at(2)},
                          {5},
@@ -420,7 +425,8 @@ TEST_F(PurgeNonEmptyNullsTest, StructOfList)
   }();
   auto [null_mask, null_count] = [&] {
     auto const valid_iter = null_at(2);
-    return cudf::test::detail::make_null_mask(valid_iter, valid_iter + structs_input->size());
+    return cudf::test::detail::make_null_mask(
+      valid_iter, valid_iter + structs_input->size(), stream, mr);
   }();
 
   // Manually set the null mask for the columns, leaving the null at list index 2 unsanitized.

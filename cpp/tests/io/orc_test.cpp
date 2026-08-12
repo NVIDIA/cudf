@@ -1529,6 +1529,8 @@ TEST_F(OrcWriterTest, StripeSizeInvalid)
 
 TEST_F(OrcWriterTest, TestMap)
 {
+  auto const stream         = cudf::test::get_default_stream();
+  auto mr                   = this->mr();
   auto const num_rows       = 1200000;
   auto const lists_per_row  = 4;
   auto const num_child_rows = (num_rows * lists_per_row) / 2;  // half due to validity
@@ -1550,9 +1552,10 @@ TEST_F(OrcWriterTest, TestMap)
   }
   int32_col offsets(row_offsets.begin(), row_offsets.end());
 
-  auto num_list_rows           = static_cast<cudf::column_view>(offsets).size() - 1;
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_list_rows);
-  auto list_col                = cudf::make_lists_column(
+  auto num_list_rows = static_cast<cudf::column_view>(offsets).size() - 1;
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(valids, valids + num_list_rows, stream, mr);
+  auto list_col = cudf::make_lists_column(
     num_list_rows, offsets.release(), std::move(s_col), null_count, std::move(null_mask));
 
   table_view expected({*list_col});
@@ -1612,10 +1615,12 @@ TEST_F(OrcReaderTest, NestedColumnSelection)
 
 TEST_F(OrcReaderTest, NestedEmptyStructColumnSelection)
 {
+  auto const stream   = cudf::test::get_default_stream();
+  auto mr             = this->mr();
   auto const validity = std::vector<bool>{true, false};
   auto const num_rows = static_cast<cudf::size_type>(validity.size());
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
@@ -1633,10 +1638,12 @@ TEST_F(OrcReaderTest, NestedEmptyStructColumnSelection)
 
 TEST_F(OrcReaderTest, NullableEmptyStructChildColumnSelection)
 {
+  auto const stream   = cudf::test::get_default_stream();
+  auto mr             = this->mr();
   auto const validity = std::vector<bool>{true, false};
   auto const num_rows = static_cast<cudf::size_type>(validity.size());
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(

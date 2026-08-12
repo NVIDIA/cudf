@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -689,10 +689,12 @@ TEST_F(ListsZeroLengthColumnTest, MixedTypes)
 
 TEST_F(ListsZeroLengthColumnTest, SuperimposeNulls)
 {
-  using FCW      = cudf::test::fixed_width_column_wrapper<int32_t>;
-  using StringCW = cudf::test::strings_column_wrapper;
-  using LCW      = cudf::test::lists_column_wrapper<int32_t>;
-  using offset_t = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using FCW         = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using StringCW    = cudf::test::strings_column_wrapper;
+  using LCW         = cudf::test::lists_column_wrapper<int32_t>;
+  using offset_t    = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 
   auto const lists = [&] {
     auto child = this
@@ -702,8 +704,9 @@ TEST_F(ListsZeroLengthColumnTest, SuperimposeNulls)
                    .release();
     auto offsets = offset_t{0, 3, 3, 5}.release();
 
-    auto const valid_iter        = cudf::test::iterators::null_at(2);
-    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valid_iter, valid_iter + 3);
+    auto const valid_iter = cudf::test::iterators::null_at(2);
+    auto [null_mask, null_count] =
+      cudf::test::detail::make_null_mask(valid_iter, valid_iter + 3, stream, mr);
 
     auto tmp = cudf::make_lists_column(
       3, std::move(offsets), std::move(child), null_count, std::move(null_mask));

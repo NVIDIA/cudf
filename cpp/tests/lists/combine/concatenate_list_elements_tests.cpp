@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -525,6 +525,8 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsNoNull)
 
 TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   using structs_col = cudf::test::structs_column_wrapper;
   using int32s_col  = cudf::test::fixed_width_column_wrapper<int32_t>;
   using strings_col = cudf::test::strings_column_wrapper;
@@ -533,15 +535,16 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
   // [ [{1, 11, "1"}, {null, null, null}], [{3, 13, "3"}], NULL ]
   // [ [{4, 14, "4"}, {5, 15, "5"}, {null, null, null}] ]
   // [ [{7, 17, "7"}, {null, null, null}], [{9, 19, "9"}, {10, 110, "10"}] ]
-  auto const input = [] {
-    auto child = [] {
-      auto child1                  = int32s_col{1, null, 3, 4, 5, null, 7, null, 9, 10};
-      auto child2                  = int32s_col{11, null, 13, 14, 15, null, 17, null, 19, 110};
-      auto child3                  = strings_col{"1", "", "3", "4", "5", "", "7", "", "9", "10"};
-      auto structs                 = structs_col{{child1, child2, child3}, nulls_at({1, 5, 7})};
-      auto offsets                 = int32s_col{0, 2, 3, 3, 6, 8, 10};
-      auto const null_it           = null_at(2);  // null list
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 6);
+  auto const input = [&] {
+    auto child = [&] {
+      auto child1        = int32s_col{1, null, 3, 4, 5, null, 7, null, 9, 10};
+      auto child2        = int32s_col{11, null, 13, 14, 15, null, 17, null, 19, 110};
+      auto child3        = strings_col{"1", "", "3", "4", "5", "", "7", "", "9", "10"};
+      auto structs       = structs_col{{child1, child2, child3}, nulls_at({1, 5, 7})};
+      auto offsets       = int32s_col{0, 2, 3, 3, 6, 8, 10};
+      auto const null_it = null_at(2);  // null list
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(null_it, null_it + 6, stream, mr);
       return cudf::make_lists_column(
         6, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
@@ -593,14 +596,15 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
     // NULL
     // [{4, 14, "4"}, {5, 15, "5"}, {null, null, null}]
     // [{7, 17, "7"}, {null, null, null}, {9, 19, "9"}, {10, 110, "10"}]
-    auto const expected = [] {
-      auto child1                  = int32s_col{4, 5, null, 7, null, 9, 10};
-      auto child2                  = int32s_col{14, 15, null, 17, null, 19, 110};
-      auto child3                  = strings_col{"4", "5", "", "7", "", "9", "10"};
-      auto structs                 = structs_col{{child1, child2, child3}, nulls_at({2, 4})};
-      auto offsets                 = int32s_col{0, 0, 3, 7};
-      auto const null_it           = null_at(0);  // null row
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 3);
+    auto const expected = [&] {
+      auto child1        = int32s_col{4, 5, null, 7, null, 9, 10};
+      auto child2        = int32s_col{14, 15, null, 17, null, 19, 110};
+      auto child3        = strings_col{"4", "5", "", "7", "", "9", "10"};
+      auto structs       = structs_col{{child1, child2, child3}, nulls_at({2, 4})};
+      auto offsets       = int32s_col{0, 0, 3, 7};
+      auto const null_it = null_at(0);  // null row
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(null_it, null_it + 3, stream, mr);
       return cudf::make_lists_column(
         3, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
@@ -615,14 +619,15 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsWithNull)
     // Output:
     // NULL
     // [{4, 14, "4"}, {5, 15, "5"}, {null, null, null}]
-    auto const expected = [] {
-      auto child1                  = int32s_col{4, 5, null};
-      auto child2                  = int32s_col{14, 15, null};
-      auto child3                  = strings_col{"4", "5", ""};
-      auto structs                 = structs_col{{child1, child2, child3}, null_at(2)};
-      auto offsets                 = int32s_col{0, 0, 3};
-      auto const null_it           = null_at(0);  // null row
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
+    auto const expected = [&] {
+      auto child1        = int32s_col{4, 5, null};
+      auto child2        = int32s_col{14, 15, null};
+      auto child3        = strings_col{"4", "5", ""};
+      auto structs       = structs_col{{child1, child2, child3}, null_at(2)};
+      auto offsets       = int32s_col{0, 0, 3};
+      auto const null_it = null_at(0);  // null row
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(null_it, null_it + 2, stream, mr);
       return cudf::make_lists_column(
         2, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
@@ -683,6 +688,8 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsNoNull)
 
 TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   using structs_col = cudf::test::structs_column_wrapper;
   using int32s_col  = cudf::test::fixed_width_column_wrapper<int32_t>;
   using lists_col   = cudf::test::lists_column_wrapper<int32_t>;
@@ -691,17 +698,18 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
   // [ [{1, 11, [1, 1]}, {2, 12, [2]}], [{3, 13, [3, 3]}] ]
   // [ [{4, 14, null}, {5, 15, [5, 5, 5]}, {6, 16, [6, 6]}], NULL ]
   // [ [{7, 17, [7]}, {8, 18, [8]}], [{9, 19, [9, 9]}, {10, 110, [10, 10, 10, 10]}] ]
-  auto const input = [] {
-    auto child = [] {
+  auto const input = [&] {
+    auto child = [&] {
       auto child1 = int32s_col{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
       auto child2 = int32s_col{11, 12, 13, 14, 15, 16, 17, 18, 19, 110};
       auto child3 =
         lists_col{{{1, 1}, {2}, {3, 3}, {}, {5, 5, 5}, {6, 6}, {7}, {8}, {9, 9}, {10, 10, 10, 10}},
                   null_at(3)};
-      auto structs                 = structs_col{{child1, child2, child3}};
-      auto offsets                 = int32s_col{0, 2, 3, 6, 6, 8, 10};
-      auto const null_it           = null_at(3);  // null list
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 6);
+      auto structs       = structs_col{{child1, child2, child3}};
+      auto offsets       = int32s_col{0, 2, 3, 6, 6, 8, 10};
+      auto const null_it = null_at(3);  // null list
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(null_it, null_it + 6, stream, mr);
       return cudf::make_lists_column(
         6, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
@@ -755,15 +763,16 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
     // [{1, 11, [1, 1]}, {2, 12, [2]}, {3, 13, [3, 3]}]
     // NULL
     // [{7, 17, [7]}, {8, 18, [8]}, {9, 19, [9, 9]}, {10, 110, [10, 10, 10, 10]}]
-    auto const expected = [] {
+    auto const expected = [&] {
       auto child1 = int32s_col{1, 2, 3, 7, 8, 9, 10};
       auto child2 = int32s_col{11, 12, 13, 17, 18, 19, 110};
       auto child3 =
         lists_col{{{1, 1}, {2}, {3, 3}, {7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
-      auto structs                 = structs_col{{child1, child2, child3}};
-      auto offsets                 = int32s_col{0, 3, 3, 7};
-      auto const null_it           = null_at(1);  // null row
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 3);
+      auto structs       = structs_col{{child1, child2, child3}};
+      auto offsets       = int32s_col{0, 3, 3, 7};
+      auto const null_it = null_at(1);  // null row
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(null_it, null_it + 3, stream, mr);
       return cudf::make_lists_column(
         3, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
@@ -778,14 +787,15 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
     // Output:
     // NULL
     // [{7, 17, [7]}, {8, 18, [8]}, {9, 19, [9, 9]}, {10, 110, [10, 10, 10, 10]}]
-    auto const expected = [] {
-      auto child1                  = int32s_col{7, 8, 9, 10};
-      auto child2                  = int32s_col{17, 18, 19, 110};
-      auto child3                  = lists_col{{{7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
-      auto structs                 = structs_col{{child1, child2, child3}};
-      auto offsets                 = int32s_col{0, 0, 4};
-      auto const null_it           = null_at(0);  // null row
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
+    auto const expected = [&] {
+      auto child1        = int32s_col{7, 8, 9, 10};
+      auto child2        = int32s_col{17, 18, 19, 110};
+      auto child3        = lists_col{{{7}, {8}, {9, 9}, {10, 10, 10, 10}}, no_nulls()};
+      auto structs       = structs_col{{child1, child2, child3}};
+      auto offsets       = int32s_col{0, 0, 4};
+      auto const null_it = null_at(0);  // null row
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(null_it, null_it + 2, stream, mr);
       return cudf::make_lists_column(
         2, offsets.release(), structs.release(), null_count, std::move(null_mask));
     }();
@@ -834,6 +844,8 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnChildSizeZero)
 // Subcase C: child.size()==0 with a null outer row — verifies null mask is preserved.
 TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnWithNullRow)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // list<list<int32>> with 2 outer rows: row 0 is null, row 1 is a valid empty list.
   // child.size() == 0; the null mask must be copied to the output.
   auto offsets        = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0};
@@ -841,19 +853,21 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnWithNullRow)
   auto inner_elements = cudf::test::fixed_width_column_wrapper<int32_t>{};
   auto inner_col =
     cudf::make_lists_column(0, inner_offsets.release(), inner_elements.release(), 0, {});
-  auto const null_it           = cudf::test::iterators::null_at(0);
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
-  auto const col               = cudf::make_lists_column(
+  auto const null_it = cudf::test::iterators::null_at(0);
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(null_it, null_it + 2, stream, mr);
+  auto const col = cudf::make_lists_column(
     2, offsets.release(), std::move(inner_col), null_count, std::move(null_mask));
 
   auto const results = cudf::lists::concatenate_list_elements(*col);
 
   // Expected: list<int32> with 2 rows — null row 0, empty row 1.
   // concatenate_list_elements reduces list<list<int32>> → list<int32>.
-  auto exp_offsets                     = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0};
-  auto exp_elements                    = cudf::test::fixed_width_column_wrapper<int32_t>{};
-  auto [exp_null_mask, exp_null_count] = cudf::test::detail::make_null_mask(null_it, null_it + 2);
-  auto const expected                  = cudf::make_lists_column(
+  auto exp_offsets  = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0};
+  auto exp_elements = cudf::test::fixed_width_column_wrapper<int32_t>{};
+  auto [exp_null_mask, exp_null_count] =
+    cudf::test::detail::make_null_mask(null_it, null_it + 2, stream, mr);
+  auto const expected = cudf::make_lists_column(
     2, exp_offsets.release(), exp_elements.release(), exp_null_count, std::move(exp_null_mask));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, *results, verbosity);

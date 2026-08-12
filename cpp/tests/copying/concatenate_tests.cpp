@@ -770,7 +770,9 @@ struct StructsColumnTest : public cudf::test::BaseFixture {};
 
 TEST_F(StructsColumnTest, ConcatenateStructs)
 {
-  auto count_iter = cuda::counting_iterator<int>{0};
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto count_iter   = cuda::counting_iterator<int>{0};
 
   // 1. String "names" column.
   std::vector<std::vector<std::string>> names(
@@ -813,7 +815,7 @@ TEST_F(StructsColumnTest, ConcatenateStructs)
   expected_children.push_back(cudf::concatenate(is_human_col_vec));
   std::vector<bool> struct_validity({true, false, true, true, true, false});
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end());
+    cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end(), stream, mr);
   auto expected =
     make_structs_column(6, std::move(expected_children), null_count, std::move(null_mask));
 

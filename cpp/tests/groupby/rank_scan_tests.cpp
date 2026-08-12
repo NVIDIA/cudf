@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -319,11 +319,13 @@ TYPED_TEST(typed_groupby_rank_scan_test, nestedStructs)
 
 TYPED_TEST(typed_groupby_rank_scan_test, structsWithNullPushdown)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto constexpr num_rows = 12;
 
-  auto get_struct_column = [] {
+  auto get_struct_column = [&] {
     auto nums_member =
       cudf::test::fixed_width_column_wrapper<T>{{0, 0, 7, 7, 7, 5, 4, 4, 4, 9, 9, 9}, null_at(5)};
     auto strings_member = cudf::test::strings_column_wrapper{
@@ -332,7 +334,7 @@ TYPED_TEST(typed_groupby_rank_scan_test, structsWithNullPushdown)
     // Reset null-mask, a posteriori. Nulls will not be pushed down to children.
     auto const null_iter = nulls_at({1, 2, 11});
     auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(null_iter, null_iter + num_rows);
+      cudf::test::detail::make_null_mask(null_iter, null_iter + num_rows, stream, mr);
     struct_column->set_null_mask(std::move(null_mask), null_count);
     return struct_column;
   };

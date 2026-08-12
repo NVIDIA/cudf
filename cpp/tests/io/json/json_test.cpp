@@ -1681,6 +1681,9 @@ TEST_P(JsonReaderParamTest, JsonDtypeSchema)
 
 TEST_F(JsonReaderTest, JsonNestedDtypeSchema)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+
   std::string json_string = R"( [{"a":[123, {"0": 123}], "b":1.0}, {"b":1.1}, {"b":2.1}])";
 
   std::map<std::string, cudf::io::schema_element> dtype_schema{
@@ -1736,7 +1739,7 @@ TEST_F(JsonReaderTest, JsonNestedDtypeSchema)
   auto leaf_child     = float_wrapper{{0.0, 123.0}, {false, true}};
   auto const validity = {1, 0, 0};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
   auto expected = cudf::make_lists_column(
     3,
     int_wrapper{{0, 2, 2, 2}}.release(),
@@ -3113,6 +3116,9 @@ TEST_F(JsonReaderTest, LastRecordInvalid)
 // Test case for dtype pruning with column order
 TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+
   std::string json_stringl = R"(
     {"a": 1, "b": {"0": "abc", "1": [-1.]}, "c": true}
     {"a": 1, "b": {"0": "abc"          }, "c": false}
@@ -3419,7 +3425,7 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
     auto const expected0 = [&] {
       auto const valids = std::vector<bool>{1, 0};
       auto [null_mask, null_count] =
-        cudf::test::detail::make_null_mask(valids.begin(), valids.end());
+        cudf::test::detail::make_null_mask(valids.begin(), valids.end(), stream, mr);
       return cudf::make_lists_column(2,
                                      size_type_wrapper{0, 1, 1}.release(),
                                      int64_wrapper{1}.release(),
@@ -3434,7 +3440,7 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       };
       auto const valids = std::vector<bool>{0, 0};
       auto [null_mask, null_count] =
-        cudf::test::detail::make_null_mask(valids.begin(), valids.end());
+        cudf::test::detail::make_null_mask(valids.begin(), valids.end(), stream, mr);
       return cudf::make_lists_column(2,
                                      size_type_wrapper{0, 0, 0}.release(),
                                      get_structs().release(),
@@ -3449,6 +3455,9 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
 
 TEST_F(JsonReaderTest, NullifyMixedList)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+
   using namespace cudf::test::iterators;
   // test list
   std::string json_stringl = R"(
@@ -3501,7 +3510,7 @@ TEST_F(JsonReaderTest, NullifyMixedList)
   };
   std::vector<bool> const list_nulls{1, 1, 0, 0, 0, 1, 0};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_nulls.cbegin(), list_nulls.cend());
+    cudf::test::detail::make_null_mask(list_nulls.cbegin(), list_nulls.cend(), stream, mr);
   auto const expected = cudf::make_lists_column(
     7,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 1, 1, 1, 1, 3, 3}.release(),

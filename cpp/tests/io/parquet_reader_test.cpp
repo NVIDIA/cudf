@@ -190,6 +190,8 @@ TEST_F(ParquetReaderTest, UserBoundsWithNulls)
 
 TEST_F(ParquetReaderTest, UserBoundsWithNullsMixedTypes)
 {
+  auto const stream      = cudf::test::get_default_stream();
+  auto mr                = this->mr();
   constexpr int num_rows = 32 * 1024;
 
   std::mt19937 gen(6542);
@@ -209,7 +211,8 @@ TEST_F(ParquetReaderTest, UserBoundsWithNullsMixedTypes)
                                                                      c1_offset_iter + num_rows + 1);
   cudf::test::fixed_width_column_wrapper<float> c1_floats(
     values, values + (num_rows * floats_per_row), valids);
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_rows);
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
 
   auto _c1 = cudf::make_lists_column(
     num_rows, c1_offsets.release(), c1_floats.release(), null_count, std::move(null_mask));
@@ -236,8 +239,9 @@ TEST_F(ParquetReaderTest, UserBoundsWithNullsMixedTypes)
     cudf::detail::make_counting_transform_iterator(0, [&](int index) { return index % 200; });
   std::vector<bool> c3_valids(num_rows);
   std::copy(_c3_valids, _c3_valids + num_rows, c3_valids.begin());
-  std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(valids, valids + num_rows);
-  auto _c3_list                   = cudf::make_lists_column(
+  std::tie(null_mask, null_count) =
+    cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
+  auto _c3_list = cudf::make_lists_column(
     num_rows, offsets.release(), string_col.release(), null_count, std::move(null_mask));
   auto c3_list = cudf::purge_nonempty_nulls(*_c3_list);
   cudf::test::fixed_width_column_wrapper<int> c3_ints(values, values + num_rows, valids);
@@ -4017,6 +4021,8 @@ void filter_typed_test()
 template <typename T>
 void filter_unary_operation_typed_test()
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = cudf::get_current_device_resource_ref();
   std::mt19937 gen(0xd00dL);
   auto [src, filepath, null_count] = [&]() {
     auto constexpr num_rows            = num_ordered_rows;
@@ -4027,7 +4033,8 @@ void filter_unary_operation_typed_test()
     auto valids = cudf::detail::make_counting_transform_iterator(0, [&](int index) {
       return (index >= 2 * row_group_size_rows and index < 3 * row_group_size_rows) ? false : true;
     });
-    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_rows);
+    auto [null_mask, null_count] =
+      cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
     _col0->set_null_mask(std::move(null_mask), null_count);
     auto col0                = cudf::purge_nonempty_nulls(_col0->view());
     auto col1                = testdata::descending<T>();

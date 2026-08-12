@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -150,14 +150,16 @@ TYPED_TEST(TypedScatterListsTest, EmptyListsOfNullableFixedWidth)
 
 TYPED_TEST(TypedScatterListsTest, NullableListsOfNullableFixedWidth)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto src_child = cudf::test::fixed_width_column_wrapper<T, int32_t>{{9, 9, 9, 9, 8, 8, 8},
                                                                       {1, 1, 1, 0, 1, 1, 1}};
 
   auto src_list_validity = cudf::test::iterators::null_at(2);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(src_list_validity, src_list_validity + 3);
+    cudf::test::detail::make_null_mask(src_list_validity, src_list_validity + 3, stream, mr);
   // One null list row, and one row with nulls.
   auto src_list_column = cudf::make_lists_column(
     3,
@@ -180,7 +182,7 @@ TYPED_TEST(TypedScatterListsTest, NullableListsOfNullableFixedWidth)
 
   auto expected_validity = cudf::test::iterators::null_at(5);
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(expected_validity, expected_validity + 7);
+    cudf::test::detail::make_null_mask(expected_validity, expected_validity + 7, stream, mr);
   auto expected_lists_column = cudf::make_lists_column(
     7,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
@@ -325,13 +327,16 @@ TEST_F(ScatterListsTest, EmptyListsOfNullableStrings)
 
 TEST_F(ScatterListsTest, NullableListsOfNullableStrings)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   auto src_strings_column =
     cudf::test::strings_column_wrapper{{"all", "the", "leaves", "", "brown", "", "dreaming"},
                                        {true, true, true, false, true, false, true}};
 
-  auto src_validity            = cudf::test::iterators::null_at(1);
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(src_validity, src_validity + 3);
-  auto src_list_column         = cudf::make_lists_column(
+  auto src_validity = cudf::test::iterators::null_at(1);
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(src_validity, src_validity + 3, stream, mr);
+  auto src_list_column = cudf::make_lists_column(
     3,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 5, 5, 7}.release(),
     src_strings_column.release(),
@@ -369,7 +374,7 @@ TEST_F(ScatterListsTest, NullableListsOfNullableStrings)
 
   auto expected_validity = cudf::test::iterators::null_at(4);
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(expected_validity, expected_validity + 6);
+    cudf::test::detail::make_null_mask(expected_validity, expected_validity + 6, stream, mr);
   auto expected_lists = cudf::make_lists_column(
     6,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 9, 11, 11, 13}.release(),
@@ -838,6 +843,8 @@ TYPED_TEST(TypedScatterListsTest, EmptyListsOfStructs)
 
 TYPED_TEST(TypedScatterListsTest, NullListsOfStructs)
 {
+  auto const stream     = cudf::test::get_default_stream();
+  auto mr               = this->mr();
   using T               = TypeParam;
   using offsets_column  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
   using numerics_column = cudf::test::fixed_width_column_wrapper<T>;
@@ -866,7 +873,7 @@ TYPED_TEST(TypedScatterListsTest, NullListsOfStructs)
   auto source_list_null_mask_begin = cudf::test::iterators::null_at(2);
 
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
-    source_list_null_mask_begin, source_list_null_mask_begin + 3);
+    source_list_null_mask_begin, source_list_null_mask_begin + 3, stream, mr);
   auto source_lists = cudf::make_lists_column(3,
                                               offsets_column{0, 4, 7, 7}.release(),
                                               source_structs.release(),
@@ -933,7 +940,7 @@ TYPED_TEST(TypedScatterListsTest, NullListsOfStructs)
   auto expected_lists_null_mask_begin = cudf::test::iterators::null_at(4);
 
   std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(
-    expected_lists_null_mask_begin, expected_lists_null_mask_begin + 6);
+    expected_lists_null_mask_begin, expected_lists_null_mask_begin + 6, stream, mr);
   auto expected_lists = cudf::make_lists_column(6,
                                                 offsets_column{0, 3, 5, 9, 11, 11, 13}.release(),
                                                 expected_structs.release(),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -290,8 +290,10 @@ void grouped_test(cudf::data_type input_type, std::vector<std::pair<int, int>> p
 
 std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(cudf::column_view const& col)
 {
-  auto itr = cudf::test::iterators::valids_at_multiples_of(2);
-  return cudf::test::detail::make_null_mask(itr, itr + col.size());
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+  auto itr    = cudf::test::iterators::valids_at_multiples_of(2);
+  return cudf::test::detail::make_null_mask(itr, itr + col.size(), stream, mr);
 }
 
 void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<int, int>> params)
@@ -409,7 +411,9 @@ struct PercentileApproxTest : public cudf::test::BaseFixture {};
 
 TEST_F(PercentileApproxTest, EmptyInput)
 {
-  auto empty_ = cudf::tdigest::detail::make_empty_tdigests_column(
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto empty_       = cudf::tdigest::detail::make_empty_tdigests_column(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   cudf::test::fixed_width_column_wrapper<double> percentiles{0.0, 0.25, 0.3};
 
@@ -424,7 +428,8 @@ TEST_F(PercentileApproxTest, EmptyInput)
 
   cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 0, 0, 0};
   std::vector<bool> nulls{false, false, false};
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(nulls.begin(), nulls.end());
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(nulls.begin(), nulls.end(), stream, mr);
 
   auto expected = cudf::make_lists_column(3,
                                           offsets.release(),
@@ -437,7 +442,9 @@ TEST_F(PercentileApproxTest, EmptyInput)
 
 TEST_F(PercentileApproxTest, EmptyPercentiles)
 {
-  auto const delta = 1000;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto const delta  = 1000;
 
   cudf::test::fixed_width_column_wrapper<double> values{0, 1, 2, 3, 4, 5};
   cudf::test::fixed_width_column_wrapper<int> keys{0, 0, 0, 1, 1, 1};
@@ -456,7 +463,8 @@ TEST_F(PercentileApproxTest, EmptyPercentiles)
 
   cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 0, 0};
   std::vector<bool> nulls{false, false};
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(nulls.begin(), nulls.end());
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(nulls.begin(), nulls.end(), stream, mr);
 
   auto expected = cudf::make_lists_column(2,
                                           offsets.release(),

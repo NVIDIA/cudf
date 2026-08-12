@@ -120,6 +120,8 @@ template <typename T>
 std::unique_ptr<cudf::column> make_parquet_list_list_col(
   int skip_rows, int num_rows, int lists_per_row, int list_size, bool include_validity)
 {
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   // root list
@@ -184,8 +186,9 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
   auto child             = cudf::make_lists_column(
     child_offsets_size, child_offsets.release(), child_data.release(), 0, rmm::device_buffer{});
 
-  int offsets_size             = static_cast<cudf::column_view>(offsets).size() - 1;
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + offsets_size);
+  int offsets_size = static_cast<cudf::column_view>(offsets).size() - 1;
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(valids, valids + offsets_size, stream, mr);
   return include_validity
            ? cudf::make_lists_column(
                offsets_size, offsets.release(), std::move(child), null_count, std::move(null_mask))
@@ -549,6 +552,8 @@ std::unique_ptr<cudf::column> make_parquet_list_col(std::mt19937& engine,
                                                     int max_vals_per_row,
                                                     bool include_validity)
 {
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
   std::vector<cudf::size_type> row_sizes(num_rows);
 
   auto const min_values_per_row = include_validity ? 0 : 1;
@@ -567,7 +572,8 @@ std::unique_ptr<cudf::column> make_parquet_list_col(std::mt19937& engine,
     auto valids = random_validity(engine);
     auto values_col =
       cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end(), valids);
-    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_rows);
+    auto [null_mask, null_count] =
+      cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
 
     auto col = cudf::make_lists_column(
       num_rows, offsets_col.release(), values_col.release(), null_count, std::move(null_mask));
@@ -625,6 +631,8 @@ std::unique_ptr<cudf::column> make_parquet_string_list_col(std::mt19937& engine,
                                                            int max_string_len,
                                                            bool include_validity)
 {
+  auto stream          = cudf::get_default_stream();
+  auto mr              = cudf::get_current_device_resource_ref();
   auto const range_min = include_validity ? 0 : 1;
 
   std::uniform_int_distribution<cudf::size_type> dist{range_min, max_vals_per_row};
@@ -645,7 +653,8 @@ std::unique_ptr<cudf::column> make_parquet_string_list_col(std::mt19937& engine,
   if (include_validity) {
     auto valids     = random_validity(engine);
     auto values_col = cudf::test::strings_column_wrapper(values.begin(), values.end(), valids);
-    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_rows);
+    auto [null_mask, null_count] =
+      cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
 
     auto col = cudf::make_lists_column(
       num_rows, offsets_col.release(), values_col.release(), null_count, std::move(null_mask));

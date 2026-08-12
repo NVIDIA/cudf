@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -319,14 +319,16 @@ TYPED_TEST(TypedContainsTest, ScalarKeyNonNullListsWithNullValues)
 
 TYPED_TEST(TypedContainsTest, ScalarKeysWithNullsInLists)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 1, 2, X, 4, 5, X, 7, 8, X, X, 1, 2, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
   auto input_null_mask_iter = null_at(4);
 
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(8,
                                               indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
                                               numerals.release(),
@@ -363,13 +365,15 @@ TYPED_TEST(TypedContainsTest, ScalarKeysWithNullsInLists)
 
 TEST_F(ContainsTest, BoolScalarWithNullsInLists)
 {
-  using T = bool;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = bool;
 
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 1, 1, X, 1, 1, X, 1, 1, X, X, 1, 1, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
   auto input_null_mask_iter = null_at(4);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(
     8,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
@@ -407,14 +411,16 @@ TEST_F(ContainsTest, BoolScalarWithNullsInLists)
 
 TEST_F(ContainsTest, StringScalarWithNullsInLists)
 {
-  using T = std::string;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = std::string;
 
   auto strings = cudf::test::strings_column_wrapper{
     {"X", "1", "2", "X", "4", "5", "X", "7", "8", "X", "X", "1", "2", "X", "1"},
     nulls_at({0, 3, 6, 9, 10, 13})};
   auto input_null_mask_iter = null_at(4);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(8,
                                               indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
                                               strings.release(),
@@ -645,14 +651,16 @@ TYPED_TEST(TypedVectorContainsTest, VectorNonNullListsWithNullValues)
 
 TYPED_TEST(TypedVectorContainsTest, VectorWithNullsInLists)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 1, 2, X, 4, 5, X, 7, 8, X, X, 1, 2, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
 
   auto input_null_mask_iter = null_at(4);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(8,
                                               indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
                                               numerals.release(),
@@ -684,14 +692,16 @@ TYPED_TEST(TypedVectorContainsTest, VectorWithNullsInLists)
 
 TYPED_TEST(TypedVectorContainsTest, ListContainsVectorWithNullsInListsAndInSearchKeys)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 1, 2, X, 4, 5, X, 7, 8, X, X, 1, 2, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
 
   auto input_null_mask_iter = null_at(4);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(8,
                                               indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
                                               numerals.release(),
@@ -724,14 +734,16 @@ TYPED_TEST(TypedVectorContainsTest, ListContainsVectorWithNullsInListsAndInSearc
 
 TEST_F(ContainsTest, BoolKeyVectorWithNullsInListsAndInSearchKeys)
 {
-  using T = bool;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = bool;
 
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 0, 1, X, 1, 1, X, 1, 1, X, X, 0, 1, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
 
   auto input_null_mask_iter = null_at(4);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(8,
                                               indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
                                               numerals.release(),
@@ -764,12 +776,14 @@ TEST_F(ContainsTest, BoolKeyVectorWithNullsInListsAndInSearchKeys)
 
 TEST_F(ContainsTest, StringKeyVectorWithNullsInListsAndInSearchKeys)
 {
-  auto strings = cudf::test::strings_column_wrapper{
-    {"X", "1", "2", "X", "4", "5", "X", "7", "8", "X", "X", "1", "2", "X", "1"},
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto strings      = cudf::test::strings_column_wrapper{
+         {"X", "1", "2", "X", "4", "5", "X", "7", "8", "X", "X", "1", "2", "X", "1"},
     nulls_at({0, 3, 6, 9, 10, 13})};
   auto input_null_mask_iter = null_at(4);
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
+    cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8, stream, mr);
   auto search_space = cudf::make_lists_column(
     8,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
@@ -1170,9 +1184,11 @@ TYPED_TEST(TypedStructContainsTest, ScalarKeyNoNullLists)
 
 TYPED_TEST(TypedStructContainsTest, ScalarKeyWithNullLists)
 {
-  using tdata_col = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using tdata_col   = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
 
-  auto const lists = [] {
+  auto const lists = [&] {
     auto offsets = indices_col{0, 4, 7, 10, 10, 15, 18, 21, 24, 24, 28, 28};
     // clang-format off
     auto data1    = tdata_col{0, 1, 2, 1,
@@ -1197,7 +1213,7 @@ TYPED_TEST(TypedStructContainsTest, ScalarKeyWithNullLists)
     auto child               = cudf::test::structs_column_wrapper{{data1, data2}};
     auto const validity_iter = nulls_at({3, 10});
     auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(validity_iter, validity_iter + 11);
+      cudf::test::detail::make_null_mask(validity_iter, validity_iter + 11, stream, mr);
     return cudf::make_lists_column(
       11, offsets.release(), child.release(), null_count, std::move(null_mask));
   }();
@@ -1482,9 +1498,11 @@ TYPED_TEST(TypedStructContainsTest, ColumnKeyWithSlicedListsNoNulls)
 
 TYPED_TEST(TypedStructContainsTest, ColumnKeyWithSlicedListsHavingNulls)
 {
-  using tdata_col = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using tdata_col   = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
 
-  auto const lists_original = [] {
+  auto const lists_original = [&] {
     auto offsets = indices_col{0, 4, 7, 10, 10, 15, 18, 21, 24, 24, 28, 28};
     // clang-format off
     auto data1    = tdata_col{0, X, 2, 1,
@@ -1509,7 +1527,7 @@ TYPED_TEST(TypedStructContainsTest, ColumnKeyWithSlicedListsHavingNulls)
     auto child = cudf::test::structs_column_wrapper{{data1, data2}, nulls_at({1, 10, 15, 24})};
     auto const validity_iter = nulls_at({3, 10});
     auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(validity_iter, validity_iter + 11);
+      cudf::test::detail::make_null_mask(validity_iter, validity_iter + 11, stream, mr);
     return cudf::make_lists_column(
       11, offsets.release(), child.release(), null_count, std::move(null_mask));
   }();

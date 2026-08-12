@@ -395,7 +395,8 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
     cudf::test::fixed_width_column_wrapper<int> c0_data(
       {1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7, 7}, stream, mr);
 
-    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids.begin(), valids.end());
+    auto [null_mask, null_count] =
+      cudf::test::detail::make_null_mask(valids.begin(), valids.end(), stream, mr);
 
     auto c0 = [&] {
       auto tmp = make_lists_column(
@@ -411,7 +412,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
         c1_offsets.release(),
         c1_data.release(),
         null_count,
-        std::get<0>(cudf::test::detail::make_null_mask(valids.begin(), valids.end())));
+        std::get<0>(cudf::test::detail::make_null_mask(valids.begin(), valids.end(), stream, mr)));
       return cudf::purge_nonempty_nulls(tmp->view());
     }();
 
@@ -439,7 +440,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
     std::vector<bool> c0_l2_valids = {1, 1, 1, 0, 0, 1, 1};
 
     auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(c0_l2_valids.begin(), c0_l2_valids.end());
+      cudf::test::detail::make_null_mask(c0_l2_valids.begin(), c0_l2_valids.end(), stream, mr);
     auto c0_l2 = [&] {
       auto tmp = make_lists_column(
         7, c0_l2_offsets.release(), c0_l2_data.release(), null_count, std::move(null_mask));
@@ -447,7 +448,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
     }();
 
     std::tie(null_mask, null_count) =
-      cudf::test::detail::make_null_mask(level1_valids.begin(), level1_valids.end());
+      cudf::test::detail::make_null_mask(level1_valids.begin(), level1_valids.end(), stream, mr);
     auto c0 = [&] {
       auto tmp = make_lists_column(
         7, c0_l1_offsets.release(), std::move(c0_l2), null_count, std::move(null_mask));
@@ -464,7 +465,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
     std::vector<bool> c1_l2_valids = {1, 0, 0, 1, 1};
 
     std::tie(null_mask, null_count) =
-      cudf::test::detail::make_null_mask(c1_l2_valids.begin(), c1_l2_valids.end());
+      cudf::test::detail::make_null_mask(c1_l2_valids.begin(), c1_l2_valids.end(), stream, mr);
     auto c1_l2 = [&] {
       auto tmp = make_lists_column(
         5, c1_l2_offsets.release(), c1_l2_data.release(), null_count, std::move(null_mask));
@@ -472,7 +473,7 @@ TEST_F(ColumnUtilitiesListsTest, DifferentPhysicalStructureBeforeConstruction)
     }();
 
     std::tie(null_mask, null_count) =
-      cudf::test::detail::make_null_mask(level1_valids.begin(), level1_valids.end());
+      cudf::test::detail::make_null_mask(level1_valids.begin(), level1_valids.end(), stream, mr);
     auto c1 = [&] {
       auto tmp = make_lists_column(
         7, c1_l1_offsets.release(), std::move(c1_l2), null_count, std::move(null_mask));

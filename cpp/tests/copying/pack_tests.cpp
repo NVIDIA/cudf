@@ -262,6 +262,8 @@ std::vector<std::unique_ptr<cudf::column>> generate_struct_of_list()
 
 std::vector<std::unique_ptr<cudf::column>> generate_list_of_struct()
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = cudf::get_current_device_resource_ref();
   // 1. String "names" column.
   std::vector<std::string> names{"Vimes",
                                  "Carrot",
@@ -326,8 +328,8 @@ std::vector<std::unique_ptr<cudf::column>> generate_list_of_struct()
   std::vector<bool> list_validity{true, true, true, true, true, false, true, false, true};
 
   cudf::test::fixed_width_column_wrapper<int> offsets{0, 1, 4, 5, 7, 7, 10, 13, 14, 16};
-  auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_validity.begin(), list_validity.begin() + 9);
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
+    list_validity.begin(), list_validity.begin() + 9, stream, mr);
   auto list = [&] {
     auto tmp = cudf::make_lists_column(
       9, offsets.release(), struct_column.release(), null_count, std::move(null_mask));

@@ -58,20 +58,22 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
                 std::size_t stripe_size_bytes    = cudf::io::default_stripe_size_bytes,
                 cudf::size_type stripe_size_rows = cudf::io::default_stripe_size_rows)
 {
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
   if (nullable) {
     // Generate deterministic bitmask instead of random bitmask for easy computation of data size.
     auto const valid_iter = cudf::detail::make_counting_transform_iterator(
       0, [](cudf::size_type i) { return i % 4 != 3; });
     cudf::size_type offset{0};
     for (auto& col : input_columns) {
-      auto const [null_mask, null_count] =
-        cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
+      auto const [null_mask, null_count] = cudf::test::detail::make_null_mask(
+        valid_iter + offset, valid_iter + col->size() + offset, stream, mr);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
         static_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
-        cudf::get_default_stream(),
-        cudf::get_current_device_resource_ref());
+        stream,
+        mr);
 
       // Shift nulls of the next column by one position, to avoid having all nulls
       // in the same table rows.
@@ -210,10 +212,12 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadNoData)
 
 TEST_F(OrcChunkedReaderTest, NestedEmptyStructColumnSelection)
 {
+  auto const stream   = cudf::test::get_default_stream();
+  auto mr             = this->mr();
   auto const validity = std::vector<bool>{true, false};
   auto const num_rows = static_cast<cudf::size_type>(validity.size());
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
@@ -231,10 +235,12 @@ TEST_F(OrcChunkedReaderTest, NestedEmptyStructColumnSelection)
 
 TEST_F(OrcChunkedReaderTest, NullableEmptyStructChildColumnSelection)
 {
+  auto const stream   = cudf::test::get_default_stream();
+  auto mr             = this->mr();
   auto const validity = std::vector<bool>{true, false};
   auto const num_rows = static_cast<cudf::size_type>(validity.size());
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(

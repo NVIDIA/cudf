@@ -91,6 +91,8 @@ std::unique_ptr<cudf::column> make_list_str_column(std::mt19937& gen,
                                                    bool is_str_nullable,
                                                    bool is_list_nullable)
 {
+  auto stream                    = cudf::get_default_stream();
+  auto mr                        = cudf::get_current_device_resource_ref();
   auto constexpr num_rows        = num_ordered_rows;
   auto constexpr string_per_row  = 3;
   auto constexpr num_string_rows = num_rows * string_per_row;
@@ -116,7 +118,7 @@ std::unique_ptr<cudf::column> make_list_str_column(std::mt19937& gen,
     cudf::detail::make_counting_transform_iterator(0, [&](int index) { return index % 100; });
   auto [null_mask, null_count] = [&]() {
     if (is_list_nullable) {
-      return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
+      return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows, stream, mr);
     } else {
       return std::make_pair(rmm::device_buffer{}, 0);
     }

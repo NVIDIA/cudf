@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -80,6 +80,8 @@ TEST_F(ListRankScanTest, DeepList)
 
 TEST_F(ListRankScanTest, ListOfStruct)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // Constructing a list of struct of two elements
   // 0.   []                  ==
   // 1.   []                  !=
@@ -180,7 +182,7 @@ TEST_F(ListRankScanTest, ListOfStruct)
                                          true,
                                          true};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
+    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end(), stream, mr);
   auto list_column = cudf::column_view(cudf::data_type(cudf::type_id::LIST),
                                        17,
                                        nullptr,
@@ -215,6 +217,8 @@ TEST_F(ListRankScanTest, ListOfStruct)
 
 TEST_F(ListRankScanTest, ListOfEmptyStruct)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // []
   // []
   // Null
@@ -232,7 +236,7 @@ TEST_F(ListRankScanTest, ListOfEmptyStruct)
   auto struct_validity = std::vector<bool>{
     false, false, false, false, false, false, false, false, true, true, true, true, true, true};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end());
+    cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end(), stream, mr);
   auto struct_col = cudf::make_structs_column(14, {}, null_count, std::move(null_mask));
 
   auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
@@ -240,7 +244,7 @@ TEST_F(ListRankScanTest, ListOfEmptyStruct)
   auto list_nullmask = std::vector<bool>{
     true, true, false, false, true, true, true, true, true, true, true, true, true};
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
+    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end(), stream, mr);
   auto list_column = cudf::make_lists_column(
     13, offsets.release(), std::move(struct_col), null_count, std::move(null_mask));
 
@@ -256,6 +260,8 @@ TEST_F(ListRankScanTest, ListOfEmptyStruct)
 
 TEST_F(ListRankScanTest, EmptyDeepList)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // List<List<int>>, where all lists are empty
   // []
   // []
@@ -268,7 +274,7 @@ TEST_F(ListRankScanTest, EmptyDeepList)
   auto offsets       = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0};
   auto list_nullmask = std::vector<bool>{true, true, false, false};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
+    cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end(), stream, mr);
   auto list_column = cudf::make_lists_column(
     4, offsets.release(), list1.release(), null_count, std::move(null_mask));
 

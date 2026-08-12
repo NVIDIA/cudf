@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -228,6 +228,8 @@ TYPED_TEST(RowBitCountTyped, Lists)
 
 TYPED_TEST(RowBitCountTyped, ListsWithNulls)
 {
+  auto const stream                   = cudf::test::get_default_stream();
+  auto mr                             = this->mr();
   using T                             = TypeParam;
   using LCW                           = cudf::test::lists_column_wrapper<T, int>;
   constexpr cudf::size_type type_size = sizeof(cudf::device_storage_type_t<T>) * CHAR_BIT;
@@ -242,8 +244,8 @@ TYPED_TEST(RowBitCountTyped, ListsWithNulls)
                                                    {1, 1, 1, 0, 1, 1, 0, 1, 0}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> inner_offsets{0, 2, 5, 6, 9, 9};
   std::vector<bool> inner_list_validity{1, 1, 1, 1, 0};
-  auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(inner_list_validity.begin(), inner_list_validity.end());
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
+    inner_list_validity.begin(), inner_list_validity.end(), stream, mr);
   auto inner_list = cudf::make_lists_column(
     5, inner_offsets.release(), values.release(), null_count, std::move(null_mask));
   cudf::test::fixed_width_column_wrapper<cudf::size_type> outer_offsets{0, 2, 2, 3, 5};

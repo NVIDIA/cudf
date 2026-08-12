@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -271,6 +271,8 @@ TYPED_TEST(Sort, WithNestedStructColumn)
 
 TYPED_TEST(Sort, WithNullableStructColumn)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   // Test for a struct column that has nulls on struct layer but not pushed down on the child
   using T    = int;
   using fwcw = cudf::test::fixed_width_column_wrapper<T>;
@@ -279,8 +281,9 @@ TYPED_TEST(Sort, WithNullableStructColumn)
   auto make_struct = [&](std::vector<std::unique_ptr<cudf::column>> child_cols,
                          std::vector<bool> nulls) {
     cudf::test::structs_column_wrapper struct_col(std::move(child_cols));
-    auto struct_                 = struct_col.release();
-    auto [null_mask, null_count] = cudf::test::detail::make_null_mask(nulls.begin(), nulls.end());
+    auto struct_ = struct_col.release();
+    auto [null_mask, null_count] =
+      cudf::test::detail::make_null_mask(nulls.begin(), nulls.end(), stream, mr);
     struct_->set_null_mask(std::move(null_mask), null_count);
     return struct_;
   };

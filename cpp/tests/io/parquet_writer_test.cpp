@@ -2178,6 +2178,8 @@ TEST_F(ParquetWriterTest, DeltaBinaryStartsWithNulls)
 std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata>
 make_byte_stream_split_table(bool as_struct)
 {
+  auto stream             = cudf::get_default_stream();
+  auto mr                 = cudf::get_current_device_resource_ref();
   constexpr auto num_rows = 100;
   std::mt19937 engine{31337};
   auto col0_data = random_values<int32_t>(num_rows);
@@ -2206,8 +2208,9 @@ make_byte_stream_split_table(bool as_struct)
 
     // make as a nested struct
     if (as_struct) {
-      auto valids                  = cudf::test::iterators::valids_at_multiples_of(2);
-      auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_rows);
+      auto valids = cudf::test::iterators::valids_at_multiples_of(2);
+      auto [null_mask, null_count] =
+        cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
 
       std::vector<std::unique_ptr<cudf::column>> table_cols;
       table_cols.push_back(

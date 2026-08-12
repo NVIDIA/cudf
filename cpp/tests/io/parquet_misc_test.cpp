@@ -72,7 +72,9 @@ TYPED_TEST(ParquetWriterDeltaTest, SupportedDeltaTestTypesSliced)
 
 TYPED_TEST(ParquetWriterDeltaTest, SupportedDeltaListSliced)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   constexpr int num_slice = 4'000;
   constexpr int num_rows  = 32 * 1024;
@@ -91,7 +93,8 @@ TYPED_TEST(ParquetWriterDeltaTest, SupportedDeltaListSliced)
                                                                      c1_offset_iter + num_rows + 1);
   cudf::test::fixed_width_column_wrapper<T> c1_vals(
     values, values + (num_rows * vals_per_row), valids);
-  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + num_rows);
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(valids, valids + num_rows, stream, mr);
 
   auto _c1 = cudf::make_lists_column(
     num_rows, c1_offsets.release(), c1_vals.release(), null_count, std::move(null_mask));

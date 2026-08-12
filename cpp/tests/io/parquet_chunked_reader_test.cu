@@ -58,6 +58,8 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
                 std::size_t max_page_size_bytes = cudf::io::default_max_page_size_bytes,
                 std::size_t max_page_size_rows  = cudf::io::default_max_page_size_rows)
 {
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
   if (nullable) {
     // Generate deterministic bitmask instead of random bitmask for easy computation of data size.
     auto const valid_iter = cudf::detail::make_counting_transform_iterator(
@@ -65,14 +67,14 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
 
     cudf::size_type offset{0};
     for (auto& col : input_columns) {
-      auto const [null_mask, null_count] =
-        cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
+      auto const [null_mask, null_count] = cudf::test::detail::make_null_mask(
+        valid_iter + offset, valid_iter + col->size() + offset, stream, mr);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
         static_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
-        cudf::get_default_stream(),
-        cudf::get_current_device_resource_ref());
+        stream,
+        mr);
 
       // Shift nulls of the next column by one position, to avoid having all nulls
       // in the same table rows.
@@ -2296,6 +2298,8 @@ TEST_F(ParquetChunkedReaderTest, TestNumRowsPerSourceEmptyTable)
 
 TEST_F(ParquetReaderTest, BooleanList)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   std::mt19937 gen(0xcaffe);
 
   // Parquet file
@@ -2322,7 +2326,7 @@ TEST_F(ParquetReaderTest, BooleanList)
     auto offsets_col  = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
       offsets_iter, offsets_iter + num_rows + 1);
     auto [null_mask, null_count] =
-      cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
+      cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows, stream, mr);
     auto _col1 = cudf::make_lists_column(
       num_rows, offsets_col.release(), bools_col.release(), null_count, std::move(null_mask));
     auto col1 = cudf::purge_nonempty_nulls(*_col1);

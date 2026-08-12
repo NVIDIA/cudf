@@ -189,8 +189,10 @@ TYPED_TEST(groupby_sum_overflow_test, ZeroValidKeys)
 
 TYPED_TEST(groupby_sum_overflow_test, ZeroValidValues)
 {
-  using K = int32_t;
-  using V = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using K           = int32_t;
+  using V           = TypeParam;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, cudf::test::iterators::all_nulls());
@@ -206,7 +208,7 @@ TYPED_TEST(groupby_sum_overflow_test, ZeroValidValues)
   children.push_back(overflow_col.release());
   std::vector<int> validity{0};  // null struct
   auto [validity_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
   auto expect_vals =
     cudf::create_structs_hierarchy(1, std::move(children), null_count, std::move(validity_mask));
 
@@ -221,8 +223,10 @@ TYPED_TEST(groupby_sum_overflow_test, ZeroValidValues)
 
 TYPED_TEST(groupby_sum_overflow_test, NullKeysAndValues)
 {
-  using K = int32_t;
-  using V = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using K           = int32_t;
+  using V           = TypeParam;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
     {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -244,7 +248,7 @@ TYPED_TEST(groupby_sum_overflow_test, NullKeysAndValues)
   children.push_back(overflow_col.release());
   std::vector<int> validity{1, 1, 1, 0};
   auto [validity_mask, null_count] =
-    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
   auto expect_vals =
     cudf::create_structs_hierarchy(4, std::move(children), null_count, std::move(validity_mask));
 

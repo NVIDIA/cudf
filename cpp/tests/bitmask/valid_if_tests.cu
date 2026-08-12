@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -54,9 +54,11 @@ TEST_F(ValidIfTest, InvalidRange)
 
 TEST_F(ValidIfTest, OddsValid)
 {
-  auto iter     = cudf::detail::make_counting_transform_iterator(0, odds_valid{});
-  auto expected = cudf::test::detail::make_null_mask(iter, iter + 10000);
-  auto actual   = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto iter         = cudf::detail::make_counting_transform_iterator(0, odds_valid{});
+  auto expected     = cudf::test::detail::make_null_mask(iter, iter + 10000, stream, mr);
+  auto actual       = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
                                        cuda::counting_iterator<cudf::size_type>{10000},
                                        odds_valid{},
                                        cudf::get_default_stream(),
@@ -68,9 +70,11 @@ TEST_F(ValidIfTest, OddsValid)
 
 TEST_F(ValidIfTest, AllValid)
 {
-  auto iter     = cudf::detail::make_counting_transform_iterator(0, all_valid{});
-  auto expected = cudf::test::detail::make_null_mask(iter, iter + 10000);
-  auto actual   = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto iter         = cudf::detail::make_counting_transform_iterator(0, all_valid{});
+  auto expected     = cudf::test::detail::make_null_mask(iter, iter + 10000, stream, mr);
+  auto actual       = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
                                        cuda::counting_iterator<cudf::size_type>{10000},
                                        all_valid{},
                                        cudf::get_default_stream(),
@@ -82,9 +86,11 @@ TEST_F(ValidIfTest, AllValid)
 
 TEST_F(ValidIfTest, AllNull)
 {
-  auto iter     = cudf::detail::make_counting_transform_iterator(0, all_null{});
-  auto expected = cudf::test::detail::make_null_mask(iter, iter + 10000);
-  auto actual   = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  auto iter         = cudf::detail::make_counting_transform_iterator(0, all_null{});
+  auto expected     = cudf::test::detail::make_null_mask(iter, iter + 10000, stream, mr);
+  auto actual       = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
                                        cuda::counting_iterator<cudf::size_type>{10000},
                                        all_null{},
                                        cudf::get_default_stream(),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1361,7 +1361,9 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfStructs)
 
 TYPED_TEST(ListColumnWrapperTestTyped, ListsOfStructsWithValidity)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto num_struct_rows = 8;
   auto numeric_column  = cudf::test::fixed_width_column_wrapper<T, int32_t>{
@@ -1376,7 +1378,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfStructsWithValidity)
   auto list_null_mask = {1, 1, 0};
   auto num_lists      = lists_column_offsets->size() - 1;
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_null_mask.begin(), list_null_mask.end());
+    cudf::test::detail::make_null_mask(list_null_mask.begin(), list_null_mask.end(), stream, mr);
   auto lists_column = [&] {
     auto tmp = cudf::make_lists_column(num_lists,
                                        std::move(lists_column_offsets),
@@ -1437,7 +1439,9 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfListsOfStructs)
 
 TYPED_TEST(ListColumnWrapperTestTyped, ListsOfListsOfStructsWithValidity)
 {
-  using T = TypeParam;
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
+  using T           = TypeParam;
 
   auto num_struct_rows = 8;
   auto numeric_column  = cudf::test::fixed_width_column_wrapper<T, int32_t>{
@@ -1452,7 +1456,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfListsOfStructsWithValidity)
   auto num_lists      = lists_column_offsets->size() - 1;
   auto list_null_mask = {1, 1, 0};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(list_null_mask.begin(), list_null_mask.end());
+    cudf::test::detail::make_null_mask(list_null_mask.begin(), list_null_mask.end(), stream, mr);
   auto lists_column = [&] {
     auto tmp = cudf::make_lists_column(num_lists,
                                        std::move(lists_column_offsets),
@@ -1468,7 +1472,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfListsOfStructsWithValidity)
   auto list_of_lists_null_mask = {1, 0};
 
   std::tie(null_mask, null_count) = cudf::test::detail::make_null_mask(
-    list_of_lists_null_mask.begin(), list_of_lists_null_mask.end());
+    list_of_lists_null_mask.begin(), list_of_lists_null_mask.end(), stream, mr);
   auto lists_of_lists_of_structs_column = [&] {
     auto tmp = cudf::make_lists_column(num_lists_of_lists,
                                        std::move(lists_of_lists_column_offsets),

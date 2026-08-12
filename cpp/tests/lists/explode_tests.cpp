@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -350,6 +350,8 @@ TEST_F(ExplodeTest, NestedStructs)
 
 TEST_F(ExplodeTest, ListOfStructsWithEmpties)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   //  a           b
   //  [{1}}]      "a"
   //  [{null}]    "b"
@@ -381,7 +383,7 @@ TEST_F(ExplodeTest, ListOfStructsWithEmpties)
   s2_cols.push_back(i2.release());
   std::vector<bool> r2_valids{false};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(r2_valids.begin(), r2_valids.end());
+    cudf::test::detail::make_null_mask(r2_valids.begin(), r2_valids.end(), stream, mr);
   auto s2 = cudf::make_structs_column(1, std::move(s2_cols), null_count, std::move(null_mask));
   cudf::test::fixed_width_column_wrapper<int32_t> off2{0, 1};
   auto row2 = cudf::make_lists_column(1, off2.release(), std::move(s2), 0, rmm::device_buffer{});
@@ -402,7 +404,7 @@ TEST_F(ExplodeTest, ListOfStructsWithEmpties)
   cudf::test::fixed_width_column_wrapper<int32_t> off4{0, 0};
   std::vector<bool> r4_valids{false};
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(r4_valids.begin(), r4_valids.end());
+    cudf::test::detail::make_null_mask(r4_valids.begin(), r4_valids.end(), stream, mr);
   auto row4 =
     cudf::make_lists_column(1, off4.release(), std::move(s4), null_count, std::move(null_mask));
 
@@ -988,6 +990,8 @@ TEST_F(ExplodeOuterTest, NestedStructs)
 
 TEST_F(ExplodeOuterTest, ListOfStructsWithEmpties)
 {
+  auto const stream = cudf::test::get_default_stream();
+  auto mr           = this->mr();
   //  a           b
   //  [{1}}]      "a"
   //  [{null}]    "b"
@@ -1019,7 +1023,7 @@ TEST_F(ExplodeOuterTest, ListOfStructsWithEmpties)
   s2_cols.push_back(i2.release());
   std::vector<bool> r2_valids{false};
   auto [null_mask, null_count] =
-    cudf::test::detail::make_null_mask(r2_valids.begin(), r2_valids.end());
+    cudf::test::detail::make_null_mask(r2_valids.begin(), r2_valids.end(), stream, mr);
   auto s2 = cudf::make_structs_column(1, std::move(s2_cols), null_count, std::move(null_mask));
   cudf::test::fixed_width_column_wrapper<int32_t> off2{0, 1};
   auto row2 = cudf::make_lists_column(1, off2.release(), std::move(s2), 0, rmm::device_buffer{});
@@ -1040,7 +1044,7 @@ TEST_F(ExplodeOuterTest, ListOfStructsWithEmpties)
   cudf::test::fixed_width_column_wrapper<int32_t> off4{0, 0};
   std::vector<bool> r4_valids{false};
   std::tie(null_mask, null_count) =
-    cudf::test::detail::make_null_mask(r4_valids.begin(), r4_valids.end());
+    cudf::test::detail::make_null_mask(r4_valids.begin(), r4_valids.end(), stream, mr);
   auto row4 =
     cudf::make_lists_column(1, off4.release(), std::move(s4), null_count, std::move(null_mask));
 

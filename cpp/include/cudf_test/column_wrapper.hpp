@@ -294,11 +294,10 @@ std::pair<std::vector<bitmask_type>, cudf::size_type> make_null_mask_vector(Vali
  * element in `[begin,end)` that evaluated to `true`.
  */
 template <typename ValidityIterator>
-std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(
-  ValidityIterator begin,
-  ValidityIterator end,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(ValidityIterator begin,
+                                                              ValidityIterator end,
+                                                              rmm::cuda_stream_view stream,
+                                                              cudf::memory_resources mr)
 {
   auto [null_mask, null_count] = make_null_mask_vector(begin, end);
   rmm::device_buffer d_mask{null_mask.data(),

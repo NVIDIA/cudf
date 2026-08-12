@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -920,7 +920,8 @@ class strings_column_wrapper : public detail::column_wrapper {
  * This class handles fixed-width type keys.
  *
  * @tparam KeyElementTo Specify a fixed-width type for the key values of the dictionary
- * @tparam SourceElementTo For converting fixed-width values to the KeyElementTo
+ * @tparam SourceElementT The fixed-width element type that is used to create elements of type
+ * `KeyElementTo`
  */
 template <typename KeyElementTo, typename SourceElementT = KeyElementTo>
 class dictionary_column_wrapper : public detail::column_wrapper {

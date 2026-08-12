@@ -411,17 +411,13 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
 
-  // the required number of runs in shared memory we will need to provide the
-  // rle_stream object
-  constexpr int rle_run_buffer_size =
-    rle_stream_required_run_buffer_size<level_decode_block_size>();
-
   // the level stream decoders. max_output_values is max to remove rolling buffer
-  __shared__ rle_run def_runs[rle_run_buffer_size];
-  __shared__ rle_run rep_runs[rle_run_buffer_size];
+  // logic from the decode step. The chunked-expand rle_stream does not need a
+  // shared-memory ring buffer of run headers; it parses runs directly into
+  // per-chunk tables, so we default-construct the decoders here.
   static constexpr int max_output_values = cuda::std::numeric_limits<int>::max();
-  rle_stream<level_t, level_decode_block_size, max_output_values>
-    decoders[level_type::NUM_LEVEL_TYPES] = {{def_runs}, {rep_runs}};
+  using decoder_stream_t = rle_stream_chunked<level_t, level_decode_block_size, max_output_values>;
+  decoder_stream_t decoders[level_type::NUM_LEVEL_TYPES] = {};
 
   // Shared-memory staging scratch for the encoded level streams. Level streams
   // for a page are usually small (definition/repetition levels are dominated by
@@ -429,8 +425,7 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // dependent global loads. Staging the bytes into shared memory once removes
   // that latency from fill_run_batch(). Streams larger than the per-stream
   // budget fall back to parsing from global with no behavior change.
-  using rle_stream_t = rle_stream<level_t, level_decode_block_size, max_output_values>;
-  __shared__ __align__(16) uint8_t stage[rle_stream_t::smem_stage_size];
+  __shared__ __align__(16) uint8_t stage[decoder_stream_t::smem_stage_size];
   __shared__ cuda::barrier<cuda::thread_scope_block> copy_barrier;
 
   // Get the level decode buffers for this page
@@ -454,7 +449,8 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
                                           rep,
                                           num_to_decode,
                                           stage,
-                                          &copy_barrier);
+                                          &copy_barrier,
+                                          decoder_stream_t::smem_stage_size);
     copy_barrier.arrive_and_wait();
     decoders[level_type::REPETITION].decode_next(t, num_to_decode);
   }
@@ -477,7 +473,8 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
                                           def,
                                           num_to_decode,
                                           stage,
-                                          &copy_barrier);
+                                          &copy_barrier,
+                                          decoder_stream_t::smem_stage_size);
     copy_barrier.arrive_and_wait();
     decoders[level_type::DEFINITION].decode_next(t, num_to_decode);
   }

@@ -301,7 +301,7 @@ repos:
           )
       - id: verify-alpha-spec
       - id: verify-codeowners
-        args: [--fix, --project-prefix=cudf]
+        args: [--fix, --org=NVIDIA, --project-prefix=cudf]
       - id: verify-hardcoded-version
         exclude: |
           (?x)

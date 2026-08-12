@@ -535,18 +535,30 @@ inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
   return cudf::test::structs_column_wrapper{std::move(children)};
 }
 
-// Build a metadata blob (version 1, offset_size=1) for the given ordered string dictionary.
+// Build a V1 VARIANT metadata blob for the given ordered string dictionary.
+// Uses 2-byte offsets when total string length exceeds 255 bytes; 1-byte otherwise.
+// Header bits [7:6] = offset_size_minus_one; bits [3:0] = version (1).
 inline std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
 {
-  std::vector<uint8_t> out{0x01, static_cast<uint8_t>(keys.size())};
+  uint32_t total = 0;
+  for (auto const& k : keys)
+    total += static_cast<uint32_t>(k.size());
 
-  std::vector<uint8_t> offs{0x00};
-  uint8_t running = 0;
+  int const offset_size = (total > 255u) ? 2 : 1;
+  std::vector<uint8_t> out{static_cast<uint8_t>(0x01 | ((offset_size - 1) << 6))};
+
+  auto write_le = [&](uint32_t v) {
+    for (int i = 0; i < offset_size; ++i)
+      out.push_back(static_cast<uint8_t>(v >> (8 * i)));
+  };
+  write_le(static_cast<uint32_t>(keys.size()));
+
+  uint32_t running = 0;
+  write_le(0u);
   for (auto const& k : keys) {
-    running = static_cast<uint8_t>(running + k.size());
-    offs.push_back(running);
+    running += static_cast<uint32_t>(k.size());
+    write_le(running);
   }
-  out.insert(out.end(), offs.begin(), offs.end());
 
   for (auto const& k : keys) {
     out.insert(out.end(), k.begin(), k.end());
@@ -766,6 +778,45 @@ TEST_F(ExtractVariantFieldTest, LargeDictionaryAndObjectScan)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*first, cudf::test::fixed_width_column_wrapper<int32_t>{0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*mid, cudf::test::fixed_width_column_wrapper<int32_t>{24});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*last, cudf::test::fixed_width_column_wrapper<int32_t>{49});
+}
+
+TEST_F(ExtractVariantFieldTest, LargeDictionary100FieldsExtractLast)
+{
+  // 100-key dictionary "k00"..."k99" totals 300 string bytes (> 255), so build_metadata must emit
+  // 2-byte offsets. The value is a flat 100-field object where field 99 ("k99") holds INT32(99)
+  // and all other fields hold BOOLEAN_TRUE (1 byte), keeping value offsets within 1-byte range
+  // (99 * 1 + 5 = 104 bytes).
+  auto const keys = make_numeric_keys(100);
+  auto const meta = build_metadata(keys);
+
+  constexpr int n_fields           = 100;
+  constexpr int target_fid         = 99;
+  auto const target_val            = enc_int32(target_fid);
+  constexpr uint8_t bool_true_byte = 0x04;
+
+  std::vector<uint8_t> val{make_variant_object_header(), static_cast<uint8_t>(n_fields)};
+  for (int i = 0; i < n_fields; ++i)
+    val.push_back(static_cast<uint8_t>(i));  // field IDs
+  uint8_t off = 0;
+  for (int i = 0; i < n_fields; ++i) {
+    val.push_back(off);
+    off = static_cast<uint8_t>(off + (i == target_fid ? target_val.size() : 1u));
+  }
+  val.push_back(off);  // sentinel offset after last field
+  for (int i = 0; i < n_fields; ++i) {
+    if (i == target_fid) {
+      val.insert(val.end(), target_val.begin(), target_val.end());
+    } else {
+      val.push_back(bool_true_byte);
+    }
+  }
+
+  auto col = wrap_single_variant(meta, val);
+  auto got = cudf::io::parquet::experimental::extract_variant_field(
+    col, "k99", cudf::data_type{cudf::type_id::INT32}, cudf::test::get_default_stream());
+
+  cudf::test::fixed_width_column_wrapper<int32_t> expected{int32_t{99}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
 }
 
 TEST_F(ExtractVariantFieldTest, MalformedVariantDataYieldsNull)

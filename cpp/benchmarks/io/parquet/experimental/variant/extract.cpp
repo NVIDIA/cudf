@@ -32,17 +32,31 @@ void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
   }
 }
 
-// Build a V1 VARIANT metadata blob for a sorted key dictionary (1-byte offsets).
+// Build a V1 VARIANT metadata blob for a sorted key dictionary.
+// Uses 2-byte offsets when the total string length exceeds 255 bytes; 1-byte otherwise.
+// Header bits [7:6] = offset_size_minus_one; bits [3:0] = version (1).
 std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
 {
-  std::vector<uint8_t> out{0x01, static_cast<uint8_t>(keys.size())};
-  uint8_t running = 0;
-  std::vector<uint8_t> offs{0x00};
+  uint32_t total = 0;
+  for (auto const& k : keys)
+    total += static_cast<uint32_t>(k.size());
+
+  int const offset_size = (total > 255u) ? 2 : 1;
+  std::vector<uint8_t> out{static_cast<uint8_t>(0x01 | ((offset_size - 1) << 6))};
+
+  auto write_le = [&](uint32_t v) {
+    for (int i = 0; i < offset_size; ++i)
+      out.push_back(static_cast<uint8_t>(v >> (8 * i)));
+  };
+  write_le(static_cast<uint32_t>(keys.size()));
+
+  uint32_t running = 0;
+  write_le(0u);
   for (auto const& k : keys) {
-    running = static_cast<uint8_t>(running + static_cast<uint8_t>(k.size()));
-    offs.push_back(running);
+    running += static_cast<uint32_t>(k.size());
+    write_le(running);
   }
-  out.insert(out.end(), offs.begin(), offs.end());
+
   for (auto const& k : keys) {
     out.insert(out.end(), k.begin(), k.end());
   }

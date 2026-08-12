@@ -742,7 +742,12 @@ TEST_F(ExtractVariantFieldTest, EmptyArrayIndexing)
          // 5 physical value bytes are present (passes the old physical-extent check),
          // but the terminal offset declares only 1 value byte, so element 0's end (5)
          // escapes the declared boundary → malformed.
-         {0x03, 0x02, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}}) {
+         {0x03, 0x02, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00},
+         // 1-element array where offsets[0]=1 (must be 0 per spec).
+         // offsets: [1, 2], values: [0x0c, 0x2a] (an int8 variant for 42).
+         // terminal_off=2 <= values_extent=2 so the terminal check passes; the
+         // nonzero first offset is caught by the new offsets[0]==0 guard.
+         {0x03, 0x01, 0x01, 0x02, 0x0c, 0x2a}}) {
     auto malformed_col = wrap_single_variant(build_metadata({}), value);
     auto got           = cudf::io::parquet::experimental::extract_variant_field(
       malformed_col, "$[0]", i8, nullptr, stream);

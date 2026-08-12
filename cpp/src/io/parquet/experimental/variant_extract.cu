@@ -433,6 +433,10 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_array_e
   if (!terminal_off.has_value() || cuda::std::cmp_greater(*terminal_off, values_extent)) {
     return {{}, op_status::MALFORMED_VARIANT};
   }
+  // The spec requires offsets[0] == 0; a nonzero first offset silently skips leading
+  // value bytes and can return a plausible result from a malformed array.
+  auto const first_off = read_uint64(value, offsets_start, offset_size);
+  if (!first_off.has_value() || *first_off != 0) { return {{}, op_status::MALFORMED_VARIANT}; }
 
   auto const start_offset_pos = offsets_start + static_cast<uint64_t>(index) * offset_size;
   auto const end_offset_pos   = offsets_start + (static_cast<uint64_t>(index) + 1) * offset_size;

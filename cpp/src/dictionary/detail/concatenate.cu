@@ -187,8 +187,9 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     cudf::detail::row::hash::device_row_hasher<cudf::hashing::detail::default_hash,
                                                cudf::nullate::NO>>;
   auto const tv         = cudf::table_view({all_keys->view()});
-  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream);
-  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream);
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream, temp_mr);
+  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream, temp_mr);
   auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
   auto const d_equal =
     row_equal.equal_to<false>(cudf::nullate::NO{}, null_equality::EQUAL, comparator);

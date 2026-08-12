@@ -128,9 +128,9 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
     hash_table.find_async(
       iter, iter + left_table_num_rows, d_equal, hasher, found_begin, stream.value());
   } else {
-    auto stencil = cuda::counting_iterator<size_type>{0};
-    auto const row_bitmask =
-      cudf::detail::bitmask_and(left, stream, cudf::get_current_device_resource_ref()).first;
+    auto const temp_mr     = cudf::get_current_device_resource_ref();
+    auto stencil           = cuda::counting_iterator<size_type>{0};
+    auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
     auto const pred =
       cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
 
@@ -163,7 +163,8 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
   : _has_nested_columns{cudf::has_nested_columns(right)},
     _nulls_equal{compare_nulls},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)},
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
+      _right, stream, cudf::get_current_device_resource_ref())},
     _hash_table{cuco::extent{static_cast<std::size_t>(right.num_rows())},
                 checked_load_factor(load_factor),
                 cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(),
@@ -181,13 +182,14 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
 
   if (right_table_num_rows == 0) { return; }
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+
   auto const build_hash_table = [&](auto iter) {
     if (this->_nulls_equal == cudf::null_equality::EQUAL or (not cudf::nullable(right))) {
       this->_hash_table.insert_async(iter, iter + right_table_num_rows, stream.value());
     } else {
-      auto stencil = cuda::counting_iterator<size_type>{0};
-      auto const row_bitmask =
-        cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first;
+      auto stencil           = cuda::counting_iterator<size_type>{0};
+      auto const row_bitmask = cudf::detail::bitmask_and(_right, stream, temp_mr).first;
       auto const pred =
         cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
 
@@ -240,7 +242,9 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
   auto found_indices     = rmm::device_uvector<size_type>(left_table_num_rows, stream);
   auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
       cudf::detail::row::primitive::row_hasher{nullate::DYNAMIC{has_nulls}, preprocessed_left};
@@ -333,7 +337,9 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   auto const output_begin =
     cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
 
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
@@ -355,7 +361,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   } else {
     // If right table is empty, return left table
     if (this->_right.num_rows() == 0) {
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                    right_indices->begin(),
                    right_indices->end(),
                    cudf::JoinNoMatch);

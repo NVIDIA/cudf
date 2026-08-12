@@ -42,10 +42,11 @@ std::unique_ptr<table> dispatch_groupby(table_view const& keys,
   auto const has_null             = nullate::DYNAMIC{cudf::has_nested_nulls(keys)};
   auto const skip_rows_with_nulls = keys_have_nulls and include_null_keys == null_policy::EXCLUDE;
 
-  auto preprocessed_keys = cudf::detail::row::hash::preprocessed_table::create(keys, stream);
-  auto const comparator  = cudf::detail::row::equality::self_comparator{preprocessed_keys};
-  auto const row_hash    = cudf::detail::row::hash::row_hasher{std::move(preprocessed_keys)};
-  auto const d_row_hash  = row_hash.device_hasher(has_null);
+  auto preprocessed_keys = cudf::detail::row::hash::preprocessed_table::create(
+    keys, stream, cudf::get_current_device_resource_ref());
+  auto const comparator = cudf::detail::row::equality::self_comparator{preprocessed_keys};
+  auto const row_hash   = cudf::detail::row::hash::row_hasher{std::move(preprocessed_keys)};
+  auto const d_row_hash = row_hash.device_hasher(has_null);
 
   if (cudf::detail::has_nested_columns(keys)) {
     auto const d_row_equal = comparator.equal_to<true>(has_null, null_keys_are_equal);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,9 +32,10 @@ std::unique_ptr<rmm::device_uvector<size_type>> make_join_match_counts(
   rmm::device_async_resource_ref mr)
 {
   auto match_counts = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
 
   if (is_empty) {
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                  match_counts->begin(),
                  match_counts->end(),
                  join == join_kind::INNER_JOIN ? 0 : 1);
@@ -46,14 +47,14 @@ std::unique_ptr<rmm::device_uvector<size_type>> make_join_match_counts(
                std::invalid_argument);
 
   auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   auto const left_table_num_rows = left.num_rows();
 
   auto count_matches = [&](auto equality, auto d_hasher) {
     // Precompute left keys: {hash(row_idx), row_idx} for each left row.
     auto const n = static_cast<thread_index_type>(left_table_num_rows);
-    rmm::device_uvector<probe_key_type> left_keys(n, stream);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::device_uvector<probe_key_type> left_keys(n, stream, temp_mr);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(left_table_num_rows),
                       left_keys.begin(),

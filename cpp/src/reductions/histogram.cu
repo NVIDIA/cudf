@@ -111,8 +111,9 @@ compute_row_frequencies(table_view const& input,
                "Nested types are not yet supported in histogram aggregation.",
                std::invalid_argument);
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+    cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
 
   auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);
@@ -131,12 +132,11 @@ compute_row_frequencies(table_view const& input,
   std::size_t const num_rows = input.num_rows();
 
   // Construct a vector to store reduced counts and init to zero
-  rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, mr);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    reduction_results.begin(),
-    reduction_results.end(),
-    histogram_count_type{0});
+  rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, temp_mr);
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
+                             reduction_results.begin(),
+                             reduction_results.end(),
+                             histogram_count_type{0});
 
   // Construct a hash set
   auto row_set =
@@ -156,7 +156,7 @@ compute_row_frequencies(table_view const& input,
   // Compute frequencies (aka distinct counts) for the input rows.
   // Note that we consider null and NaNs as always equal.
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     cuda::counting_iterator<std::size_t>{0},
     cuda::counting_iterator<std::size_t>{num_rows},
     [set_ref = row_set_ref,

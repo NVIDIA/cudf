@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -61,8 +61,9 @@ cudf::size_type unique_count(column_view const& input,
   auto device_view            = *input_device_view;
   auto input_table_view       = table_view{{input}};
 
-  auto const comparator = cudf::detail::row::equality::self_comparator{input_table_view, stream};
-  auto const comp       = comparator.equal_to<false>(
+  auto const comparator = cudf::detail::row::equality::self_comparator{
+    input_table_view, stream, cudf::get_current_device_resource_ref()};
+  auto const comp = comparator.equal_to<false>(
     nullate::DYNAMIC{cudf::has_nulls(input_table_view)},
     null_equality::EQUAL,
     cudf::detail::row::equality::nan_equal_physical_equality_comparator{});

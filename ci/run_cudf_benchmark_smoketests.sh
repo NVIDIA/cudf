@@ -34,7 +34,7 @@ for bench in *_NVBENCH; do
     args=(--profile --devices 0 -q --rmm_mode cuda)
     if [[ "$bench" == NDSH_* ]]; then
       args+=(--axis scale_factor=0.01)
-      if [[ "$bench" =~ ^NDSH_Q(01|02|03|04|05|06|07|08|09|10|11|12|13|14|15|16|17|18|21)_NVBENCH$ ]]; then
+      if [[ "$bench" =~ ^NDSH_Q(01|02|03|04|05|06|07|08|09|10|11|12|13|14|15|16|17|18|19|20|21|22)_NVBENCH$ ]]; then
         args+=(--output_directory "${validation_dir}/q${BASH_REMATCH[1]}")
       fi
     fi

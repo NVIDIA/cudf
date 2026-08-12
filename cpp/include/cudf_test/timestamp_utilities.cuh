@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,9 +26,8 @@ using time_point_ms =
  * The period is inferred from `count` and difference between `start`
  * and `stop`.
  *
- * @tparam Rep The arithmetic type representing the number of ticks
- * @tparam Period A cuda::std::ratio representing the tick period (i.e. the
- *number of seconds per tick)
+ * @tparam T The timestamp type of the generated column's elements
+ * @tparam nullable Whether the generated column carries a validity mask
  * @param count The number of timestamps to create
  * @param start The first timestamp as a cuda::std::chrono::time_point
  * @param stop The last timestamp as a cuda::std::chrono::time_point

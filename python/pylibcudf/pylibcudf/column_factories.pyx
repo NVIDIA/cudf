@@ -35,7 +35,7 @@ __all__ = [
 ]
 
 cpdef Column make_empty_column(
-    MakeEmptyColumnOperand type_or_id,
+    MakeEmptyColumnOperand type_or_id: DataType | TypeId,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):

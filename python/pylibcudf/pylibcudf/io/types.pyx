@@ -35,11 +35,13 @@ from pylibcudf.span import is_span
 
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
+from collections.abc import Mapping, Sequence
 import codecs
 import errno
 import io
 import os
 import re
+from typing import Any, TypeAlias
 
 from pylibcudf.libcudf.io.json import \
     json_recovery_mode_t as JSONRecoveryMode  # no-cython-lint
@@ -50,6 +52,7 @@ from pylibcudf.libcudf.io.types import (
     quote_style as QuoteStyle,  # no-cython-lint
     statistics_freq as StatisticsFreq,  # no-cython-lint
 )
+from pylibcudf.span import Span
 
 __all__ = [
     "ColumnEncoding",
@@ -66,6 +69,9 @@ __all__ = [
     "TableInputMetadata",
     "TableWithMetadata",
 ]
+
+ColumnNameSpec: TypeAlias = tuple[str, list["ColumnNameSpec"]]
+ChildNameSpec: TypeAlias = Mapping[str, "ChildNameSpec"]
 
 cdef class PartitionInfo:
     """
@@ -322,7 +328,7 @@ cdef class TableWithMetadata:
         [("id", []), ("name", [("first", []), ("last", [])])]
 
     """
-    def __init__(self, Table tbl, list column_names):
+    def __init__(self, Table tbl, list column_names: list[ColumnNameSpec]):
         self.tbl = tbl
 
         self.metadata.schema_info = self._make_column_info(column_names)
@@ -471,7 +477,7 @@ cdef class FilepathSource:
         Known file size in bytes. Omit to query size via KvikIO (HEAD for remote URLs).
     """
 
-    def __init__(self, path, size=None):
+    def __init__(self, path: str | os.PathLike[Any], size: int | None = None):
         self.path = os.fspath(path)
         self.size = size
 
@@ -498,7 +504,19 @@ cdef class SourceInfo:
         If an empty list, constructs an empty SourceInfo.
     """
 
-    def __init__(self, sources):
+    def __init__(
+        self,
+        sources: (
+            Sequence[str]
+            | Sequence[os.PathLike[Any]]
+            | Sequence[FilepathSource]
+            | Sequence[Datasource]
+            | Sequence[io.StringIO]
+            | Sequence[bytes]
+            | Sequence[io.BytesIO]
+            | Sequence[Span]
+        ),
+    ):
         if not sources:
             self.c_obj = move(source_info())
             return
@@ -662,7 +680,14 @@ cdef class SinkInfo:
         (that are not all io.IOBase instances) will raise a ValueError.
     """
 
-    def __init__(self, list sinks):
+    def __init__(
+        self,
+        list sinks: (
+            Sequence[str]
+            | Sequence[os.PathLike[Any]]
+            | Sequence[io.IOBase]
+        ),
+    ):
         cdef vector[data_sink *] data_sinks
         cdef vector[string] paths
 

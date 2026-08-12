@@ -38,6 +38,11 @@ from pylibcudf.io.parquet_metadata import FileMetaData
 
 import pylibcudf.libcudf.io.hybrid_scan
 
+try:
+    from collections.abc import Buffer
+except ImportError:
+    from typing_extensions import Buffer
+
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
 
 __all__ = ["FileMetaData", "HybridScanReader", "UseDataPageMask"]
@@ -82,7 +87,11 @@ cdef class HybridScanReader:
     >>> row_groups = reader.all_row_groups(options)
     """
 
-    def __init__(self, const uint8_t[::1] footer_bytes, ParquetReaderOptions options):
+    def __init__(
+        self,
+        const uint8_t[::1] footer_bytes: Buffer,
+        ParquetReaderOptions options,
+    ):
         self.c_obj = make_unique[cpp_hybrid_scan_reader](
             host_span[const_uint8_t](&footer_bytes[0], len(footer_bytes)),
             options.c_obj
@@ -131,7 +140,9 @@ cdef class HybridScanReader:
         cdef byte_range_info info = self.c_obj.get()[0].page_index_byte_range()
         return ByteRangeInfo(info.offset(), info.size())
 
-    def setup_page_index(self, const uint8_t[::1] page_index_bytes):
+    def setup_page_index(
+        self, const uint8_t[::1] page_index_bytes: Buffer
+    ):
         """Setup the page index within the Parquet file metadata.
 
         Parameters

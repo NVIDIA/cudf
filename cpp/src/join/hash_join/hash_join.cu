@@ -20,6 +20,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
+#include <rmm/device_buffer.hpp>
+
 #include <cuda/std/bit>
 
 #include <cmath>
@@ -134,10 +136,20 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   };
   dispatch_join_comparator(
     right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
-  auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
-                                       cudf::get_current_device_resource_ref()};
-  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
-    _impl->cumulative_ends.data(), _impl->cumulative_ends.data(), _impl->capacity, env));
+  std::size_t temp_storage_bytes{};
+  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(nullptr,
+                                              temp_storage_bytes,
+                                              _impl->cumulative_ends.data(),
+                                              _impl->cumulative_ends.data(),
+                                              _impl->capacity,
+                                              stream.value()));
+  rmm::device_buffer temp_storage(temp_storage_bytes, stream, temp_mr);
+  CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(temp_storage.data(),
+                                              temp_storage_bytes,
+                                              _impl->cumulative_ends.data(),
+                                              _impl->cumulative_ends.data(),
+                                              _impl->capacity,
+                                              stream.value()));
   launch_hash_csr_build_fill(right.num_rows(),
                              build_positions.data(),
                              _impl->cumulative_ends.data(),

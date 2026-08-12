@@ -1076,7 +1076,7 @@ class dictionary_column_wrapper : public detail::column_wrapper {
                                          begin, end, stream, mr.get_temporary_mr()),
                                        cudf::data_type{type_id::INT32},
                                        stream,
-                                       mr);
+                                       mr.get_output_mr());
   }
 
   /**
@@ -1118,7 +1118,7 @@ class dictionary_column_wrapper : public detail::column_wrapper {
                                          begin, end, v, stream, mr.get_temporary_mr()),
                                        cudf::data_type{type_id::INT32},
                                        stream,
-                                       mr);
+                                       mr.get_output_mr());
   }
 
   /**
@@ -1308,7 +1308,7 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
       cudf::dictionary::encode(strings_column_wrapper(begin, end, stream, mr.get_temporary_mr()),
                                cudf::data_type{type_id::INT32},
                                stream,
-                               mr);
+                               mr.get_output_mr());
   }
 
   /**
@@ -1353,7 +1353,7 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
       cudf::dictionary::encode(strings_column_wrapper(begin, end, v, stream, mr.get_temporary_mr()),
                                cudf::data_type{type_id::INT32},
                                stream,
-                               mr);
+                               mr.get_output_mr());
   }
 
   /**

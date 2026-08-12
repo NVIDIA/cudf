@@ -36,16 +36,14 @@ struct indices_handler_fn {
  */
 std::unique_ptr<column> decode(dictionary_column_view const& source,
                                rmm::cuda_stream_view stream,
-                               cudf::memory_resources mr)
+                               rmm::device_async_resource_ref mr)
 {
   if (source.is_empty()) return make_empty_column(type_id::EMPTY);
 
-  auto const output_mr = mr.get_output_mr();
-  auto const temp_mr   = mr.get_temporary_mr();
-
   // annotated indices include the offset, size and bitmask from it's parent
-  auto const indices       = source.get_indices_annotated();
-  auto const d_indices     = column_device_view::create(indices, stream, temp_mr);
+  auto const indices = source.get_indices_annotated();
+  auto const d_indices =
+    column_device_view::create(indices, stream, cudf::get_current_device_resource_ref());
   auto const d_iterator    = cudf::detail::indexalator_factory::make_input_iterator(indices);
   auto const indices_begin = cudf::detail::make_counting_transform_iterator(
     0, indices_handler_fn{d_iterator, *d_indices, source.keys().size()});
@@ -55,12 +53,12 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
                                            indices_begin + source.size(),
                                            cudf::out_of_bounds_policy::NULLIFY,
                                            stream,
-                                           output_mr)
+                                           mr)
                         ->release();
   auto output_column = std::unique_ptr<column>(std::move(table_column.front()));
 
   // apply any nulls to the output column
-  output_column->set_null_mask(cudf::detail::copy_bitmask(source.parent(), stream, output_mr),
+  output_column->set_null_mask(cudf::detail::copy_bitmask(source.parent(), stream, mr),
                                source.null_count());
 
   return output_column;
@@ -70,7 +68,7 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
 
 std::unique_ptr<column> decode(dictionary_column_view const& source,
                                rmm::cuda_stream_view stream,
-                               cudf::memory_resources mr)
+                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::decode(source, stream, mr);

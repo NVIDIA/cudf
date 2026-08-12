@@ -62,11 +62,11 @@ from .utils cimport _get_stream, _get_memory_resource
 from .gpumemoryview import _datatype_from_dtype_desc
 from ._interop_helpers import ArrowLike, ColumnMetadata, _ObjectWithArrowMetadata
 
+from itertools import accumulate
+from typing import Iterable, Protocol, TypedDict
 import array
 import functools
 import operator
-from itertools import accumulate
-from typing import Iterable
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 try:
@@ -78,6 +78,23 @@ except ImportError as e:
 
 
 __all__ = ["Column", "ListsColumnView", "StructsColumnView", "is_c_contiguous"]
+
+
+class ArrayInterfaceBase(TypedDict):
+    data: tuple[int, bool]
+    shape: tuple[int, ...]
+    typestr: str
+    version: int
+
+
+class SupportsCudaArrayInterface(Protocol):
+    @property
+    def __cuda_array_interface__(self) -> ArrayInterfaceBase: ...
+
+
+class SupportsArrayInterface(Protocol):
+    @property
+    def __array_interface__(self) -> ArrayInterfaceBase: ...
 
 
 cdef is_iterable(obj):

@@ -857,6 +857,8 @@ class StreamingExecutor:
             raise TypeError("num_py_executors must be an int")
         if not isinstance(self.kvikio_nthreads, int):
             raise TypeError("kvikio_nthreads must be an int")
+        if self.kvikio_nthreads <= 0:
+            raise ValueError("kvikio_nthreads must be positive")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it

@@ -412,17 +412,6 @@ class SPMDEngine(StreamingEngine):
         executor_options = executor_options or {}
         engine_options = engine_options or {}
 
-        kvikio_nthreads = int(
-            executor_options.get(
-                "kvikio_nthreads",
-                os.environ.get(
-                    "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                    os.environ.get("KVIKIO_NTHREADS", "256"),
-                ),
-            )
-        )
-        kvikio.defaults.set("num_threads", kvikio_nthreads)
-
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"
         )
@@ -437,6 +426,19 @@ class SPMDEngine(StreamingEngine):
             engine_options.get("hardware_binding", HardwareBindingPolicy()),
         )
         bind_to_gpu(hw_binding)
+
+        kvikio_nthreads = int(
+            executor_options.get(
+                "kvikio_nthreads",
+                os.environ.get(
+                    "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                    os.environ.get("KVIKIO_NTHREADS", "256"),
+                ),
+            )
+        )
+        if kvikio_nthreads <= 0:
+            raise ValueError(f"kvikio_nthreads must be positive, got {kvikio_nthreads}")
+        kvikio.defaults.set("num_threads", kvikio_nthreads)
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -609,6 +611,18 @@ class SPMDEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
+        kvikio_nthreads = int(
+            executor_options.get(
+                "kvikio_nthreads",
+                os.environ.get(
+                    "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                    os.environ.get("KVIKIO_NTHREADS", "256"),
+                ),
+            )
+        )
+        if kvikio_nthreads <= 0:
+            raise ValueError(f"kvikio_nthreads must be positive, got {kvikio_nthreads}")
+        kvikio.defaults.set("num_threads", kvikio_nthreads)
         existing_executor_options = self.config.get("executor_options", {})
         if isinstance(existing_executor_options, dict):
             existing_quent_context = existing_executor_options.get("quent_context")

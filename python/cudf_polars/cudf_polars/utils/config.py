@@ -996,7 +996,7 @@ class ConfigOptions(Generic[ExecutorType]):
 
         # Engine-dependent default: only prefetch for the streaming executor.
         # Skipped if the user or the environment has already set a value.
-        prefetch_default = user_executor == "streaming"
+        prefetch_default = UNSPECIFIED if user_executor == "streaming" else False
         prefetch_env_set = (
             os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
             is not None

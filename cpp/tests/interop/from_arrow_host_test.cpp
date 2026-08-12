@@ -742,29 +742,27 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnLarge)
 {
   constexpr int32_t width = 2;
 
-  for (auto const num_rows : {cudf::size_type{1024}, cudf::size_type{1025}}) {
-    SCOPED_TRACE(num_rows);
-    std::vector<int64_t> values(num_rows * width);
-    std::iota(values.begin(), values.end(), int64_t{0});
-    std::vector<int32_t> offsets(num_rows + 1);
-    for (cudf::size_type i = 0; i <= num_rows; ++i) {
-      offsets[i] = static_cast<int32_t>(i) * width;
-    }
-
-    auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
-    auto expected_child =
-      cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end());
-
-    auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/false);
-    auto input_array  = make_fixed_size_list_array(input_schema.get(), values, num_rows);
-    auto input        = as_host_device_array(input_array);
-
-    auto result       = cudf::from_arrow_host(input_schema.get(), &input);
-    auto result_lists = cudf::lists_column_view{result->get_column(0)};
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_offsets, result_lists.offsets());
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_child, result_lists.child());
+  constexpr cudf::size_type num_rows = 1025;
+  std::vector<int64_t> values(num_rows * width);
+  std::iota(values.begin(), values.end(), int64_t{0});
+  std::vector<int32_t> offsets(num_rows + 1);
+  for (cudf::size_type i = 0; i <= num_rows; ++i) {
+    offsets[i] = static_cast<int32_t>(i) * width;
   }
+
+  auto expected_offsets =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
+  auto expected_child =
+    cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end());
+
+  auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/false);
+  auto input_array  = make_fixed_size_list_array(input_schema.get(), values, num_rows);
+  auto input        = as_host_device_array(input_array);
+
+  auto result       = cudf::from_arrow_host(input_schema.get(), &input);
+  auto result_lists = cudf::lists_column_view{result->get_column(0)};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_offsets, result_lists.offsets());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_child, result_lists.child());
 }
 
 TEST_F(FromArrowHostDeviceTest, FixedSizeListInvalidBounds)

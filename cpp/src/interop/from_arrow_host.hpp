@@ -54,15 +54,16 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
  * @brief Create the offsets column for a fixed-size-list array
  *
  * Arrow fixed-size-list arrays carry no offsets buffer; the offsets are implicit.
- * This generates `size` offsets of the form `{0, width, 2*width, ...}`.
+ * This generates `num_offsets` offsets of the form `{0, width, 2*width, ...}`.
  *
- * @param size Number of offsets to generate (normally num_rows + 1)
+ * @param num_offsets Number of offsets to generate. Normalized host input requires
+ * `num_rows + 1`; sliced device input requires `row_offset + num_rows + 1`.
  * @param width Number of child elements per list row
  * @param stream CUDA stream used for device memory operations
  * @param mr Device memory resource to use for all device memory allocations
- * @return INT32 offsets column
+ * @return cuDF LIST offsets column
  */
-std::unique_ptr<column> make_fixed_size_list_offsets(size_type size,
+std::unique_ptr<column> make_fixed_size_list_offsets(size_type num_offsets,
                                                      int32_t width,
                                                      rmm::cuda_stream_view stream,
                                                      rmm::device_async_resource_ref mr);

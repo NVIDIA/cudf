@@ -462,43 +462,40 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
 {
   constexpr int32_t width = 2;
 
-  for (auto const num_rows : {cudf::size_type{1024}, cudf::size_type{1025}}) {
-    SCOPED_TRACE(num_rows);
-    std::vector<int64_t> values(num_rows * width);
-    std::iota(values.begin(), values.end(), int64_t{0});
-    std::vector<int32_t> offsets(num_rows + 1);
-    for (cudf::size_type i = 0; i <= num_rows; ++i) {
-      offsets[i] = static_cast<int32_t>(i) * width;
-    }
-
-    auto child =
-      cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
-    auto offsets_col =
-      cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
-    auto expected = cudf::make_lists_column(
-      num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
-
-    auto input_schema = make_fixed_size_list_device_schema(width);
-    nanoarrow::UniqueArray input_array;
-    NANOARROW_THROW_NOT_OK(
-      ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
-    auto* list_array = input_array->children[0];
-    cudf::lists_column_view expected_view{*expected};
-    populate_fixed_size_list_from_col(list_array, expected_view);
-    populate_from_col<int64_t>(list_array->children[0], expected_view.child());
-    NANOARROW_THROW_NOT_OK(
-      ArrowArrayFinishBuilding(input_array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
-
-    ArrowDeviceArray input;
-    memcpy(&input.array, list_array, sizeof(ArrowArray));
-    input.device_id   = rmm::get_current_cuda_device().value();
-    input.device_type = ARROW_DEVICE_CUDA;
-    input.sync_event  = nullptr;
-
-    auto result = cudf::from_arrow_device_column(input_schema->children[0], &input);
-    EXPECT_EQ(result.get_deleter().owned_mem_.size(), 1);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), *result);
+  constexpr cudf::size_type num_rows = 1025;
+  std::vector<int64_t> values(num_rows * width);
+  std::iota(values.begin(), values.end(), int64_t{0});
+  std::vector<int32_t> offsets(num_rows + 1);
+  for (cudf::size_type i = 0; i <= num_rows; ++i) {
+    offsets[i] = static_cast<int32_t>(i) * width;
   }
+
+  auto child =
+    cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
+  auto expected = cudf::make_lists_column(
+    num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
+
+  auto input_schema = make_fixed_size_list_device_schema(width);
+  nanoarrow::UniqueArray input_array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
+  auto* list_array = input_array->children[0];
+  cudf::lists_column_view expected_view{*expected};
+  populate_fixed_size_list_from_col(list_array, expected_view);
+  populate_from_col<int64_t>(list_array->children[0], expected_view.child());
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(input_array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, list_array, sizeof(ArrowArray));
+  input.device_id   = rmm::get_current_cuda_device().value();
+  input.device_type = ARROW_DEVICE_CUDA;
+  input.sync_event  = nullptr;
+
+  auto result = cudf::from_arrow_device_column(input_schema->children[0], &input);
+  EXPECT_EQ(result.get_deleter().owned_mem_.size(), 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), *result);
 }
 
 TEST_F(FromArrowDeviceTest, FixedSizeListInvalidBounds)

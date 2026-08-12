@@ -83,11 +83,9 @@ struct arrow_array_container {
                         rmm::cuda_stream_view stream,
                         rmm::device_async_resource_ref mr)
   {
-    // TODO: Remove this guard when owning wrappers can export fixed-size-list with matching
-    // schema and buffers for every target device.
     CUDF_EXPECTS(!contains_fixed_size_list(schema_),
-                 "Owning Arrow device wrappers do not support fixed-size-list input until "
-                 "fixed-size-list egress is implemented",
+                 "Importing fixed-size-list columns through owning Arrow device-array wrappers is "
+                 "not supported",
                  cudf::data_type_error);
     switch (input_.device_type) {
       case ARROW_DEVICE_CUDA:

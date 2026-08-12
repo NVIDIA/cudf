@@ -1286,12 +1286,13 @@ TEST_F(OrcReaderTest, MultipleInputs)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *full_table);
 }
 
-struct OrcWriterTestDecimal : public OrcWriterTest,
-                              public ::testing::WithParamInterface<std::tuple<int, int>> {};
+struct OrcWriterTestDecimal
+  : public OrcWriterTest,
+    public ::testing::WithParamInterface<std::tuple<int, int, cudf::io::compression_type>> {};
 
 TEST_P(OrcWriterTestDecimal, Decimal64)
 {
-  auto const [num_rows, scale] = GetParam();
+  auto const [num_rows, scale, compression] = GetParam();
 
   // Using int16_t because scale causes values to overflow if they already require 32 bits
   auto const vals = random_values<int32_t>(num_rows);
@@ -1301,7 +1302,8 @@ TEST_P(OrcWriterTestDecimal, Decimal64)
 
   auto filepath = temp_env->get_temp_filepath("Decimal64.orc");
   cudf::io::orc_writer_options out_opts =
-    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl);
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl)
+      .compression(compression);
 
   cudf::io::write_orc(out_opts);
 
@@ -1312,10 +1314,16 @@ TEST_P(OrcWriterTestDecimal, Decimal64)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(tbl.column(0), result.tbl->view().column(0));
 }
 
+// The cases with more than 10000 rows and no compression test the writer's non-compaction path,
+// where encoded streams are written straight from the encoder output, because decimal data stream
+// sizes are known exactly up front and uncompressed streams get no alignment padding, which leaves
+// the chunks of a multi-rowgroup stripe already contiguous.
 INSTANTIATE_TEST_CASE_P(OrcWriterTest,
                         OrcWriterTestDecimal,
                         ::testing::Combine(::testing::Values(1, 10000, 10001, 34567),
-                                           ::testing::Values(-2, 0, 2)));
+                                           ::testing::Values(-2, 0, 2),
+                                           ::testing::Values(cudf::io::compression_type::AUTO,
+                                                             cudf::io::compression_type::NONE)));
 
 TEST_F(OrcWriterTest, Decimal32)
 {

@@ -181,7 +181,7 @@ class hash_join {
                         rmm::device_async_resource_ref mr) const;
 
  private:
-  bool const _is_empty;   ///< true if the build-side table is empty
+  bool const _is_empty;   ///< true if the build-side (right) table is empty
   bool const _has_nulls;  ///< true if nulls are present in either right table or any left table
   cudf::null_equality const _nulls_equal;  ///< whether to consider nulls as equal
   cudf::table_view _right;                 ///< input table to build the hash map

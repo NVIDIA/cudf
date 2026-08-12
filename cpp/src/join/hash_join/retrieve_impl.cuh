@@ -62,31 +62,17 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                              : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {
-    if constexpr (Join == join_kind::INNER_JOIN) {
-      launch_hash_csr_probe_count<false>(left.num_rows(),
-                                         valid_rows,
-                                         probe_slots.data(),
-                                         match_counts.data(),
-                                         nullptr,
-                                         nullptr,
-                                         _impl->map_view(),
-                                         _impl->csr_view(),
-                                         equality,
-                                         hasher,
-                                         stream);
-    } else {
-      launch_hash_csr_probe_count<true>(left.num_rows(),
-                                        valid_rows,
-                                        probe_slots.data(),
-                                        match_counts.data(),
-                                        nullptr,
-                                        nullptr,
-                                        _impl->map_view(),
-                                        _impl->csr_view(),
-                                        equality,
-                                        hasher,
-                                        stream);
-    }
+    launch_hash_csr_probe_count<Join != join_kind::INNER_JOIN>(left.num_rows(),
+                                                               valid_rows,
+                                                               probe_slots.data(),
+                                                               match_counts.data(),
+                                                               nullptr,
+                                                               nullptr,
+                                                               _impl->map_view(),
+                                                               _impl->csr_view(),
+                                                               equality,
+                                                               hasher,
+                                                               stream);
   };
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);

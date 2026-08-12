@@ -71,7 +71,7 @@ CUDF_KERNEL void hash_csr_build_fill_kernel(size_type num_rows,
   }
 }
 
-template <bool is_outer, typename Equal, typename Hasher>
+template <bool IsOuter, typename Equal, typename Hasher>
 CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
                                              bitmask_type const* valid_rows,
                                              size_type* probe_slots,
@@ -97,7 +97,7 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
       probe_slots[index] = found ? static_cast<size_type>(slot) : CUDF_SIZE_TYPE_SENTINEL;
     }
     if (match_counts != nullptr) {
-      match_counts[index] = is_outer ? cuda::std::max(count, size_type{1}) : count;
+      match_counts[index] = IsOuter ? cuda::std::max(count, size_type{1}) : count;
     }
 
     if (found && matched_slots != nullptr) {
@@ -150,7 +150,7 @@ void launch_hash_csr_build_count(size_type num_rows,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-template <bool is_outer, typename Equal, typename Hasher>
+template <bool IsOuter, typename Equal, typename Hasher>
 void launch_hash_csr_probe_count(size_type num_rows,
                                  bitmask_type const* valid_rows,
                                  size_type* probe_slots,
@@ -165,7 +165,7 @@ void launch_hash_csr_probe_count(size_type num_rows,
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
-  hash_csr_probe_count_kernel<is_outer>
+  hash_csr_probe_count_kernel<IsOuter>
     <<<config.num_blocks, config.num_threads_per_block, 0, stream.value()>>>(num_rows,
                                                                              valid_rows,
                                                                              probe_slots,
@@ -179,7 +179,7 @@ void launch_hash_csr_probe_count(size_type num_rows,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-template <bool is_outer>
+template <bool IsOuter>
 CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
                                           size_type num_probe_rows,
                                           std::int64_t outputs_per_warp,
@@ -222,7 +222,7 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
                                    offsets - 1);
       auto const slot            = probe_slots[probe_row];
       left_indices[output_index] = probe_row + left_index_offset;
-      if constexpr (is_outer) {
+      if constexpr (IsOuter) {
         if (slot == CUDF_SIZE_TYPE_SENTINEL) {
           right_indices[output_index] = JoinNoMatch;
           continue;
@@ -234,7 +234,7 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
   }
 }
 
-template <bool is_outer>
+template <bool IsOuter>
 void launch_hash_csr_retrieve(std::int64_t output_size,
                               size_type num_probe_rows,
                               std::int64_t const* offsets,
@@ -256,7 +256,7 @@ void launch_hash_csr_retrieve(std::int64_t output_size,
   auto const num_warps        = static_cast<std::int64_t>(num_blocks) * hash_csr_warps_per_block;
   auto const outputs_per_warp = cudf::util::div_rounding_up_safe(output_size, num_warps);
 
-  hash_csr_retrieve_kernel<is_outer>
+  hash_csr_retrieve_kernel<IsOuter>
     <<<num_blocks, hash_csr_block_size, 0, stream.value()>>>(output_size,
                                                              num_probe_rows,
                                                              outputs_per_warp,

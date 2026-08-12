@@ -150,6 +150,8 @@ cpdef bytes fetch_page_index_to_host(
             (<ByteRangeInfo>page_index_range).c_obj,
         ))
 
+    if buf.get() is NULL:
+        raise RuntimeError("fetch_page_index_to_host returned no buffer")
     cdef const uint8_t* ptr = buf.get().data()
     cdef size_t n = buf.get().size()
     return bytes(ptr[:n])

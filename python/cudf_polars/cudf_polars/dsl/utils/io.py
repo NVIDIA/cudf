@@ -205,9 +205,9 @@ def attach_cached_parquet_metadata(
     for node in traversal([root]):
         if isinstance(node, StreamingScan) and node.base_scan.typ == "parquet":
             for scan in node.scans:
-                cached = [cached_parquet_info_map.get(path) for path in scan.paths]
-                if any(info is None for info in cached):
+                if not all(path in cached_parquet_info_map for path in scan.paths):
                     continue
+                cached = [cached_parquet_info_map[path] for path in scan.paths]
                 Scan._validate_cached_parquet_info(scan.paths, cached)
                 scan.cached_parquet_info = cached
                 scan._non_child_args = (*scan._non_child_args[:-1], cached)

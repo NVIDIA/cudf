@@ -5,6 +5,7 @@
 
 #include "page_data.cuh"
 #include "page_decode.cuh"
+#include "page_state_composed.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
@@ -50,16 +51,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                                 cudf::device_span<bool const> page_mask,
                                 kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16)
     page_state_buffers_s<rolling_buf_size, rolling_buf_size, rolling_buf_size>
       state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
 
   // Exit early if the page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }
@@ -82,10 +83,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const process_nulls  = should_process_nulls(s);
 
   auto const data_len   = cuda::std::distance(s->stream.data_start, s->stream.data_end);
-  auto const num_values = data_len / s->dtype_len_in;
+  auto const num_values = data_len / s->output_cvt.dtype_len_in;
 
   // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->dtype_len_in <= 0 or data_len <= 0) {
+  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
     cg::invoke_one(block, [&]() {
       set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE),
                 error_code);
@@ -93,7 +94,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     return;
   }
 
-  PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Get the level decode buffers for this page
   PageInfo* pp       = &pages[page_idx];
@@ -104,20 +105,21 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
-  while (s->setup.error == 0 &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (s->setup.error == 0 && (s->progress.input_value_count < s->setup.num_input_values ||
+                                 s->progress.src_pos < s->progress.nz_count)) {
     int target_pos;
-    int src_pos = s->src_pos;
+    int src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() == 0) {
       target_pos = cuda::std::min(src_pos + 2 * (decode_block_size - warp.size()),
-                                  s->nz_count + (decode_block_size - warp.size()));
+                                  s->progress.nz_count + (decode_block_size - warp.size()));
     } else {
-      target_pos = cuda::std::min<int32_t>(s->nz_count, src_pos + decode_block_size - warp.size());
+      target_pos =
+        cuda::std::min<int32_t>(s->progress.nz_count, src_pos + decode_block_size - warp.size());
     }
     // This needs to be here to prevent warp 1 modifying src_pos before all threads have read it
     block.sync();
@@ -161,7 +163,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         // nesting level that is storing actual leaf values
         int leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-        uint32_t dtype_len = s->dtype_len;
+        uint32_t dtype_len = s->output_cvt.dtype_len;
         uint8_t const* src = s->stream.data_start + val_src_pos;
         uint8_t* dst =
           nesting_info_base[leaf_level_index].data_out + static_cast<size_t>(dst_pos) * dtype_len;
@@ -174,17 +176,17 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
             case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
             case Type::FIXED_LEN_BYTE_ARRAY:
-              if (s->dtype_len_in <= sizeof(int32_t)) {
+              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
                 gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int32_t*>(dst), src, num_values, s->dtype_len_in);
+                  reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
                 break;
-              } else if (s->dtype_len_in <= sizeof(int64_t)) {
+              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
                 gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int64_t*>(dst), src, num_values, s->dtype_len_in);
+                  reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
                 break;
-              } else if (s->dtype_len_in <= sizeof(__int128_t)) {
+              } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
                 gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<__int128_t*>(dst), src, num_values, s->dtype_len_in);
+                  reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
                 break;
               }
               // unsupported decimal precision
@@ -193,16 +195,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
           }
         } else if (dtype_len == 8) {
-          if (s->dtype_len_in == 4) {
+          if (s->output_cvt.dtype_len_in == 4) {
             // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
             // TIME_MILLIS is the only duration type stored as int32:
             // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
             gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
             // zero out most significant bytes
             memset(dst + 4, 0, 4);
-          } else if (s->ts_scale) {
+          } else if (s->output_cvt.ts_scale) {
             gpuOutputSplitInt64Timestamp(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->ts_scale);
+              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.ts_scale);
           } else {
             gpuOutputByteStreamSplit<int64_t>(dst, src, num_values);
           }
@@ -213,7 +215,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         }
       }
       // Only the first thread in the warp 1 updates src_pos
-      if (warp.meta_group_rank() == 1 and warp.thread_rank() == 0) { s->src_pos = target_pos; }
+      if (warp.meta_group_rank() == 1 and warp.thread_rank() == 0) {
+        s->progress.src_pos = target_pos;
+      }
     }
     block.sync();
   }
@@ -221,11 +225,14 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   // Zero-fill null positions after decoding valid values
   if (has_repetition) {
     int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-    auto const& ni             = s->nesting_info[leaf_level_index];
+    auto const& ni             = s->nesting.nesting_info[leaf_level_index];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(
-        s, s->dtype_len, init_valid_map_offset, num_values, static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_block_size>(s,
+                                                         s->output_cvt.dtype_len,
+                                                         init_valid_map_offset,
+                                                         num_values,
+                                                         static_cast<int>(block.thread_rank()));
     }
   }
 
@@ -258,16 +265,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                    cudf::device_span<bool const> page_mask,
                    kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16)
     page_state_buffers_s<rolling_buf_size, rolling_buf_size, rolling_buf_size>
       state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
   int out_warp_id;
 
   // Exit early if the page is pruned
@@ -290,11 +297,11 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   bool const process_nulls  = should_process_nulls(s);
 
-  PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   if (s->stream.dict_base) {
     out_warp_id = (s->stream.dict_bits > 0) ? 2 : 1;
@@ -321,18 +328,21 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const first_out_thread_id = out_warp_id * warp.size();
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
-  while (s->setup.error == 0 &&
-         (s->input_value_count < s->setup.num_input_values || s->src_pos < s->nz_count)) {
+  while (s->setup.error == 0 && (s->progress.input_value_count < s->setup.num_input_values ||
+                                 s->progress.src_pos < s->progress.nz_count)) {
     int target_pos;
-    int src_pos = s->src_pos;
+    int src_pos = s->progress.src_pos;
 
     if (warp.meta_group_rank() < out_warp_id) {
-      target_pos = cuda::std::min<int32_t>(src_pos + 2 * (decode_block_size - first_out_thread_id),
-                                           s->nz_count + (decode_block_size - first_out_thread_id));
-    } else {
       target_pos =
-        cuda::std::min<int32_t>(s->nz_count, src_pos + decode_block_size - first_out_thread_id);
-      if (out_warp_id > 1) { target_pos = cuda::std::min<int32_t>(target_pos, s->dict_pos); }
+        cuda::std::min<int32_t>(src_pos + 2 * (decode_block_size - first_out_thread_id),
+                                s->progress.nz_count + (decode_block_size - first_out_thread_id));
+    } else {
+      target_pos = cuda::std::min<int32_t>(s->progress.nz_count,
+                                           src_pos + decode_block_size - first_out_thread_id);
+      if (out_warp_id > 1) {
+        target_pos = cuda::std::min<int32_t>(target_pos, s->progress.dict_pos);
+      }
     }
     // this needs to be here to prevent warp 3 modifying src_pos before all threads have read it
     block.sync();
@@ -347,10 +357,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       uint32_t src_target_pos = target_pos + skipped_leaf_values;
 
       // WARP1: Decode dictionary indices, booleans or string positions
-      // NOTE: racecheck complains of a RAW error involving the s->dict_pos assignment below.
-      // This is likely a false positive in practice, but could be solved by wrapping the next
-      // 9 lines in `if (s->dict_pos < src_target_pos) {}`. If that change is made here, it will
-      // be needed in the other DecodeXXX kernels.
+      // NOTE: racecheck complains of a RAW error involving the s->progress.dict_pos assignment
+      // below. This is likely a false positive in practice, but could be solved by wrapping the
+      // next 9 lines in `if (s->progress.dict_pos < src_target_pos) {}`. If that change is made
+      // here, it will be needed in the other DecodeXXX kernels.
       if (s->stream.dict_base) {
         src_target_pos =
           decode_dictionary_indices<is_calc_sizes_only::NO>(s, sb, src_target_pos, warp).first;
@@ -360,7 +370,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                  s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
         initialize_string_descriptors<is_calc_sizes_only::NO>(s, sb, src_target_pos, warp);
       }
-      if (warp.thread_rank() == 0) { s->dict_pos = src_target_pos; }
+      if (warp.thread_rank() == 0) { s->progress.dict_pos = src_target_pos; }
     } else {
       // WARP1..WARP3: Decode values
       src_pos += block.thread_rank() - first_out_thread_id;
@@ -393,7 +403,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         // nesting level that is storing actual leaf values
         int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-        uint32_t const dtype_len = s->dtype_len;
+        uint32_t const dtype_len = s->output_cvt.dtype_len;
         void* dst =
           nesting_info_base[leaf_level_index].data_out + static_cast<size_t>(dst_pos) * dtype_len;
 
@@ -422,9 +432,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
               read_fixed_width_value_fast(s, sb, val_src_pos, static_cast<uint2*>(dst));
               break;
             default:
-              if (s->dtype_len_in <= sizeof(int32_t)) {
+              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
                 read_fixed_width_byte_array_as_int(s, sb, val_src_pos, static_cast<int32_t*>(dst));
-              } else if (s->dtype_len_in <= sizeof(int64_t)) {
+              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
                 read_fixed_width_byte_array_as_int(s, sb, val_src_pos, static_cast<int64_t*>(dst));
               } else {
                 read_fixed_width_byte_array_as_int(
@@ -437,7 +447,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         } else if (dtype == Type::INT96) {
           read_int96_timestamp(s, sb, val_src_pos, static_cast<int64_t*>(dst));
         } else if (dtype_len == 8) {
-          if (s->dtype_len_in == 4) {
+          if (s->output_cvt.dtype_len_in == 4) {
             // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
             // TIME_MILLIS is the only duration type stored as int32:
             // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
@@ -445,7 +455,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             read_fixed_width_value_fast(s, sb, val_src_pos, dst_ptr);
             // zero out most significant bytes
             cuda::std::memset(dst_ptr + 1, 0, sizeof(int32_t));
-          } else if (s->ts_scale) {
+          } else if (s->output_cvt.ts_scale) {
             read_int64_timestamp(s, sb, val_src_pos, static_cast<int64_t*>(dst));
           } else {
             read_fixed_width_value_fast(s, sb, val_src_pos, static_cast<uint2*>(dst));
@@ -457,7 +467,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         }
       }
 
-      if (block.thread_rank() == first_out_thread_id) { s->src_pos = target_pos; }
+      if (block.thread_rank() == first_out_thread_id) { s->progress.src_pos = target_pos; }
     }
     __syncthreads();
   }
@@ -466,11 +476,14 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const is_string =
     ((dtype == Type::BYTE_ARRAY) && !is_decimal) || (dtype == Type::FIXED_LEN_BYTE_ARRAY);
   if (is_string || has_repetition) {
-    auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
+    auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(
-        s, s->dtype_len, init_valid_map_offset, num_values, static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_block_size>(s,
+                                                         s->output_cvt.dtype_len,
+                                                         init_valid_map_offset,
+                                                         num_values,
+                                                         static_cast<int>(block.thread_rank()));
     }
   }
 

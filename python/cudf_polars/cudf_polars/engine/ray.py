@@ -866,6 +866,9 @@ class RayEngine(StreamingEngine):
             existing_quent_context = existing_executor_options.get("quent_context")
             if existing_quent_context is not None:
                 executor_options.setdefault("quent_context", existing_quent_context)
+            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
+            if existing_kvikio_nthreads is not None:
+                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
         engine_options = engine_options or {}
         rapidsmpf_options_as_bytes = resolve_rapidsmpf_options(
             rapidsmpf_options

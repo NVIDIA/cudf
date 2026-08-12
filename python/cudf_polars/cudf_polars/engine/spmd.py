@@ -611,6 +611,14 @@ class SPMDEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
+        existing_executor_options = self.config.get("executor_options", {})
+        if isinstance(existing_executor_options, dict):
+            existing_quent_context = existing_executor_options.get("quent_context")
+            if existing_quent_context is not None:
+                executor_options.setdefault("quent_context", existing_quent_context)
+            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
+            if existing_kvikio_nthreads is not None:
+                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
         kvikio_nthreads = int(
             executor_options.get(
                 "kvikio_nthreads",
@@ -623,11 +631,6 @@ class SPMDEngine(StreamingEngine):
         if kvikio_nthreads <= 0:
             raise ValueError(f"kvikio_nthreads must be positive, got {kvikio_nthreads}")
         kvikio.defaults.set("num_threads", kvikio_nthreads)
-        existing_executor_options = self.config.get("executor_options", {})
-        if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"

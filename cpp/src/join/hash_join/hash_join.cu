@@ -9,7 +9,6 @@
 #include "join/join_common_utils.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
@@ -21,7 +20,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <cuda/iterator>
+#include <cuda/std/bit>
 
 #include <cmath>
 #include <cstdint>
@@ -64,13 +63,13 @@ void validate_hash_join_probe(table_view const& right, table_view const& left, b
 namespace {
 std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
 {
-  auto const checked     = checked_load_factor(load_factor);
-  auto const requested   = std::max(static_cast<long double>(rows) + 1,
+  auto const checked   = checked_load_factor(load_factor);
+  auto const requested = std::max(static_cast<long double>(rows) + 1,
                                   std::ceil(static_cast<long double>(rows) / checked));
-  std::uint64_t capacity = 1;
-  while (static_cast<long double>(capacity) < requested) {
-    capacity <<= 1;
-  }
+  CUDF_EXPECTS(requested <= std::numeric_limits<std::uint32_t>::max(),
+               "HashCSR table capacity is not representable",
+               std::overflow_error);
+  auto const capacity = cuda::std::bit_ceil(static_cast<std::uint64_t>(requested));
   CUDF_EXPECTS(capacity <= std::numeric_limits<std::uint32_t>::max(),
                "HashCSR table capacity is not representable",
                std::overflow_error);
@@ -107,8 +106,10 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
   if (_is_empty) { return; }
 
-  CUDF_CUDA_TRY(cudaMemsetAsync(
-    _impl->entries.data(), 0xff, _impl->entries.size() * sizeof(std::uint64_t), stream.value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->entries.data(),
+                                0xff,
+                                _impl->entries.size() * sizeof(hash_csr_key_type),
+                                stream.value()));
   CUDF_CUDA_TRY(cudaMemsetAsync(_impl->cumulative_ends.data(),
                                 0,
                                 _impl->cumulative_ends.size() * sizeof(size_type),
@@ -119,7 +120,8 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
                              ? static_cast<bitmask_type const*>(row_bitmask.data())
                              : nullptr;
-  rmm::device_uvector<std::uint64_t> build_positions(right.num_rows(), stream, temp_mr);
+  rmm::device_uvector<hash_csr_build_position_type> build_positions(
+    right.num_rows(), stream, temp_mr);
   auto build = [&](auto equality, auto hasher) {
     launch_hash_csr_build_count(right.num_rows(),
                                 valid_rows,
@@ -130,7 +132,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                 hasher,
                                 stream);
   };
-  dispatch_hash_csr_comparator(
+  dispatch_join_comparator(
     right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
   auto env = cuda::std::execution::env{cuda::stream_ref{stream.value()},
                                        cudf::get_current_device_resource_ref()};

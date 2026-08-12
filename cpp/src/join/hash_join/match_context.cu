@@ -74,7 +74,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_co
     }
   };
 
-  dispatch_hash_csr_comparator(
+  dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
   return match_counts;

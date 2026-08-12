@@ -1,12 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "join_common_utils.hpp"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/gather.cuh>
-#include <cudf/detail/join/hash_join.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -20,20 +19,10 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
-#include <algorithm>
 #include <memory>
 
 namespace cudf {
 namespace detail {
-
-namespace {
-bool has_dictionary_columns(table_view const& table)
-{
-  return std::any_of(table.begin(), table.end(), [](column_view const& column) {
-    return column.type().id() == type_id::DICTIONARY32;
-  });
-}
-}  // namespace
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
@@ -43,34 +32,31 @@ inner_join(table_view const& left_input,
            rmm::cuda_stream_view stream,
            rmm::device_async_resource_ref mr)
 {
-  auto join_tables = [&](table_view const& left, table_view const& right) {
-    auto const has_nulls = cudf::has_nested_nulls(left) || cudf::has_nested_nulls(right)
-                             ? cudf::nullable_join::YES
-                             : cudf::nullable_join::NO;
-    if (right.num_rows() > left.num_rows()) {
-      cudf::hash_join::impl_type hj_obj(left,
-                                        has_nulls == cudf::nullable_join::YES,
-                                        compare_nulls,
-                                        CUCO_DESIRED_LOAD_FACTOR,
-                                        stream,
-                                        cudf::get_current_device_resource_ref());
-      auto [right_result, left_result] = hj_obj.inner_join(right, std::nullopt, stream, mr);
-      return std::pair(std::move(left_result), std::move(right_result));
-    }
-    cudf::hash_join::impl_type hj_obj(right,
-                                      has_nulls == cudf::nullable_join::YES,
-                                      compare_nulls,
-                                      CUCO_DESIRED_LOAD_FACTOR,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
-    return hj_obj.inner_join(left, std::nullopt, stream, mr);
-  };
-
-  if (!has_dictionary_columns(left_input)) { return join_tables(left_input, right_input); }
-
+  // Make sure any dictionary columns have matched key sets.
+  // This will return any new dictionary columns created as well as updated table_views.
   auto matched = cudf::dictionary::detail::match_dictionaries(
-    {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
-  return join_tables(matched.second.front(), matched.second.back());
+    {left_input, right_input},
+    stream,
+    cudf::get_current_device_resource_ref());  // temporary objects returned
+
+  // now rebuild the table views with the updated ones
+  auto const left      = matched.second.front();
+  auto const right     = matched.second.back();
+  auto const has_nulls = cudf::has_nested_nulls(left) || cudf::has_nested_nulls(right)
+                           ? cudf::nullable_join::YES
+                           : cudf::nullable_join::NO;
+
+  // For `inner_join`, we can freely choose either the `left` or `right` table to use for
+  // building/probing the hash map. Because building is typically more expensive than probing, we
+  // build the hash map from the smaller table.
+  if (right.num_rows() > left.num_rows()) {
+    cudf::hash_join hj_obj(left, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream);
+    auto [right_result, left_result] = hj_obj.inner_join(right, std::nullopt, stream, mr);
+    return std::pair(std::move(left_result), std::move(right_result));
+  } else {
+    cudf::hash_join hj_obj(right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream);
+    return hj_obj.inner_join(left, std::nullopt, stream, mr);
+  }
 }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
@@ -81,24 +67,21 @@ left_join(table_view const& left_input,
           rmm::cuda_stream_view stream,
           rmm::device_async_resource_ref mr)
 {
-  auto join_tables = [&](table_view const& left, table_view const& right) {
-    auto const has_nulls = cudf::has_nested_nulls(left) || cudf::has_nested_nulls(right)
+  // Make sure any dictionary columns have matched key sets.
+  // This will return any new dictionary columns created as well as updated table_views.
+  auto matched = cudf::dictionary::detail::match_dictionaries(
+    {left_input, right_input},  // these should match
+    stream,
+    cudf::get_current_device_resource_ref());  // temporary objects returned
+  // now rebuild the table views with the updated ones
+  table_view const left  = matched.second.front();
+  table_view const right = matched.second.back();
+  auto const has_nulls   = cudf::has_nested_nulls(left) || cudf::has_nested_nulls(right)
                              ? cudf::nullable_join::YES
                              : cudf::nullable_join::NO;
-    cudf::hash_join::impl_type hj_obj(right,
-                                      has_nulls == cudf::nullable_join::YES,
-                                      compare_nulls,
-                                      CUCO_DESIRED_LOAD_FACTOR,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
-    return hj_obj.left_join(left, std::nullopt, stream, mr);
-  };
 
-  if (!has_dictionary_columns(left_input)) { return join_tables(left_input, right_input); }
-
-  auto matched = cudf::dictionary::detail::match_dictionaries(
-    {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
-  return join_tables(matched.second.front(), matched.second.back());
+  cudf::hash_join hj_obj(right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream);
+  return hj_obj.left_join(left, std::nullopt, stream, mr);
 }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
@@ -109,24 +92,21 @@ full_join(table_view const& left_input,
           rmm::cuda_stream_view stream,
           rmm::device_async_resource_ref mr)
 {
-  auto join_tables = [&](table_view const& left, table_view const& right) {
-    auto const has_nulls = cudf::has_nested_nulls(left) || cudf::has_nested_nulls(right)
+  // Make sure any dictionary columns have matched key sets.
+  // This will return any new dictionary columns created as well as updated table_views.
+  auto matched = cudf::dictionary::detail::match_dictionaries(
+    {left_input, right_input},  // these should match
+    stream,
+    cudf::get_current_device_resource_ref());  // temporary objects returned
+  // now rebuild the table views with the updated ones
+  table_view const left  = matched.second.front();
+  table_view const right = matched.second.back();
+  auto const has_nulls   = cudf::has_nested_nulls(left) || cudf::has_nested_nulls(right)
                              ? cudf::nullable_join::YES
                              : cudf::nullable_join::NO;
-    cudf::hash_join::impl_type hj_obj(right,
-                                      has_nulls == cudf::nullable_join::YES,
-                                      compare_nulls,
-                                      CUCO_DESIRED_LOAD_FACTOR,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
-    return hj_obj.full_join(left, std::nullopt, stream, mr);
-  };
 
-  if (!has_dictionary_columns(left_input)) { return join_tables(left_input, right_input); }
-
-  auto matched = cudf::dictionary::detail::match_dictionaries(
-    {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
-  return join_tables(matched.second.front(), matched.second.back());
+  cudf::hash_join hj_obj(right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream);
+  return hj_obj.full_join(left, std::nullopt, stream, mr);
 }
 
 }  // namespace detail

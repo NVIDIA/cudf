@@ -32,13 +32,13 @@ struct hash_join<Hasher>::impl {
 
   hash_csr_map_view map_view() const
   {
-    return {const_cast<std::uint64_t*>(entries.data()), capacity, capacity - 1};
+    return {const_cast<hash_csr_key_type*>(entries.data()), capacity, capacity - 1};
   }
 
   hash_csr_view csr_view() const { return {cumulative_ends.data(), values.data()}; }
 
   cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
-  rmm::device_uvector<std::uint64_t> entries;
+  rmm::device_uvector<hash_csr_key_type> entries;
   rmm::device_uvector<size_type> cumulative_ends;
   rmm::device_uvector<size_type> values;
   std::uint32_t capacity;

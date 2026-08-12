@@ -11,6 +11,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
@@ -21,39 +22,10 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/iterator>
-#include <cuda/std/tuple>
-#include <thrust/tabulate.h>
+#include <thrust/fill.h>
+#include <thrust/sequence.h>
 
 namespace cudf::detail {
-namespace {
-
-/**
- * @brief Returns trivial left/right index pairs for an outer join when the build side is empty.
- */
-std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-          std::unique_ptr<rmm::device_uvector<size_type>>>
-make_trivial_outer_indices(size_type left_start_idx,
-                           size_type partition_size,
-                           rmm::cuda_stream_view stream,
-                           rmm::device_async_resource_ref mr)
-{
-  auto left_indices  = std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
-  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
-  auto out           = cuda::zip_iterator(left_indices->begin(), right_indices->begin());
-  thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   out,
-                   out + partition_size,
-                   cuda::proclaim_return_type<cuda::std::tuple<size_type, size_type>>(
-                     [left_start_idx] __device__(auto i) {
-                       return cuda::std::tuple{static_cast<size_type>(left_start_idx + i),
-                                               JoinNoMatch};
-                     }));
-  return std::pair(std::move(left_indices), std::move(right_indices));
-}
-
-}  // namespace
-
 template <typename Hasher>
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
@@ -97,9 +69,15 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
     if (join == join_kind::INNER_JOIN) {
       return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
                        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
-    } else {
-      return make_trivial_outer_indices(left_start_idx, partition_size, stream, mr);
     }
+    auto left_indices =
+      std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
+    auto right_indices =
+      std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
+    auto const exec = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+    thrust::sequence(exec, left_indices->begin(), left_indices->end(), left_start_idx);
+    thrust::fill(exec, right_indices->begin(), right_indices->end(), JoinNoMatch);
+    return std::pair(std::move(left_indices), std::move(right_indices));
   }
 
   // Slice the left table to the partition range
@@ -122,7 +100,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   auto offsets = cudf::detail::make_zeroed_device_uvector_async<std::int64_t>(
     static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
   auto const output_size =
-    hash_csr_scan_counts(counts.data(), partition_size, offsets.data(), stream);
+    cudf::detail::sizes_to_offsets(counts.begin(), counts.end(), offsets.begin(), 0, stream);
   CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
 
   rmm::device_uvector<size_type> probe_slots(partition_size, stream, temp_mr);
@@ -157,13 +135,13 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                         stream);
     }
   };
-  dispatch_hash_csr_comparator(_right,
-                               left_partition_view,
-                               _preprocessed_right,
-                               preprocessed_left,
-                               _has_nulls,
-                               _nulls_equal,
-                               save_slots);
+  dispatch_join_comparator(_right,
+                           left_partition_view,
+                           _preprocessed_right,
+                           preprocessed_left,
+                           _has_nulls,
+                           _nulls_equal,
+                           save_slots);
 
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
     static_cast<std::size_t>(output_size), stream, mr);

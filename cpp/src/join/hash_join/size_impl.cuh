@@ -8,9 +8,12 @@
 #include "dispatch.cuh"
 #include "hash_csr_kernels.cuh"
 
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+
+#include <cuda/std/functional>
 
 namespace cudf::detail {
 
@@ -57,9 +60,10 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                                               hasher,
                                                               stream);
   };
-  dispatch_hash_csr_comparator(
+  dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
-  auto const output_size = hash_csr_reduce_counts(match_counts.data(), left.num_rows(), stream);
+  auto const output_size = cudf::detail::reduce(
+    match_counts.begin(), match_counts.end(), std::int64_t{0}, cuda::std::plus<>{}, stream);
   CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
   return static_cast<std::size_t>(output_size);
 }
@@ -104,11 +108,11 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                       hasher,
                                       stream);
   };
-  dispatch_hash_csr_comparator(
+  dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
-  auto const left_output_size =
-    hash_csr_reduce_counts(match_counts.data(), left.num_rows(), stream);
+  auto const left_output_size = cudf::detail::reduce(
+    match_counts.begin(), match_counts.end(), std::int64_t{0}, cuda::std::plus<>{}, stream);
   auto const matched_right_rows = matched_build_rows.value(stream);
   CUDF_EXPECTS(left_output_size >= 0, "Join output size overflowed", std::overflow_error);
   auto const output_size = static_cast<std::uint64_t>(left_output_size) +

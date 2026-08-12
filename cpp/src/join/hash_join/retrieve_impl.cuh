@@ -11,6 +11,7 @@
 
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -87,13 +88,13 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                         stream);
     }
   };
-  dispatch_hash_csr_comparator(
+  dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
   auto offsets = cudf::detail::make_zeroed_device_uvector_async<std::int64_t>(
     static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
-  auto const actual_size =
-    hash_csr_scan_counts(match_counts.data(), left.num_rows(), offsets.data(), stream);
+  auto const actual_size = cudf::detail::sizes_to_offsets(
+    match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream);
   CUDF_EXPECTS(actual_size >= 0, "Join output size overflowed", std::overflow_error);
   auto const join_size = Join != join_kind::FULL_JOIN && output_size.has_value()
                            ? *output_size

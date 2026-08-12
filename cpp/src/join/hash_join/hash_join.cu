@@ -21,8 +21,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/mr/polymorphic_allocator.hpp>
-
 #include <cuda/iterator>
 
 #include <cmath>

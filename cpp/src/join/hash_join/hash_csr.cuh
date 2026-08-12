@@ -5,14 +5,18 @@
 
 #pragma once
 
-#include "kernels_common.cuh"
-
+#include <cudf/hashing.hpp>
 #include <cudf/types.hpp>
 
 #include <cstdint>
 #include <limits>
 
 namespace cudf::detail {
+
+struct hash_csr_key_type {
+  hash_value_type hash;
+  size_type row;
+};
 
 constexpr size_type hash_csr_empty_slot               = size_type{-1};
 constexpr std::uint64_t hash_csr_empty_entry          = std::numeric_limits<std::uint64_t>::max();
@@ -54,17 +58,17 @@ struct hash_csr_map_view {
   std::uint32_t mask;
 
   template <typename Equal>
-  __device__ std::uint32_t find_or_insert(probe_key_type key, Equal equal) const
+  __device__ std::uint32_t find_or_insert(hash_csr_key_type key, Equal equal) const
   {
-    auto const desired = pack_hash_csr_entry(key.first, key.second);
+    auto const desired = pack_hash_csr_entry(key.hash, key.row);
     for (std::uint32_t step = 0; step < capacity; ++step) {
-      auto const slot = (static_cast<std::uint32_t>(key.first) + step) & mask;
+      auto const slot = (static_cast<std::uint32_t>(key.hash) + step) & mask;
       auto const old  = atomicCAS(reinterpret_cast<unsigned long long*>(entries + slot),
                                  static_cast<unsigned long long>(hash_csr_empty_entry),
                                  static_cast<unsigned long long>(desired));
       if (old == hash_csr_empty_entry) { return slot; }
-      if (unpack_hash_csr_hash(old) == key.first &&
-          equal(key, probe_key_type{unpack_hash_csr_hash(old), unpack_hash_csr_row(old)})) {
+      if (unpack_hash_csr_hash(old) == key.hash &&
+          equal(key, hash_csr_key_type{unpack_hash_csr_hash(old), unpack_hash_csr_row(old)})) {
         return slot;
       }
     }
@@ -72,14 +76,15 @@ struct hash_csr_map_view {
   }
 
   template <typename Equal>
-  __device__ std::uint32_t find(probe_key_type key, Equal equal) const
+  __device__ std::uint32_t find(hash_csr_key_type key, Equal equal) const
   {
     for (std::uint32_t step = 0; step < capacity; ++step) {
-      auto const slot    = (static_cast<std::uint32_t>(key.first) + step) & mask;
+      auto const slot    = (static_cast<std::uint32_t>(key.hash) + step) & mask;
       auto const current = entries[slot];
       if (current == hash_csr_empty_entry) { return capacity; }
-      if (unpack_hash_csr_hash(current) == key.first &&
-          equal(key, probe_key_type{unpack_hash_csr_hash(current), unpack_hash_csr_row(current)})) {
+      if (unpack_hash_csr_hash(current) == key.hash &&
+          equal(key,
+                hash_csr_key_type{unpack_hash_csr_hash(current), unpack_hash_csr_row(current)})) {
         return slot;
       }
     }

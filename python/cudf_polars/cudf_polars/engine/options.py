@@ -345,6 +345,9 @@ class StreamingOptions:
     num_py_executors: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", int
     )
+    kvikio_nthreads: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", int
+    )
     max_concurrent_io_tasks: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", int
     )

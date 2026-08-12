@@ -78,6 +78,11 @@ def test_executor_options_max_concurrent_io_tasks() -> None:
     assert result["max_concurrent_io_tasks"] == 6
 
 
+def test_executor_options_kvikio_nthreads() -> None:
+    result = StreamingOptions(kvikio_nthreads=128).to_executor_options()
+    assert result["kvikio_nthreads"] == 128
+
+
 @pytest.mark.parametrize("value", [True, False])
 def test_executor_options_sink_to_directory(*, value: bool) -> None:
     result = StreamingOptions(sink_to_directory=value).to_executor_options()

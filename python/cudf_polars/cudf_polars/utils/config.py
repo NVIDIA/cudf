@@ -685,6 +685,13 @@ class StreamingExecutor:
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
+    kvikio_nthreads
+        Number of threads in the kvikio thread pool. Defaults to 256.
+        This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable
+        - the ``KVIKIO_NTHREADS`` environment variable (lower precedence)
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
@@ -754,6 +761,14 @@ class StreamingExecutor:
     num_py_executors: int = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__NUM_PY_EXECUTORS", int, default=8
+        )
+    )
+    kvikio_nthreads: int = dataclasses.field(
+        default_factory=lambda: int(
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                os.environ.get("KVIKIO_NTHREADS", "256"),
+            )
         )
     )
 
@@ -840,6 +855,8 @@ class StreamingExecutor:
             raise TypeError("max_concurrent_io_tasks must be an int")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
+        if not isinstance(self.kvikio_nthreads, int):
+            raise TypeError("kvikio_nthreads must be an int")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it

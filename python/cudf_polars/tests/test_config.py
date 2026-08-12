@@ -801,6 +801,49 @@ def test_num_py_executors_from_env(
         assert config.executor.num_py_executors == 8
 
 
+def test_kvikio_nthreads_default() -> None:
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.executor.kvikio_nthreads == 256
+
+
+def test_kvikio_nthreads_from_executor_options() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"kvikio_nthreads": 128},
+        )
+    )
+    assert config.executor.kvikio_nthreads == 128
+
+
+def test_kvikio_nthreads_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", "64")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 64
+
+
+def test_kvikio_nthreads_from_kvikio_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("KVIKIO_NTHREADS", "32")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 32
+
+
+def test_kvikio_nthreads_cudf_polars_env_takes_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", "64")
+        m.setenv("KVIKIO_NTHREADS", "32")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 64
+
+
 def test_dask_sink_to_directory_false_raises() -> None:
     with pytest.raises(
         ValueError, match="The dask cluster requires sink_to_directory=True"

@@ -7,9 +7,12 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
+
+import kvikio
 
 import pylibcudf as plc
 import rmm.mr
@@ -408,6 +411,18 @@ class SPMDEngine(StreamingEngine):
     ) -> None:
         executor_options = executor_options or {}
         engine_options = engine_options or {}
+
+        kvikio_nthreads = int(
+            executor_options.get(
+                "kvikio_nthreads",
+                os.environ.get(
+                    "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                    os.environ.get("KVIKIO_NTHREADS", "256"),
+                ),
+            )
+        )
+        kvikio.defaults.set("num_threads", kvikio_nthreads)
+
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"
         )

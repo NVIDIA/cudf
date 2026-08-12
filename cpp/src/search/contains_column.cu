@@ -12,7 +12,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace detail {
@@ -21,7 +21,7 @@ namespace {
 
 std::unique_ptr<column> contains_dictionary(column_view const& haystack_in,
                                             column_view const& needles_in,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   dictionary_column_view const haystack(haystack_in);
@@ -52,7 +52,7 @@ std::unique_ptr<column> contains_dictionary(column_view const& haystack_in,
 
 std::unique_ptr<column> contains(column_view const& haystack,
                                  column_view const& needles,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   // Dictionary columns require key normalization; all other types share the type-erased path.
@@ -73,7 +73,7 @@ std::unique_ptr<column> contains(column_view const& haystack,
 
 std::unique_ptr<column> contains(column_view const& haystack,
                                  column_view const& needles,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

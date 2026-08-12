@@ -18,6 +18,7 @@
 
 #include <cstring>
 #include <memory>
+#include <random>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -186,6 +187,46 @@ std::vector<std::string> get_dict_keys(int nesting)
   return keys;
 }
 
+// Keys for the field-count benchmark: "f00", "f01", ..., "f{N-1}" plus "z" for miss rows.
+// All sort before "z", maintaining the required lexicographic order.
+std::vector<std::string> get_dict_keys_for_fields(int num_fields)
+{
+  std::vector<std::string> keys;
+  keys.reserve(num_fields + 1);
+  for (int i = 0; i < num_fields; ++i) {
+    keys.emplace_back("f" + std::string(i < 10 ? "0" : "") + std::to_string(i));
+  }
+  keys.emplace_back("z");
+  return keys;
+}
+
+// Build a flat object with `num_fields` fields using 1-byte field IDs and 1-byte offsets.
+// Field `target_fid` holds `inner`; all other fields hold a dummy BOOLEAN_TRUE (0x04).
+std::vector<uint8_t> build_flat_object(int num_fields,
+                                       int target_fid,
+                                       std::vector<uint8_t> const& inner)
+{
+  // object_header(1) + num_fields(1) + field_ids(num_fields) + offsets(num_fields+1) + data
+  std::vector<uint8_t> out{0x02, static_cast<uint8_t>(num_fields)};
+  for (int i = 0; i < num_fields; ++i) {
+    out.push_back(static_cast<uint8_t>(i));
+  }
+  uint8_t running = 0;
+  for (int i = 0; i < num_fields; ++i) {
+    out.push_back(running);
+    running += static_cast<uint8_t>(i == target_fid ? inner.size() : 1u);
+  }
+  out.push_back(running);  // sentinel offset after last field
+  for (int i = 0; i < num_fields; ++i) {
+    if (i == target_fid) {
+      out.insert(out.end(), inner.begin(), inner.end());
+    } else {
+      out.push_back(0x04);  // BOOLEAN_TRUE dummy
+    }
+  }
+  return out;
+}
+
 // Build the JSONPath-like extraction path.
 // For nesting=2, type=array: "a.b[1]"
 // For nesting=3, type=string: "a.b.c"
@@ -212,7 +253,58 @@ cudf::data_type get_target_type(std::string const& type_str)
 
 }  // namespace
 
-static void bench_variant_extract(nvbench::state& state)
+// Assign each row randomly as a hit or miss rather than using contiguous strided ranges,
+// so the memory access pattern doesn't accidentally favour cache locality.
+void fill_val_rows(std::vector<std::vector<uint8_t>>& val_rows,
+                   std::vector<uint8_t> const& hit_val,
+                   std::vector<uint8_t> const& miss_val,
+                   int hit_rate)
+{
+  std::mt19937 rng{42};
+  std::uniform_int_distribution<int> dist{0, 99};
+  for (auto& row : val_rows) {
+    row = (dist(rng) < hit_rate) ? hit_val : miss_val;
+  }
+}
+
+// Benchmarks cast_variant: each row's value IS the leaf primitive (no path traversal).
+static void bench_variant_cast(nvbench::state& state)
+{
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const type_str = state.get_string("type");
+  auto const hit_rate = static_cast<int>(state.get_int64("hit_rate"));
+
+  auto const meta_blob = build_metadata(get_dict_keys(0));
+  auto const hit_val   = build_leaf_value(type_str);
+  auto const miss_val  = build_miss_value(0, /*is_array=*/false, type_str);
+
+  std::vector<std::vector<uint8_t>> meta_rows(num_rows, meta_blob);
+  std::vector<std::vector<uint8_t>> val_rows(num_rows);
+  fill_val_rows(val_rows, hit_val, miss_val, hit_rate);
+
+  auto col = build_variant_column(meta_rows, val_rows, stream, mr);
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+
+  auto const target_type = get_target_type(type_str);
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    std::ignore =
+      cudf::io::parquet::experimental::cast_variant(col->view().child(1), target_type, stream, mr);
+  });
+}
+
+NVBENCH_BENCH(bench_variant_cast)
+  .set_name("bench_variant_cast")
+  .add_int64_axis("num_rows", {32768, 262144, 2097152})
+  .add_string_axis("type", {"string", "float", "bool", "int32_t"})
+  .add_int64_axis("hit_rate", {20, 80});
+
+// Benchmarks extract_variant_field with varying path depth (nesting >= 1).
+static void bench_variant_extract_nesting(nvbench::state& state)
 {
   auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
@@ -224,46 +316,76 @@ static void bench_variant_extract(nvbench::state& state)
 
   bool const is_array = (type_str == "array");
 
-  // Build per-row blobs.
-  // hit_rate% of rows contain the correctly typed value at the target path.
-  // Miss rows hold a valid VARIANT with a wrong key ("z") or wrong primitive type so extraction
-  // returns null without short-circuiting on a trivial null input.
-  auto const keys      = get_dict_keys(nesting);
-  auto const meta_blob = build_metadata(keys);
+  auto const meta_blob = build_metadata(get_dict_keys(nesting));
   auto const hit_val   = build_hit_value(type_str, nesting);
   auto const miss_val  = build_miss_value(nesting, is_array, type_str);
 
   std::vector<std::vector<uint8_t>> meta_rows(num_rows, meta_blob);
   std::vector<std::vector<uint8_t>> val_rows(num_rows);
-  for (cudf::size_type i = 0; i < num_rows; ++i) {
-    val_rows[i] = (static_cast<int>(i % 100) < hit_rate) ? hit_val : miss_val;
-  }
+  fill_val_rows(val_rows, hit_val, miss_val, hit_rate);
 
   auto col = build_variant_column(meta_rows, val_rows, stream, mr);
   CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
 
   auto const target_type = get_target_type(type_str);
-
-  // For nesting=0 with a non-array type, the variant value IS the leaf primitive; use cast_variant.
-  // For arrays at any nesting level, or any nesting >= 1, use extract_variant_field with a path.
-  bool const use_cast_variant = (nesting == 0 && !is_array);
-  auto const path             = use_cast_variant ? std::string{} : get_path(nesting, is_array);
+  auto const path        = get_path(nesting, is_array);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    if (use_cast_variant) {
-      std::ignore = cudf::io::parquet::experimental::cast_variant(
-        col->view().child(1), target_type, stream, mr);
-    } else {
-      std::ignore = cudf::io::parquet::experimental::extract_variant_field(
-        col->view(), path, target_type, stream, mr);
-    }
+    std::ignore = cudf::io::parquet::experimental::extract_variant_field(
+      col->view(), path, target_type, stream, mr);
   });
 }
 
-NVBENCH_BENCH(bench_variant_extract)
-  .set_name("bench_variant_extract")
+NVBENCH_BENCH(bench_variant_extract_nesting)
+  .set_name("bench_variant_extract_nesting")
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
   .add_string_axis("type", {"string", "float", "bool", "int32_t", "array"})
-  .add_int64_axis("nesting", {0, 1, 5})
+  .add_int64_axis("nesting", {1, 5})
+  .add_int64_axis("hit_rate", {20, 80});
+
+// Benchmarks extract_variant_field on a flat object, varying the total number of fields
+// and whether the target field is first or last (probes binary search cost).
+// Type is fixed to int32_t to isolate field-lookup overhead.
+static void bench_variant_extract_fields(nvbench::state& state)
+{
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const num_rows      = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_fields    = static_cast<int>(state.get_int64("num_fields"));
+  auto const field_pos_str = state.get_string("field_position");
+  auto const hit_rate      = static_cast<int>(state.get_int64("hit_rate"));
+
+  int const target_fid = (field_pos_str == "last") ? (num_fields - 1) : 0;
+
+  auto const meta_blob = build_metadata(get_dict_keys_for_fields(num_fields));
+  auto const leaf      = build_leaf_value("int32_t");
+  auto const hit_val   = build_flat_object(num_fields, target_fid, leaf);
+  // Miss: object keyed on "z" (field ID = num_fields), so the lookup fails.
+  auto const miss_val = wrap_in_object(static_cast<uint8_t>(num_fields), leaf);
+
+  std::vector<std::vector<uint8_t>> meta_rows(num_rows, meta_blob);
+  std::vector<std::vector<uint8_t>> val_rows(num_rows);
+  fill_val_rows(val_rows, hit_val, miss_val, hit_rate);
+
+  auto col = build_variant_column(meta_rows, val_rows, stream, mr);
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+
+  std::string const path =
+    "f" + std::string(target_fid < 10 ? "0" : "") + std::to_string(target_fid);
+  auto const target_type = cudf::data_type{cudf::type_id::INT32};
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    std::ignore = cudf::io::parquet::experimental::extract_variant_field(
+      col->view(), path, target_type, stream, mr);
+  });
+}
+
+NVBENCH_BENCH(bench_variant_extract_fields)
+  .set_name("bench_variant_extract_fields")
+  .add_int64_axis("num_rows", {32768, 262144, 2097152})
+  .add_int64_axis("num_fields", {1, 10, 100})
+  .add_string_axis("field_position", {"first", "last"})
   .add_int64_axis("hit_rate", {20, 80});

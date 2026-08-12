@@ -60,11 +60,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                    parquet_reader_options const& options);
 
   /**
-   * @brief Constructor that shares pre-parsed Parquet metadata
-   *
-   * Borrows an already-constructed `aggregate_reader_metadata` instead of parsing and copying the
-   * file metadata again. Multiple single-file readers can share one metadata object, avoiding a
-   * per-reader copy of the (potentially large) row group metadata.
+   * @brief Constructor that takes shared ownership of pre-parsed Parquet metadata
    *
    * @param metadata Shared, pre-parsed Parquet file metadata. Must not be null.
    */

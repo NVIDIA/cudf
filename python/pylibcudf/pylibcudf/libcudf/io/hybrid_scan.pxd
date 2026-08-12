@@ -53,7 +53,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         ) except +libcudf_exception_handler
 
         hybrid_scan_reader(
-            const hybrid_scan_metadata& metadata
+            hybrid_scan_metadata metadata
         ) except +libcudf_exception_handler
 
         FileMetaData parquet_metadata() except +libcudf_exception_handler

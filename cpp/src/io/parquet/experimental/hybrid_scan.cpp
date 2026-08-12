@@ -47,8 +47,8 @@ hybrid_scan_reader::hybrid_scan_reader(FileMetaData const& parquet_metadata,
 {
 }
 
-hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata const& metadata)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(metadata._metadata)}
+hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata)
+  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
 {
 }
 

@@ -61,7 +61,7 @@ enum class use_data_page_mask : bool {
  * @brief Shareable, pre-parsed Parquet file metadata for the Hybrid Scan reader.
  *
  * Parses the Parquet file metadata once so that multiple `hybrid_scan_reader` instances reading
- * the same file can borrow it rather than each re-parsing and copying the row group metadata.
+ * the same file can share it rather than each re-parsing and copying the row group metadata.
  * The intended use is to read disjoint row-group ranges of a single file: construct one
  * `hybrid_scan_metadata` per file and pass it to as many readers as there are ranges.
  *
@@ -371,14 +371,13 @@ class hybrid_scan_reader {
                               parquet_reader_options const& options);
 
   /**
-   * @brief Constructor that borrows shared, pre-parsed Parquet file metadata
+   * @brief Constructor that takes shared ownership of pre-parsed Parquet file metadata
    *
-   * Constructs a reader that shares `metadata` instead of parsing and copying the file metadata
-   * again.
+   * Constructs a reader that shares the pre-parsed metadata object.
    *
    * @param metadata Shared, pre-parsed Parquet file metadata
    */
-  explicit hybrid_scan_reader(hybrid_scan_metadata const& metadata);
+  explicit hybrid_scan_reader(hybrid_scan_metadata metadata);
 
   /**
    * @brief Destructor for the experimental parquet reader class

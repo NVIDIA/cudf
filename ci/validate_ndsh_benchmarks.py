@@ -9,7 +9,18 @@ from pathlib import Path
 
 import duckdb
 
-QUERIES = ("q01", "q03", "q04", "q09", "q17", "q18", "q21")
+QUERIES = (
+    "q01",
+    "q02",
+    "q03",
+    "q04",
+    "q05",
+    "q06",
+    "q09",
+    "q17",
+    "q18",
+    "q21",
+)
 EXPECTED_NAMES = {
     "q18": [
         "c_name",

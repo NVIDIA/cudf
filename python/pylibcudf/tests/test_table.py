@@ -3,7 +3,7 @@
 
 import pyarrow as pa
 import pytest
-from utils import assert_table_eq
+from utils import assert_column_eq, assert_table_eq
 
 from rmm.pylibrmm.stream import Stream
 
@@ -116,10 +116,10 @@ def test_from_arrow_fixed_size_list_normalizes_to_list(values):
     expected = pa.array(values, type=pa.list_(pa.int64()))
 
     column = plc.Column.from_arrow(fixed)
-    assert column.to_arrow().equals(expected)
+    assert_column_eq(expected, column)
 
     table = plc.Table.from_arrow(pa.table({"a": fixed}))
-    assert_table_eq(table.to_arrow(), pa.table({"a": expected}))
+    assert_table_eq(pa.table({"a": expected}), table)
 
 
 def test_from_arrow_fixed_size_list_in_mixed_table():
@@ -135,7 +135,7 @@ def test_from_arrow_fixed_size_list_in_mixed_table():
         pa.array([[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64())),
     )
 
-    assert_table_eq(plc.Table.from_arrow(arrow_table).to_arrow(), expected)
+    assert_table_eq(expected, plc.Table.from_arrow(arrow_table))
 
 
 def test_to_arrow_zero_column_preserves_num_rows():

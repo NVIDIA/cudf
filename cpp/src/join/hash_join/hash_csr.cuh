@@ -58,7 +58,7 @@ struct hash_csr_map_view {
   std::uint32_t mask;
 
   template <typename Equal>
-  __device__ std::uint32_t find_or_insert(hash_csr_key_type key, Equal equal) const
+  __device__ std::uint32_t insert(hash_csr_key_type key, Equal equal) const
   {
     auto const desired = pack_hash_csr_entry(key.hash, key.row);
     for (std::uint32_t step = 0; step < capacity; ++step) {

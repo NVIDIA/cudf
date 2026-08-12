@@ -52,7 +52,7 @@ CUDF_KERNEL void hash_csr_build_count_kernel(size_type num_rows,
       continue;
     }
 
-    auto const slot = map.find_or_insert(hash_csr_key_type{hasher(index), index}, equal);
+    auto const slot = map.insert(hash_csr_key_type{hasher(index), index}, equal);
     if (slot == map.capacity) {
       build_positions[index] = hash_csr_empty_build_position;
       continue;

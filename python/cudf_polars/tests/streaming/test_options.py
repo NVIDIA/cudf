@@ -73,6 +73,11 @@ def test_executor_options_num_py_executors() -> None:
     assert result["num_py_executors"] == 4
 
 
+def test_executor_options_max_concurrent_io_tasks() -> None:
+    result = StreamingOptions(max_concurrent_io_tasks=6).to_executor_options()
+    assert result["max_concurrent_io_tasks"] == 6
+
+
 @pytest.mark.parametrize("value", [True, False])
 def test_executor_options_sink_to_directory(*, value: bool) -> None:
     result = StreamingOptions(sink_to_directory=value).to_executor_options()
@@ -305,6 +310,8 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
             "4GiB",
             "--unbounded-file-read-cache",
             "host",
+            "--max-concurrent-io-tasks",
+            "6",
         ]
     )
     opts = StreamingOptions._from_argparse(args)
@@ -313,6 +320,7 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert opts.raise_on_fail is True
     assert opts.pinned_max_pool_size == "4GiB"
     assert opts.unbounded_file_read_cache == "host"
+    assert opts.max_concurrent_io_tasks == 6
     # Unprovided args default to None → UNSPECIFIED
     assert isinstance(opts.fallback_mode, Unspecified)
 

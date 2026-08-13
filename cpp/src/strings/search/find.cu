@@ -742,8 +742,8 @@ std::unique_ptr<column> contains(strings_column_view const& input,
   }
 
   // Heterogeneous: thread-per-short + warp-per-long. Gives large speedups vs the old
-  // warp-per-all path for mixed-width large columns. For small columns the two-pass overhead
-  // exceeds the savings, so we fall back to warp-per-all (baseline behavior) there.
+  // warp-per-all path for mixed-width columns. Selected on average width only; the two-pass
+  // overhead is bounded because the second launch reads `*d_long_count == 0` and exits.
   if (avg_bytes > AVG_CHAR_BYTES_THRESHOLD) {
     return contains_heterogeneous(input, target, stream, mr);
   }

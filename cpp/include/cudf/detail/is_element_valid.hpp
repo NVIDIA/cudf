@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
@@ -30,7 +30,7 @@ namespace detail {
 
 bool is_element_valid_sync(column_view const& col_view,
                            size_type element_index,
-                           rmm::cuda_stream_view stream);
+                           cuda::stream_ref stream);
 
 }  // namespace detail
 }  // namespace CUDF_EXPORT cudf

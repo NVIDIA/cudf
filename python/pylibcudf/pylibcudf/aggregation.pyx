@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -428,7 +428,7 @@ cpdef Aggregation median():
     return Aggregation.from_libcudf(move(make_median_aggregation[aggregation]()))
 
 
-cpdef Aggregation quantile(list quantiles, interpolation interp = interpolation.LINEAR):
+cpdef Aggregation quantile(list quantiles: list[float], interpolation interp = interpolation.LINEAR):
     """Create a quantile aggregation.
 
     For details, see :cpp:func:`make_quantile_aggregation`.

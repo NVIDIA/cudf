@@ -216,7 +216,7 @@ class Agg(Expr):
     )
 
     interp_mapping: ClassVar[dict[str, plc.types.Interpolation]] = {
-        "nearest": plc.types.Interpolation.NEAREST,
+        "nearest": plc.types.Interpolation.NEAREST_HALF_UP,
         "higher": plc.types.Interpolation.HIGHER,
         "lower": plc.types.Interpolation.LOWER,
         "midpoint": plc.types.Interpolation.MIDPOINT,

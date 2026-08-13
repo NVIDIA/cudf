@@ -63,6 +63,9 @@ python -m auditwheel repair \
     --exclude librmm.so \
     --exclude libucxx.so \
     --exclude libucp.so.0 \
+    --exclude libnvrtc.so \
+    --exclude libnvrtc-builtins.so \
+    --exclude libnvJitLink.so \
     -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
     ${package_dir}/dist/*
 

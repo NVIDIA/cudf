@@ -37,6 +37,9 @@ python -m auditwheel repair \
     --exclude libnvcomp.so.5 \
     --exclude librapids_logger.so \
     --exclude librmm.so \
+    --exclude libnvrtc.so \
+    --exclude libnvrtc-builtins.so \
+    --exclude libnvJitLink.so \
     -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
     ${package_dir}/dist/*
 

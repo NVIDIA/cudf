@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -34,6 +34,9 @@ python -m auditwheel repair \
     --exclude libkvikio.so \
     --exclude librapids_logger.so \
     --exclude librmm.so \
+    --exclude libnvrtc.so \
+    --exclude libnvrtc-builtins.so \
+    --exclude libnvJitLink.so \
     -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
     ${package_dir}/dist/*
 

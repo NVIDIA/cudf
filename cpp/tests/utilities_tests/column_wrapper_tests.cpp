@@ -410,8 +410,8 @@ TYPED_TEST(FixedWidthColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                                                  this->resources());
   cudf::column_view view = col;
 
-  // TODO: Remove once equality row preprocessing uses the supplied memory resources.
-  this->enable_current_device_resource_use();
+  // TODO: Check the harness with a failing current resource once equality row preprocessing uses
+  // the supplied memory resources.
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,
@@ -517,8 +517,8 @@ TYPED_TEST(StringsColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                          this->resources());
   cudf::column_view view = col;
 
-  // TODO: Remove once equality row preprocessing uses the supplied memory resources.
-  this->enable_current_device_resource_use();
+  // TODO: Check the harness with a failing current resource once equality row preprocessing uses
+  // the supplied memory resources.
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
                                  match_view,
                                  cudf::test::debug_output_level::FIRST_ERROR,

@@ -22,30 +22,9 @@ scoped_current_device_resource::scoped_current_device_resource(
 {
 }
 
-scoped_current_device_resource::scoped_current_device_resource(
-  scoped_current_device_resource&& other) noexcept
-  : _previous{std::exchange(other._previous, std::nullopt)}
+scoped_current_device_resource::~scoped_current_device_resource()
 {
-}
-
-scoped_current_device_resource& scoped_current_device_resource::operator=(
-  scoped_current_device_resource&& other) noexcept
-{
-  if (this != &other) {
-    restore();
-    _previous = std::exchange(other._previous, std::nullopt);
-  }
-  return *this;
-}
-
-scoped_current_device_resource::~scoped_current_device_resource() { restore(); }
-
-void scoped_current_device_resource::restore() noexcept
-{
-  if (_previous.has_value()) {
-    std::ignore = cudf::set_current_device_resource(std::move(*_previous));
-    _previous.reset();
-  }
+  std::ignore = cudf::set_current_device_resource(std::move(_previous));
 }
 
 memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_resource_ref upstream)

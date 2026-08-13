@@ -19,8 +19,6 @@
 
 #include <cuda/memory_resource>
 
-#include <optional>
-
 namespace CUDF_EXPORT cudf {
 namespace test {
 
@@ -47,10 +45,8 @@ class BaseFixture : public ::testing::Test {
 /**
  * @brief Base fixture that instruments tests with a memory-resource harness.
  *
- * Each test instantiates a fresh harness. The failing current-device-resource scope is installed
- * after `_harness` so accidental fallback to the default MR fails the test. Tests should construct
- * results with `resources()`. `TearDown` asserts that no output or temporary allocations remain
- * live; the prior current resource is restored when the optional scope is reset or destroyed.
+ * Each test instantiates a fresh harness. Tests should construct results with `resources()`.
+ * `TearDown` asserts that no output or temporary allocations remain live.
  */
 struct BaseFixtureWithHarness : public BaseFixture {
   /**
@@ -70,18 +66,8 @@ struct BaseFixtureWithHarness : public BaseFixture {
    */
   cudf::memory_resources resources() { return _harness.resources(); }
 
-  /**
-   * @brief Clear the failing current-device-resource scope for the remainder of the test.
-   *
-   * After this call, APIs may allocate from the restored current device resource without failing
-   * the test. Prefer removing the need for this once those APIs accept explicit resources.
-   */
-  void enable_current_device_resource_use() { _fail_on_current.reset(); }
-
  protected:
   memory_resource_test_harness _harness{mr()};
-  std::optional<scoped_current_device_resource> _fail_on_current{
-    _harness.fail_on_current_device_resource_use()};
 };
 
 /**

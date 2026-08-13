@@ -5,10 +5,11 @@ from enum import IntEnum
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
+from pylibcudf import Table
 from pylibcudf.aggregation import Aggregation
 from pylibcudf.column import Column
 from pylibcudf.scalar import Scalar
-from pylibcudf.types import DataType, NanPolicy, NullPolicy
+from pylibcudf.types import DataType, NanPolicy, NullEquality, NullPolicy
 from pylibcudf.utils import CudaStreamLike
 
 class ScanType(IntEnum):
@@ -47,5 +48,15 @@ def distinct_count(
     source: Column,
     null_handling: NullPolicy,
     nan_handling: NanPolicy,
+    stream: CudaStreamLike | None = None,
+) -> int: ...
+def unique_count_table(
+    source: Table,
+    nulls_equal: NullEquality,
+    stream: CudaStreamLike | None = None,
+) -> int: ...
+def distinct_count_table(
+    source: Table,
+    nulls_equal: NullEquality,
     stream: CudaStreamLike | None = None,
 ) -> int: ...

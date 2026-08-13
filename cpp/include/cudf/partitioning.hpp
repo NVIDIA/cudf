@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,12 +15,15 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column partitioning APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_partition
  * @{
- * @file
- * @brief Column partitioning APIs
  */
 
 /**
@@ -82,6 +85,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
  * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
  * number of rows in the output table.
  *
+ * An empty `columns_to_hash` is treated as empty, producing an empty result even when `input` has a
+ * non-zero row count.
+ *
  * @throw std::out_of_range if index is `columns_to_hash` is invalid
  *
  * @param input The table to partition
@@ -112,6 +118,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
  * of `num_partitions + 1` offsets, where partition `i` contains rows in the range
  * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
  * number of rows in the output table.
+ *
+ * A zero-column `keys` table is treated as empty, producing an empty result even when `input` has a
+ * non-zero row count.
  *
  * @throw std::invalid_argument if `keys` is not empty and does not have the same number of rows as
  * `input`.

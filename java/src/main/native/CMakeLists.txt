@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -109,12 +109,11 @@ endif()
 find_package(nvtx3 REQUIRED)
 
 if(NOT TARGET nvcomp
-   AND NOT TARGET nvcomp::nvcomp
+   AND NOT TARGET nvcomp::nvcomp_static
    AND NOT DEFINED ENV{CUDF_INSTALL_DIR}
 )
   include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_nvcomp.cmake)
 endif()
-find_package(nvcomp REQUIRED)
 
 # ##################################################################################################
 # * find JNI --------------------------------------------------------------------------------------
@@ -170,6 +169,9 @@ add_library(
   src/DeletionVectorJni.cpp
   src/HashJoinJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
+  src/HybridScanReaderJni.cpp
+  src/HybridScanReaderJniInternal.cpp
+  src/HybridScanReaderJniMaterialize.cpp
   src/KeyRemappingJni.cpp
   src/HostUDFWrapperJni.cpp
   src/NvcompJni.cpp
@@ -179,6 +181,7 @@ add_library(
   src/RmmJni.cpp
   src/ScalarJni.cpp
   src/TableJni.cpp
+  src/VariantUtilsJni.cpp
   src/aggregation128_utils.cu
   src/check_nvcomp_output_sizes.cu
   src/maps_column_view.cu
@@ -264,30 +267,19 @@ endif()
 
 # ##################################################################################################
 # * link libraries --------------------------------------------------------------------------------
-
-set(CUDF_LINK PUBLIC cudf::cudf)
 if(CUDF_JNI_LIBCUDF_STATIC)
-  # Whole-link libcudf.a into the shared library but not its dependencies
-  set(CUDF_LINK PRIVATE -Wl,--whole-archive cudf::cudf -Wl,--no-whole-archive)
+  target_link_libraries(cudfjni PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,cudf::cudf>)
+else()
+  target_link_libraries(cudfjni PUBLIC cudf::cudf)
 endif()
 
-# When nvcomp is installed we need to use nvcomp::nvcomp but from the cudf build directory it will
-# just be nvcomp.
-target_link_libraries(
-  cudfjni ${CUDF_LINK} PRIVATE nvtx3::nvtx3-cpp $<TARGET_NAME_IF_EXISTS:nvcomp>
-                               $<TARGET_NAME_IF_EXISTS:nvcomp::nvcomp>
-)
+get_target_property(cudf_static_linked_projects cudf::cudf CUDF_STATIC_LINKED_PROJECTS)
+if(nvcomp IN_LIST cudf_static_linked_projects)
+  target_link_libraries(cudfjni PRIVATE $<COMPILE_ONLY:nvcomp::nvcomp_static>)
+else()
+  target_link_libraries(cudfjni PRIVATE nvcomp::nvcomp)
 
-# ##################################################################################################
-# * cudart options --------------------------------------------------------------------------------
-#   cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic
-#   linking
-
-set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Static)
-
-# ##################################################################################################
-# * install shared libraries ----------------------------------------------------------------------
-if(TARGET nvcomp::nvcomp)
+  # * install nvcomp for tests
   add_custom_command(
     TARGET cudfjni
     PRE_LINK
@@ -296,3 +288,11 @@ if(TARGET nvcomp::nvcomp)
     COMMENT "Copying nvcomp libraries to ${PROJECT_BINARY_DIR}"
   )
 endif()
+
+target_link_libraries(cudfjni PRIVATE nvtx3::nvtx3-cpp)
+
+# ##################################################################################################
+# * cudart options --------------------------------------------------------------------------------
+#   cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic
+#   linking
+set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Static)

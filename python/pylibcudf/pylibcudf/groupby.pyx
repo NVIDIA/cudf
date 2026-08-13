@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -272,6 +272,8 @@ cdef class GroupBy:
             A tuple whose first element is the group's keys and whose second
             element is a table of shifted values.
         """
+        cdef table_view c_values
+
         cdef vector[reference_wrapper[const scalar]] c_fill_values = \
             _as_vector(fill_values)
 
@@ -280,9 +282,10 @@ cdef class GroupBy:
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
+        c_values = values.view()
         with nogil:
             c_res = dereference(self.c_obj).shift(
-                values.view(),
+                c_values,
                 c_offset,
                 c_fill_values,
                 _cs,
@@ -324,9 +327,10 @@ cdef class GroupBy:
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
+        cdef table_view c_value = value.view()
         with nogil:
             c_res = dereference(self.c_obj).replace_nulls(
-                value.view(),
+                c_value,
                 c_replace_policies,
                 _cs,
                 mr.get_mr()

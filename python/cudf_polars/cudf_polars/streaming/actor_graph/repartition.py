@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Re-chunking logic for the RapidsMPF streaming runtime."""
 
@@ -7,19 +7,19 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
-from rapidsmpf.memory.memory_reservation import opaque_memory_usage
-from rapidsmpf.streaming.core.actor import define_actor
-from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.cudf.channel_metadata import ChannelMetadata
-from rapidsmpf.streaming.cudf.table_chunk import (
+from cudf_streaming.channel_metadata import ChannelMetadata
+from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
+from rapidsmpf.streaming.core.actor import define_actor
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     empty_table_chunk,
@@ -143,7 +143,7 @@ async def concatenate_node(
             if tracer is not None and output_duplicated:
                 tracer.set_duplicated()
 
-            stream = context.get_stream_from_pool()
+            stream = context.br().stream_pool.get_stream()
             seq_num = 0
             allgather = AllGatherManager(context, comm, collective_id)
             with allgather.inserting() as inserter:
@@ -158,8 +158,6 @@ async def concatenate_node(
             result_table = await allgather.extract_concatenated(
                 stream, ir_context=ir_context
             )
-            if tracer is not None:
-                tracer.add_chunk(table=result_table)
 
             # If no chunks were gathered, result_table has 0 columns.
             # We need to create an empty table with the correct schema.
@@ -170,7 +168,7 @@ async def concatenate_node(
                     result_table, stream, exclusive_view=True, br=context.br()
                 )
 
-            await ch_out.send(context, Message(0, output_chunk))
+            await send_chunk(context, ch_out, output_chunk, 0, tracer=tracer)
         else:
             # Local repartitioning (tree reduction).
 
@@ -220,19 +218,14 @@ async def concatenate_node(
                         if len(chunks) > 1:
                             # _concat reuses chunks[0] if len(chunks) == 1
                             del chunks
-                    if tracer is not None:
-                        tracer.add_chunk(table=df.table)
-                    await ch_out.send(
-                        context,
-                        Message(
-                            seq_num,
-                            TableChunk.from_pylibcudf_table(
-                                df.table,
-                                df.stream,
-                                exclusive_view=True,
-                                br=context.br(),
-                            ),
-                        ),
+                    output_chunk = TableChunk.from_pylibcudf_table(
+                        df.table,
+                        df.stream,
+                        exclusive_view=True,
+                        br=context.br(),
+                    )
+                    await send_chunk(
+                        context, ch_out, output_chunk, seq_num, tracer=tracer
                     )
                     seq_num += 1
                     del df

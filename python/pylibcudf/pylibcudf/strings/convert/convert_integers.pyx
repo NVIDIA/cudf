@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_integers as cpp_convert_integers,
 )
@@ -53,10 +53,11 @@ cpdef Column to_integers(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = move(
             cpp_convert_integers.to_integers(
-                input.view(),
+                c_input,
                 output_type.c_obj,
                 _cs,
                 mr.get_mr()
@@ -93,10 +94,11 @@ cpdef Column from_integers(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_integers = integers.view()
     with nogil:
         c_result = move(
             cpp_convert_integers.from_integers(
-                integers.view(),
+                c_integers,
                 _cs,
                 mr.get_mr()
             )
@@ -140,11 +142,12 @@ cpdef Column is_integer(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     if int_type is None:
         with nogil:
             c_result = move(
                 cpp_convert_integers.is_integer(
-                    input.view(),
+                    c_input,
                     _cs,
                     mr.get_mr()
                 )
@@ -153,7 +156,7 @@ cpdef Column is_integer(
         with nogil:
             c_result = move(
                 cpp_convert_integers.is_integer(
-                    input.view(),
+                    c_input,
                     int_type.c_obj,
                     _cs,
                     mr.get_mr()
@@ -193,10 +196,11 @@ cpdef Column hex_to_integers(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = move(
             cpp_convert_integers.hex_to_integers(
-                input.view(),
+                c_input,
                 output_type.c_obj,
                 _cs,
                 mr.get_mr()
@@ -231,10 +235,11 @@ cpdef Column is_hex(Column input, object stream=None, DeviceMemoryResource mr=No
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = move(
             cpp_convert_integers.is_hex(
-                input.view(),
+                c_input,
                 _cs,
                 mr.get_mr()
             )
@@ -270,10 +275,11 @@ cpdef Column integers_to_hex(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = move(
             cpp_convert_integers.integers_to_hex(
-                input.view(),
+                c_input,
                 _cs,
                 mr.get_mr()
             )

@@ -64,6 +64,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
 
   rowgroup_char_counts_kernel<<<num_blocks, block_size, 0, stream.value()>>>(
     counts, orc_columns, rowgroup_bounds, str_col_indexes);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 struct equality_functor {
@@ -231,6 +232,7 @@ void populate_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionaries
   constexpr int block_size = 256;
   populate_dictionary_hash_maps_kernel<block_size>
     <<<dictionaries.count(), block_size, 0, stream.value()>>>(dictionaries, columns);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries,
@@ -240,6 +242,7 @@ void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries,
   constexpr int block_size = 1024;
   collect_map_entries_kernel<block_size>
     <<<dictionaries.count(), block_size, 0, stream.value()>>>(dictionaries);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void get_dictionary_indices(device_2dspan<stripe_dictionary> dictionaries,
@@ -250,6 +253,7 @@ void get_dictionary_indices(device_2dspan<stripe_dictionary> dictionaries,
   constexpr int block_size = 1024;
   get_dictionary_indices_kernel<block_size>
     <<<dictionaries.count(), block_size, 0, stream.value()>>>(dictionaries, columns);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::orc::detail

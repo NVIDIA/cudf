@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
@@ -23,6 +24,7 @@
 #include <nvbench/types.cuh>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -88,17 +90,23 @@ static void BM_transform(nvbench::state& state)
   state.add_global_memory_reads<key_type>(static_cast<std::size_t>(num_rows) * (tree_levels + 1));
   state.add_global_memory_writes<key_type>(num_rows);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::transform_extended(inputs,
-                             code,
-                             cudf::data_type{cudf::type_to_id<key_type>()},
-                             cudf::udf_source_type::CUDA,
-                             std::nullopt,
-                             cudf::null_aware::NO,
-                             std::nullopt,
-                             cudf::output_nullability::PRESERVE,
-                             launch.get_stream().get_stream());
+    cudf::transform(code,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_to_id<key_type>()},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
+                    launch.get_stream().get_stream());
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define AST_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns, nullable) \

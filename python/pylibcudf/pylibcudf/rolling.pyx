@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -10,7 +10,9 @@ from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport rolling as cpp_rolling
 from pylibcudf.libcudf.aggregation cimport rolling_aggregation
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -169,10 +171,12 @@ cpdef Table grouped_range_rolling_window(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_group_keys = group_keys.view()
+    cdef column_view c_orderby = orderby.view()
     with nogil:
         result = cpp_rolling.grouped_range_rolling_window(
-            group_keys.view(),
-            orderby.view(),
+            c_group_keys,
+            c_orderby,
             order,
             null_order,
             dereference(preceding.c_obj.get()),
@@ -230,12 +234,17 @@ cpdef Column rolling_window(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source = source.view()
+    cdef column_view c_preceding_window
+    cdef column_view c_following_window
     if WindowType is Column:
+        c_preceding_window = preceding_window.view()
+        c_following_window = following_window.view()
         with nogil:
             result = cpp_rolling.rolling_window(
-                source.view(),
-                preceding_window.view(),
-                following_window.view(),
+                c_source,
+                c_preceding_window,
+                c_following_window,
                 min_periods,
                 dereference(c_agg),
                 _cs,
@@ -244,7 +253,7 @@ cpdef Column rolling_window(
     else:
         with nogil:
             result = cpp_rolling.rolling_window(
-                source.view(),
+                c_source,
                 preceding_window,
                 following_window,
                 min_periods,
@@ -315,10 +324,12 @@ cpdef tuple make_range_windows(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_group_keys = group_keys.view()
+    cdef column_view c_orderby = orderby.view()
     with nogil:
         result = cpp_rolling.make_range_windows(
-            group_keys.view(),
-            orderby.view(),
+            c_group_keys,
+            c_orderby,
             order,
             null_order,
             dereference(preceding.c_obj.get()),

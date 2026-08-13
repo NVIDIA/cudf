@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_floats as cpp_convert_floats,
 )
@@ -49,9 +49,10 @@ cpdef Column to_floats(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_strings = strings.view()
     with nogil:
         c_result = cpp_convert_floats.to_floats(
-            strings.view(),
+            c_strings,
             output_type.c_obj,
             _cs,
             mr.get_mr()
@@ -87,9 +88,10 @@ cpdef Column from_floats(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_floats = floats.view()
     with nogil:
         c_result = cpp_convert_floats.from_floats(
-            floats.view(), _cs, mr.get_mr()
+            c_floats, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -120,9 +122,10 @@ cpdef Column is_float(Column input, object stream=None, DeviceMemoryResource mr=
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_floats.is_float(
-            input.view(), _cs, mr.get_mr()
+            c_input, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

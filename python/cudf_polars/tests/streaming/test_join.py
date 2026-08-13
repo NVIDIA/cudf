@@ -1,9 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for dynamic join path in join_actor (including Right and Full joins)."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -21,6 +23,9 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import warns_on_spmd
 from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
+
+if TYPE_CHECKING:
+    import concurrent.futures
 
 
 @pytest.fixture
@@ -227,22 +232,6 @@ def test_join_and_slice(request, zlice, streaming_engine_factory):
         assert_gpu_result_equal(q, engine=streaming_engine)
 
 
-@pytest.mark.parametrize("how", ["inner", "semi", "left", "right"])
-def test_bloom_filter_join(how, streaming_engine_factory):
-    streaming_engine = streaming_engine_factory(
-        StreamingOptions(
-            max_rows_per_partition=2,
-            broadcast_limit=10,
-            target_partition_size=10,
-        ),
-    )
-    dim = pl.LazyFrame({"key": range(10), "val": range(10)})
-    fact = pl.LazyFrame({"key": range(200), "data": range(200)})
-    left, right = (dim, fact) if how == "right" else (fact, dim)
-    q = left.join(right, on="key", how=how)
-    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
-
-
 @pytest.mark.parametrize(
     "maintain_order", ["left_right", "right_left", "left", "right"]
 )
@@ -273,7 +262,12 @@ def test_join_maintain_order_fallback_streaming(
 
 
 @pytest.mark.parametrize("broadcast_limit", [1, 48, 128, 1024])
-def test_broadcast_limit(left, right, broadcast_limit):
+def test_broadcast_limit(
+    left,
+    right,
+    broadcast_limit,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
     engine = pl.GPUEngine(
         raise_on_fail=True,
         executor="streaming",
@@ -304,14 +298,17 @@ def test_broadcast_limit(left, right, broadcast_limit):
     q = left.join(right, on="y", how="inner")
     ir = Translator(q._ldf.visit(), engine).translate_ir()
     config_options = ConfigOptions.from_polars_engine(engine)
-    shuffle_nodes = [
-        type(node)
-        for node in lower_ir_graph(
+    lowering = lower_ir_graph(
+        ir,
+        config_options,
+        collect_statistics(
             ir,
             config_options,
-            collect_statistics(ir, config_options),
-        )[1]
-        if isinstance(node, Shuffle)
+            parquet_stats_executor,
+        ),
+    )
+    shuffle_nodes = [
+        type(node) for node in lowering.partition_info if isinstance(node, Shuffle)
     ]
 
     # NOTE: Expect small table to have 3 partitions (9 / 3).
@@ -325,7 +322,9 @@ def test_broadcast_limit(left, right, broadcast_limit):
         assert len(shuffle_nodes) == 0
 
 
-def test_cache_preserves_partitioning_join():
+def test_shared_join_preserves_partitioning(
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
     engine = pl.GPUEngine(
         raise_on_fail=True,
         executor="streaming",
@@ -349,18 +348,24 @@ def test_cache_preserves_partitioning_join():
 
     config_options = ConfigOptions.from_polars_engine(engine)
     ir = Translator(q._ldf.visit(), engine).translate_ir()
-    lowered_ir, partition_info = lower_ir_graph(
-        ir, config_options, collect_statistics(ir, config_options)
+    lowering = lower_ir_graph(
+        ir,
+        config_options,
+        collect_statistics(ir, config_options, parquet_stats_executor),
     )
+    lowered_ir = lowering.lowered
+    partition_info = lowering.partition_info
 
-    # Cache should preserve partitioning on 'key'
-    cache_partitioning = [
+    assert not any(isinstance(node, Cache) for node in traversal([lowered_ir]))
+
+    # Removing Cache should preserve the shared join's partitioning on 'key'.
+    join_partitioning = [
         [ne.name for ne in partition_info[node].partitioned_on]
         for node in traversal([lowered_ir])
-        if isinstance(node, Cache)
+        if isinstance(node, Join)
     ]
-    assert cache_partitioning == [["key"]], (
-        f"Cache should preserve partitioning on 'key', got {cache_partitioning}"
+    assert join_partitioning == [["key"]], (
+        f"Shared join should be partitioned on 'key', got {join_partitioning}"
     )
 
     # Only 2 shuffles needed (for join sides, not for groupby)
@@ -397,6 +402,7 @@ def test_join_computed_expr_right_key(streaming_engine_factory) -> None:
             target_partition_size=1,
             max_rows_per_partition=4,
             broadcast_limit=1,  # Disable broadcast joins
+            raise_on_fail=True,
         ),
     )
     if engine.nranks < 2:

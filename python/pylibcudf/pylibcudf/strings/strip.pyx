@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -6,6 +6,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_string_scalar as cpp_make_string_scalar,
@@ -51,6 +52,7 @@ cpdef Column strip(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
 
     if to_strip is None:
         to_strip = Scalar.from_libcudf(
@@ -61,9 +63,10 @@ cpdef Column strip(
     cdef string_scalar* cpp_to_strip
     cpp_to_strip = <string_scalar *>(to_strip.c_obj.get())
 
+    c_input = input.view()
     with nogil:
         c_result = cpp_strip.strip(
-            input.view(),
+            c_input,
             side,
             dereference(cpp_to_strip),
             _cs,

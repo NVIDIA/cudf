@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,17 +38,6 @@ void gpuinflate(device_span<device_span<uint8_t const> const> inputs,
                 device_span<codec_exec_result> results,
                 gzip_header_included parse_hdr,
                 rmm::cuda_stream_view stream);
-
-/**
- * @brief Interface for copying uncompressed byte blocks
- *
- * @param[in] inputs List of input buffers
- * @param[out] outputs List of output buffers
- * @param[in] stream CUDA stream to use
- */
-void gpu_copy_uncompressed_blocks(device_span<device_span<uint8_t const> const> inputs,
-                                  device_span<device_span<uint8_t> const> outputs,
-                                  rmm::cuda_stream_view stream);
 
 /**
  * @brief Interface for decompressing Snappy-compressed data

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,16 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file strings/split/partition.hpp
+ * @brief Strings partition APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_split
  * @{
- * @file strings/split/partition.hpp
- * @brief Strings partition APIs
  */
 
 /**

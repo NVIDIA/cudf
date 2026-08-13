@@ -28,7 +28,6 @@ Attributes and underlying data
    DataFrame.info
    DataFrame.select_dtypes
    DataFrame.values
-   DataFrame.values_host
    DataFrame.ndim
    DataFrame.size
    DataFrame.shape

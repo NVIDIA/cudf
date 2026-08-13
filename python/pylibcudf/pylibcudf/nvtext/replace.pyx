@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -6,6 +6,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.replace cimport (
     filter_tokens as cpp_filter_tokens,
     replace_tokens as cpp_replace_tokens,
@@ -63,11 +64,14 @@ cpdef Column replace_tokens(
         delimiter = Scalar.from_libcudf(
             cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
         )
+    cdef column_view c_input = input.view()
+    cdef column_view c_targets = targets.view()
+    cdef column_view c_replacements = replacements.view()
     with nogil:
         c_result = cpp_replace_tokens(
-            input.view(),
-            targets.view(),
-            replacements.view(),
+            c_input,
+            c_targets,
+            c_replacements,
             dereference(<const string_scalar*>delimiter.get()),
             _cs,
             mr.get_mr()
@@ -121,9 +125,10 @@ cpdef Column filter_tokens(
             cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_filter_tokens(
-            input.view(),
+            c_input,
             min_token_length,
             dereference(<const string_scalar*>replacement.get()),
             dereference(<const string_scalar*>delimiter.get()),

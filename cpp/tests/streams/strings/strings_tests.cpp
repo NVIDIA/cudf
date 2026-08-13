@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/strings/strip.hpp>
 #include <cudf/strings/wrap.hpp>
 
+#include <optional>
 #include <string>
 
 class StringsTest : public cudf::test::BaseFixture {};
@@ -60,9 +61,9 @@ TEST_F(StringsTest, Slice)
   auto input = cudf::test::strings_column_wrapper({"hello", "these", "are test strings"});
   auto view  = cudf::strings_column_view(input);
 
-  auto start = cudf::numeric_scalar(2, true, cudf::test::get_default_stream());
-  auto stop  = cudf::numeric_scalar(5, true, cudf::test::get_default_stream());
-  auto step  = cudf::numeric_scalar(1, true, cudf::test::get_default_stream());
+  auto start = std::optional<cudf::size_type>(2);
+  auto stop  = std::optional<cudf::size_type>(5);
+  auto step  = std::optional<cudf::size_type>(1);
   cudf::strings::slice_strings(view, start, stop, step, cudf::test::get_default_stream());
 
   auto starts = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 2, 3});

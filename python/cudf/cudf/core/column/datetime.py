@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -46,6 +46,10 @@ from cudf.utils.dtypes import (
     get_dtype_of_same_kind,
 )
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
+from cudf.utils.temporal import (
+    _unit_to_name,
+    unit_to_nanoseconds_conversion,
+)
 from cudf.utils.utils import _EQUALITY_OPS, is_na_like
 
 if TYPE_CHECKING:
@@ -511,7 +515,7 @@ class DatetimeColumn(TemporalBaseColumn):
         # pandas' isocalendar for datetime64 returns UInt32 with NA preserved.
         is_arrow = isinstance(self.dtype, pd.ArrowDtype)
         target_dtype: DtypeObj = (
-            np.dtype(np.int64) if is_arrow else np.dtype(np.uint32)
+            np.dtype(np.int64) if is_arrow else pd.UInt32Dtype()
         )
         result = {
             field: self.strftime(
@@ -533,6 +537,37 @@ class DatetimeColumn(TemporalBaseColumn):
                 "Cannot use .astype to convert from timezone-naive dtype to timezone-aware dtype. "
                 "Use tz_localize instead."
             )
+        target_unit = (
+            np.datetime_data(dtype)[0]
+            if isinstance(dtype, np.dtype)
+            else dtype.pyarrow_dtype.unit
+        )
+        if (
+            len(self) != self.null_count
+            and unit_to_nanoseconds_conversion[target_unit]
+            < unit_to_nanoseconds_conversion[self.time_unit]
+        ):
+            # Casting to a finer resolution multiplies the underlying
+            # int64 values and can silently wrap around. pandas
+            # bounds-checks every narrowing conversion
+            # (astype_overflowsafe) and raises instead. Compare on the
+            # integer view: a host round-trip through pd.Timestamp can
+            # itself overflow for extreme values.
+            lo, hi = self.astype(np.dtype(np.int64)).minmax()
+            bound = np.iinfo(np.int64).max // (
+                unit_to_nanoseconds_conversion[self.time_unit]
+                // unit_to_nanoseconds_conversion[target_unit]
+            )
+            offender = None
+            if hi > bound:
+                offender = np.datetime64(int(hi), self.time_unit)  # type: ignore[call-overload]
+            elif lo < -bound:
+                offender = np.datetime64(int(lo), self.time_unit)  # type: ignore[call-overload]
+            if offender is not None:
+                raise pd.errors.OutOfBoundsDatetime(
+                    f"Out of bounds {_unit_to_name[target_unit]} "
+                    f"timestamp: {str(offender).replace('T', ' ')}"
+                )
         return self.cast(dtype=dtype)  # type: ignore[return-value]
 
     def as_timedelta_column(self, dtype: np.dtype) -> None:  # type: ignore[override]
@@ -602,7 +637,7 @@ class DatetimeColumn(TemporalBaseColumn):
             )
         with self.access(mode="read", scope="internal"):
             return cast(
-                cudf.core.column.string.StringColumn,
+                "cudf.core.column.string.StringColumn",
                 ColumnBase.create(
                     plc.strings.convert.convert_datetime.from_timestamps(
                         self.plc_column,
@@ -777,9 +812,9 @@ class DatetimeColumn(TemporalBaseColumn):
             # When the operation should yield another datetime and self
             # is tz-aware, carry the tz forward with the resolved unit.
             if self_is_tz and result_dtype.kind == "M":
-                tz_dtype = cast(pd.DatetimeTZDtype, self.dtype)
+                tz_dtype = cast("pd.DatetimeTZDtype", self.dtype)
                 unit = np.datetime_data(
-                    cast(np.dtype[np.datetime64], result_dtype)
+                    cast("np.dtype[np.datetime64]", result_dtype)
                 )[0]
                 return pd.DatetimeTZDtype(unit, tz_dtype.tz)
             return result_dtype
@@ -977,7 +1012,9 @@ class DatetimeColumn(TemporalBaseColumn):
         )
 
         transition_times, offsets = _get_tz_data(tzname)
-        transition_times_local = (transition_times + offsets).astype(
+        # Use the raw cast: transition tables contain sentinel entries
+        # beyond the finer units' bounds that intentionally wrap around.
+        transition_times_local = (transition_times + offsets).cast(
             localized.dtype
         )
         indices = (
@@ -988,7 +1025,7 @@ class DatetimeColumn(TemporalBaseColumn):
         if is_arrow:
             dtype = pd.ArrowDtype(pa.timestamp(self.time_unit, tz))  # type: ignore[call-overload]
         result = cast(
-            DatetimeTZColumn, ColumnBase.create(gmt_data.plc_column, dtype)
+            "DatetimeTZColumn", ColumnBase.create(gmt_data.plc_column, dtype)
         )
         # Avoid re-computing local times from UTC times
         result._local_time = localized
@@ -1001,6 +1038,20 @@ class DatetimeColumn(TemporalBaseColumn):
 
 
 class DatetimeTZColumn(DatetimeColumn):
+    def _round_dt(
+        self,
+        round_func: Callable[
+            [plc.Column, plc.datetime.RoundingFrequency], plc.Column
+        ],
+        freq: str,
+    ) -> ColumnBase:
+        # Rounding must operate on the local wall-clock time and then be
+        # re-localized to the original timezone to match pandas semantics.
+        rounded_local = cast(
+            "DatetimeColumn", self._local_time._round_dt(round_func, freq)
+        )
+        return rounded_local.tz_localize(str(self.tz))
+
     def to_pandas(
         self,
         *,
@@ -1061,7 +1112,10 @@ class DatetimeTZColumn(DatetimeColumn):
         transition_times, offsets = _get_tz_data(str(self.tz))
         base_dtype = _get_base_dtype(self.dtype)
         indices = (
-            transition_times.astype(base_dtype).searchsorted(
+            # Use the raw cast: transition tables contain sentinel
+            # entries beyond the finer units' bounds that intentionally
+            # wrap around.
+            transition_times.cast(base_dtype).searchsorted(
                 self._utc_time.astype(base_dtype), side="right"
             )
             - 1
@@ -1070,7 +1124,7 @@ class DatetimeTZColumn(DatetimeColumn):
         # Perform the add on the tz-naive UTC view so the result is naive
         # (``self + offsets`` now preserves tz by default). The local-time
         # column must be tz-naive to represent the wall-clock values.
-        return cast(DatetimeColumn, self._utc_time + offsets_from_utc)
+        return cast("DatetimeColumn", self._utc_time + offsets_from_utc)
 
     def as_string_column(self, dtype: DtypeObj) -> StringColumn:
         return self._local_time.as_string_column(dtype)
@@ -1105,7 +1159,7 @@ class DatetimeTZColumn(DatetimeColumn):
                     .plc_column
                 )
                 casted = cast(
-                    DatetimeTZColumn, ColumnBase.create(casted_plc, dtype)
+                    "DatetimeTZColumn", ColumnBase.create(casted_plc, dtype)
                 )
             else:
                 casted = self
@@ -1118,7 +1172,7 @@ class DatetimeTZColumn(DatetimeColumn):
                     .plc_column
                 )
                 casted = cast(
-                    DatetimeTZColumn, ColumnBase.create(casted_plc, dtype)
+                    "DatetimeTZColumn", ColumnBase.create(casted_plc, dtype)
                 )
             else:
                 casted = self
@@ -1192,6 +1246,6 @@ class DatetimeTZColumn(DatetimeColumn):
                 pd.DatetimeTZDtype(self.time_unit, tz)
             )
         return cast(
-            DatetimeTZColumn,
+            "DatetimeTZColumn",
             ColumnBase.create(self.plc_column, target_dtype),
         )

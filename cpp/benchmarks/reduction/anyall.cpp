@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf/column/column_view.hpp>
@@ -38,9 +39,12 @@ static void reduction_anyall(nvbench::state& state, nvbench::type_list<DataType>
   state.add_global_memory_reads<DataType>(size);
   state.add_global_memory_writes<nvbench::int8_t>(1);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&values, output_type, &agg](nvbench::launch& launch) {
     cudf::reduce(*values, *agg, output_type);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   set_throughputs(state);
 }

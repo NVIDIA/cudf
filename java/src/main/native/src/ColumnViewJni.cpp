@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,6 +15,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/datetime.hpp>
+#include <cudf/detail/structs/utilities.hpp>
 #include <cudf/json/json.hpp>
 #include <cudf/lists/combine.hpp>
 #include <cudf/lists/contains.hpp>
@@ -71,7 +72,9 @@
 
 #include <jni.h>
 
+#include <array>
 #include <numeric>
+#include <utility>
 
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
@@ -853,7 +856,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnView_stringSplit(
     auto const input          = reinterpret_cast<cudf::column_view const*>(input_handle);
     auto const strings_column = cudf::strings_column_view{*input};
     auto const delimiter_jstr = cudf::jni::native_jstring(env, delimiter_obj);
-    auto const delimiter      = std::string(delimiter_jstr.get(), delimiter_jstr.size_bytes());
+    auto const delimiter      = std::string(delimiter_jstr);
     auto const max_split      = limit > 1 ? limit - 1 : limit;
     auto result = cudf::strings::split(strings_column, cudf::string_scalar{delimiter}, max_split);
     return cudf::jni::convert_table_for_return(env, std::move(result));
@@ -888,7 +891,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnView_stringSplitRe(JNIEnv
     auto const input          = reinterpret_cast<cudf::column_view const*>(input_handle);
     auto const strings_column = cudf::strings_column_view{*input};
     auto const pattern_jstr   = cudf::jni::native_jstring(env, pattern_obj);
-    auto const pattern        = std::string(pattern_jstr.get(), pattern_jstr.size_bytes());
+    auto const pattern        = std::string(pattern_jstr);
     auto const max_split      = limit > 1 ? limit - 1 : limit;
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
@@ -921,7 +924,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_stringSplitRecord(
     auto const input          = reinterpret_cast<cudf::column_view const*>(input_handle);
     auto const strings_column = cudf::strings_column_view{*input};
     auto const delimiter_jstr = cudf::jni::native_jstring(env, delimiter_obj);
-    auto const delimiter      = std::string(delimiter_jstr.get(), delimiter_jstr.size_bytes());
+    auto const delimiter      = std::string(delimiter_jstr);
     auto const max_split      = limit > 1 ? limit - 1 : limit;
     auto result =
       cudf::strings::split_record(strings_column, cudf::string_scalar{delimiter}, max_split);
@@ -957,7 +960,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_stringSplitRecordRe(JNIEn
     auto const input          = reinterpret_cast<cudf::column_view const*>(input_handle);
     auto const strings_column = cudf::strings_column_view{*input};
     auto const pattern_jstr   = cudf::jni::native_jstring(env, pattern_obj);
-    auto const pattern        = std::string(pattern_jstr.get(), pattern_jstr.size_bytes());
+    auto const pattern        = std::string(pattern_jstr);
     auto const max_split      = limit > 1 ? limit - 1 : limit;
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
@@ -1466,7 +1469,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_stringTimestampToTimestam
     cudf::strings_column_view strings_column(*column);
 
     return release_as_jlong(cudf::strings::to_timestamps(
-      strings_column, cudf::data_type(static_cast<cudf::type_id>(time_unit)), format.get()));
+      strings_column, cudf::data_type(static_cast<cudf::type_id>(time_unit)), format));
   }
   JNI_CATCH(env, 0);
 }
@@ -1485,7 +1488,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_isTimestamp(JNIEnv* env,
     cudf::jni::native_jstring format(env, formatObj);
     cudf::column_view* column = reinterpret_cast<cudf::column_view*>(handle);
     cudf::strings_column_view strings_column(*column);
-    return release_as_jlong(cudf::strings::is_timestamp(strings_column, format.get()));
+    return release_as_jlong(cudf::strings::is_timestamp(strings_column, format));
   }
   JNI_CATCH(env, 0);
 }
@@ -1503,7 +1506,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_timestampToStringTimestam
     cudf::jni::auto_set_device(env);
     cudf::jni::native_jstring format(env, j_format);
     cudf::column_view* column = reinterpret_cast<cudf::column_view*>(handle);
-    return release_as_jlong(cudf::strings::from_timestamps(*column, format.get()));
+    return release_as_jlong(cudf::strings::from_timestamps(*column, format));
   }
   JNI_CATCH(env, 0);
 }
@@ -1553,13 +1556,20 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
     cudf::jni::auto_set_device(env);
     cudf::column_view* column = reinterpret_cast<cudf::column_view*>(handle);
     cudf::jni::native_jstring n_j_udf(env, j_udf);
-    std::string n_udf(n_j_udf.get());
+    std::string n_udf              = n_j_udf;
     cudf::transform_input inputs[] = {*column};
-    return release_as_jlong(cudf::transform_extended(
-      inputs,
-      n_udf,
-      cudf::data_type(cudf::type_id::INT32),
-      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA));
+    return release_as_jlong(std::move(
+      cudf::transform(n_udf,
+                      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      inputs,
+                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                                                        cudf::output_nullability::PRESERVE}},
+                      {},
+                      std::nullopt)
+        ->release()
+        .front()));
   }
   JNI_CATCH(env, 0);
 }
@@ -1659,7 +1669,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_matchesRe(JNIEnv* env,
     auto const pattern        = cudf::jni::native_jstring(env, pattern_obj);
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
-    auto const regex_prog     = cudf::strings::regex_program::create(pattern.get(), flags, groups);
+    auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, groups);
     return release_as_jlong(cudf::strings::matches_re(strings_column, *regex_prog));
   }
   JNI_CATCH(env, 0);
@@ -1683,7 +1693,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_containsRe(JNIEnv* env,
     auto const pattern        = cudf::jni::native_jstring(env, pattern_obj);
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const capture        = static_cast<cudf::strings::capture_groups>(capture_groups);
-    auto const regex_prog     = cudf::strings::regex_program::create(pattern.get(), flags, capture);
+    auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, capture);
     return release_as_jlong(cudf::strings::contains_re(strings_column, *regex_prog));
   }
   JNI_CATCH(env, 0);
@@ -1802,7 +1812,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_substringS(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     auto const cv  = reinterpret_cast<cudf::column_view const*>(cv_handle);
     auto const scv = cudf::strings_column_view{*cv};
-    return release_as_jlong(cudf::strings::slice_strings(scv, start));
+    auto const st  = std::optional<cudf::size_type>(start);
+    return release_as_jlong(cudf::strings::slice_strings(scv, st));
   }
   JNI_CATCH(env, 0);
 }
@@ -1816,7 +1827,9 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_substring(
     cudf::jni::auto_set_device(env);
     cudf::column_view* cv = reinterpret_cast<cudf::column_view*>(column_view);
     cudf::strings_column_view scv(*cv);
-    return release_as_jlong(cudf::strings::slice_strings(scv, start, end));
+    auto const st = std::optional<cudf::size_type>(start);
+    auto const en = std::optional<cudf::size_type>(end);
+    return release_as_jlong(cudf::strings::slice_strings(scv, st, en));
   }
   JNI_CATCH(env, 0);
 }
@@ -2005,29 +2018,10 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_replaceRegex(JNIEnv* env,
     auto const pattern        = cudf::jni::native_jstring(env, j_pattern);
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
-    auto const regex_prog     = cudf::strings::regex_program::create(pattern.get(), flags, groups);
+    auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, groups);
     auto const repl           = reinterpret_cast<cudf::string_scalar const*>(j_repl);
     return release_as_jlong(
       cudf::strings::replace_re(strings_column, *regex_prog, *repl, j_maxrepl));
-  }
-  JNI_CATCH(env, 0);
-}
-
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_replaceMultiRegex(
-  JNIEnv* env, jclass, jlong j_column_view, jobjectArray j_patterns, jlong j_repls)
-{
-  JNI_NULL_CHECK(env, j_column_view, "column is null", 0);
-  JNI_NULL_CHECK(env, j_patterns, "patterns is null", 0);
-  JNI_NULL_CHECK(env, j_repls, "repls is null", 0);
-  JNI_TRY
-  {
-    cudf::jni::auto_set_device(env);
-    auto cv = reinterpret_cast<cudf::column_view const*>(j_column_view);
-    cudf::strings_column_view scv(*cv);
-    cudf::jni::native_jstringArray patterns(env, j_patterns);
-    auto repl_cv = reinterpret_cast<cudf::column_view const*>(j_repls);
-    cudf::strings_column_view repl_scv(*repl_cv);
-    return release_as_jlong(cudf::strings::replace_re(scv, patterns.as_cpp_vector(), repl_scv));
   }
   JNI_CATCH(env, 0);
 }
@@ -2052,10 +2046,10 @@ Java_ai_rapids_cudf_ColumnView_stringReplaceWithBackrefs(JNIEnv* env,
     auto const pattern        = cudf::jni::native_jstring(env, pattern_obj);
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
-    auto const regex_prog     = cudf::strings::regex_program::create(pattern.get(), flags, groups);
+    auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, groups);
     cudf::jni::native_jstring ss_replace(env, replace_obj);
     return release_as_jlong(
-      cudf::strings::replace_with_backrefs(strings_column, *regex_prog, ss_replace.get()));
+      cudf::strings::replace_with_backrefs(strings_column, *regex_prog, ss_replace));
   }
   JNI_CATCH(env, 0);
 }
@@ -2090,7 +2084,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_pad(
     cudf::size_type width         = reinterpret_cast<cudf::size_type>(j_width);
     cudf::strings::side_type side = static_cast<cudf::strings::side_type>(j_side);
     cudf::jni::native_jstring ss_fill(env, fill_char);
-    return release_as_jlong(cudf::strings::pad(scv, width, side, ss_fill.get()));
+    return release_as_jlong(cudf::strings::pad(scv, width, side, ss_fill));
   }
   JNI_CATCH(env, 0);
 }
@@ -2130,7 +2124,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnView_extractRe(JNIEnv* en
     auto const pattern        = cudf::jni::native_jstring(env, pattern_obj);
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
-    auto const regex_prog     = cudf::strings::regex_program::create(pattern.get(), flags, groups);
+    auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, groups);
     return cudf::jni::convert_table_for_return(env,
                                                cudf::strings::extract(strings_column, *regex_prog));
   }
@@ -2155,10 +2149,13 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_extractAllRecord(JNIEnv* 
     auto const strings_column = cudf::strings_column_view{*column_view};
     auto const pattern        = cudf::jni::native_jstring(env, pattern_obj);
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
-    auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
-    auto const regex_prog     = cudf::strings::regex_program::create(pattern.get(), flags, groups);
-    auto result               = (idx == 0) ? cudf::strings::findall(strings_column, *regex_prog)
-                                           : cudf::strings::extract_all_record(strings_column, *regex_prog);
+    auto const regex_prog     = cudf::strings::regex_program::create(
+      pattern,
+      flags,
+      idx == 0 ? cudf::strings::capture_groups::NON_CAPTURE
+                   : static_cast<cudf::strings::capture_groups>(capture_groups));
+    auto result = (idx == 0) ? cudf::strings::findall(strings_column, *regex_prog)
+                             : cudf::strings::extract_all_record(strings_column, *regex_prog);
     return release_as_jlong(result);
   }
   JNI_CATCH(env, 0);
@@ -2221,42 +2218,43 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_bitwiseMergeAndSetValidit
   {
     cudf::jni::auto_set_device(env);
     cudf::column_view* original_column = reinterpret_cast<cudf::column_view*>(base_column);
-    std::unique_ptr<cudf::column> copy(new cudf::column(*original_column));
     cudf::jni::native_jpointerArray<cudf::column_view> n_cudf_columns(env, column_handles);
 
-    if (n_cudf_columns.size() == 0) {
-      copy->set_null_mask({}, 0);
-      return release_as_jlong(copy);
+    auto const op = static_cast<cudf::binary_operator>(bin_op);
+    if (op != cudf::binary_operator::BITWISE_AND && op != cudf::binary_operator::BITWISE_OR) {
+      JNI_THROW_NEW(env, cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS, "Unsupported merge operation", 0);
     }
 
-    cudf::binary_operator op = static_cast<cudf::binary_operator>(bin_op);
-    switch (op) {
-      case cudf::binary_operator::BITWISE_AND: {
-        auto cols = n_cudf_columns.get_dereferenced();
-        cols.push_back(copy->view());
-        auto table_view                = cudf::table_view{cols};
-        auto [new_bitmask, null_count] = cudf::bitmask_and(table_view);
-        copy->set_null_mask(std::move(new_bitmask), null_count);
-        break;
-      }
-      case cudf::binary_operator::BITWISE_OR: {
-        auto input_table = cudf::table_view{n_cudf_columns.get_dereferenced()};
-        auto [tmp_new_bitmask, tmp_null_count] = cudf::bitmask_or(input_table);
-        copy->set_null_mask(std::move(tmp_new_bitmask), tmp_null_count);
-        // and the bitmask with the original column
-        cudf::table_view table_view{std::vector<cudf::column_view>{copy->view(), *original_column}};
-        auto [new_bitmask, null_count] = cudf::bitmask_and(table_view);
-        copy->set_null_mask(std::move(new_bitmask), null_count);
-        break;
-      }
-      default:
-        JNI_THROW_NEW(
-          env, cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS, "Unsupported merge operation", 0);
-    }
-    auto const copy_cv = copy->view();
-    if (cudf::has_nonempty_nulls(copy_cv)) { copy = cudf::purge_nonempty_nulls(copy_cv); }
+    // If we have no columns to merge, return the original column unchanged.
+    // 0 signals to the caller that this was a no-op.
+    if (n_cudf_columns.size() == 0) { return 0; }
 
-    return release_as_jlong(copy);
+    // Merge the null masks of the provided columns using the binary op.
+    auto const cudf_columns             = n_cudf_columns.get_dereferenced();
+    auto const input_table              = cudf::table_view{cudf_columns};
+    auto [merge_mask, merge_null_count] = op == cudf::binary_operator::BITWISE_AND
+                                            ? cudf::bitmask_and(input_table)
+                                            : cudf::bitmask_or(input_table);
+
+    // If the merge null count is 0, the merged mask is all-valid - either the binop returned
+    // an empty mask or the mask was allocated but had no nulls.
+    // in either case this is a no-op on the original mask and we can return as-is.
+    if (merge_null_count == 0) { return 0; }
+
+    auto copy = std::make_unique<cudf::column>(*original_column);
+
+    // Now apply the merged mask to the original by AND-ing it into
+    // the parent's null mask. This will also push it down through any
+    // descendants for STRUCTs so that child masks stay consistent ,
+    // and fix offsets for LIST/STRINGs by purging non-empty nulls.
+    auto result = cudf::structs::detail::superimpose_and_sanitize_nulls(
+      static_cast<cudf::bitmask_type const*>(merge_mask.data()),
+      merge_null_count,
+      std::move(copy),
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref());
+
+    return release_as_jlong(result);
   }
   JNI_CATCH(env, 0);
 }

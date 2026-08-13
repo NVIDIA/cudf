@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -242,7 +242,7 @@ struct BaseArrowFixture : public cudf::test::BaseFixture {
     }
   }
 
-  void compare_device_buffers(const size_t nbytes,
+  void compare_device_buffers(size_t const nbytes,
                               int const buffer_idx,
                               ArrowArray const* expected,
                               ArrowArray const* actual)
@@ -269,10 +269,10 @@ struct BaseArrowFixture : public cudf::test::BaseFixture {
     if (expected->length > 0) {
       EXPECT_EQ(expected->buffers[0], actual->buffers[0]);
       if (schema_view.type == NANOARROW_TYPE_BOOL) {
-        const size_t nbytes = (expected->length + 7) >> 3;
+        size_t const nbytes = (expected->length + 7) >> 3;
         compare_device_buffers(nbytes, 1, expected, actual);
       } else if (schema_view.type == NANOARROW_TYPE_DECIMAL128) {
-        const size_t nbytes = (expected->length * sizeof(__int128_t));
+        size_t const nbytes = (expected->length * sizeof(__int128_t));
         compare_device_buffers(nbytes, 1, expected, actual);
       } else {
         for (int i = 1; i < expected->n_buffers; ++i) {
@@ -432,7 +432,7 @@ TYPED_TEST(ToArrowDeviceTestDurationsTest, DurationTable)
   NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(expected_schema.get(), 1));
 
   ArrowSchemaInit(expected_schema->children[0]);
-  const ArrowTimeUnit arrow_unit = [&] {
+  ArrowTimeUnit const arrow_unit = [&] {
     switch (cudf::type_to_id<TypeParam>()) {
       case cudf::type_id::DURATION_SECONDS: return NANOARROW_TIME_UNIT_SECOND;
       case cudf::type_id::DURATION_MILLISECONDS: return NANOARROW_TIME_UNIT_MILLI;

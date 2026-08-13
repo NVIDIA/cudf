@@ -114,14 +114,6 @@ def test_index_iter_error(data, all_supported_types_as_str):
         iter(gdi)
 
 
-@pytest.mark.parametrize("data", [[], [1]])
-def test_index_values_host(data, all_supported_types_as_str, request):
-    gdi = cudf.Index(data, dtype=all_supported_types_as_str)
-    pdi = pd.Index(data, dtype=all_supported_types_as_str)
-
-    np.testing.assert_array_equal(gdi.to_numpy(), pdi.values)
-
-
 def test_index_values():
     gidx = cudf.Index([1, 2, 3])
     pidx = gidx.to_pandas()

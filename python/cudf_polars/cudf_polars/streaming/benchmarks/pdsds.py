@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -22,6 +22,7 @@ import polars as pl
 try:
     from cudf_polars.streaming.benchmarks.utils import (
         COUNT_DTYPE,
+        _CPU_ENGINES,
         build_parser,
         parse_args,
         run_polars,
@@ -37,6 +38,10 @@ if TYPE_CHECKING:
 # on each worker takes ~15 sec extra
 os.environ["KVIKIO_COMPAT_MODE"] = os.environ.get("KVIKIO_COMPAT_MODE", "on")
 os.environ["KVIKIO_NTHREADS"] = os.environ.get("KVIKIO_NTHREADS", "8")
+# TODO: consider raising the rapidsmpf built-in default from 1 to 8.
+os.environ["RAPIDSMPF_NUM_STREAMING_THREADS"] = os.environ.get(
+    "RAPIDSMPF_NUM_STREAMING_THREADS", "8"
+)
 
 
 def valid_query(name: str) -> bool:
@@ -328,4 +333,7 @@ class PDSDSDuckDBQueries(PDSDSQueries):
 if __name__ == "__main__":
     parser = build_parser(num_queries=99)
     args = parse_args(parser=parser)
+    if args.frontend not in _CPU_ENGINES:
+        os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "1")
+        os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "1")
     run_polars(PDSDSPolarsQueries, args)

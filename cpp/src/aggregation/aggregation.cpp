@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -34,21 +34,21 @@ template CUDF_EXPORT std::unique_ptr<scan_aggregation> make_sum_aggregation<scan
 template CUDF_EXPORT std::unique_ptr<segmented_reduce_aggregation>
 make_sum_aggregation<segmented_reduce_aggregation>();
 
-/// Factory to create a SUM_WITH_OVERFLOW aggregation
+/// Factory to create a SUM_OVERFLOW aggregation
 template <typename Base>
-std::unique_ptr<Base> make_sum_with_overflow_aggregation()
+std::unique_ptr<Base> make_sum_overflow_aggregation()
 {
-  return std::make_unique<detail::sum_with_overflow_aggregation>();
+  return std::make_unique<detail::sum_overflow_aggregation>();
 }
-template CUDF_EXPORT std::unique_ptr<aggregation> make_sum_with_overflow_aggregation<aggregation>();
+template CUDF_EXPORT std::unique_ptr<aggregation> make_sum_overflow_aggregation<aggregation>();
 template CUDF_EXPORT std::unique_ptr<groupby_aggregation>
-make_sum_with_overflow_aggregation<groupby_aggregation>();
+make_sum_overflow_aggregation<groupby_aggregation>();
 template CUDF_EXPORT std::unique_ptr<groupby_scan_aggregation>
-make_sum_with_overflow_aggregation<groupby_scan_aggregation>();
+make_sum_overflow_aggregation<groupby_scan_aggregation>();
 template CUDF_EXPORT std::unique_ptr<reduce_aggregation>
-make_sum_with_overflow_aggregation<reduce_aggregation>();
+make_sum_overflow_aggregation<reduce_aggregation>();
 template CUDF_EXPORT std::unique_ptr<segmented_reduce_aggregation>
-make_sum_with_overflow_aggregation<segmented_reduce_aggregation>();
+make_sum_overflow_aggregation<segmented_reduce_aggregation>();
 
 /// Factory to create a PRODUCT aggregation
 template <typename Base>

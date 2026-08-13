@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport attributes as cpp_attributes
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -36,10 +37,10 @@ cpdef Column count_characters(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_attributes.count_characters(
-            source_strings.view(), _cs, mr.get_mr()
+            c_source_strings, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -68,10 +69,10 @@ cpdef Column count_bytes(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_attributes.count_bytes(
-            source_strings.view(), _cs, mr.get_mr()
+            c_source_strings, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -100,10 +101,10 @@ cpdef Column code_points(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_attributes.code_points(
-            source_strings.view(), _cs, mr.get_mr()
+            c_source_strings, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

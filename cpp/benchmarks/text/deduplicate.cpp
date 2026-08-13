@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/strings/strings_column_view.hpp>
 
@@ -29,9 +30,14 @@ static void bench_suffix_array(nvbench::state& state)
   auto chars_size = input.chars_size(cudf::get_default_stream());
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
   state.add_global_memory_writes<nvbench::int32_t>(num_rows);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = nvtext::build_suffix_array(input, dup_width);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 static void bench_resolve_duplicates(nvbench::state& state)
@@ -57,9 +63,14 @@ static void bench_resolve_duplicates(nvbench::state& state)
   auto chars_size = input1.chars_size(stream) + input2.chars_size(stream);
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = nvtext::resolve_duplicates_pair(input1, *sa1, input2, *sa2, dup_width);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_suffix_array)

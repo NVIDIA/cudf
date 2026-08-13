@@ -1,72 +1,109 @@
 # Supported Data Types
 
-cuDF supports many data types supported by NumPy and Pandas, including
-numeric, datetime, timedelta, categorical and string data types. We
-also provide special data types for working with decimals, list-like,
-and dictionary-like data.
+cuDF largely uses the same [data type objects](https://pandas.pydata.org/docs/user_guide/basics.html#dtypes) supported by pandas, including
+numeric, datetime, timedelta, and string data types and their nullable variants. cuDF also supports
+data types from the [Arrow type system](https://arrow.apache.org/docs/format/CDataInterface.html#data-type-description-format-strings) such as decimals, list,
+and struct types.
 
 All data types in cuDF are [nullable](missing-data).
 
 <div class="special-table">
 
-| Kind of data         | Data type(s)                                                                                                                             |
+| Kind of data         | Default data type(s)                                                                                                                     |
 |----------------------|------------------------------------------------------------------------------------------------------------------------------------------|
 | Signed integer       | `'int8'`, `'int16'`, `'int32'`, `'int64'`                                                                                                |
-| Unsigned integer     | `'uint32'`, `'uint64'`                                                                                                                   |
+| Unsigned integer     | `'uint8'`, `'uint16'`, `'uint32'`, `'uint64'`                                                                                            |
 | Floating-point       | `'float32'`, `'float64'`                                                                                                                 |
-| Datetime             | `'datetime64[s]'`, `'datetime64[ms]'`, `'datetime64['us']`, `'datetime64[ns]'`                                                           |
-| Timedelta (duration) | `'timedelta[s]'`, `'timedelta[ms]'`, `'timedelta['us']`, `'timedelta[ns]'`                                                               |
+| Datetime             | `'datetime64[s]'`, `'datetime64[ms]'`, `'datetime64[us]'`, `'datetime64[ns]'`                                                            |
+| Datetime w/ timezone | `pandas.DatetimeTZDtype`                                                                                                                 |
+| Timedelta (duration) | `'timedelta64[s]'`, `'timedelta64[ms]'`, `'timedelta64[us]'`, `'timedelta64[ns]'`                                                        |
 | Category             | {py:class}`~cudf.core.dtypes.CategoricalDtype`                                                                                           |
-| String               | `'object'` or `'string'`                                                                                                                 |
+| String               | `pandas.StringDtype`                                                                                                                     |
 | Decimal              | {py:class}`~cudf.core.dtypes.Decimal32Dtype`, {py:class}`~cudf.core.dtypes.Decimal64Dtype`, {py:class}`~cudf.core.dtypes.Decimal128Dtype`|
 | List                 | {py:class}`~cudf.core.dtypes.ListDtype`                                                                                                  |
 | Struct               | {py:class}`~cudf.core.dtypes.StructDtype`                                                                                                |
+| Interval             | {py:class}`~cudf.core.dtypes.IntervalDtype`                                                                                              |
 
 </div>
 
-## NumPy data types
+```{note}
+cuDF does not have an analogous type for `pandas.PeriodDtype` or `pandas.SparseDtype`.
+```
 
-We use NumPy data types for integer, floating, datetime, timedelta,
-and string data types.  Thus, just like in NumPy,
-`np.dtype("float32")`, `np.float32`, and `"float32"` are all acceptable
-ways to specify the `float32` data type:
+## Specifying data types
+
+cuDF APIs with a `dtype` parameter accept the same types of arguments as pandas,
+including pandas [nullable types](https://pandas.pydata.org/docs/reference/arrays.html#nullable-integer),
+e.g. `pandas.Int64Dtype()`, and [`pandas.ArrowDtype`](https://pandas.pydata.org/docs/reference/api/pandas.ArrowDtype.html)
 
 ```python
 >>> import cudf
+>>> import pandas as pd
+>>> import pyarrow as pa
 >>> s = cudf.Series([1, 2, 3], dtype="float32")
 >>> s
 0    1.0
 1    2.0
 2    3.0
 dtype: float32
+
+>>> s = cudf.Series([1, 2, 3], dtype=pd.Float64Dtype())
+>>> s
+0    1.0
+1    2.0
+2    3.0
+dtype: Float32
+
+>>> s = cudf.Series([1, 2, 3], dtype=pd.ArrowDtype(pa.float64()))
+>>> s
+0    1.0
+1    2.0
+2    3.0
+dtype: double[pyarrow]
 ```
+
+These data type objects are treated as metadata describing the type of data
+and have no behavior differences when operations are performed on the GPU data.
 
 ## A note on `object`
 
-The data type associated with string data in cuDF is `"np.object"`.
+In pandas, `"object"` can represent string or arbitrary Python object data.
+
+```python
+>>> import pandas as pd
+>>> pd.Series([True, 1, "a", pd.Series([])], dtype=object)
+0                         True
+1                            1
+2                            a
+3    Series([], dtype: object)
+dtype: object
+
+>>> pd.Series(["a", "b", "C"], dtype=object)
+0    a
+1    b
+2    C
+dtype: object
+```
+
+In cuDF, `"object"` type can only be used as a representation for string data
+as cuDF does not support storing arbitrary Python objects.
 
 ```python
 >>> import cudf
->>> s = cudf.Series(["abc", "def", "ghi"])
+>>> s = cudf.Series(["abc", "def", "ghi"], dtype="object")
 >>> s.dtype
 dtype("object")
 ```
 
-This is for compatibility with Pandas, but it can be misleading. In
-both NumPy and Pandas, `"object"` is the data type associated data
-composed of arbitrary Python objects (not just strings).  However,
-cuDF does not support storing arbitrary Python objects.
-
 ## Decimal data types
 
-We provide special data types for working with decimal data, namely
 {py:class}`~cudf.core.dtypes.Decimal32Dtype`,
 {py:class}`~cudf.core.dtypes.Decimal64Dtype`, and
-{py:class}`~cudf.core.dtypes.Decimal128Dtype`.  Use these data types when you
+{py:class}`~cudf.core.dtypes.Decimal128Dtype` are data types for decimal data useful when you
 need to store values with greater precision than allowed by floating-point
 representation.
 
-Decimal data types in cuDF are based on fixed-point representation.  A
+Decimal data types in cuDF are based on fixed-point representation. A
 decimal data type is composed of a _precision_ and a _scale_.  The
 precision represents the total number of digits in each value of this
 dtype. For example, the precision associated with the decimal value
@@ -113,12 +150,12 @@ type:
 ## Nested data types (`List` and `Struct`)
 
 {py:class}`~cudf.core.dtypes.ListDtype` and
-{py:class}`~cudf.core.dtypes.StructDtype` are special data types in cuDF for
+{py:class}`~cudf.core.dtypes.StructDtype` are data types in cuDF for
 working with list-like and dictionary-like data. These are referred to as
-"nested" data types, because they enable you to store a list of lists, or a
-struct of lists, or a struct of list of lists, etc.,
+"nested" data types because they are specified by a "child" type of the elements
+which also might be a list or struct type.
 
-You can create lists and struct Series from existing Pandas Series of
+You can create lists and struct Series from existing pandas Series of
 lists and dictionaries respectively:
 
 ```python
@@ -151,5 +188,4 @@ Or by reading them from disk, using a [file format that supports nested data](/c
 ListDtype(int64)
 ```
 
-[numpy-dtype]: https://numpy.org/doc/stable/reference/arrays.dtypes.html#arrays-dtypes
 [python-decimal]: https://docs.python.org/3/library/decimal.html#decimal.Decimal

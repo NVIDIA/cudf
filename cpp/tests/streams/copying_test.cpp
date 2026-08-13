@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -72,8 +72,8 @@ TEST_F(CopyingTest, ScatterTable)
 TEST_F(CopyingTest, ScatterScalars)
 {
   auto const source = cudf::scalar_type_t<int32_t>(100, true, cudf::test::get_default_stream());
-  std::reference_wrapper<const cudf::scalar> slr_ref{source};
-  std::vector<std::reference_wrapper<const cudf::scalar>> source_vector{slr_ref};
+  std::reference_wrapper<cudf::scalar const> slr_ref{source};
+  std::vector<std::reference_wrapper<cudf::scalar const>> source_vector{slr_ref};
 
   cudf::test::fixed_width_column_wrapper<int32_t> target({10, 20, 30, 40, 50, 60, 70, 80});
   cudf::test::fixed_width_column_wrapper<int32_t> scatter_map({-3, 3, 1, -1});
@@ -146,7 +146,7 @@ TEST_F(CopyingTest, CopyRange)
     source(source_elements, source_elements + size);
 
   cudf::mutable_column_view target_view{target};
-  const cudf::column_view immutable_view{target_view};
+  cudf::column_view const immutable_view{target_view};
 
   cudf::size_type source_begin{9};
   cudf::size_type source_end{size - 50};
@@ -268,7 +268,7 @@ TEST_F(CopyingTest, BooleanMaskScatter)
 
 TEST_F(CopyingTest, BooleanMaskScatterScalars)
 {
-  std::vector<std::reference_wrapper<const cudf::scalar>> scalars;
+  std::vector<std::reference_wrapper<cudf::scalar const>> scalars;
   auto s = cudf::scalar_type_t<int32_t>(1, true, cudf::test::get_default_stream());
   scalars.emplace_back(s);
   cudf::test::fixed_width_column_wrapper<int32_t, int32_t> target(

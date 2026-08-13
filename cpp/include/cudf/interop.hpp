@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,6 +17,7 @@
 
 #include <rmm/resource_ref.hpp>
 
+#include <span>
 #include <utility>
 
 struct DLManagedTensor;
@@ -37,11 +38,16 @@ typedef int32_t ArrowDeviceType;  // NOLINT
 #define ARROW_DEVICE_CUDA 2  // NOLINT
 ///@endcond
 
+/**
+ * @file
+ * @brief APIs for converting between cudf tables/columns and DLPack tensors or Apache Arrow
+ * arrays.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup interop_dlpack
  * @{
- * @file
  */
 
 /**
@@ -96,7 +102,6 @@ DLManagedTensor* to_dlpack(
 /**
  * @addtogroup interop_arrow
  * @{
- * @file
  */
 
 /**
@@ -318,8 +323,6 @@ class arrow_column {
   /**
    * @brief Get a view of the column data
    *
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used for any allocations during conversion
    * @return A view of the column data
    */
   [[nodiscard]] column_view view() const;
@@ -354,7 +357,7 @@ class arrow_table {
    * @param mr Device memory resource used for any allocations during conversion
    */
   arrow_table(cudf::table&& input,
-              cudf::host_span<column_metadata const> metadata,
+              std::span<column_metadata const> metadata,
               rmm::cuda_stream_view stream      = cudf::get_default_stream(),
               rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -438,8 +441,6 @@ class arrow_table {
   /**
    * @brief Get a view of the table data
    *
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used for any allocations during conversion
    * @return A view of the table data
    */
   [[nodiscard]] table_view view() const;
@@ -470,7 +471,7 @@ class arrow_table {
  * @return ArrowSchema generated from `input`
  */
 unique_schema_t to_arrow_schema(cudf::table_view const& input,
-                                cudf::host_span<column_metadata const> metadata);
+                                std::span<column_metadata const> metadata);
 
 /**
  * @brief Create `ArrowDeviceArray` from cudf table and metadata

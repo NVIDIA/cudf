@@ -41,6 +41,7 @@ set(cython_sources
     stream_compaction.pyx
     sorting.pyx
     table.pyx
+    table_equality.pyx
     traits.pyx
     transform.pyx
     transpose.pyx

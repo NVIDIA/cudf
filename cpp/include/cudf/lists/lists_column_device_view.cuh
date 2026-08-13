@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,14 @@
 
 #include <cuda_runtime.h>
 
-namespace cudf::detail {
+namespace cudf {
 
 /**
  * @brief Given a column_device_view, an instance of this class provides a
  * wrapper on this compound column for list operations.
  * Analogous to list_column_view.
+ *
+ * @ingroup column_classes
  */
 class lists_column_device_view : private column_device_view {
  public:
@@ -103,4 +105,4 @@ class lists_column_device_view : private column_device_view {
   }
 };
 
-}  // namespace cudf::detail
+}  // namespace cudf

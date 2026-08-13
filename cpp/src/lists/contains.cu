@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -199,7 +199,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
   auto const input_it      = cudf::detail::make_counting_transform_iterator(
     size_type{0},
     cuda::proclaim_return_type<list_device_view>(
-      [lists = cudf::detail::lists_column_device_view{*lists_cdv_ptr}] __device__(auto const idx) {
+      [lists = cudf::lists_column_device_view{*lists_cdv_ptr}] __device__(auto const idx) {
         return list_device_view{lists, idx};
       }));
 
@@ -345,15 +345,15 @@ std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     out_begin,
     out_begin + lists.size(),
-    cuda::proclaim_return_type<bool>([lists = cudf::detail::lists_column_device_view{
-                                        *lists_cdv_ptr}] __device__(auto const list_idx) {
-      auto const list = list_device_view{lists, list_idx};
-      return list.is_null() ||
-             thrust::any_of(thrust::seq,
-                            cuda::counting_iterator<cudf::size_type>{0},
-                            cuda::counting_iterator{list.size()},
-                            [&list](auto const idx) { return list.is_null(idx); });
-    }));
+    cuda::proclaim_return_type<bool>(
+      [lists = cudf::lists_column_device_view{*lists_cdv_ptr}] __device__(auto const list_idx) {
+        auto const list = list_device_view{lists, list_idx};
+        return list.is_null() ||
+               thrust::any_of(thrust::seq,
+                              cuda::counting_iterator<cudf::size_type>{0},
+                              cuda::counting_iterator{list.size()},
+                              [&list](auto const idx) { return list.is_null(idx); });
+      }));
 
   return output;
 }

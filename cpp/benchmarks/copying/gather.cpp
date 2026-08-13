@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/copying.hpp>
 #include <cudf/filling.hpp>
@@ -43,8 +44,13 @@ static void bench_gather(nvbench::state& state)
   state.add_global_memory_reads<int8_t>(source_table->alloc_size());
   state.add_global_memory_writes<int8_t>(source_table->alloc_size());
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { cudf::gather(*source_table, gather_map->view()); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_gather)

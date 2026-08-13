@@ -1,6 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from libc.stdint cimport int64_t, uint8_t
+from libc.stdint cimport int32_t, int64_t, uint8_t
 from libcpp cimport bool
 from libcpp.functional cimport reference_wrapper
 from libcpp.map cimport map
@@ -53,6 +53,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         void set_column_indices(
             vector[size_type] col_indices
         ) except +libcudf_exception_handler
+        void set_column_field_ids(
+            vector[int32_t] column_field_ids
+        ) except +libcudf_exception_handler
         void set_num_rows(int64_t val) except +libcudf_exception_handler
         void set_row_groups(
             vector[vector[size_type]] row_grp
@@ -88,6 +91,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& column_indices(
             vector[size_type] col_indices
+        ) except +libcudf_exception_handler
+        parquet_reader_options_builder& column_field_ids(
+            vector[int32_t] column_field_ids
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& row_groups(
             vector[vector[size_type]] row_grp

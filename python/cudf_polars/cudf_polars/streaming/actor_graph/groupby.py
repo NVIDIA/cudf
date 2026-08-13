@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """GroupBy and Distinct logic for the RapidsMPF streaming runtime."""
 
@@ -7,18 +7,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import pylibcudf as plc
+from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
+    HashScheme,
+)
+from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.communicator.single import new_communicator as single_comm
 from rapidsmpf.config import Options, get_environment_variables
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.context import Context
-from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.cudf.channel_metadata import (
-    ChannelMetadata,
-    HashScheme,
-)
-from rapidsmpf.streaming.cudf.table_chunk import TableChunk
-
-import pylibcudf as plc
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.expr import Col, NamedExpr
@@ -28,7 +26,9 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
+    MAX_ROWS_PER_PARTITION,
     ChannelManager,
     NormalizedPartitioning,
     _make_hash_shuffle_metadata,
@@ -320,9 +320,7 @@ async def _tree_reduce(
         aggregated = await evaluate_chunk(
             context, aggregated, decomposed.select_ir, ir_context=ir_context
         )
-    if tracer is not None:
-        tracer.add_chunk(table=aggregated.table_view())
-    await ch_out.send(context, Message(0, aggregated))
+    await send_chunk(context, ch_out, aggregated, 0, tracer=tracer)
 
     await ch_out.drain(context)
 
@@ -442,9 +440,7 @@ async def _shuffle_reduce(
             *extract_irs,
             ir_context=ir_context,
         )
-        if tracer is not None:
-            tracer.add_chunk(table=partition_chunk.table_view())
-        await ch_out.send(context, Message(partition_id, partition_chunk))
+        await send_chunk(context, ch_out, partition_chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)
 
@@ -500,7 +496,7 @@ def _key_indices(
         return tuple(schema_keys[k] for k in schema if k in subset)
 
 
-def _require_tree(ir: GroupBy | Distinct) -> bool:
+def _maintain_order(ir: GroupBy | Distinct) -> bool:
     if isinstance(ir, GroupBy):
         return ir.maintain_order
     else:
@@ -520,6 +516,7 @@ async def _choose_strategy(
     collective_ids: list[int],
     target_partition_size: int,
     skip_global_comm: bool,  # noqa: FBT001
+    maintain_order: bool,  # noqa: FBT001
     tracer: ActorTracer | None,
 ) -> int:
     """
@@ -545,6 +542,8 @@ async def _choose_strategy(
         The target partition size.
     skip_global_comm
         Whether to skip the global communication.
+    maintain_order
+        Whether the operation should maintain input ordering semantics.
     tracer
         Optional tracer for runtime metrics.
 
@@ -553,15 +552,24 @@ async def _choose_strategy(
     The output count.
     """
     aggregated_size = aggregated.data_alloc_size()
-    local_estimated_size = (aggregated_size // max(1, chunks_received)) * local_count
+    sample_count = max(1, chunks_received)
+    local_estimated_size = (aggregated_size // sample_count) * local_count
+    if input_drained:
+        local_estimated_rows = aggregated.shape[0]
+    else:
+        local_estimated_rows = (
+            aggregated.shape[0] * local_count + sample_count - 1
+        ) // sample_count
 
     if skip_global_comm:
         total_estimated_size = local_estimated_size
+        total_estimated_rows = local_estimated_rows
         total_chunk_count = local_count
         total_need_shuffle = int(not input_drained)
     else:
         (
             total_estimated_size,
+            total_estimated_rows,
             total_chunk_count,
             total_need_shuffle,
         ) = await allgather_reduce(
@@ -569,17 +577,31 @@ async def _choose_strategy(
             comm,
             collective_ids.pop(),
             local_estimated_size,
+            local_estimated_rows,
             local_count,
             int(not input_drained),
         )
 
+    min_row_limit_count = 1
+    if total_estimated_rows > 0:
+        min_row_limit_count = (
+            total_estimated_rows + MAX_ROWS_PER_PARTITION - 1
+        ) // MAX_ROWS_PER_PARTITION
+
     ideal_count = 1
-    use_tree = total_need_shuffle == 0
+    use_tree = maintain_order or (
+        total_need_shuffle == 0
+        and (skip_global_comm or total_estimated_rows < MAX_ROWS_PER_PARTITION)
+    )
     if not use_tree:
-        ideal_count = max(2, total_estimated_size // target_partition_size)
+        ideal_count = max(
+            2, total_estimated_size // target_partition_size, min_row_limit_count
+        )
 
     output_count_limit = local_count if skip_global_comm else total_chunk_count
     output_count = min(ideal_count, output_count_limit)
+    if not use_tree:
+        output_count = max(2, output_count, min_row_limit_count)
     if tracer is not None:
         tracer.decision = (
             "tree_local"
@@ -643,7 +665,7 @@ async def groupby_actor(
             nranks,
             keys=_key_indices(ir, ir.children[0].schema, concrete_prefix=True),
         )
-        require_tree = _require_tree(ir)
+        maintain_order = _maintain_order(ir)
         fully_partitioned = partitioning.is_strictly_partitioned()
         fallback_case = (
             # NOTE: This criteria means that we fell back
@@ -659,7 +681,10 @@ async def groupby_actor(
             metadata_out = ChannelMetadata(
                 local_count=metadata_in.local_count,
                 partitioning=maybe_remap_partitioning(
-                    ir, metadata_in.partitioning, child_ir=ir.children[0]
+                    ir,
+                    metadata_in.partitioning,
+                    child_ir=ir.children[0],
+                    context=context,
                 ),
                 duplicated=metadata_in.duplicated,
             )
@@ -683,7 +708,7 @@ async def groupby_actor(
             ir_context,
             ch_in,
             target_partition_size,
-            allow_early_exit=not require_tree,
+            allow_early_exit=not maintain_order,
         )
 
         skip_global_comm = metadata_in.duplicated or isinstance(
@@ -699,6 +724,7 @@ async def groupby_actor(
             collective_ids,
             target_partition_size,
             skip_global_comm,
+            maintain_order,
             tracer,
         )
 

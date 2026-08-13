@@ -15,6 +15,8 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief Check if two tables are equal.
  *
+ * @ingroup table_classes
+ *
  * Returns true if the input tables have the same number of rows, the same number of columns,
  * matching column types, and every row in `left` compares equal to the row at the same index in
  * `right`. Null equality is controlled by `nulls_equal`. Floating point NaN values compare equal.

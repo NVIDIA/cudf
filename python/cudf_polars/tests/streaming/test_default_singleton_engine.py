@@ -58,7 +58,7 @@ def _reset_singleton_module_state() -> None:
         dse._state.worker = None
 
 
-def _run(body: object) -> None:
+def _run(body: object, timeout_seconds: int) -> None:
     """
     Subprocess entry point.
 
@@ -69,7 +69,7 @@ def _run(body: object) -> None:
     """
     _reset_singleton_module_state()
     try:
-        body()  # type: ignore[operator]
+        body(timeout_seconds)  # type: ignore[operator]
     finally:
         _reset_singleton_module_state()
 
@@ -79,7 +79,7 @@ def _run(body: object) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _body_lifecycle() -> None:
+def _body_lifecycle(timeout_seconds: int) -> None:
     """
     Construction, type, get-or-create, shutdown, context manager, fresh-after-shutdown.
     """
@@ -115,7 +115,7 @@ def _body_lifecycle() -> None:
         _ = e2.context
 
 
-def _body_default_path_routing() -> None:
+def _body_default_path_routing(timeout_seconds: int) -> None:
     """
     Both ``engine="gpu"`` and ``engine=pl.GPUEngine(executor="streaming")``
     route through the singleton, reuse it across queries, and pick up an
@@ -159,7 +159,7 @@ def _body_default_path_routing() -> None:
         assert dse._state.instance is user_engine
 
 
-def _body_concurrent_warm_path() -> None:
+def _body_concurrent_warm_path(timeout_seconds: int) -> None:
     """Concurrent ``get_or_create()`` calls return the same instance."""
     import threading
 
@@ -169,7 +169,7 @@ def _body_concurrent_warm_path() -> None:
 
     main_engine = DefaultSingletonEngine.get_or_create()
     try:
-        barrier = threading.Barrier(8)
+        barrier = threading.Barrier(8, timeout=timeout_seconds)
         results: list[DefaultSingletonEngine] = []
         results_lock = threading.Lock()
 
@@ -182,7 +182,10 @@ def _body_concurrent_warm_path() -> None:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=timeout_seconds)
+            assert not t.is_alive(), (
+                f"worker thread did not finish within {timeout_seconds}s"
+            )
 
         assert len(results) == 8
         assert all(r is main_engine for r in results)
@@ -190,7 +193,7 @@ def _body_concurrent_warm_path() -> None:
         main_engine.shutdown()
 
 
-def _body_atexit_no_op() -> None:
+def _body_atexit_no_op(timeout_seconds: int) -> None:
     """
     ``DefaultSingletonEngine.shutdown`` (registered once at import as the
     atexit hook) is a no-op when no engine is live.
@@ -213,7 +216,7 @@ def _body_atexit_no_op() -> None:
     assert dse._state.instance is None
 
 
-def _body_singleton_blocked_when_explicit_alive() -> None:
+def _body_singleton_blocked_when_explicit_alive(timeout_seconds: int) -> None:
     """
     The reverse direction: ``get_or_create()`` refuses if any other
     ``StreamingEngine`` is alive when ``DefaultSingletonEngine.__init__``
@@ -243,7 +246,7 @@ def _body_singleton_blocked_when_explicit_alive() -> None:
     assert StreamingEngine._active_engine_count() == 0
 
 
-def _body_worker_thread_isolation() -> None:
+def _body_worker_thread_isolation(timeout_seconds: int) -> None:
     """
     The dedicated worker thread owns construction and shutdown.
 
@@ -293,8 +296,11 @@ def _body_worker_thread_isolation() -> None:
 
     t = threading.Thread(target=creator)
     t.start()
-    create_done.wait()
-    t.join()
+    assert create_done.wait(timeout=timeout_seconds), (
+        f"creator did not signal completion within {timeout_seconds}s"
+    )
+    t.join(timeout=timeout_seconds)
+    assert not t.is_alive(), f"creator thread did not finish within {timeout_seconds}s"
     live = dse._state.instance
     assert live is not None
     live.shutdown()  # different thread than the one that constructed
@@ -315,7 +321,7 @@ def _body_worker_thread_isolation() -> None:
     DefaultSingletonEngine.get_or_create().shutdown()  # retry succeeds
 
 
-def _body_shutdown_timeout() -> None:
+def _body_shutdown_timeout(timeout_seconds: int) -> None:
     """
     A hung ``SPMDEngine.shutdown`` causes the timeout branch to fire:
     a warning is emitted, the singleton slot is cleared, and any new
@@ -350,7 +356,9 @@ def _body_shutdown_timeout() -> None:
             if self is not engine:
                 real_shutdown(self)
                 return
-            release_worker.wait()
+            assert release_worker.wait(timeout=timeout_seconds), (
+                f"release_worker did not signal completion within {timeout_seconds}s"
+            )
             try:
                 # Run the real teardown so the rapidsmpf Context is
                 # destroyed on the construction (worker) thread, otherwise
@@ -372,7 +380,9 @@ def _body_shutdown_timeout() -> None:
             # Once the leaked worker returns it removes itself from the
             # registry; a fresh construction is allowed again.
             release_worker.set()
-            real_done.wait()
+            assert real_done.wait(timeout=timeout_seconds), (
+                f"real_done did not signal completion within {timeout_seconds}s"
+            )
             DefaultSingletonEngine.get_or_create().shutdown()
 
 
@@ -398,7 +408,7 @@ _ALL_BODIES = [
     "body", _ALL_BODIES, ids=lambda b: b.__name__.removeprefix("_body_")
 )
 def test_default_singleton_engine(
-    proc_pool: ProcessPoolExecutor, body: Callable[[], None]
+    proc_pool: ProcessPoolExecutor, body: Callable[[], None], timeout_seconds: int
 ) -> None:
     """Run each ``_body_*`` function in an isolated subprocess."""
-    proc_pool.submit(_run, body).result()
+    proc_pool.submit(_run, body, timeout_seconds).result(timeout=timeout_seconds)

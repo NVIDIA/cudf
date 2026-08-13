@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/ast/detail/operators.cuh>
@@ -21,8 +21,7 @@ struct arity_functor {
   template <ast_operator op>
   void operator()(cudf::size_type& result)
   {
-    // Arity is not dependent on null handling, so just use the false implementation here.
-    result = operator_functor<op, false>::arity;
+    result = operator_functor<op>::arity;
   }
 };
 
@@ -156,7 +155,7 @@ struct type_dispatch_binary_op {
     type_dispatcher(
       lhs_type,
       // Always dispatch to the non-null operator for the purpose of type determination.
-      detail::single_dispatch_binary_operator_types<operator_functor<op, false>>{},
+      detail::single_dispatch_binary_operator_types<operator_functor<op>>{},
       std::forward<F>(f),
       std::forward<Ts>(args)...);
   }
@@ -225,7 +224,7 @@ struct type_dispatch_unary_op {
     type_dispatcher(
       input_type,
       // Always dispatch to the non-null operator for the purpose of type determination.
-      detail::dispatch_unary_operator_types<operator_functor<op, false>>{},
+      detail::dispatch_unary_operator_types<operator_functor<op>>{},
       std::forward<F>(f),
       std::forward<Ts>(args)...);
   }
@@ -274,6 +273,13 @@ cudf::data_type ast_operator_return_type(ast_operator op,
     default: CUDF_FAIL("Unsupported operator return type."); break;
   }
   return result;
+}
+
+bool is_comparison_operator(ast_operator op)
+{
+  return op == ast_operator::EQUAL || op == ast_operator::NULL_EQUAL ||
+         op == ast_operator::NOT_EQUAL || op == ast_operator::LESS || op == ast_operator::GREATER ||
+         op == ast_operator::LESS_EQUAL || op == ast_operator::GREATER_EQUAL;
 }
 
 cudf::size_type ast_operator_arity(ast_operator op)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -73,7 +73,7 @@ inline size_type __device__ row_to_value_idx(size_type idx,
       idx += col.offset();
       col = col.child(0);
     } else {
-      auto list_col = cudf::detail::lists_column_device_view(col);
+      auto list_col = cudf::lists_column_device_view(col);
       auto child    = list_col.child();
       if (parquet_col.output_as_byte_array && child.type().id() == type_id::UINT8) { break; }
       idx = list_col.offset_at(idx);

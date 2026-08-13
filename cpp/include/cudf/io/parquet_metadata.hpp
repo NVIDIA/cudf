@@ -1,11 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file parquet_metadata.hpp
- * @brief cuDF-IO freeform API
+ * @brief Freeform APIs for Parquet metadata
  */
 
 #pragma once
@@ -15,6 +15,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -23,7 +24,6 @@ namespace io {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 //! Parquet physical `Type`
@@ -292,7 +292,7 @@ parquet_metadata read_parquet_metadata(source_info const& src_info);
  * @return List of FileMetaData objects, one per parquet source
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
-  cudf::host_span<std::unique_ptr<cudf::io::datasource> const> sources);
+  std::span<std::unique_ptr<cudf::io::datasource> const> sources);
 
 /** @} */  // end of group
 }  // namespace io

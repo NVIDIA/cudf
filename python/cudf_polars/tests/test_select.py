@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -8,10 +8,12 @@ import pytest
 
 import polars as pl
 
+from cudf_polars.dsl.ir import Scan
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.utils.config import ParquetOptions
 
 
 def test_select(engine: pl.GPUEngine):
@@ -147,3 +149,54 @@ def test_select_fast_count_parquet_skip_rows(
 
     q = pl.scan_parquet(file).slice(1, 5).select(pl.len())
     assert_gpu_result_equal(q, engine=engine)
+
+
+PARQUET_FAST_COUNT_ROWS = 10
+
+
+@pytest.fixture(scope="module")
+def parquet_fast_count_df() -> pl.DataFrame:
+    return pl.DataFrame({"a": range(PARQUET_FAST_COUNT_ROWS)})
+
+
+@pytest.fixture(
+    params=[
+        pytest.param({"skip_rows": 0, "n_rows": None}, id="all_rows"),
+        pytest.param({"skip_rows": 3, "n_rows": None}, id="skip_rows"),
+        pytest.param({"skip_rows": 2, "n_rows": 4}, id="skip_rows_and_limit"),
+        pytest.param({"skip_rows": 0, "n_rows": 5}, id="n_rows"),
+        pytest.param({"skip_rows": 8, "n_rows": 10}, id="skip_near_end"),
+        pytest.param(
+            {"skip_rows": PARQUET_FAST_COUNT_ROWS, "n_rows": None},
+            id="skip_all",
+        ),
+    ],
+)
+def parquet_scan_row_bounds(request) -> dict[str, int | None]:
+    return request.param
+
+
+def test_get_parquet_row_count_from_metadata_raises() -> None:
+    paths = ["/some/missing/file.parquet"]
+    parquet_options = ParquetOptions(prefetch_file_metadata=True)
+
+    with pytest.raises(AssertionError, match=r"Cached parquet info is required"):
+        Scan._get_parquet_row_count_from_metadata(
+            paths,
+            skip_rows=0,
+            n_rows=-1,
+            parquet_options=parquet_options,
+            cached_parquet_info=None,
+        )
+
+    with pytest.raises(
+        AssertionError,
+        match=(r"Paths do not match cached parquet info."),
+    ):
+        Scan._get_parquet_row_count_from_metadata(
+            paths,
+            skip_rows=0,
+            n_rows=-1,
+            parquet_options=parquet_options,
+            cached_parquet_info=[],
+        )

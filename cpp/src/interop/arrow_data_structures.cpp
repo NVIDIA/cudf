@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -294,7 +294,7 @@ void arrow_column::to_arrow(ArrowDeviceArray* output,
 column_view arrow_column::view() const { return cached_view; }
 
 arrow_table::arrow_table(cudf::table&& input,
-                         cudf::host_span<column_metadata const> metadata,
+                         std::span<column_metadata const> metadata,
                          rmm::cuda_stream_view stream,
                          rmm::device_async_resource_ref mr)
   : container{[&]() {

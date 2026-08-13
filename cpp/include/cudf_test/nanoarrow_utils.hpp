@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -430,7 +430,7 @@ struct VectorOfArrays {
     return 0;
   }
 
-  static const char* get_last_error(ArrowArrayStream* stream) { return nullptr; }
+  static char const* get_last_error(ArrowArrayStream* stream) { return nullptr; }
 
   static void release(ArrowArrayStream* stream)
   {

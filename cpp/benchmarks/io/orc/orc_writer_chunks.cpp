@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,7 +23,9 @@ constexpr int64_t data_size = 512 << 20;
 
 void nvbench_orc_write(nvbench::state& state)
 {
-  cudf::size_type num_cols = state.get_int64("num_columns");
+  cudf::size_type num_cols     = state.get_int64("num_columns");
+  auto const stripe_size_bytes = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows  = state.get_int64("stripe_size_rows");
 
   auto tbl = create_random_table(
     cycle_dtypes(get_type_or_group({static_cast<int32_t>(data_type::INTEGRAL_SIGNED),
@@ -52,21 +54,27 @@ void nvbench_orc_write(nvbench::state& state)
 
                cudf::io::orc_writer_options opts =
                  cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view);
+               // Sentinel 0 == use cuDF default.
+               if (stripe_size_bytes > 0) opts.set_stripe_size_bytes(stripe_size_bytes);
+               if (stripe_size_rows > 0) opts.set_stripe_size_rows(stripe_size_rows);
                cudf::io::write_orc(opts);
 
                timer.stop();
                encoded_file_size = source_sink.size();
              });
 
-  state.add_buffer_size(mem_stats_logger.peak_memory_usage(), "pmu", "Peak Memory Usage");
-  state.add_buffer_size(encoded_file_size, "efs", "Encoded File Size");
-  state.add_element_count(view.num_rows(), "Total Rows");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+  state.add_element_count(view.num_rows(), "total_rows");
 }
 
 void nvbench_orc_chunked_write(nvbench::state& state)
 {
-  cudf::size_type num_cols   = state.get_int64("num_columns");
-  cudf::size_type num_tables = state.get_int64("num_chunks");
+  cudf::size_type num_cols     = state.get_int64("num_columns");
+  cudf::size_type num_tables   = state.get_int64("num_chunks");
+  auto const stripe_size_bytes = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows  = state.get_int64("stripe_size_rows");
 
   std::vector<std::unique_ptr<cudf::table>> tables;
   for (cudf::size_type idx = 0; idx < num_tables; idx++) {
@@ -104,6 +112,8 @@ void nvbench_orc_chunked_write(nvbench::state& state)
 
       cudf::io::chunked_orc_writer_options opts =
         cudf::io::chunked_orc_writer_options::builder(source_sink.make_sink_info());
+      if (stripe_size_bytes > 0) opts.set_stripe_size_bytes(stripe_size_bytes);
+      if (stripe_size_rows > 0) opts.set_stripe_size_rows(stripe_size_rows);
       cudf::io::orc_chunked_writer writer(opts);
       std::for_each(tables.begin(),
                     tables.end(),
@@ -114,18 +124,23 @@ void nvbench_orc_chunked_write(nvbench::state& state)
       encoded_file_size = source_sink.size();
     });
 
-  state.add_buffer_size(mem_stats_logger.peak_memory_usage(), "pmu", "Peak Memory Usage");
-  state.add_buffer_size(encoded_file_size, "efs", "Encoded File Size");
-  state.add_element_count(total_rows, "Total Rows");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+  state.add_element_count(total_rows, "total_rows");
 }
 
 NVBENCH_BENCH(nvbench_orc_write)
   .set_name("orc_write")
   .set_min_samples(4)
-  .add_int64_axis("num_columns", {8, 64});
+  .add_int64_axis("num_columns", {8, 64})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(nvbench_orc_chunked_write)
   .set_name("orc_chunked_write")
   .set_min_samples(4)
   .add_int64_axis("num_columns", {8, 64})
-  .add_int64_axis("num_chunks", {8, 64});
+  .add_int64_axis("num_chunks", {8, 64})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});

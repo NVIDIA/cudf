@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,7 +24,6 @@ namespace datetime {
 /**
  * @addtogroup datetime_extract
  * @{
- * @file
  */
 
 /**
@@ -65,7 +64,6 @@ std::unique_ptr<cudf::column> extract_datetime_component(
 /**
  * @addtogroup datetime_compute
  * @{
- * @file
  */
 
 /**

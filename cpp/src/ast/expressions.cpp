@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "jit/row_ir.hpp"
@@ -34,6 +34,32 @@ operation::operation(ast_operator op, expression const& left, expression const& 
 cudf::size_type literal::accept(detail::expression_parser& visitor) const
 {
   return visitor.visit(*this);
+}
+
+cudf::data_type column_reference::get_data_type(table_view const& table) const
+{
+  CUDF_EXPECTS(get_column_index() >= 0 && get_column_index() < table.num_columns(),
+               "column index out of range",
+               std::out_of_range);
+  return table.column(get_column_index()).type();
+}
+
+cudf::data_type column_reference::get_data_type(table_view const& left_table,
+                                                table_view const& right_table) const
+{
+  auto const table = [&] {
+    if (get_table_source() == table_reference::LEFT) {
+      return left_table;
+    } else if (get_table_source() == table_reference::RIGHT) {
+      return right_table;
+    } else {
+      CUDF_FAIL("Column reference data type cannot be determined from unknown table.");
+    }
+  }();
+  CUDF_EXPECTS(get_column_index() >= 0 && get_column_index() < table.num_columns(),
+               "column index out of range",
+               std::out_of_range);
+  return table.column(get_column_index()).type();
 }
 
 cudf::size_type column_reference::accept(detail::expression_parser& visitor) const

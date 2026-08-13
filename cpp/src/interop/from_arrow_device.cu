@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -179,9 +179,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
     auto const d_items = view.buffer_views[binary_view_vector_idx].data.as_binary_view;
     auto variadic_ptrs = std::vector<char const*>();
     for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-      auto variadic_buf =
-        ArrowArrayBuffer(const_cast<ArrowArray*>(input), i + NANOARROW_BINARY_VIEW_FIXED_BUFFERS);
-      variadic_ptrs.push_back(reinterpret_cast<char const*>(variadic_buf->data));
+      variadic_ptrs.push_back(reinterpret_cast<char const*>(view.variadic_buffers[i]));
     }
     auto d_variadic_ptrs = cudf::detail::make_device_uvector_async(
       variadic_ptrs, stream, cudf::get_current_device_resource_ref());
@@ -367,7 +365,7 @@ dispatch_tuple_t get_column(ArrowSchemaView* schema,
 {
   CUDF_EXPECTS(
     input->length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "Total number of rows in Arrow column exceeds the column size limit.",
+    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
     std::overflow_error);
 
   return type.id() != type_id::EMPTY
@@ -434,7 +432,19 @@ unique_table_view_t from_arrow_device(ArrowSchema const* schema,
       return out_view;
     });
 
-  return unique_table_view_t{new table_view{columns},
+  // A zero-column struct still has a length, preserve it as the table row count.
+  table_view* table_view_ptr = nullptr;
+  if (columns.empty()) {
+    CUDF_EXPECTS(
+      input->array.length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
+      "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
+      std::overflow_error);
+    table_view_ptr =
+      new table_view{std::vector<column_view>{}, static_cast<size_type>(input->array.length)};
+  } else {
+    table_view_ptr = new table_view{columns};
+  }
+  return unique_table_view_t{table_view_ptr,
                              custom_view_deleter<cudf::table_view>{std::move(owned_mem)}};
 }
 

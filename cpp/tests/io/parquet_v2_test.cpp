@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -721,7 +721,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndex)
   auto const expected = table_view{{col0, col1, col2, col3, col4, col5, col6, col7}};
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndex.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -819,7 +819,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexNulls)
   auto expected = table_view{{col0, col1, col2, col3, col4, col5, col6, col7}};
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexNulls.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -909,7 +909,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexNullColumn)
   auto expected = table_view{{col0, col1, col2, col3}};
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexNullColumn.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -1007,7 +1007,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexStruct)
   table_view expected({c0, c1, *c2});
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexStruct.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -1097,7 +1097,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexStructNulls)
   table_view expected({c0, c1});
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexStructNulls.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)

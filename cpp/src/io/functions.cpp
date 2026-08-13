@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "io/orc/orc.hpp"
+#include "io/parquet/reader_impl_helpers.hpp"
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -162,24 +163,26 @@ std::vector<std::unique_ptr<cudf::io::datasource>> make_datasources(source_info 
   switch (info.type()) {
     case io_type::FILEPATH: {
       std::vector<std::unique_ptr<cudf::io::datasource>> sources;
-      sources.reserve(info.filepaths().size());
+      sources.reserve(info.filepath_sources().size());
       // Creating sources in a single thread is faster for a small number of sources
       auto const pool_use_threshold =
         cudf::detail::getenv_or("LIBCUDF_DATASOURCE_PARALLEL_CREATION_THRESHOLD", 8ul);
-      if (info.filepaths().size() >= pool_use_threshold) {
+      if (info.filepath_sources().size() >= pool_use_threshold) {
         std::vector<std::future<std::unique_ptr<cudf::io::datasource>>> source_tasks;
-        source_tasks.reserve(info.filepaths().size());
-        for (auto const& path : info.filepaths()) {
-          source_tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
-            [=] { return cudf::io::datasource::create(path, offset, max_size_estimate); }));
+        source_tasks.reserve(info.filepath_sources().size());
+        for (auto const& fs : info.filepath_sources()) {
+          source_tasks.emplace_back(cudf::detail::host_worker_pool().submit_task([=] {
+            return cudf::io::datasource::create(fs.path, offset, max_size_estimate, fs.size);
+          }));
         }
         std::transform(
           source_tasks.begin(), source_tasks.end(), std::back_inserter(sources), [](auto& task) {
             return task.get();
           });
       } else {
-        for (auto const& filepath : info.filepaths()) {
-          sources.emplace_back(cudf::io::datasource::create(filepath, offset, max_size_estimate));
+        for (auto const& fs : info.filepath_sources()) {
+          sources.emplace_back(
+            cudf::io::datasource::create(fs.path, offset, max_size_estimate, fs.size));
         }
       }
       return sources;
@@ -240,6 +243,35 @@ table_with_metadata read_json(json_reader_options options,
                                       options.get_byte_range_size_with_padding());
 
   return json::detail::read_json(datasources, options, stream, mr);
+}
+
+json_reader_result read_json_with_diagnostics(json_reader_options options,
+                                              rmm::cuda_stream_view stream,
+                                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+
+  options.set_compression(infer_compression_type(options.get_compression(), options.get_source()));
+
+  auto datasources = make_datasources(options.get_source(),
+                                      options.get_byte_range_offset(),
+                                      options.get_byte_range_size_with_padding());
+
+  return json::detail::read_json_with_diagnostics(datasources, options, stream, mr);
+}
+
+json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
+  json_reader_options options, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+
+  options.set_compression(infer_compression_type(options.get_compression(), options.get_source()));
+
+  auto datasources = make_datasources(options.get_source(),
+                                      options.get_byte_range_offset(),
+                                      options.get_byte_range_size_with_padding());
+
+  return json::detail::read_json_with_row_diagnostics(datasources, options, stream, mr);
 }
 
 void write_json(json_writer_options const& options, rmm::cuda_stream_view stream)
@@ -646,7 +678,7 @@ parquet_metadata read_parquet_metadata(source_info const& src_info)
 }
 
 std::vector<parquet::FileMetaData> read_parquet_footers(
-  host_span<std::unique_ptr<cudf::io::datasource> const> sources)
+  std::span<std::unique_ptr<cudf::io::datasource> const> sources)
 {
   CUDF_FUNC_RANGE();
   return detail_parquet::read_parquet_footers(sources);
@@ -726,13 +758,14 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                parquet_reader_options const& options,
                                                rmm::cuda_stream_view stream,
                                                rmm::device_async_resource_ref mr)
-  : reader{std::make_unique<detail_parquet::chunked_reader>(chunk_read_limit,
-                                                            0,
-                                                            make_datasources(options.get_source()),
-                                                            std::vector<parquet::FileMetaData>{},
-                                                            options,
-                                                            stream,
-                                                            mr)}
+  : reader{std::make_unique<detail_parquet::chunked_reader>(
+      chunk_read_limit,
+      detail_parquet::derive_pass_read_limit(chunk_read_limit),
+      make_datasources(options.get_source()),
+      std::vector<parquet::FileMetaData>{},
+      options,
+      stream,
+      mr)}
 {
 }
 
@@ -746,13 +779,14 @@ chunked_parquet_reader::chunked_parquet_reader(
   parquet_reader_options const& options,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
-  : reader{std::make_unique<detail_parquet::chunked_reader>(chunk_read_limit,
-                                                            0,
-                                                            std::move(datasources),
-                                                            std::move(parquet_metadatas),
-                                                            options,
-                                                            stream,
-                                                            mr)}
+  : reader{std::make_unique<detail_parquet::chunked_reader>(
+      chunk_read_limit,
+      detail_parquet::derive_pass_read_limit(chunk_read_limit),
+      std::move(datasources),
+      std::move(parquet_metadatas),
+      options,
+      stream,
+      mr)}
 {
 }
 

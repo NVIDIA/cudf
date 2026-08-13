@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -30,6 +31,8 @@ static void bench_ngrams(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
   state.add_global_memory_writes<nvbench::int8_t>(chars_size * 2);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   if (ngram_type == "chars") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       auto result = nvtext::generate_character_ngrams(input);
@@ -39,6 +42,9 @@ static void bench_ngrams(nvbench::state& state)
       auto result = nvtext::generate_ngrams(input, 2, separator);
     });
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_ngrams)

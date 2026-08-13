@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -212,7 +212,7 @@ void scan_result_functor::operator()<aggregation::RANK>(aggregation const& agg)
 
 // Sort-based groupby
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::sort_scan(
-  host_span<scan_request const> requests,
+  std::span<scan_request const> requests,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {

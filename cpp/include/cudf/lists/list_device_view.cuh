@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -21,7 +21,7 @@ namespace CUDF_EXPORT cudf {
  * a list of elements of arbitrary type (including further nested lists).
  */
 class list_device_view {
-  using lists_column_device_view = cudf::detail::lists_column_device_view;
+  using lists_column_device_view = cudf::lists_column_device_view;
 
  public:
   list_device_view() = default;
@@ -325,14 +325,13 @@ class list_device_view {
  *
  */
 struct list_size_functor {
-  detail::lists_column_device_view const d_column;  ///< The list column to access
+  lists_column_device_view const d_column;  ///< The list column to access
   /**
    * @brief Constructor
    *
    * @param d_col The cudf::lists_column_device_view whose rows are being accessed
    */
-  CUDF_HOST_DEVICE inline list_size_functor(detail::lists_column_device_view const& d_col)
-    : d_column(d_col)
+  CUDF_HOST_DEVICE inline list_size_functor(lists_column_device_view const& d_col) : d_column(d_col)
   {
   }
   /**
@@ -363,7 +362,7 @@ struct list_size_functor {
  * @param c The list_column_device_view to iterate over
  * @return An iterator that returns the size of the list by row index
  */
-CUDF_HOST_DEVICE auto inline make_list_size_iterator(detail::lists_column_device_view const& c)
+CUDF_HOST_DEVICE auto inline make_list_size_iterator(lists_column_device_view const& c)
 {
   return detail::make_counting_transform_iterator(0, list_size_functor{c});
 }

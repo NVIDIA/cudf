@@ -1,9 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.strings.split cimport split as cpp_split
 from pylibcudf.libcudf.table.table cimport table
@@ -70,9 +70,10 @@ cpdef Table split(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_strings_column = strings_column.view()
     with nogil:
         c_result = cpp_split.split(
-            strings_column.view(),
+            c_strings_column,
             dereference(c_delimiter),
             maxsplit,
             _cs,
@@ -123,9 +124,10 @@ cpdef Table rsplit(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_strings_column = strings_column.view()
     with nogil:
         c_result = cpp_split.rsplit(
-            strings_column.view(),
+            c_strings_column,
             dereference(c_delimiter),
             maxsplit,
             _cs,
@@ -171,9 +173,10 @@ cpdef Column split_record(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_strings = strings.view()
     with nogil:
         c_result = cpp_split.split_record(
-            strings.view(),
+            c_strings,
             dereference(c_delimiter),
             maxsplit,
             _cs,
@@ -221,9 +224,10 @@ cpdef Column rsplit_record(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_strings = strings.view()
     with nogil:
         c_result = cpp_split.rsplit_record(
-            strings.view(),
+            c_strings,
             dereference(c_delimiter),
             maxsplit,
             _cs,
@@ -268,9 +272,10 @@ cpdef Table split_re(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_split.split_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
@@ -315,9 +320,10 @@ cpdef Table rsplit_re(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_split.rsplit_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
@@ -361,9 +367,10 @@ cpdef Column split_record_re(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_split.split_record_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
@@ -404,9 +411,10 @@ cpdef Column rsplit_record_re(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_split.rsplit_record_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
@@ -428,9 +436,10 @@ cpdef Column split_part(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_split.split_part(
-            input.view(),
+            c_input,
             dereference(c_delimiter),
             index,
             _cs,

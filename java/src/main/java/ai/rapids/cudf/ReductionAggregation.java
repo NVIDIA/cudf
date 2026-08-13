@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -53,11 +53,14 @@ public final class ReductionAggregation {
   }
 
   /**
-   * Sum reduction that also reports int64 overflow. Result is a struct scalar
-   * with children {sum: INT64, overflow: BOOL8}. Input column must be INT64.
+   * Sum reduction that also reports overflow. The result is a struct scalar
+   * with children {sum: same type as input, overflow: BOOL8}. The input may
+   * be any signed integer type (INT8/16/32/64) or fixed-point decimal
+   * (DECIMAL32/64/128). On overflow the sum value is unspecified; the boolean flag
+   * is the source of truth.
    */
-  public static ReductionAggregation sumWithOverflow() {
-    return new ReductionAggregation(Aggregation.sumWithOverflow());
+  public static ReductionAggregation sumOverflow() {
+    return new ReductionAggregation(Aggregation.sumOverflow());
   }
 
   /**

@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport repeat as cpp_repeat
 from pylibcudf.libcudf.types cimport size_type
 
@@ -48,19 +49,24 @@ cpdef Column repeat_strings(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
+    cdef column_view c_repeat_times
 
     if ColumnorSizeType is Column:
+        c_input = input.view()
+        c_repeat_times = repeat_times.view()
         with nogil:
             c_result = cpp_repeat.repeat_strings(
-                input.view(),
-                repeat_times.view(),
+                c_input,
+                c_repeat_times,
                 _cs,
                 mr.get_mr()
             )
     elif ColumnorSizeType is size_type:
+        c_input = input.view()
         with nogil:
             c_result = cpp_repeat.repeat_strings(
-                input.view(),
+                c_input,
                 repeat_times,
                 _cs,
                 mr.get_mr()

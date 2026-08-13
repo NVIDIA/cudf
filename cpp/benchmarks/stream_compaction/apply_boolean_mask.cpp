@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf/stream_compaction.hpp>
@@ -64,6 +65,7 @@ void apply_mask_benchmark(nvbench::state& state, nvbench::type_list<DataType>)
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   calculate_bandwidth<DataType>(state);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync,
              [&source_table, &mask, is_retention](nvbench::launch& launch) {
@@ -74,6 +76,8 @@ void apply_mask_benchmark(nvbench::state& state, nvbench::type_list<DataType>)
                }
              });
 
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   set_throughputs(state);
 }
 

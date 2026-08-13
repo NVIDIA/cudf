@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -130,17 +130,17 @@ class sanitizer_subscriber {
   static void check_result(SanitizerResult result);
 
   template <typename Args, cudaStream_t Args::* Field>
-  static void check_stream_arg(const Sanitizer_CallbackData* cbdata);
+  static void check_stream_arg(Sanitizer_CallbackData const* cbdata);
 
-  void callback(Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid, const void* cbdata);
+  void callback(Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid, void const* cbdata);
 };
 
 sanitizer_subscriber::sanitizer_subscriber()
 {
-  const auto cb = [](void* userdata,
+  auto const cb = [](void* userdata,
                      Sanitizer_CallbackDomain domain,
                      Sanitizer_CallbackId cbid,
-                     const void* cbdata) {
+                     void const* cbdata) {
     auto* subscriber = static_cast<sanitizer_subscriber*>(userdata);
     subscriber->callback(domain, cbid, cbdata);
   };
@@ -154,16 +154,16 @@ sanitizer_subscriber::~sanitizer_subscriber() { check_result(sanitizerUnsubscrib
 void sanitizer_subscriber::check_result(SanitizerResult result)
 {
   if (result != SANITIZER_SUCCESS) {
-    const char* str;
+    char const* str;
     sanitizerGetResultString(result, &str);
     throw std::runtime_error(std::string("Sanitizer error: ") + str);
   }
 }
 
 template <typename Args, cudaStream_t Args::* Field>
-void sanitizer_subscriber::check_stream_arg(const Sanitizer_CallbackData* cbdata)
+void sanitizer_subscriber::check_stream_arg(Sanitizer_CallbackData const* cbdata)
 {
-  const auto* args = static_cast<const Args*>(cbdata->functionParams);
+  auto const* args = static_cast<Args const*>(cbdata->functionParams);
   check_stream_and_error(args->*Field);
 }
 
@@ -183,7 +183,7 @@ void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
 {
   switch (domain) {
     case SANITIZER_CB_DOMAIN_RUNTIME_API: {
-      const auto* runtime_cbdata = static_cast<const Sanitizer_CallbackData*>(cbdata);
+      auto const* runtime_cbdata = static_cast<Sanitizer_CallbackData const*>(cbdata);
 
       if (runtime_cbdata->callbackSite == SANITIZER_API_ENTER) {
         switch (cbid) {

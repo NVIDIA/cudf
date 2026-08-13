@@ -14,12 +14,7 @@ from cudf.core.column.datetime import (
     DatetimeColumn,
     DatetimeTZColumn,
 )
-from cudf.core.column.decimal import (
-    Decimal32Column,
-    Decimal64Column,
-    Decimal128Column,
-    DecimalBaseColumn,
-)
+from cudf.core.column.decimal import DecimalColumn
 from cudf.core.column.interval import IntervalColumn
 from cudf.core.column.lists import ListColumn
 from cudf.core.column.numerical import NumericalColumn
@@ -33,10 +28,7 @@ __all__ = [
     "ColumnBase",
     "DatetimeColumn",
     "DatetimeTZColumn",
-    "Decimal32Column",
-    "Decimal64Column",
-    "Decimal128Column",
-    "DecimalBaseColumn",
+    "DecimalColumn",
     "IntervalColumn",
     "ListColumn",
     "NumericalColumn",

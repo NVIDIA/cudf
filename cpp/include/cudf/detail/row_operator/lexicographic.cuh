@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -421,8 +421,8 @@ class device_row_comparator {
                                  cuda::std::numeric_limits<int>::max());
         }
 
-        lcol = detail::structs_column_device_view(lcol).get_sliced_child(0);
-        rcol = detail::structs_column_device_view(rcol).get_sliced_child(0);
+        lcol = structs_column_device_view(lcol).get_sliced_child(0);
+        rcol = structs_column_device_view(rcol).get_sliced_child(0);
         ++depth;
       }
 
@@ -467,8 +467,8 @@ class device_row_comparator {
       column_device_view rcol = _rhs.slice(rhs_element_index, 1);
 
       while (lcol.type().id() == type_id::LIST) {
-        lcol = detail::lists_column_device_view(lcol).get_sliced_child();
-        rcol = detail::lists_column_device_view(rcol).get_sliced_child();
+        lcol = lists_column_device_view(lcol).get_sliced_child();
+        rcol = lists_column_device_view(rcol).get_sliced_child();
       }
 
       auto const l_offsets = _l_dremel_device_view->offsets;
@@ -677,8 +677,10 @@ struct less_equivalent_comparator
  *
  */
 struct preprocessed_table {
-  using table_device_view_owner =
-    std::invoke_result_t<decltype(table_device_view::create), table_view, rmm::cuda_stream_view>;
+  using table_device_view_owner = std::invoke_result_t<decltype(table_device_view::create),
+                                                       table_view,
+                                                       rmm::cuda_stream_view,
+                                                       rmm::device_async_resource_ref>;
 
   /**
    * @brief Preprocess table for use with lexicographical comparison

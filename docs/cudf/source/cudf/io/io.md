@@ -117,6 +117,29 @@ Note that:
 For more information about error handling, compatibility mode, and
 tuning parameters in KvikIO see: <https://github.com/rapidsai/kvikio>
 
+### Remote file sizes and HEAD requests
+
+When reading remote files (for example `s3://...` URLs) via `pylibcudf.io.SourceInfo`, KvikIO
+may send HEAD requests at open time to probe connectivity and query file size. To skip those
+requests when the file size is already known (for example from object-store metadata), pass a
+`pylibcudf.io.FilepathSource` with the `size` argument set:
+
+```python
+import pylibcudf as plc
+
+content_length = ...  # from external metadata
+sources = plc.io.SourceInfo([
+    plc.io.FilepathSource("s3://bucket/object.parquet", size=content_length),
+])
+table = plc.io.parquet.read_parquet(
+    plc.io.parquet.ParquetReaderOptions.builder(sources).build()
+)
+```
+
+Providing an incorrect size avoids the extra HEAD requests but will break footer reads and other
+operations that depend on the true file length. Plain string paths in `SourceInfo` preserve the
+previous behavior (size queried via KvikIO).
+
 Operations that support the use of GPUDirect Storage:
 
 - {py:func}`cudf.read_avro`

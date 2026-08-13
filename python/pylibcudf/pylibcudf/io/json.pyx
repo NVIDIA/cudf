@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.map cimport map
@@ -41,6 +41,7 @@ from pylibcudf.libcudf.io.json import json_recovery_mode_t as JsonRecoveryModeTy
 
 from pylibcudf.libcudf.types cimport data_type, size_type
 from pylibcudf.libcudf.column.column cimport column, column_contents
+from pylibcudf.libcudf.column.column_view cimport column_view
 
 from pylibcudf.types cimport DataType
 
@@ -860,10 +861,11 @@ cpdef TableWithMetadata read_json_from_string_column(
     mr = _get_memory_resource(mr)
 
     # Join the string column into a single string
+    cdef column_view c_input = input.view()
     with nogil:
         c_join_string_column = move(
             cpp_combine.join_strings(
-                input.view(),
+                c_input,
                 dereference(c_separator),
                 dereference(c_narep),
                 _cs,

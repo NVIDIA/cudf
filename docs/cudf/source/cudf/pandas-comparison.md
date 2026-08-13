@@ -1,42 +1,59 @@
-# Comparison of cuDF and Pandas
+# Comparison of cuDF and pandas
 
-cuDF is a DataFrame library that closely matches the Pandas API, but
-when used directly is *not* a full drop-in replacement for Pandas.  There are some
-differences between cuDF and Pandas, both in terms of API and
-behaviour.  This page documents the similarities and differences
-between cuDF and Pandas.
+cuDF is a DataFrame library that closely matches the pandas API but
+behaviorally is *not* a full drop-in replacement for pandas.
+This page documents the similarities and differences
+between cuDF and pandas.
 
-Starting with the v23.10.01 release, cuDF also provides a pandas
+cuDF also provides a pandas
 accelerator mode (`cudf.pandas`) that supports 100% of the pandas API
 and accelerates pandas code on the GPU without requiring any code
-change.  See the [`cudf.pandas` documentation](../cudf_pandas/index).
+change. Visit the [`cudf.pandas` documentation](../cudf_pandas/index)
+if you have existing pandas code that you want to accelerate with cuDF.
+
+For a detailed list of API-level behavioral differences, see the
+[pandas Compatibility Notes](PandasCompat).
 
 ## Supported operations
 
 cuDF supports many of the same data structures and operations as
-Pandas.  This includes `Series`, `DataFrame`, `Index` and
+pandas. This includes `Series`, `DataFrame`, `Index` and
 operations on them such as unary and binary operations, indexing,
 filtering, concatenating, joining, groupby and window operations -
 among many others.
 
-The best way to check if we support a particular Pandas API is to search
+The best way to check if we support a particular pandas API is to search
 our [API docs](/cudf/api_docs/index).
 
 ## Data types
 
-cuDF supports many of the commonly-used data types in Pandas,
-including numeric, datetime, timestamp, string, and categorical data
-types.  In addition, we support special data types for decimal, list,
-and "struct" values.  See the section on [Data Types](data-types) for
+cuDF supports all the data types in pandas except for `pandas.PeriodDtype`, `pandas.SparseDtype`
+and third-party `ExtensionDtype`s from other libraries.
+In addition, cuDF supports data types for decimal, list,
+and "struct" values. See the section on [Data Types](data-types) for
 details.
 
-Note that we do not support custom data types like Pandas'
-`ExtensionDtype`.
+### No true `"object"` data type
+
+In pandas and NumPy, the `"object"` data type can represent data
+of arbitrary Python objects.
+
+```{code} python
+>>> import pandas as pd
+>>> s = pd.Series(["a", 1, [1, 2, 3]])
+0            a
+1            1
+2    [1, 2, 3]
+dtype: object
+```
+
+cuDF can use `"object"` to represent string data but does *not* support storing or operating on
+collections of arbitrary Python objects.
 
 ## Null (or "missing") values
 
-Unlike Pandas, *all* data types in cuDF are nullable,
-meaning they can contain missing values (represented by `cudf.NA`).
+Unlike pandas, missing values are represented by the same
+missing value indicator, `cudf.NA`.
 
 ```{code} python
 >>> s = cudf.Series([1, 2, cudf.NA])
@@ -48,7 +65,7 @@ dtype: int64
 ```
 
 Nulls are not coerced to `NaN` in any situation;
-compare the behavior of cuDF with Pandas below:
+compare the behavior of cuDF with pandas below:
 
 ```{code} python
 >>> s = cudf.Series([1, 2, cudf.NA], dtype="category")
@@ -82,22 +99,22 @@ highly parallel operations rather than sequential operations.
 In the vast majority of cases, it is possible to avoid iteration and
 use an existing function or method to accomplish the same task. If you
 absolutely must iterate, copy the data from GPU to CPU by using
-`.to_arrow()` or `.to_pandas()`, then copy the result back to GPU
-using `.from_arrow()` or the constructors.
+`.to_arrow()` or `.to_pandas()`, then convert the result back to GPU
+using a `Series`, `DataFrame` or `Index` constructor.
 
 ## Result ordering
 
-In Pandas, `join` (or `merge`), `value_counts` and `groupby` operations provide
-certain guarantees about the order of rows in the result returned.  In a Pandas
+In pandas, `join` (or `merge`), `value_counts` and `groupby` operations provide
+certain guarantees about the order of rows in the result returned.  In a pandas
 `join`, the order of join keys is (depending on the particular style of join
 being performed) either preserved or sorted lexicographically by default.
 `groupby` sorts the group keys, and preserves the order of rows within each
-group. In some cases, disabling this option in Pandas can yield better
+group. In some cases, disabling this option in pandas can yield better
 performance.
 
 By contrast, cuDF's default behavior is to return rows in a
 non-deterministic order to maximize performance.  Compare the results
-obtained from Pandas and cuDF below:
+obtained from pandas and cuDF below:
 
 ```{code} python
 >>> import cupy as cp
@@ -127,7 +144,7 @@ rather than by position, so the order in which rows are returned
 doesn't matter. However, if you require that results be returned in a
 predictable (sorted) order, you can pass the `sort=True` option
 explicitly or enable the `mode.pandas_compatible` option when trying
-to match Pandas behavior with `sort=False`:
+to match pandas behavior with `sort=False`:
 
 ```{code} python
 >>> df.groupby("a", sort=True).mean().head()
@@ -158,16 +175,15 @@ determinism of floating-point operations because floating-point
 arithmetic is non-associative, that is, `(a + b) + c` is not necessarily equal to `a + (b + c)`.
 
 For example, `s.sum()` is not guaranteed to produce identical results
-to Pandas nor produce identical results from run to run, when `s` is a
-Series of floats.  If you need to compare floating point results, you
+to pandas or produce identical results from run to run, when `s` is a
+Series of floats. If you need to compare floating point results, you
 should typically do so using the functions provided in the
 [`cudf.testing`](/cudf/api_docs/general_utilities)
 module, which allow you to compare values up to a desired precision.
 
 ## Column names
 
-Unlike Pandas, cuDF does not support duplicate column names.
-It is best to use unique strings for column names.
+Unlike pandas, cuDF does not support `DataFrame`s with duplicate column names.
 
 ## Writing a DataFrame to Parquet with non-string column names
 
@@ -190,28 +206,9 @@ ValueError: Writing a Parquet file requires string column names
 UserWarning: The DataFrame has column names of non-string type. They will be converted to strings on write.
 ```
 
-## No true `"object"` data type
-
-In Pandas and NumPy, the `"object"` data type is used for
-collections of arbitrary Python objects.  For example, in Pandas you
-can do the following:
-
-```{code} python
->>> import pandas as pd
->>> s = pd.Series(["a", 1, [1, 2, 3]])
-0            a
-1            1
-2    [1, 2, 3]
-dtype: object
-```
-
-For compatibility with Pandas, cuDF reports the data type for strings
-as `"object"`, but we do *not* support storing or operating on
-collections of arbitrary Python objects.
-
 ## `.apply()` function limitations
 
-The `.apply()` function in Pandas accepts a user-defined function
+The `.apply()` function in pandas accepts a user-defined function
 (UDF) that can include arbitrary operations that are applied to each
 value of a `Series`, `DataFrame`, or in the case of a groupby,
 each group.  cuDF also supports `.apply()`, but it relies on Numba to

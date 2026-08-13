@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -88,6 +88,7 @@ struct statistics_chunk {
   statistics_val sum{};        //!< sum of chunk
   uint8_t has_minmax{};        //!< Nonzero if min_value and max_values are valid
   uint8_t has_sum{};           //!< Nonzero if sum is valid
+  uint8_t has_nan{};           //!< Nonzero if a NaN was seen (floating point only)
 };
 
 struct statistics_group {

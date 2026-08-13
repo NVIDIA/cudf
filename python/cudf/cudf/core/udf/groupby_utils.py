@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -147,7 +147,7 @@ def jit_groupby_apply(offsets, grouped_values, function, *args):
     # Dispatcher is specialized, so there's only one definition - get
     # it so we can get the cufunc from the code library
     (kern_def,) = specialized.overloads.values()
-    grid, tpb = ctx.get_max_potential_block_size(
+    _grid, tpb = ctx.get_max_potential_block_size(
         func=kern_def._codelibrary.get_cufunc(),
         b2d_func=0,
         memsize=0,

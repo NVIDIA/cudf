@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import array
@@ -232,3 +232,37 @@ def test_from_iterable_pyarrow_or_numpy_array(arr):
 def test_from_iterable_plc_column():
     with pytest.raises(ValueError, match="is not iterable"):
         plc.Column.from_iterable_of_py(plc.Column.from_iterable_of_py([1]))
+
+
+@pytest.mark.parametrize(
+    "arr",
+    [
+        pa.array([-1, 2, 3], type=pa.int64()),
+        pa.array([2, None, 3, 1, None, 5, None, 7, 8, None], type=pa.int16()),
+        pa.array([1, None, 3], type=pa.int32()),
+        pa.array([1, 2, 3], type=pa.uint8()),
+        pa.array([1, None, 3], type=pa.uint32()),
+        pa.array([1.25, 4.5, 7.75], type=pa.float32()),
+        pa.array([1.25, None, 7.75], type=pa.float64()),
+        pa.array([True, False, True], type=pa.bool_()),
+        pa.array([True, None, False, True, None, False], type=pa.bool_()),
+        pa.array(["fóó", "bår", "bäz"], type=pa.string()),
+        pa.array([], type=pa.string()),
+        pa.array(["hello", None, "wörld", "🚀"], type=pa.large_string()),
+    ],
+)
+def test_to_pylist(arr):
+    col = plc.Column.from_arrow(arr)
+    got = col.to_pylist()
+    expect = arr.to_pylist()
+    assert got == expect
+
+
+def test_to_pylist_unsupported():
+    with pytest.raises(
+        NotImplementedError,
+        match="Column with dtype",
+    ):
+        plc.Column.from_iterable_of_py(
+            [[1, 2], [3, 4]], dtype=plc.DataType(plc.TypeId.INT32)
+        ).to_pylist()

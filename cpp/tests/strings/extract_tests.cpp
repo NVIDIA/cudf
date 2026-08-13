@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -266,6 +266,33 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, table_expected);
 }
 
+TEST_F(StringsExtractTests, NonParticipatingGroup)
+{
+  auto input = cudf::test::strings_column_wrapper({"A1", "B2", "C"});
+  auto sv    = cudf::strings_column_view(input);
+
+  // the optional group does not participate in the match for "C" and must
+  // result in null, not an empty string
+  auto prog    = cudf::strings::regex_program::create("(\\D)(\\d)?");
+  auto results = cudf::strings::extract(sv, *prog);
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(cudf::test::strings_column_wrapper({"A", "B", "C"}).release());
+  columns.push_back(cudf::test::strings_column_wrapper({"1", "2", ""}, {1, 1, 0}).release());
+  auto expected = cudf::table(std::move(columns));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
+
+  // a group that participates with an empty match remains an empty string
+  auto prog2    = cudf::strings::regex_program::create("(\\D)(\\d*)");
+  auto results2 = cudf::strings::extract(sv, *prog2);
+
+  std::vector<std::unique_ptr<cudf::column>> columns2;
+  columns2.push_back(cudf::test::strings_column_wrapper({"A", "B", "C"}).release());
+  columns2.push_back(cudf::test::strings_column_wrapper({"1", "2", ""}).release());
+  auto expected2 = cudf::table(std::move(columns2));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results2, expected2);
+}
+
 TEST_F(StringsExtractTests, ExtractAllTest)
 {
   std::vector<char const*> h_input(
@@ -398,6 +425,50 @@ TEST_F(StringsExtractTests, LargeRegex)
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::extract(strings_view, *prog);
   std::vector<char const*> h_expected{"quick", nullptr, nullptr};
+  cudf::test::strings_column_wrapper expected(
+    h_expected.begin(),
+    h_expected.end(),
+    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
+}
+
+TEST_F(StringsExtractTests, CrlfLineAnchorExtNewline)
+{
+  // extract group 1 of ([a-z]+)$ at \r\n line ends; null where no match.
+  // Verified vs OpenJDK 17 group(1) of first match.
+  auto input = cudf::test::strings_column_wrapper({"abc\r\n",
+                                                   "abc\n",
+                                                   "abc\r",
+                                                   "abc",
+                                                   "a\r\nb",
+                                                   "abc\r\n\r\n",
+                                                   "",
+                                                   "abc" NEXT_LINE,
+                                                   "a\nb\r\nc",
+                                                   "\r\n",
+                                                   "\r\nabc",
+                                                   "x\n\r",
+                                                   "a\r\rb",
+                                                   "a\n\nb"});
+  auto view  = cudf::strings_column_view(input);
+  auto prog =
+    cudf::strings::regex_program::create("([a-z]+)$", cudf::strings::regex_flags::EXT_NEWLINE);
+  auto results = cudf::strings::extract(view, *prog);
+
+  std::vector<char const*> h_expected{"abc",
+                                      "abc",
+                                      "abc",
+                                      "abc",
+                                      "b",
+                                      nullptr,
+                                      nullptr,
+                                      "abc",
+                                      "c",
+                                      nullptr,
+                                      "abc",
+                                      nullptr,
+                                      "b",
+                                      "b"};
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),

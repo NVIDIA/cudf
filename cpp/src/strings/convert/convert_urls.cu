@@ -392,6 +392,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   auto row_sizes = rmm::device_uvector<size_type>(strings_count, stream);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
     <<<num_threadblocks, threadblock_size, 0, stream.value()>>>(*d_strings, row_sizes.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   // performs scan on the sizes and builds the appropriate offsets column
   auto [offsets_column, out_chars_bytes] = cudf::strings::detail::make_offsets_child_column(
     row_sizes.begin(), row_sizes.end(), stream, mr);
@@ -405,6 +406,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   // decode and copy the characters from the input column to the output column
   url_decode_char_replacer<num_warps_per_threadblock, char_block_size>
     <<<num_threadblocks, threadblock_size, 0, stream.value()>>>(*d_strings, d_out_chars, offsets);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
   rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);

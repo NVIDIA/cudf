@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -155,7 +155,7 @@ def test_flat_size_exceeds_size_type_limit(patch_cupy_stream):
 def test_from_ndarray_invalid_obj(obj):
     with pytest.raises(
         TypeError,
-        match="Cannot convert object of type .* to a pylibcudf Column",
+        match=r"Cannot convert object of type .* to a pylibcudf Column",
     ):
         plc.Column.from_array(obj)
 
@@ -173,9 +173,25 @@ def test_array_interface_with_data_none():
 
     with pytest.raises(
         ValueError,
-        match="Expected a data field .* the array interface.",
+        match=r"Expected a data field .* the array interface.",
     ):
         plc.Column.from_array(ArrayInterfaceWithNone())
+
+
+def test_array_interface_with_mask_raises():
+    class ArrayInterfaceWithMask:
+        def __init__(self):
+            self.values = np.array([1, 2, 3], dtype=np.int32)
+
+        @property
+        def __array_interface__(self):
+            return {**self.values.__array_interface__, "mask": object()}
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Masked array-interface inputs are not supported",
+    ):
+        plc.Column.from_array_interface(ArrayInterfaceWithMask())
 
 
 def test_from_zero_dimensional_array():

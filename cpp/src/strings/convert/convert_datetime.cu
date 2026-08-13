@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -101,7 +101,7 @@ struct format_compiler {
 
   // clang-format off
   // The specifiers are documented here (not all are supported):
-  // https://en.cppreference.com/w/cpp/chrono/system_clock/formatter
+  // https://en.cppreference.com/cpp/chrono/system_clock/formatter
   specifier_map specifiers = {
     {'Y', 4}, {'y', 2}, {'m', 2}, {'d', 2}, {'H', 2}, {'I', 2}, {'M', 2},
     {'S', 2}, {'f', 6}, {'z', 5}, {'Z', 3}, {'p', 2}, {'j', 3},
@@ -787,7 +787,7 @@ struct datetime_formatter_fn {
     // and retrieving the hour, minute, second, and subsecond values from it
     // but it did not scale/modulo the components for negative timestamps
     // correctly -- it simply did an abs(timestamp) as documented here:
-    // https://en.cppreference.com/w/cpp/chrono/hh_mm_ss/hh_mm_ss
+    // https://en.cppreference.com/cpp/chrono/hh_mm_ss/hh_mm_ss
 
     if constexpr (not std::is_same_v<T, cudf::timestamp_s>) {
       int64_t constexpr base = T::period::type::den;  // 1000=ms, 1000000=us, etc

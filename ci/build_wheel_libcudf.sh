@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -15,7 +15,7 @@ rapids-dependency-file-generator \
   --output requirements \
   --file-key "py_build_${package_name}" \
   --file-key "py_rapids_build_${package_name}" \
-  --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};cuda_suffixed=true" \
+  --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};cuda_suffixed=true;use_cuda_wheels=true" \
 | tee /tmp/requirements-build.txt
 
 rapids-logger "Installing build requirements"
@@ -46,3 +46,6 @@ LIBCUDF_LIBRARY=$(find "${WHEEL_EXPORT_DIR}" -type f -name 'libcudf.so')
 ./ci/check_symbols.sh "${LIBCUDF_LIBRARY}"
 
 ./ci/validate_wheel.sh "${package_dir}" "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}"
+
+RAPIDS_PACKAGE_NAME="$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")"
+export RAPIDS_PACKAGE_NAME

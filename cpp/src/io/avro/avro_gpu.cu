@@ -424,6 +424,7 @@ void DecodeAvroColumnData(device_span<block_desc_s const> blocks,
 
   gpuDecodeAvroColumnData<<<dim_grid, dim_block, 0, stream.value()>>>(
     blocks, schema, global_dictionary, avro_data, schema_len, min_row_size);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace gpu

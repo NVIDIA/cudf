@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 DSL nodes for the LogicalPlan of polars.
@@ -20,8 +20,10 @@ import functools
 import itertools
 import json
 import random
+import reprlib
 import time
 import uuid
+from collections.abc import Sized
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -46,7 +48,7 @@ from cudf_polars.containers.dataframe import NamedColumn
 from cudf_polars.dsl.expressions import rolling, unary
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.nodebase import Node
-from cudf_polars.dsl.to_ast import to_ast, to_parquet_filter
+from cudf_polars.dsl.to_ast import _DECIMAL_IDS, to_ast, to_parquet_filter
 from cudf_polars.dsl.tracing import log_do_evaluate, nvtx_annotate_cudf_polars
 from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.dsl.utils.windows import (
@@ -65,8 +67,15 @@ from cudf_polars.utils.versions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Hashable, Iterable, Sequence
-    from concurrent.futures import ThreadPoolExecutor
+    import concurrent.futures
+    from collections.abc import (
+        Callable,
+        Generator,
+        Hashable,
+        Iterable,
+        Iterator,
+        Sequence,
+    )
     from typing import Literal, Self
 
     from polars import polars  # type: ignore[attr-defined]
@@ -74,6 +83,8 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers.dataframe import NamedColumn
+    from cudf_polars.dsl.utils.io import CachedParquetInfo
+    from cudf_polars.streaming.rank_aware_source import RankAwareSource
     from cudf_polars.typing import CSECache, ClosedInterval, Schema, Slice as Zlice
     from cudf_polars.utils.config import ParquetOptions
     from cudf_polars.utils.timer import Timer
@@ -129,7 +140,7 @@ class IRExecutionContext:
         Identifier for the query being executed.
     """
 
-    py_executor: ThreadPoolExecutor | None = field(default=None)
+    py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
     get_cuda_stream: Callable[[], Stream] = field(default=get_cuda_stream)
     query_id: uuid.UUID = field(default_factory=uuid.uuid4)
 
@@ -183,6 +194,29 @@ class IRExecutionContext:
             self.get_cuda_stream, upstreams=[df.stream for df in dfs]
         ) as result_stream:
             yield result_stream
+
+
+def apply_predicate(df: DataFrame, predicate: expr.NamedExpr | None) -> DataFrame:
+    """Filter ``df`` by a predicate expression."""
+    if predicate is None:
+        return df
+    (mask,) = broadcast(
+        predicate.evaluate(df), target_length=df.num_rows, stream=df.stream
+    )
+    return df.filter(mask)
+
+
+def concatenate_chunks(
+    dfs: Sequence[DataFrame], *, context: IRExecutionContext
+) -> DataFrame:
+    """Vertically concatenate ``dfs`` (which must share a schema) into one frame."""
+    with context.stream_ordered_after(*dfs) as stream:
+        return DataFrame.from_table(
+            plc.concatenate.concatenate([df.table for df in dfs], stream=stream),
+            dfs[0].column_names,
+            dfs[0].dtypes,
+            stream=stream,
+        )
 
 
 _BINOPS = {
@@ -335,10 +369,194 @@ class PythonScan(IR):
         self.predicate = predicate
         self._non_child_args = (schema, options, predicate)
         self.children = ()
-        raise NotImplementedError("PythonScan not implemented")
 
+    def get_hashable(self) -> Hashable:
+        """Return a hashable representation."""
+        _scan_fn, with_columns, source_type, ir_node_index = self.options
+        return (
+            type(self),
+            tuple(self.schema.items()),
+            ir_node_index,
+            tuple(with_columns) if with_columns is not None else None,
+            source_type,
+            self.predicate,
+        )
 
-_DECIMAL_IDS = {plc.TypeId.DECIMAL32, plc.TypeId.DECIMAL64, plc.TypeId.DECIMAL128}
+    @staticmethod
+    def run_source_function(
+        options: Any,
+        schema: Schema,
+        *,
+        rank_aware_source: RankAwareSource | None = None,
+        rank: int = 0,
+        nranks: int = 1,
+        context: IRExecutionContext,
+    ) -> tuple[int | None, Iterator[pl.DataFrame | DataFrame]]:
+        """
+        Call the source and return its raw chunks.
+
+        The source's scan function is invoked here, so this is where the
+        registered IO source's user code runs. A source that yields no chunks
+        produces a single empty host frame carrying the declared schema, so
+        the iterator always yields at least one chunk.
+
+        Parameters
+        ----------
+        options
+            The `PythonScan` options tuple
+            ``(scan_fn, with_columns, source_type, ir_node_index)``.
+        schema
+            The declared output schema, used for the empty-source fallback frame.
+        rank_aware_source
+            The `RankAwareSource` captured by the registered scan function,
+            when one was found.
+        rank
+            Rank running this scan, passed to a `RankAwareSource`. Defaults to
+            ``0`` for single-rank / in-memory execution.
+        nranks
+            Total number of ranks, passed to a `RankAwareSource`. Defaults to
+            ``1`` for single-rank / in-memory execution.
+        context
+            The IR execution context (provides the CUDA stream).
+
+        Returns
+        -------
+        count
+            The number of chunks the source will yield when it reports one up front (a
+            sized iterator) or None for a plain generator whose length is unknown until
+            it is drained.
+        chunks
+            An iterator of raw chunks, always yielding at least one chunk.
+
+        Raises
+        ------
+        TypeError
+            If the source yields something other than a polars or cudf-polars
+            DataFrame.
+        """
+        scan_fn, with_columns, _source_type, _ir_node_index = options
+        # We pass predicate=None and apply any pushed predicate on the
+        # GPU in process_chunk.
+        # TODO: forward the pushed predicate to a RankAwareSource so a GPU-aware source
+        # can apply it at read time. See https://github.com/rapidsai/cudf/issues/22917.
+        if rank_aware_source is not None:
+            source_chunks = rank_aware_source(
+                with_columns, None, None, None, rank=rank, nranks=nranks
+            )
+        else:
+            # A plain source. The discarded second return value is the wrapper's
+            # "predicate applied" flag, which carries no information here.
+            source_chunks, _ = scan_fn(with_columns, None, None, None)
+        count = len(source_chunks) if isinstance(source_chunks, Sized) else None
+
+        def chunks() -> Generator[pl.DataFrame | DataFrame, None, None]:
+            iterator = iter(source_chunks)
+            sentinel = object()
+            first = next(iterator, sentinel)
+            if first is sentinel:
+                # Empty source: emit one empty host frame carrying the declared schema.
+                yield pl.DataFrame(
+                    schema={name: dtype.polars_type for name, dtype in schema.items()}
+                )
+                return
+            for chunk in itertools.chain((first,), iterator):
+                if not isinstance(chunk, (DataFrame, pl.DataFrame)):
+                    raise TypeError(
+                        "PythonScan source must yield polars.DataFrame or "
+                        "cudf_polars.containers.DataFrame chunks"
+                    )
+                yield chunk
+
+        return count, chunks()
+
+    @staticmethod
+    def process_chunk(
+        chunk: pl.DataFrame | DataFrame,
+        schema: Schema,
+        predicate: expr.NamedExpr | None,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """
+        Move a raw source chunk to the device, validate it, and filter it.
+
+        Parameters
+        ----------
+        chunk
+            A raw chunk returned from :meth:`run_source_function`.
+        schema
+            The declared output schema. The chunk must match it in name, order,
+            and dtype.
+        predicate
+            A pushed-down filter to apply on the device, or ``None``.
+        context
+            The IR execution context (provides the CUDA stream).
+
+        Returns
+        -------
+        The device dataframe for this chunk, filtered by ``predicate``.
+
+        Raises
+        ------
+        polars.exceptions.SchemaError
+            If the chunk's schema does not match ``schema``.
+        """
+        # A host frame is copied to the device; a cudf-polars frame is already there.
+        df = (
+            chunk
+            if isinstance(chunk, DataFrame)
+            else DataFrame.from_polars(chunk, stream=context.get_cuda_stream())
+        )
+        # Validate against the declared (output) schema. Polars performs this
+        # check for register_io_source(..., validate_schema=True), but the flag is
+        # not exposed to the GPU plan, so we always validate.
+        # See https://github.com/rapidsai/cudf/issues/23043
+        declared = pl.Schema(
+            {name: dtype.polars_type for name, dtype in schema.items()}
+        )
+        produced = pl.Schema(
+            zip(
+                df.column_names,
+                (dtype.polars_type for dtype in df.dtypes),
+                strict=True,
+            )
+        )
+        if produced != declared:
+            raise pl.exceptions.SchemaError(
+                f"user provided schema: {declared} doesn't match the "
+                f"DataFrame schema: {produced}"
+            )
+        return apply_predicate(df, predicate)
+
+    @classmethod
+    @log_do_evaluate
+    @nvtx_annotate_cudf_polars(message="PythonScan")
+    def do_evaluate(
+        cls,
+        schema: Schema,
+        options: Any,
+        predicate: expr.NamedExpr | None,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """
+        Evaluate and return a dataframe.
+
+        This runs the source eagerly, producing the whole scan output as one
+        frame. It is used by the non-streaming (in-memory) engine. Streaming
+        engines do not call this; they handle ``PythonScan`` with a dedicated
+        actor (``python_scan_node``) that streams chunks individually.
+        """
+        _, raw = cls.run_source_function(options, schema, context=context)
+        chunks = [
+            cls.process_chunk(chunk, schema, predicate, context=context)
+            for chunk in raw
+        ]
+        # run_source_function always yields at least one chunk.
+        if len(chunks) == 1:
+            return chunks[0]
+        return concatenate_chunks(chunks, context=context)
+
 
 _COMPARISON_BINOPS = {
     plc.binaryop.BinaryOperator.EQUAL,
@@ -354,6 +572,8 @@ _COMPARISON_BINOPS = {
 def _parquet_physical_types(
     paths: list[str], columns: list[str] | None
 ) -> dict[str, plc.DataType]:
+    # TODO: Use prefetched metadata
+    # https://github.com/rapidsai/cudf/issues/22940
     metadata = plc.io.parquet_metadata.read_parquet_metadata(plc.io.SourceInfo(paths))
     column_types = metadata.schema().column_types()
 
@@ -421,6 +641,7 @@ class Scan(IR):
     """Input from files."""
 
     __slots__ = (
+        "cached_parquet_info",
         "cloud_options",
         "include_file_paths",
         "n_rows",
@@ -447,7 +668,7 @@ class Scan(IR):
         "predicate",
         "parquet_options",
     )
-    _n_non_child_args = 11
+    _n_non_child_args = 12
     typ: str
     """What type of file are we reading? Parquet, CSV, etc..."""
     reader_options: dict[str, Any]
@@ -470,6 +691,8 @@ class Scan(IR):
     """Mask to apply to the read dataframe."""
     parquet_options: ParquetOptions
     """Parquet-specific options."""
+    cached_parquet_info: list[CachedParquetInfo] | None
+    """Cached parquet file metadata."""
 
     PARQUET_DEFAULT_CHUNK_SIZE: int = 0  # unlimited
     PARQUET_DEFAULT_PASS_LIMIT: int = 16 * 1024**3  # 16GiB
@@ -488,6 +711,7 @@ class Scan(IR):
         include_file_paths: str | None,
         predicate: expr.NamedExpr | None,
         parquet_options: ParquetOptions,
+        cached_parquet_info: list[CachedParquetInfo] | None = None,
     ):
         self.schema = schema
         self.typ = typ
@@ -512,9 +736,14 @@ class Scan(IR):
             include_file_paths,
             predicate,
             parquet_options,
+            cached_parquet_info,
         )
         self.children = ()
         self.parquet_options = parquet_options
+        self.cached_parquet_info = cached_parquet_info
+
+        Scan._validate_cached_parquet_info(self.paths, self.cached_parquet_info)
+
         if self.typ not in ("csv", "parquet", "ndjson"):  # pragma: no cover
             # This line is unhittable ATM since IPC/Anonymous scan raise
             # on the polars side
@@ -531,8 +760,6 @@ class Scan(IR):
             raise NotImplementedError(
                 "Read from cloud storage"
             )  # pragma: no cover; no test yet
-        if any(str(p).startswith("file://") for p in self.paths):
-            raise NotImplementedError("Read from file URI")
         if self.typ == "csv":
             if any(
                 plc.io.SourceInfo._is_remote_uri(p) for p in self.paths
@@ -596,6 +823,21 @@ class Scan(IR):
                 "Reading only parquet metadata to produce row index."
             )
 
+    @staticmethod
+    def _validate_cached_parquet_info(
+        paths: list[str],
+        cached_parquet_info: list[CachedParquetInfo] | None,
+    ) -> None:
+        if cached_parquet_info is not None and paths != [
+            info.path for info in cached_parquet_info
+        ]:
+            missing = reprlib.repr(
+                set(paths) - {info.path for info in cached_parquet_info}
+            )
+            raise AssertionError(
+                f"Paths do not match cached parquet info. Missing paths: {missing}"
+            )
+
     def get_hashable(self) -> Hashable:
         """
         Hashable representation of the node.
@@ -649,29 +891,53 @@ class Scan(IR):
             [Column(filepaths, name=name, dtype=dtype)], stream=df.stream
         )
 
-    @nvtx_annotate_cudf_polars(message="Scan.fast_count")
-    def fast_count(self) -> int:  # pragma: no cover
-        """Get the number of rows in a Parquet Scan."""
-        meta = plc.io.parquet_metadata.read_parquet_metadata(
-            plc.io.SourceInfo(self.paths)
-        )
-        total_rows = meta.num_rows() - self.skip_rows
-        if self.n_rows != -1:
-            total_rows = min(total_rows, self.n_rows)
-        return max(total_rows, 0)
-
     @staticmethod
     @nvtx_annotate_cudf_polars(message="Scan._get_parquet_row_count_from_metadata")
     def _get_parquet_row_count_from_metadata(
-        paths: list[str], skip_rows: int, n_rows: int
+        paths: list[str],
+        skip_rows: int,
+        n_rows: int,
+        parquet_options: ParquetOptions,
+        cached_parquet_info: list[CachedParquetInfo] | None,
     ) -> int:
         # Zero-width parquet files lose their row count when read through
         # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
-        meta = plc.io.parquet_metadata.read_parquet_metadata(plc.io.SourceInfo(paths))
-        num_rows = meta.num_rows() - skip_rows
+        if parquet_options.prefetch_file_metadata:
+            if cached_parquet_info is None:
+                raise AssertionError(
+                    "Cached parquet info is required when prefetching file metadata is enabled"
+                )
+
+            Scan._validate_cached_parquet_info(paths, cached_parquet_info)
+            parquet_metadatas = [
+                info.file_metadata for info in cached_parquet_info
+            ]  # pragma: no cover
+            num_rows = sum(
+                metadata.num_rows for metadata in parquet_metadatas
+            )  # pragma: no cover
+        else:
+            meta = plc.io.parquet_metadata.read_parquet_metadata(
+                plc.io.SourceInfo(paths)
+            )
+            num_rows = meta.num_rows()
+
+        num_rows -= skip_rows
         if n_rows != -1:
             num_rows = min(num_rows, n_rows)
         return max(num_rows, 0)
+
+    @staticmethod
+    def _apply_parquet_projection(
+        table: plc.Table, names: Sequence[str], with_columns: Sequence[str] | None
+    ) -> tuple[plc.Table, list[str]]:
+        # `set_column_names` may leave pandas-indices in the table.
+        # Here we ensure that the table only contains the projection.
+        if with_columns is None:
+            return table, list(names)
+        names = list(names)
+        with_columns = list(with_columns)
+        columns = dict(zip(names, table.columns(), strict=True))
+        return plc.Table([columns[name] for name in with_columns]), with_columns
 
     @classmethod
     @log_do_evaluate
@@ -689,6 +955,7 @@ class Scan(IR):
         include_file_paths: str | None,
         predicate: expr.NamedExpr | None,
         parquet_options: ParquetOptions,
+        cached_parquet_info: list[CachedParquetInfo] | None,
         *,
         context: IRExecutionContext,
     ) -> DataFrame:
@@ -699,7 +966,7 @@ class Scan(IR):
             def read_csv_header(
                 path: Path | str, sep: str
             ) -> list[str]:  # pragma: no cover
-                with Path(path).open() as f:
+                with Path(path).open(encoding="utf-8") as f:
                     for line in f:
                         stripped = line.strip()
                         if stripped:
@@ -743,7 +1010,7 @@ class Scan(IR):
             for p in paths:
                 skiprows = reader_options["skip_rows"]
                 path = Path(p)
-                with path.open() as f:
+                with path.open(encoding="utf-8") as f:
                     while f.readline() == "\n":
                         skiprows += 1
                 options = (
@@ -804,6 +1071,24 @@ class Scan(IR):
                     df,
                 )
         elif typ == "parquet":
+            if parquet_options.prefetch_file_metadata:
+                if cached_parquet_info is None:
+                    raise AssertionError(
+                        "Cached parquet info is required when prefetching file metadata is enabled"
+                    )
+                Scan._validate_cached_parquet_info(paths, cached_parquet_info)
+                filepath_sources = []
+                parquet_metadatas = []
+                for info in cached_parquet_info:
+                    filepath_sources.append(
+                        plc.io.types.FilepathSource(info.path, info.size)
+                    )
+                    parquet_metadatas.append(info.file_metadata)
+                source_info = plc.io.SourceInfo(filepath_sources)
+            else:
+                parquet_metadatas = None
+                source_info = plc.io.SourceInfo(paths)
+
             filters = None
             if predicate is not None and row_index is None:
                 # Can't apply filters during read if we have a row index.
@@ -813,11 +1098,12 @@ class Scan(IR):
                     ),
                     stream=stream,
                 )
-            parquet_reader_options = (
-                plc.io.parquet.ParquetReaderOptions.builder(plc.io.SourceInfo(paths))
-                .decimal_width(plc.TypeId.DECIMAL128)
-                .build()
-            )
+            builder = plc.io.parquet.ParquetReaderOptions.builder(source_info)
+            if filters is not None and parquet_options.use_jit_filter:
+                builder.use_jit_filter(use_jit_filter=True)
+            parquet_reader_options = builder.decimal_width(
+                plc.TypeId.DECIMAL128
+            ).build()
 
             if with_columns is not None:
                 parquet_reader_options.set_column_names(with_columns)
@@ -832,31 +1118,40 @@ class Scan(IR):
                     parquet_reader_options,
                     chunk_read_limit=parquet_options.chunk_read_limit,
                     pass_read_limit=parquet_options.pass_read_limit,
+                    parquet_metadatas=parquet_metadatas,
                     stream=stream,
                 )
                 chunk = reader.read_chunk()
                 # TODO: Nested column names
                 names = chunk.column_names(include_children=False)
-                concatenated_columns = chunk.tbl.columns()
+                concatenated_columns = chunk.tbl.release()
                 while reader.has_next():
-                    columns = reader.read_chunk().tbl.columns()
+                    columns = reader.read_chunk().tbl.release()
                     # Discard columns while concatenating to reduce memory footprint.
                     # Reverse order to avoid O(n^2) list popping cost.
                     for i in reversed(range(len(concatenated_columns))):
                         concatenated_columns[i] = plc.concatenate.concatenate(
                             [concatenated_columns[i], columns.pop()], stream=stream
                         )
-                num_rows = (
-                    cls._get_parquet_row_count_from_metadata(paths, skip_rows, n_rows)
-                    if not names
-                    else None
+                table, names = cls._apply_parquet_projection(
+                    plc.Table(concatenated_columns), names, with_columns
                 )
+                if not names:
+                    table = plc.Table(
+                        table.columns(),
+                        num_rows=cls._get_parquet_row_count_from_metadata(
+                            paths,
+                            skip_rows,
+                            n_rows,
+                            parquet_options,
+                            cached_parquet_info,
+                        ),
+                    )
                 df = DataFrame.from_table(
-                    plc.Table(concatenated_columns),
+                    table,
                     names=names,
                     dtypes=[schema[name] for name in names],
                     stream=stream,
-                    num_rows=num_rows,
                 )
                 if include_file_paths is not None:
                     df = Scan.add_file_paths(  # pragma: no cover
@@ -864,21 +1159,31 @@ class Scan(IR):
                     )
             else:
                 tbl_w_meta = plc.io.parquet.read_parquet(
-                    parquet_reader_options, stream=stream
+                    parquet_reader_options,
+                    parquet_metadatas=parquet_metadatas,
+                    stream=stream,
                 )
                 # TODO: consider nested column names?
                 col_names = tbl_w_meta.column_names(include_children=False)
-                num_rows = (
-                    cls._get_parquet_row_count_from_metadata(paths, skip_rows, n_rows)
-                    if not col_names
-                    else None
+                table, col_names = cls._apply_parquet_projection(
+                    tbl_w_meta.tbl, col_names, with_columns
                 )
+                if not col_names:
+                    table = plc.Table(
+                        table.columns(),
+                        num_rows=cls._get_parquet_row_count_from_metadata(
+                            paths,
+                            skip_rows,
+                            n_rows,
+                            parquet_options,
+                            cached_parquet_info,
+                        ),
+                    )
                 df = DataFrame.from_table(
-                    tbl_w_meta.tbl,
+                    table,
                     col_names,
                     [schema[name] for name in col_names],
                     stream=stream,
-                    num_rows=num_rows,
                 )
                 if include_file_paths is not None:
                     df = Scan.add_file_paths(
@@ -931,18 +1236,12 @@ class Scan(IR):
                 dtype=dtype,
             )
             df = DataFrame([index_col, *df.columns], stream=df.stream)
-            if next(iter(schema)) != name:
-                df = df.select(schema)
+            # Reorder to the row-index column is always first.
+            df = df.select(schema) if next(iter(schema)) != name else df
         assert all(
             c.obj.type() == schema[name].plc_type for name, c in df.column_map.items()
         )
-        if predicate is None:
-            return df
-        else:
-            (mask,) = broadcast(
-                predicate.evaluate(df), target_length=df.num_rows, stream=df.stream
-            )
-            return df.filter(mask)
+        return apply_predicate(df, predicate)
 
 
 class Sink(IR):
@@ -1546,7 +1845,13 @@ class Select(IR):
         ):  # pragma: no cover
             stream = context.get_cuda_stream()
             scan = self.children[0]
-            effective_rows = scan.fast_count()
+            effective_rows = Scan._get_parquet_row_count_from_metadata(
+                scan.paths,
+                scan.skip_rows,
+                scan.n_rows,
+                scan.parquet_options,
+                None,
+            )
             dtype = DataType(pl.UInt32())
             col = Column(
                 plc.Column.from_scalar(
@@ -2020,7 +2325,7 @@ def _add_cast(
     side: expr.ColRef,
     left_casts: dict[str, DataType],
     right_casts: dict[str, DataType],
-) -> None:
+) -> None:  # pragma: no cover
     (col,) = side.children
     assert isinstance(col, expr.Col)
     casts = (
@@ -2042,7 +2347,9 @@ def _align_decimal_binop_types(
     ):
         target = DataType.common_decimal_dtype(left_type, right_type)
 
-        if left_type.id() != target.id() or left_type.scale() != target.scale():
+        if (
+            left_type.id() != target.id() or left_type.scale() != target.scale()
+        ):  # pragma: no cover
             _add_cast(target, left_expr, left_casts, right_casts)
 
         if right_type.id() != target.id() or right_type.scale() != target.scale():
@@ -2054,7 +2361,7 @@ def _align_decimal_binop_types(
     ) or (
         plc.traits.is_fixed_point(right_type.plc_type)
         and plc.traits.is_floating_point(left_type.plc_type)
-    ):
+    ):  # pragma: no cover
         is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
         decimal_expr, float_expr = (
             (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
@@ -2084,7 +2391,9 @@ def _collect_decimal_binop_casts(
     return left_casts, right_casts
 
 
-def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
+def _apply_casts(
+    df: DataFrame, casts: dict[str, DataType]
+) -> DataFrame:  # pragma: no cover
     if not casts:
         return df
 
@@ -2165,7 +2474,7 @@ class ConditionalJoin(IR):
         self.options = options
         self.children = (left, right)
         predicate_wrapper = self.Predicate(predicate)
-        _, nulls_equal, zlice, suffix, coalesce, maintain_order = self.options
+        _, nulls_equal, _zlice, _suffix, coalesce, maintain_order = self.options
         # Preconditions from polars
         assert not nulls_equal
         assert not coalesce
@@ -2185,17 +2494,16 @@ class ConditionalJoin(IR):
         context: IRExecutionContext,
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
+        left_casts, right_casts = _collect_decimal_binop_casts(
+            predicate_wrapper.predicate
+        )
+        left_on = _apply_casts(left, left_casts)
+        right_on = _apply_casts(right, right_casts)
         with context.stream_ordered_after(left, right) as stream:
-            left_casts, right_casts = _collect_decimal_binop_casts(
-                predicate_wrapper.predicate
-            )
             _, _, zlice, suffix, _, _ = options
 
             lg, rg = plc.join.conditional_inner_join(
-                _apply_casts(left, left_casts).table,
-                _apply_casts(right, right_casts).table,
-                predicate_wrapper.ast,
-                stream=stream,
+                left_on.table, right_on.table, predicate_wrapper.ast, stream=stream
             )
             left_result = DataFrame.from_table(
                 plc.copying.gather(
@@ -2338,7 +2646,7 @@ class Join(IR):
         *,
         left_primary: bool = True,
         stream: Stream,
-    ) -> list[plc.Column]:
+    ) -> tuple[plc.Column, ...]:
         """
         Reorder gather maps to satisfy polars join order restrictions.
 
@@ -2365,7 +2673,7 @@ class Join(IR):
 
         Returns
         -------
-        list[plc.Column]
+        tuple[plc.Column, ...]
             Reordered left and right gather maps.
 
         Notes
@@ -2478,9 +2786,9 @@ class Join(IR):
         context: IRExecutionContext,
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
-        with context.stream_ordered_after(left, right) as stream:
-            how, nulls_equal, zlice, suffix, coalesce, maintain_order = options
-            if how == "Cross":
+        how, nulls_equal, zlice, suffix, coalesce, maintain_order = options
+        if how == "Cross":
+            with context.stream_ordered_after(left, right) as stream:
                 # Separate implementation, since cross_join returns the
                 # result, not the gather maps
                 if right.num_rows == 0:
@@ -2499,7 +2807,9 @@ class Join(IR):
                         ),
                         stream=stream,
                     )
-                    result = DataFrame([*left_cols, *right_cols], stream=stream)
+                    return DataFrame([*left_cols, *right_cols], stream=stream).slice(
+                        zlice
+                    )
                 else:
                     columns = plc.join.cross_join(
                         left.table, right.table, stream=stream
@@ -2518,25 +2828,25 @@ class Join(IR):
                         left=False,
                         stream=stream,
                     )
-                    result = DataFrame([*left_cols, *right_cols], stream=stream).slice(
+                    return DataFrame([*left_cols, *right_cols], stream=stream).slice(
                         zlice
                     )
-
-            else:
-                # how != "Cross"
-                # TODO: Waiting on clarity based on https://github.com/pola-rs/polars/issues/17184
-                left_on = DataFrame(
-                    broadcast(
-                        *(e.evaluate(left) for e in left_on_exprs), stream=stream
-                    ),
-                    stream=stream,
-                )
-                right_on = DataFrame(
-                    broadcast(
-                        *(e.evaluate(right) for e in right_on_exprs), stream=stream
-                    ),
-                    stream=stream,
-                )
+        else:
+            # how != "Cross"
+            # TODO: Waiting on clarity based on https://github.com/pola-rs/polars/issues/17184
+            left_on = DataFrame(
+                broadcast(
+                    *(e.evaluate(left) for e in left_on_exprs), stream=left.stream
+                ),
+                stream=left.stream,
+            )
+            right_on = DataFrame(
+                broadcast(
+                    *(e.evaluate(right) for e in right_on_exprs), stream=right.stream
+                ),
+                stream=right.stream,
+            )
+            with context.stream_ordered_after(left, right) as stream:
                 null_equality = (
                     plc.types.NullEquality.EQUAL
                     if nulls_equal
@@ -2549,16 +2859,15 @@ class Join(IR):
                     table = plc.copying.gather(
                         left.table, lg, left_policy, stream=stream
                     )
-                    result = DataFrame.from_table(
+                    return DataFrame.from_table(
                         table, left.column_names, left.dtypes, stream=stream
-                    )
+                    ).slice(zlice)
                 else:
                     if how == "Right":
                         # Right join is a left join with the tables swapped
                         left, right = right, left
                         left_on, right_on = right_on, left_on
                         maintain_order = Join.SWAPPED_ORDER[maintain_order]
-
                     lg, rg = join_fn(
                         left_on.table, right_on.table, null_equality, stream=stream
                     )
@@ -2636,10 +2945,7 @@ class Join(IR):
                             if name in left.column_names_set
                         }
                     )
-                    result = left.with_columns(right.columns, stream=stream)
-                result = result.slice(zlice)
-
-        return result
+                    return left.with_columns(right.columns, stream=stream).slice(zlice)
 
 
 class HStack(IR):
@@ -2923,10 +3229,7 @@ class Filter(IR):
         cls, mask_expr: expr.NamedExpr, df: DataFrame, *, context: IRExecutionContext
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
-        (mask,) = broadcast(
-            mask_expr.evaluate(df), target_length=df.num_rows, stream=df.stream
-        )
-        return df.filter(mask)
+        return apply_predicate(df, mask_expr)
 
 
 class Projection(IR):
@@ -2954,7 +3257,11 @@ class Projection(IR):
             target_length=df.num_rows,
             stream=df.stream,
         )
-        return DataFrame(columns, stream=df.stream)
+        return DataFrame(
+            columns,
+            stream=df.stream,
+            num_rows=df.num_rows if len(schema) == 0 else None,
+        )
 
 
 class MergeSorted(IR):
@@ -3212,15 +3519,24 @@ class MapFunction(IR):
 class Union(IR):
     """Concatenate dataframes vertically."""
 
-    __slots__ = ("zlice",)
-    _non_child = ("schema", "zlice")
+    __slots__ = ("maintain_order", "zlice")
+    _non_child = ("schema", "zlice", "maintain_order")
     _n_non_child_args = 1
+    maintain_order: bool
+    """Whether row order must be preserved."""
     zlice: Zlice | None
     """Optional slice to apply to the result."""
 
-    def __init__(self, schema: Schema, zlice: Zlice | None, *children: IR):
+    def __init__(
+        self,
+        schema: Schema,
+        zlice: Zlice | None,
+        maintain_order: bool,  # noqa: FBT001
+        *children: IR,
+    ):
         self.schema = schema
         self.zlice = zlice
+        self.maintain_order = maintain_order
         self._non_child_args = (zlice,)
         self.children = children
         schema = self.children[0].schema
@@ -3232,14 +3548,8 @@ class Union(IR):
         cls, zlice: Zlice | None, *dfs: DataFrame, context: IRExecutionContext
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
-        with context.stream_ordered_after(*dfs) as stream:
-            # TODO: only evaluate what we need if we have a slice?
-            return DataFrame.from_table(
-                plc.concatenate.concatenate([df.table for df in dfs], stream=stream),
-                dfs[0].column_names,
-                dfs[0].dtypes,
-                stream=stream,
-            ).slice(zlice)
+        # TODO: only evaluate what we need if we have a slice?
+        return concatenate_chunks(dfs, context=context).slice(zlice)
 
 
 class HConcat(IR):

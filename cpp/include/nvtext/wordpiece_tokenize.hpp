@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,6 +15,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_tokenize
  * @{
  * @file
+ * @brief APIs for WordPiece tokenization of strings columns using a vocabulary.
  */
 
 /**

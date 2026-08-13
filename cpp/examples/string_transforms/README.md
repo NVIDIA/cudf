@@ -3,6 +3,8 @@
 This C++ example demonstrates using libcudf transform API to access and create
 strings columns.
 
+Blog post that uses this code: https://developer.nvidia.com/blog/efficient-transforms-in-cudf-using-jit-compilation/
+
 The example source code loads a csv file and produces a transformed column from the table using the values from the tables.
 
 The following examples are included:

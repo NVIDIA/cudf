@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for RapidsMPF metadata functionality."""
@@ -6,18 +6,19 @@
 from __future__ import annotations
 
 import pytest
-from rapidsmpf.streaming.cudf.channel_metadata import (
-    ChannelMetadata,
-    HashScheme,
-    OrderKey,
-    OrderScheme,
-    Partitioning,
-)
-from rapidsmpf.streaming.cudf.table_chunk import TableChunk
 
 import polars as pl
 
 import pylibcudf as plc
+from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
+    HashScheme,
+    OrderKey,
+    OrderScheme,
+    Ordering,
+    Partitioning,
+)
+from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataFrame, DataType
@@ -25,7 +26,6 @@ from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import GroupBy, HStack, Projection, Select, Sort
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.collectives.sort import (
-    _is_already_sorted,
     _sort_to_order_keys,
 )
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
@@ -346,7 +346,7 @@ def test_get_partitioning_moduli_allow_subset(
     ],
 )
 def test_is_aligned_with(spmd_engine, left, right, expected) -> None:
-    """is_aligned_with checks compatible hash layout for chunkwise operations."""
+    """is_aligned_with checks compatible partitioning layouts."""
     br = spmd_engine.context.br()
     assert left.is_aligned_with(right, br) is expected
     assert right.is_aligned_with(left, br) is expected
@@ -489,8 +489,8 @@ def test_remap_partitioning_reorder_columns_projection(streaming_engine) -> None
     assert result.inter_rank.modulus == 8
 
 
-def _make_order_scheme(context, *, key_indices=(0,), values=(100, 200), strict=False):
-    stream = context.get_stream_from_pool()
+def _make_ordering(context, *, key_indices=(0,), values=(100, 200), strict=False):
+    stream = context.br().stream_pool.get_stream()
     df = DataFrame.from_polars(
         pl.DataFrame({f"k{i}": list(values) for i in key_indices}), stream
     )
@@ -499,7 +499,13 @@ def _make_order_scheme(context, *, key_indices=(0,), values=(100, 200), strict=F
     )
     asc, before = plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
     keys = [OrderKey(i, asc, before) for i in key_indices]
-    return OrderScheme(keys, chunk, strict_boundaries=strict)
+    return Ordering(keys, chunk, strict_boundaries=strict)
+
+
+def _make_order_scheme(context, *, key_indices=(0,), values=(100, 200), strict=False):
+    return OrderScheme(
+        [_make_ordering(context, key_indices=key_indices, values=values, strict=strict)]
+    )
 
 
 @pytest.mark.parametrize(
@@ -587,6 +593,51 @@ def test_from_keys_order_scheme_single_rank(spmd_engine):
     assert result_rev_int.inter_rank_scheme is None
 
 
+def test_from_keys_order_scheme_selects_matching_ordering(spmd_engine):
+    asc, before = plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
+    scheme = OrderScheme(
+        [
+            _make_ordering(spmd_engine.context, key_indices=(0,), strict=True),
+            _make_ordering(spmd_engine.context, key_indices=(1,), strict=True),
+        ]
+    )
+    part = Partitioning(inter_rank=scheme, local="inherit")
+
+    result = NormalizedPartitioning.from_keys(
+        part, nranks=4, keys=(OrderKey(1, asc, before),)
+    )
+
+    assert isinstance(result.inter_rank_scheme, OrderScheme)
+    assert result.inter_rank_scheme.orderings[0].keys[0].column_index == 1
+    assert [o.keys[0].column_index for o in result.inter_rank_scheme.orderings] == [
+        1,
+        0,
+    ]
+
+
+def test_from_keys_order_scheme_selects_longest_matching_ordering(spmd_engine):
+    asc, before = plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
+    scheme = OrderScheme(
+        [
+            _make_ordering(spmd_engine.context, key_indices=(0,), strict=True),
+            _make_ordering(spmd_engine.context, key_indices=(0, 1), strict=True),
+        ]
+    )
+    part = Partitioning(inter_rank=scheme, local="inherit")
+
+    result = NormalizedPartitioning.from_keys(
+        part,
+        nranks=4,
+        keys=(OrderKey(0, asc, before), OrderKey(1, asc, before)),
+    )
+
+    assert isinstance(result.inter_rank_scheme, OrderScheme)
+    assert [
+        tuple(k.column_index for k in ordering.keys)
+        for ordering in result.inter_rank_scheme.orderings
+    ] == [(0, 1), (0,)]
+
+
 def test_remap_partitioning_order_scheme_select(spmd_engine):
     part = Partitioning(
         inter_rank=_make_order_scheme(spmd_engine.context, key_indices=(0,)),
@@ -596,7 +647,45 @@ def test_remap_partitioning_order_scheme_select(spmd_engine):
     result = maybe_remap_partitioning(_make_select_ir(engine, ("b", "a")), part)
     assert result is not None
     assert isinstance(result.inter_rank, OrderScheme)
-    assert result.inter_rank.keys[0].column_index == 1
+    assert result.inter_rank.orderings[0].keys[0].column_index == 1
+
+
+def test_remap_partitioning_order_scheme_updates_all_orderings(spmd_engine):
+    part = Partitioning(
+        inter_rank=OrderScheme(
+            [
+                _make_ordering(spmd_engine.context, key_indices=(0,)),
+                _make_ordering(spmd_engine.context, key_indices=(1,)),
+            ]
+        ),
+        local="inherit",
+    )
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+
+    result = maybe_remap_partitioning(_make_select_ir(engine, ("b", "a")), part)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    assert [o.keys[0].column_index for o in result.inter_rank.orderings] == [1, 0]
+
+
+def test_remap_partitioning_order_scheme_drops_only_lost_orderings(spmd_engine):
+    part = Partitioning(
+        inter_rank=OrderScheme(
+            [
+                _make_ordering(spmd_engine.context, key_indices=(0,)),
+                _make_ordering(spmd_engine.context, key_indices=(2,)),
+            ]
+        ),
+        local="inherit",
+    )
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+
+    result = maybe_remap_partitioning(_make_select_ir(engine, ("b", "a")), part)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    assert [o.keys[0].column_index for o in result.inter_rank.orderings] == [1]
 
 
 def test_remap_partitioning_order_scheme_drops_key(spmd_engine):
@@ -608,6 +697,163 @@ def test_remap_partitioning_order_scheme_drops_key(spmd_engine):
     result = maybe_remap_partitioning(_make_select_ir(engine, ("b",)), part)
     assert result is not None
     assert result.inter_rank is None
+
+
+def test_remap_partitioning_order_scheme_adds_alias_ordering(spmd_engine):
+    q = pl.LazyFrame({"a": [1], "b": [2], "c": [3]})
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    child = Translator(q._ldf.visit(), engine).translate_ir()
+    alias = expr.NamedExpr("a_alias", expr.Col(child.schema["a"], "a"))
+    hstack = HStack(
+        {**child.schema, "a_alias": child.schema["a"]},
+        (alias,),
+        should_broadcast=True,
+        df=child,
+    )
+    part = Partitioning(
+        inter_rank=_make_order_scheme(
+            spmd_engine.context, key_indices=(0,), strict=True
+        ),
+        local="inherit",
+    )
+
+    result = maybe_remap_partitioning(hstack, part)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    assert [o.keys[0].column_index for o in result.inter_rank.orderings] == [0, 3]
+    assert [o.strict_boundaries for o in result.inter_rank.orderings] == [True, True]
+
+
+@pytest.mark.parametrize(
+    "frequency,expected",
+    [
+        ("1ms", [1_000_000, 2_000_000]),
+        ("1us", [1_234_000, 2_345_000]),
+    ],
+)
+def test_remap_partitioning_order_scheme_adds_truncated_ordering(
+    spmd_engine, frequency, expected
+):
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    hstack = Translator(
+        pl.LazyFrame({"DateTime": [1]})
+        .with_columns(
+            pl.col("DateTime")
+            .cast(pl.Datetime("ns"))
+            .dt.truncate(frequency)
+            .cast(pl.Int64)
+            .alias("ts_bucket")
+        )
+        ._ldf.visit(),
+        engine,
+    ).translate_ir()
+    assert isinstance(hstack, HStack)
+    part = Partitioning(
+        inter_rank=_make_order_scheme(
+            spmd_engine.context,
+            key_indices=(0,),
+            values=(1_234_567, 2_345_678),
+            strict=True,
+        ),
+        local="inherit",
+    )
+
+    result = maybe_remap_partitioning(hstack, part, context=spmd_engine.context)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    orderings = result.inter_rank.orderings
+    assert [o.keys[0].column_index for o in orderings] == [0, 1]
+    assert [o.strict_boundaries for o in orderings] == [True, False]
+
+    boundaries = orderings[1].get_boundaries(spmd_engine.context.br())
+    boundary_df = DataFrame.from_table(
+        boundaries.table_view(),
+        ["ts_bucket"],
+        [hstack.schema["ts_bucket"]],
+        boundaries.stream,
+    ).to_polars()
+    assert boundary_df["ts_bucket"].to_list() == expected
+
+
+def test_remap_partitioning_order_scheme_truncates_prefix_key(spmd_engine):
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    hstack = Translator(
+        pl.LazyFrame({"venue": [1], "DateTime": [1]})
+        .with_columns(
+            pl.col("DateTime")
+            .cast(pl.Datetime("ns"))
+            .dt.truncate("1ms")
+            .cast(pl.Int64)
+            .alias("ts_bucket")
+        )
+        ._ldf.visit(),
+        engine,
+    ).translate_ir()
+    assert isinstance(hstack, HStack)
+    part = Partitioning(
+        inter_rank=_make_order_scheme(
+            spmd_engine.context,
+            key_indices=(0, 1),
+            values=(1_234_567, 2_345_678),
+            strict=True,
+        ),
+        local="inherit",
+    )
+
+    result = maybe_remap_partitioning(hstack, part, context=spmd_engine.context)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    orderings = result.inter_rank.orderings
+    assert [
+        tuple(key.column_index for key in ordering.keys) for ordering in orderings
+    ] == [(0, 1), (0, 2)]
+    assert [o.strict_boundaries for o in orderings] == [True, False]
+
+    boundaries = orderings[1].get_boundaries(spmd_engine.context.br())
+    boundary_df = DataFrame.from_table(
+        boundaries.table_view(),
+        ["venue", "ts_bucket"],
+        [hstack.schema["venue"], hstack.schema["ts_bucket"]],
+        boundaries.stream,
+    ).to_polars()
+    assert boundary_df["venue"].to_list() == [1_234_567, 2_345_678]
+    assert boundary_df["ts_bucket"].to_list() == [1_000_000, 2_000_000]
+
+
+def test_remap_partitioning_order_scheme_ignores_unordered_truncate(spmd_engine):
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    hstack = Translator(
+        pl.LazyFrame({"venue": [1], "DateTime": [1]})
+        .with_columns(
+            pl.col("DateTime")
+            .cast(pl.Datetime("ns"))
+            .dt.truncate("1ms")
+            .cast(pl.Int64)
+            .alias("ts_bucket")
+        )
+        ._ldf.visit(),
+        engine,
+    ).translate_ir()
+    assert isinstance(hstack, HStack)
+    part = Partitioning(
+        inter_rank=_make_order_scheme(
+            spmd_engine.context,
+            key_indices=(0,),
+            strict=True,
+        ),
+        local="inherit",
+    )
+
+    result = maybe_remap_partitioning(hstack, part, context=spmd_engine.context)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    orderings = result.inter_rank.orderings
+    assert [o.keys[0].column_index for o in orderings] == [0]
+    assert [o.strict_boundaries for o in orderings] == [True]
 
 
 @pytest.mark.parametrize(
@@ -644,10 +890,11 @@ def test_sort_output_metadata(spmd_engine_factory, by, descending, nulls_last) -
     assert metadata.partitioning.local == "inherit"
 
     output_cols = list(ir.schema.keys())
-    assert len(scheme.keys) == len(by)
+    ordering = scheme.orderings[0]
+    assert len(ordering.keys) == len(by)
     for i, col in enumerate(by):
-        assert scheme.keys[i].column_index == output_cols.index(col)
-    assert scheme.strict_boundaries is True
+        assert ordering.keys[i].column_index == output_cols.index(col)
+    assert ordering.strict_boundaries is True
 
 
 @pytest.mark.parametrize(
@@ -659,7 +906,7 @@ def test_sort_output_metadata(spmd_engine_factory, by, descending, nulls_last) -
         (2, False, True),  # exact match + non-strict → skip (strict irrelevant)
     ],
 )
-def test_is_already_sorted(spmd_engine, scheme_key_count, strict, expected) -> None:
+def test_is_strictly_sorted(spmd_engine, scheme_key_count, strict, expected) -> None:
     df_lf = pl.LazyFrame({"x": list(range(5)), "y": list(range(5))})
     base_ir = Translator(df_lf._ldf.visit(), spmd_engine).translate_ir()
     asc, before = plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
@@ -678,7 +925,7 @@ def test_is_already_sorted(spmd_engine, scheme_key_count, strict, expected) -> N
     )
 
     ctx = spmd_engine.context
-    stream = ctx.get_stream_from_pool()
+    stream = ctx.br().stream_pool.get_stream()
     keys = [OrderKey(i, asc, before) for i in range(scheme_key_count)]
     boundary_chunk = TableChunk.from_pylibcudf_table(
         DataFrame.from_polars(
@@ -689,10 +936,13 @@ def test_is_already_sorted(spmd_engine, scheme_key_count, strict, expected) -> N
         exclusive_view=False,
         br=ctx.br(),
     )
-    scheme = OrderScheme(keys, boundary_chunk, strict_boundaries=strict)
+    scheme = OrderScheme([Ordering(keys, boundary_chunk, strict_boundaries=strict)])
     meta = ChannelMetadata(
         3, partitioning=Partitioning(inter_rank=scheme, local="inherit")
     )
 
     order_keys = _sort_to_order_keys(sort_xy)
-    assert _is_already_sorted(meta, order_keys, nranks=1) is expected
+    partitioning = NormalizedPartitioning.from_keys(
+        meta.partitioning, nranks=1, keys=order_keys
+    )
+    assert partitioning.is_strictly_sorted(order_keys) is expected

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -96,8 +96,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Aggregation_createNoParamAgg(JNIEnv*
         case 35:  // MERGE_HISTOGRAM
           return cudf::make_merge_histogram_aggregation();
           // case 36: BITWISE_AGG
-        case 37:  // SUM_WITH_OVERFLOW
-          return cudf::make_sum_with_overflow_aggregation();
+        case 37:  // SUM_OVERFLOW
+          return cudf::make_sum_overflow_aggregation();
 
         default: throw std::logic_error("Unsupported No Parameter Aggregation Operation");
       }
@@ -211,7 +211,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Aggregation_createQuantAgg(JNIEnv* e
   {
     cudf::jni::auto_set_device(env);
 
-    const cudf::jni::native_jdoubleArray quantiles(env, j_quantiles);
+    cudf::jni::native_jdoubleArray const quantiles(env, j_quantiles);
 
     std::vector<double> quants(quantiles.data(), quantiles.data() + quantiles.size());
     cudf::interpolation interp = static_cast<cudf::interpolation>(j_method);

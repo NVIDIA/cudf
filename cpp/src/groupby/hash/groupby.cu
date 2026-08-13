@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,7 +31,7 @@ namespace cudf::groupby::detail::hash {
 namespace {
 
 std::unique_ptr<table> dispatch_groupby(table_view const& keys,
-                                        host_span<aggregation_request const> requests,
+                                        std::span<aggregation_request const> requests,
                                         cudf::detail::result_cache* cache,
                                         bool const keys_have_nulls,
                                         null_policy const include_null_keys,
@@ -111,7 +111,7 @@ struct can_use_hash_groupby_fn {
  * @return true A hash-based groupby should be used
  * @return false A hash-based groupby should not be used
  */
-bool can_use_hash_groupby(host_span<aggregation_request const> requests)
+bool can_use_hash_groupby(std::span<aggregation_request const> requests)
 {
   return std::all_of(requests.begin(), requests.end(), [](aggregation_request const& r) {
     auto const v_type = is_dictionary(r.values.type())
@@ -132,7 +132,7 @@ bool can_use_hash_groupby(host_span<aggregation_request const> requests)
 // Hash-based groupby
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby(
   table_view const& keys,
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   null_policy include_null_keys,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)

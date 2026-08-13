@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cpython cimport bool as py_bool
 from cython cimport no_gc_clear
+from libc.math cimport isinf
 from libc.stdint cimport (
     int8_t,
     int16_t,
@@ -425,7 +426,7 @@ def _(
     cdef type_id tid = c_dtype.id()
 
     if tid == type_id.FLOAT32:
-        if abs(py_val) > numeric_limits[float].max():
+        if not isinf(py_val) and abs(py_val) > numeric_limits[float].max():
             raise OverflowError(f"{py_val} out of range for FLOAT32 scalar")
         c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
         (<numeric_scalar[float]*>c_obj.get()).set_value(py_val, _cs)

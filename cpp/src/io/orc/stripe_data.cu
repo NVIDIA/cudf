@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -762,7 +762,7 @@ integer_rlev1(orc_bytestream_s* bs, orc_rlev1_state_s* rle, T* vals, uint32_t ma
 /**
  * @brief Maps the RLEv2 5-bit length code to 6-bit length
  */
-static const __device__ __constant__ uint8_t kRLEv2_W[32] = {
+static __device__ const __constant__ uint8_t kRLEv2_W[32] = {
   1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
   17, 18, 19, 20, 21, 22, 23, 24, 26, 28, 30, 32, 40, 48, 56, 64};
 
@@ -775,7 +775,7 @@ static const __device__ __constant__ uint8_t kRLEv2_W[32] = {
  *
  * @see https://github.com/apache/orc/commit/9faf7f5147a7bc69
  */
-static const __device__ __constant__ uint8_t ClosestFixedBitsMap[65] = {
+static __device__ const __constant__ uint8_t ClosestFixedBitsMap[65] = {
   1,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
   22, 23, 24, 26, 26, 28, 28, 30, 30, 32, 32, 40, 40, 40, 40, 40, 40, 40, 40, 48, 48, 48,
   48, 48, 48, 48, 48, 56, 56, 56, 56, 56, 56, 56, 56, 64, 64, 64, 64, 64, 64, 64, 64};
@@ -1131,7 +1131,7 @@ byte_rle(orc_bytestream_s* bs, orc_byte_rle_state_s* rle, uint8_t* vals, uint32_
   return rle->num_vals;
 }
 
-static const __device__ __constant__ int64_t kPow5i[28] = {1,
+static __device__ const __constant__ int64_t kPow5i[28] = {1,
                                                            5,
                                                            25,
                                                            125,
@@ -1533,7 +1533,7 @@ static __device__ void DecodeRowPositions(orcdec_state_s* s,
 /**
  * @brief Trailing zeroes for decoding timestamp nanoseconds
  */
-static const __device__ __constant__ uint32_t kTimestampNanoScale[8] = {
+static __device__ const __constant__ uint32_t kTimestampNanoScale[8] = {
   1, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
 
 /**
@@ -2072,6 +2072,7 @@ void __host__ decode_nulls_and_string_dictionaries(column_desc* chunks,
   decode_nulls_and_string_dictionaries_kernel<block_size>
     <<<dim_grid, block_size, 0, stream.value()>>>(
       chunks, global_dictionary, num_columns, num_stripes, first_row);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -2106,6 +2107,7 @@ void __host__ decode_column_data(column_desc* chunks,
   auto const num_blocks = num_columns * (num_rowgroups > 0 ? num_rowgroups : num_stripes);
   decode_column_data_kernel<block_size><<<num_blocks, block_size, 0, stream.value()>>>(
     chunks, global_dictionary, tz_table, row_groups, first_row, rowidx_stride, level, error_count);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::orc::detail

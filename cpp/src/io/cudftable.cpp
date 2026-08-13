@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/contiguous_split.hpp>
+#include <cudf/detail/contiguous_split.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
@@ -25,7 +26,9 @@ namespace {
  *
  * The CudfTable format stores a table in a simple binary layout:
  * - Magic number (4 bytes): "CTBL"
- * - Version (4 bytes): uint32_t format version (currently 1)
+ * - Version (4 bytes): uint32_t format version (currently 2)
+ * - Metadata version (4 bytes): int32_t version of the embedded pack() metadata
+ * - Reserved (4 bytes): padding, kept zero
  * - Metadata length (8 bytes): uint64_t size of the metadata buffer in bytes
  * - Data length (8 bytes): uint64_t size of the data buffer in bytes
  * - Metadata (variable): serialized column metadata from pack()
@@ -33,22 +36,32 @@ namespace {
  */
 struct cudftable_header {
   static constexpr uint32_t magic_number = 0x4C425443;  ///< "CTBL" in little-endian
-  static constexpr uint32_t version      = 1;           ///< Format version
+  // Bumped to 2 when the embedded pack() metadata layout changed to an explicit
+  // serialized_table_header, so older readers reject new files instead of
+  // misparsing the metadata. See cpp/src/copying/pack.cpp.
+  static constexpr uint32_t version = 2;  ///< File format version
 
   uint32_t magic{};            ///< Magic number for format validation
-  uint32_t format_version{};   ///< Format version number
+  uint32_t format_version{};   ///< File format version number
+  int32_t metadata_version{};  ///< Version of the embedded pack() metadata layout
+  int32_t reserved{};          ///< Padding; kept zero for deterministic output
   uint64_t metadata_length{};  ///< Length of metadata buffer in bytes
   uint64_t data_length{};      ///< Length of data buffer in bytes
 
   cudftable_header() = default;
-  cudftable_header(uint64_t metadata_size, uint64_t data_size)
+  cudftable_header(uint64_t metadata_size, uint64_t data_size, int32_t meta_version)
     : magic{magic_number},
       format_version{version},
+      metadata_version{meta_version},
       metadata_length{metadata_size},
       data_length{data_size}
   {
   }
 };
+
+// Header is written/read via memcpy, so guard against accidental padding that
+// would leave uninitialized bytes in the file.
+static_assert(sizeof(cudftable_header) == 32);
 
 }  // anonymous namespace
 
@@ -56,7 +69,8 @@ void write_cudftable(data_sink* sink, table_view const& input, rmm::cuda_stream_
 {
   auto const packed = cudf::pack(input, stream, cudf::get_current_device_resource_ref());
 
-  auto const header = cudftable_header{packed.metadata->size(), packed.gpu_data->size()};
+  auto const header = cudftable_header{
+    packed.metadata->size(), packed.gpu_data->size(), cudf::detail::packed_metadata_version};
   sink->host_write(&header, sizeof(cudftable_header));
 
   sink->host_write(packed.metadata->data(), header.metadata_length);
@@ -87,6 +101,8 @@ packed_table read_cudftable(datasource* source,
                "Invalid magic number in cudftable header");
   CUDF_EXPECTS(header.format_version == cudftable_header::version,
                "Unsupported cudftable format version");
+  CUDF_EXPECTS(header.metadata_version == cudf::detail::packed_metadata_version,
+               "Unsupported cudftable packed metadata version");
 
   auto const metadata_offset = header_size;
   auto const data_offset     = metadata_offset + header.metadata_length;

@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+schema_version: 1
+
+context:
+  version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
+  minor_version: ${{ (version | split("."))[:2] | join(".") }}
+  cuda_version: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[:2] | join(".") }}
+  cuda_major: '${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}'
+  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
+  head_rev: '${{ git.head_rev(".")[:8] }}'
+  py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
+  py_buildstring: ${{ py_abi_min | version_to_buildstring }}
+  py_runtime_latest: "3.14"
+
+package:
+  name: cudf-streaming
+  version: ${{ version }}
+
+source:
+  path: ../../..
+
+build:
+  python:
+    version_independent: true
+  string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
+  script:
+    content: |
+      ./build.sh cudf_streaming
+    secrets:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - SCCACHE_DIST_AUTH_TOKEN
+    env:
+      CMAKE_C_COMPILER_LAUNCHER: ${{ env.get("CMAKE_C_COMPILER_LAUNCHER") }}
+      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CUDA_COMPILER_LAUNCHER") }}
+      CMAKE_CXX_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CXX_COMPILER_LAUNCHER") }}
+      CMAKE_GENERATOR: ${{ env.get("CMAKE_GENERATOR") }}
+      NVCC_APPEND_FLAGS: ${{ env.get("NVCC_APPEND_FLAGS", default="") }}
+      PARALLEL_LEVEL: ${{ env.get("PARALLEL_LEVEL", default="8") }}
+      RAPIDS_ARTIFACTS_DIR: ${{ env.get("RAPIDS_ARTIFACTS_DIR", default="") }}
+      RAPIDS_PY_VERSION: ${{ env.get("RAPIDS_PY_VERSION", default="") }}
+      SCCACHE_BUCKET: ${{ env.get("SCCACHE_BUCKET", default="") }}
+      SCCACHE_DIST_AUTH_TYPE: ${{ env.get("SCCACHE_DIST_AUTH_TYPE", default="token") }}
+      SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE: ${{ env.get("SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE", default="false") }}
+      SCCACHE_DIST_MAX_RETRIES: ${{ env.get("SCCACHE_DIST_MAX_RETRIES", default="inf") }}
+      SCCACHE_DIST_REQUEST_TIMEOUT: ${{ env.get("SCCACHE_DIST_REQUEST_TIMEOUT", default="7140") }}
+      SCCACHE_DIST_SCHEDULER_URL: ${{ env.get("SCCACHE_DIST_SCHEDULER_URL", default="") }}
+      SCCACHE_ERROR_LOG: ${{ env.get("SCCACHE_ERROR_LOG", default="/tmp/sccache.log") }}
+      SCCACHE_IDLE_TIMEOUT: ${{ env.get("SCCACHE_IDLE_TIMEOUT", default="0") }}
+      SCCACHE_NO_CACHE: ${{ env.get("SCCACHE_NO_CACHE", default="") }}
+      SCCACHE_RECACHE: ${{ env.get("SCCACHE_RECACHE", default="") }}
+      SCCACHE_REGION: ${{ env.get("SCCACHE_REGION", default="") }}
+      SCCACHE_S3_KEY_PREFIX: cudf-streaming-${{ env.get("RAPIDS_CONDA_ARCH") }}
+      SCCACHE_S3_NO_CREDENTIALS: ${{ env.get("SCCACHE_S3_NO_CREDENTIALS", default="false") }}
+      SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX: cudf-streaming-${{ env.get("RAPIDS_CONDA_ARCH") }}-cuda${{ cuda_major }}-conda-preprocessor-cache
+      SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE: ${{ env.get("SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE", default="true") }}
+      SCCACHE_S3_USE_SSL: ${{ env.get("SCCACHE_S3_USE_SSL", default="true") }}
+      SCCACHE_SERVER_LOG: ${{ env.get("SCCACHE_SERVER_LOG", default="sccache=debug") }}
+
+requirements:
+  build:
+    - cmake ${{ cmake_version }}
+    - ninja
+    - ${{ compiler("c") }}
+    - ${{ compiler("cxx") }}
+    - ${{ compiler("cuda") }}
+    - cuda-version =${{ cuda_version }}
+    - ${{ stdlib("c") }}
+  host:
+    - cython >=3.2.2
+    - pip
+    - python =${{ py_abi_min }}
+    - python-abi3 ${{ py_abi_min }}.*
+    - cuda-version =${{ cuda_version }}
+    - pylibcudf =${{ version }}
+    - libcudf-streaming =${{ minor_version }}
+    - rapidsmpf =${{ minor_version }}
+    - rapids-build-backend >=0.4.0,<0.5.0
+    - scikit-build-core>=0.11.0
+    - cuda-cudart-dev
+  run:
+    - python
+    - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
+    - libcudf-streaming =${{ minor_version }}
+    - pylibcudf =${{ version }}
+    - rapidsmpf =${{ minor_version }}
+    - cuda-cudart
+  ignore_run_exports:
+    from_package:
+      - cuda-cudart-dev
+    by_name:
+      - cuda-version
+
+tests:
+  - python:
+      imports:
+        - cudf_streaming
+      python_version: ${{ py_runtime_latest }}.*
+      pip_check: false
+
+about:
+  homepage: ${{ load_from_file("python/cudf_streaming/pyproject.toml").project.urls.Homepage }}
+  license: ${{ load_from_file("python/cudf_streaming/pyproject.toml").project.license }}
+  summary: ${{ load_from_file("python/cudf_streaming/pyproject.toml").project.description }}

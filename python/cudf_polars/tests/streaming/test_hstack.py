@@ -1,8 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CSE HStack handling in the streaming executor."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +24,9 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import warns_on_spmd
 from cudf_polars.utils.config import ConfigOptions, StreamingFallbackMode
+
+if TYPE_CHECKING:
+    import concurrent.futures
 
 
 @pytest.fixture
@@ -77,7 +82,9 @@ def test_hstack_non_scalar_cse_fallback(df, engine):
         assert_gpu_result_equal(q, engine=engine)
 
 
-def test_hstack_non_pointwise_redirect_covers_parallel_hstack_handler(engine):
+def test_hstack_non_pointwise_redirect_covers_parallel_hstack_handler(
+    engine, parquet_stats_executor: concurrent.futures.ThreadPoolExecutor
+):
     """Filter → rec(HStack) so standalone non-pointwise HStack hits redirect to Select."""
     base = Translator(
         pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})._ldf.visit(), engine
@@ -101,7 +108,15 @@ def test_hstack_non_pointwise_redirect_covers_parallel_hstack_handler(engine):
     mask = expr.NamedExpr("m", expr.Literal(DataType(pl.Boolean()), value=True))
     root = Filter(hstack_schema, mask, hstack)
     config_options = ConfigOptions.from_polars_engine(engine)
-    lower_ir_graph(root, config_options, collect_statistics(root, config_options))
+    lower_ir_graph(
+        root,
+        config_options,
+        collect_statistics(
+            root,
+            config_options,
+            parquet_stats_executor,
+        ),
+    )
 
 
 def test_with_columns_scalar_upstream_20981(engine):
@@ -112,7 +127,11 @@ def test_with_columns_scalar_upstream_20981(engine):
 
 
 @pytest.mark.parametrize("comm_subexpr_elim", [True, False])
-def test_cse_agg_shared_decomposition(engine, comm_subexpr_elim):
+def test_cse_agg_shared_decomposition(
+    engine,
+    comm_subexpr_elim,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
     df = pl.LazyFrame({"a": [1, 2, 3, 4, 5, 6]})
     q = df.with_columns(
         pl.col("a").sum().alias("s"),
@@ -131,14 +150,18 @@ def test_cse_agg_shared_decomposition(engine, comm_subexpr_elim):
     assert len(inner_hstacks) == (1 if comm_subexpr_elim else 0)
 
     config_options = ConfigOptions.from_polars_engine(engine)
-    lowered, _ = lower_ir_graph(
-        ir, config_options, collect_statistics(ir, config_options)
+    lowering = lower_ir_graph(
+        ir,
+        config_options,
+        collect_statistics(ir, config_options, parquet_stats_executor),
     )
 
     # Both paths must lower to a single Repartition computing one aggregation.
-    repartitions = [n for n in traversal([lowered]) if isinstance(n, Repartition)]
+    repartitions = [
+        n for n in traversal([lowering.lowered]) if isinstance(n, Repartition)
+    ]
     assert len(repartitions) == 1
-    assert len(repartitions[0].children[0].exprs) == 1
+    assert len(repartitions[0].children[0].exprs) == 1  # type: ignore[attr-defined]
     assert_gpu_result_equal(q, engine=engine, collect_kwargs={"optimizations": opts})
 
 

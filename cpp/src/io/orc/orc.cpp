@@ -12,9 +12,9 @@
 #include <cudf/io/orc.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 
+#include <cuda/numeric>
 #include <thrust/tabulate.h>
 
-#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -432,9 +432,9 @@ host_span<uint8_t const> orc_decompressor::decompress_blocks(host_span<uint8_t c
       // Uncompressed block
       max_dst_length += block_len;
     } else {
-      CUDF_EXPECTS(max_dst_length <= std::numeric_limits<size_t>::max() - m_blockSize,
-                   "ORC decompression: compression block size overflow");
-      max_dst_length += m_blockSize;
+      auto const next = cuda::add_overflow<size_t>(max_dst_length, m_blockSize);
+      CUDF_EXPECTS(!next.overflow, "ORC decompression: compression block size overflow");
+      max_dst_length = next.value;
     }
     i += block_len;
     CUDF_EXPECTS(i <= src.size() and block_len <= m_blockSize, "Error in decompression");

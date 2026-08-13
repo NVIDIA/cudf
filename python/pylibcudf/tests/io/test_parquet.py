@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import io
 import os
 
 import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.parquet as pq
 import pytest
 from pyarrow.parquet import read_table, write_table
 from utils import (
@@ -103,6 +104,53 @@ def test_read_parquet_basic(
     # No filtering done
     assert res.num_row_groups_after_stats_filter is None
     assert res.num_row_groups_after_bloom_filter is None
+
+
+def test_read_parquet_column_field_ids(binary_source_or_sink):
+    schema = pa.schema(
+        [
+            pa.field(
+                "col_int64",
+                pa.int64(),
+                metadata={b"PARQUET:field_id": b"10"},
+            ),
+            pa.field(
+                "col_string",
+                pa.string(),
+                metadata={b"PARQUET:field_id": b"20"},
+            ),
+            pa.field(
+                "col_bool",
+                pa.bool_(),
+                metadata={b"PARQUET:field_id": b"30"},
+            ),
+        ]
+    )
+    pa_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2, 3], type=pa.int64()),
+            pa.array(["a", "b", "c"], type=pa.string()),
+            pa.array([True, False, True], type=pa.bool_()),
+        ],
+        schema=schema,
+    )
+    source = make_source(
+        binary_source_or_sink, pa_table, **_COMMON_PARQUET_SOURCE_KWARGS
+    )
+    source_info = plc.io.SourceInfo([source])
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(source_info)
+        .column_field_ids([30, 10])
+        .build()
+    )
+
+    res = plc.io.parquet.read_parquet(options)
+
+    assert_table_and_meta_eq(
+        pa_table.select(["col_bool", "col_int64"]),
+        res,
+        check_field_nullability=False,
+    )
 
 
 @pytest.mark.parametrize("if_prune_rowgroup,result", [(True, 0), (False, 1)])
@@ -391,6 +439,147 @@ def test_file_metadata_from_bytes_empty() -> None:
         plc.io.parquet_metadata.FileMetaData.from_bytes(memoryview(b""))
 
 
+def test_file_metadata_row_groups_and_column_chunks() -> None:
+    table = pa.table(
+        {
+            "a": list(range(100)),
+            "b": [x * 10 for x in range(100)],
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, row_group_size=25)
+    sink.seek(0)
+    parquet_file = pq.ParquetFile(sink)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+
+    assert (
+        len(file_metadata.row_groups) == parquet_file.metadata.num_row_groups
+    )
+
+    for rg_idx, row_group in enumerate(file_metadata.row_groups):
+        pa_row_group = parquet_file.metadata.row_group(rg_idx)
+        assert row_group.num_rows == pa_row_group.num_rows
+        assert row_group.total_byte_size == pa_row_group.total_byte_size
+        assert row_group.total_compressed_size is None or (
+            row_group.total_compressed_size >= 0
+        )
+        assert row_group.file_offset is None or row_group.file_offset >= 0
+        assert row_group.ordinal is None or row_group.ordinal == rg_idx
+
+        assert len(row_group.columns) == pa_row_group.num_columns
+        for col_idx, column_chunk in enumerate(row_group.columns):
+            pa_col_chunk = pa_row_group.column(col_idx)
+            meta_data = column_chunk.meta_data
+            assert column_chunk.file_path == ""
+            assert column_chunk.file_offset == 0
+            assert isinstance(column_chunk.offset_index_offset, int)
+            assert isinstance(column_chunk.offset_index_length, int)
+            assert isinstance(column_chunk.column_index_offset, int)
+            assert isinstance(column_chunk.column_index_length, int)
+            assert isinstance(column_chunk.schema_idx, int)
+            assert meta_data.num_values == pa_col_chunk.num_values
+            assert (
+                meta_data.total_uncompressed_size
+                == pa_col_chunk.total_uncompressed_size
+            )
+            assert (
+                meta_data.total_compressed_size
+                == pa_col_chunk.total_compressed_size
+            )
+            assert meta_data.path_in_schema[-1] == pa_col_chunk.path_in_schema
+
+
+def test_file_metadata_wrappers_not_directly_constructible() -> None:
+    with pytest.raises(
+        ValueError, match="SortingColumn cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.SortingColumn()
+    with pytest.raises(
+        ValueError, match="ColumnChunk cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.ColumnChunk()
+    with pytest.raises(
+        ValueError, match="ColumnChunkMetaData cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.ColumnChunkMetaData()
+    with pytest.raises(
+        ValueError, match="RowGroup cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.RowGroup()
+
+
+def test_file_metadata_row_group_sorting_columns(tmp_path) -> None:
+    table = pa.table({"a": list(range(50)), "b": [x * 10 for x in range(50)]})
+    sorting_columns = pq.SortingColumn.from_ordering(
+        table.schema, [("a", "ascending")]
+    )
+
+    parquet_path = tmp_path / "sorted.parquet"
+    write_table(
+        table, parquet_path, row_group_size=25, sorting_columns=sorting_columns
+    )
+
+    parquet_file = pq.ParquetFile(parquet_path)
+    source_info = plc.io.SourceInfo([parquet_path])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+
+    for rg_idx, row_group in enumerate(file_metadata.row_groups):
+        pa_sorting_columns = parquet_file.metadata.row_group(
+            rg_idx
+        ).sorting_columns
+        assert pa_sorting_columns is not None
+        assert row_group.sorting_columns is not None
+        assert len(row_group.sorting_columns) == len(pa_sorting_columns)
+
+        for sorting_column, pa_sorting_column in zip(
+            row_group.sorting_columns, pa_sorting_columns, strict=True
+        ):
+            assert sorting_column.column_idx == pa_sorting_column.column_index
+            assert sorting_column.descending == pa_sorting_column.descending
+            assert sorting_column.nulls_first == pa_sorting_column.nulls_first
+
+
+def test_file_metadata_columnchunk_metadata() -> None:
+    table = pa.table(
+        {
+            "a": list(range(100)),
+            "b": [x * 10 for x in range(100)],
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, row_group_size=25)
+    sink.seek(0)
+    parquet_file = pq.ParquetFile(sink)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+
+    result = file_metadata.columnchunk_metadata
+    assert set(result) == {"a", "b"}
+
+    expected: dict[str, list[int]] = {"a": [], "b": []}
+    for rg_idx in range(parquet_file.metadata.num_row_groups):
+        pa_row_group = parquet_file.metadata.row_group(rg_idx)
+        for col_idx in range(pa_row_group.num_columns):
+            pa_col = pa_row_group.column(col_idx)
+            expected[pa_col.path_in_schema].append(
+                pa_col.total_uncompressed_size
+            )
+
+    for name, sizes in expected.items():
+        assert result[name] == sizes
+
+
 # TODO: Test these options
 # list row_groups = None,
 # ^^^ This one is not tested since it's not in pyarrow/pandas, deprecate?
@@ -468,6 +657,36 @@ def test_write_parquet(
     synchronize_stream(stream)
 
     assert isinstance(result, memoryview)
+
+
+# cupy allocates on its own stream, so this cannot honor the injected default
+# stream used by the stream-validation test pass.
+@pytest.mark.uses_custom_stream
+def test_write_large_list_row_group():
+    import cupy as cp
+
+    # 524.3k list<float32>[1024] rows exceed 2 GiB plain data. The writer must retain the correct
+    # plain-data size for dictionary selection.
+    rows = 524_300
+    embedding_dim = 1024
+    values = cp.zeros((rows, embedding_dim), dtype=cp.float32)
+    table = plc.Table(
+        [plc.Column.from_cuda_array_interface(values)],
+        num_rows=rows,
+    )
+    metadata = plc.io.types.TableInputMetadata(table)
+    sink = plc.io.SinkInfo([io.BytesIO()])
+    options = (
+        plc.io.parquet.ParquetWriterOptions.builder(sink, table)
+        .metadata(metadata)
+        .build()
+    )
+
+    result = plc.io.parquet.write_parquet(options)
+    parquet_file = pq.ParquetFile(io.BytesIO(result))
+
+    assert parquet_file.metadata.num_rows == rows
+    assert parquet_file.metadata.num_row_groups == 1
 
 
 @pytest.mark.parametrize("use_jit_filter", [False, True])

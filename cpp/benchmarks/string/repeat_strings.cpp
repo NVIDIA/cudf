@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/strings/repeat_strings.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -33,6 +34,7 @@ static void bench_repeat(nvbench::state& state)
   auto const data_size = table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (api == "scalar") {
     state.add_global_memory_writes<nvbench::int8_t>(data_size * max_repeat);
     state.exec(nvbench::exec_tag::sync,
@@ -46,6 +48,8 @@ static void bench_repeat(nvbench::state& state)
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::repeat_strings(input, repeats); });
   }
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_repeat)

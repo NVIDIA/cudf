@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -109,7 +109,7 @@ std::unique_ptr<cudf::column> generate_ngrams(cudf::strings_column_view const& s
       strings.offsets().type(), strings_count + 1, strings.offsets().head(), nullptr, 0);
     auto table_offsets = cudf::detail::copy_if(
                            cudf::table_view({offsets_view}),
-                           [d_strings, strings_count] __device__(cudf::size_type idx) {
+                           [d_strings, strings_count] __device__(cudf::size_type idx) -> bool {
                              if (idx == strings_count) return true;
                              if (d_strings.is_null(idx)) return false;
                              return !d_strings.element<cudf::string_view>(idx).empty();
@@ -275,6 +275,7 @@ std::unique_ptr<cudf::column> generate_character_ngrams(cudf::strings_column_vie
       static_cast<cudf::thread_index_type>(input.size()) * tile_size, block_size);
     count_char_ngrams_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
       *d_strings, ngrams, tile_size, counts.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
     return cudf::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr);
   }();
   auto d_offsets = offsets->view().data<cudf::size_type>();
@@ -375,6 +376,7 @@ std::unique_ptr<cudf::column> hash_character_ngrams(cudf::strings_column_view co
     auto counts = rmm::device_uvector<cudf::size_type>(input.size(), stream);
     count_char_ngrams_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
       *d_strings, ngrams, cudf::detail::warp_size, counts.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
     return cudf::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr);
   }();
   auto d_offsets = offsets->view().data<cudf::size_type>();
@@ -389,6 +391,7 @@ std::unique_ptr<cudf::column> hash_character_ngrams(cudf::strings_column_view co
 
   character_ngram_hash_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
     *d_strings, ngrams, seed, d_offsets, d_hashes);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   return make_lists_column(
     input.size(), std::move(offsets), std::move(hashes), 0, rmm::device_buffer{});

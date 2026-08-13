@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,20 +12,22 @@ import java.nio.ByteOrder;
 public abstract class AstExpression {
   /**
    * Enumeration for the types of AST nodes that can appear in a serialized AST.
-   * NOTE: This must be kept in sync with the `jni_serialized_node_type` in CompiledExpression.cpp!
+   * NOTE: This must be kept in sync with `jni_serialized_expression_type` in
+   * CompiledExpression.cpp!
    */
   protected enum ExpressionType {
     VALID_LITERAL(0),
     NULL_LITERAL(1),
     COLUMN_REFERENCE(2),
     UNARY_EXPRESSION(3),
-    BINARY_EXPRESSION(4);
+    BINARY_EXPRESSION(4),
+    COLUMN_NAME_REFERENCE(5),
+    JIT_EXPRESSION(6);
 
     private final byte nativeId;
 
     ExpressionType(int nativeId) {
-      this.nativeId = (byte) nativeId;
-      assert this.nativeId == nativeId;
+      this.nativeId = AstUtils.checkByte(nativeId);
     }
 
     /** Get the size in bytes to serialize this node type */

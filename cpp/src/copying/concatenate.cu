@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,9 @@
 #include <thrust/transform_scan.h>
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
+#include <stdexcept>
 #include <utility>
 
 namespace cudf {
@@ -165,6 +167,7 @@ size_type concatenate_masks(device_span<column_device_view const> d_views,
       dest_mask,
       output_size,
       d_valid_count.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   return output_size - d_valid_count.value(stream);
 }
 
@@ -271,6 +274,7 @@ std::unique_ptr<column> fused_concatenate(host_span<column_view const> views,
     static_cast<size_type>(d_views.size()),
     *d_out_view,
     d_valid_count.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   if (has_nulls) {
     out_col->set_null_count(output_size - d_valid_count.value(stream));
@@ -497,14 +501,17 @@ void bounds_and_type_check(host_span<column_view const> cols, rmm::cuda_stream_v
 }  // anonymous namespace
 
 // Concatenates the elements from a vector of column_views
-std::unique_ptr<column> concatenate(host_span<column_view const> columns_to_concat,
+std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
                                     rmm::cuda_stream_view stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not columns_to_concat.empty(), "Unexpected empty list of columns to concatenate.");
 
+  auto const views_as_host_span =
+    host_span<column_view const>{columns_to_concat.data(), columns_to_concat.size()};
+
   // verify all types match and that we won't overflow size_type in output size
-  bounds_and_type_check(columns_to_concat, stream);
+  bounds_and_type_check(views_as_host_span, stream);
 
   if (std::all_of(columns_to_concat.begin(), columns_to_concat.end(), [](column_view const& c) {
         return c.is_empty();
@@ -522,10 +529,10 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns_to_conc
       data_type(type_id::EMPTY), length, rmm::device_buffer{}, rmm::device_buffer{}, length);
   }
   return type_dispatcher<dispatch_storage_type>(
-    columns_to_concat.front().type(), concatenate_dispatch{columns_to_concat, stream, mr});
+    columns_to_concat.front().type(), concatenate_dispatch{views_as_host_span, stream, mr});
 }
 
-std::unique_ptr<table> concatenate(host_span<table_view const> tables_to_concat,
+std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
                                    rmm::cuda_stream_view stream,
                                    rmm::device_async_resource_ref mr)
 {
@@ -538,6 +545,20 @@ std::unique_ptr<table> concatenate(host_span<table_view const> tables_to_concat,
                              return t.num_columns() == first_table.num_columns();
                            }),
                "Mismatch in table columns to concatenate.");
+
+  // Zero-column tables carry only a row count; concatenation sums their rows.
+  if (first_table.num_columns() == 0) {
+    auto const total_rows = std::accumulate(
+      tables_to_concat.begin(),
+      tables_to_concat.end(),
+      std::size_t{0},
+      [](std::size_t acc, auto const& t) { return acc + static_cast<std::size_t>(t.num_rows()); });
+    CUDF_EXPECTS(total_rows <= static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
+                 "Total number of rows exceeds the column size limit",
+                 std::overflow_error);
+    return std::make_unique<table>(std::vector<std::unique_ptr<column>>{},
+                                   static_cast<size_type>(total_rows));
+  }
 
   std::vector<std::unique_ptr<column>> concat_columns;
   for (size_type i = 0; i < first_table.num_columns(); ++i) {
@@ -554,7 +575,7 @@ std::unique_ptr<table> concatenate(host_span<table_view const> tables_to_concat,
   return std::make_unique<table>(std::move(concat_columns));
 }
 
-rmm::device_buffer concatenate_masks(host_span<column_view const> views,
+rmm::device_buffer concatenate_masks(std::span<column_view const> views,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
 {
@@ -569,7 +590,9 @@ rmm::device_buffer concatenate_masks(host_span<column_view const> views,
     rmm::device_buffer null_mask =
       cudf::detail::create_null_mask(total_element_count, mask_state::UNINITIALIZED, stream, mr);
 
-    detail::concatenate_masks(views, static_cast<bitmask_type*>(null_mask.data()), stream);
+    detail::concatenate_masks(host_span<column_view const>{views.data(), views.size()},
+                              static_cast<bitmask_type*>(null_mask.data()),
+                              stream);
 
     return null_mask;
   }
@@ -579,7 +602,7 @@ rmm::device_buffer concatenate_masks(host_span<column_view const> views,
 
 }  // namespace detail
 
-rmm::device_buffer concatenate_masks(host_span<column_view const> views,
+rmm::device_buffer concatenate_masks(std::span<column_view const> views,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
 {
@@ -588,7 +611,7 @@ rmm::device_buffer concatenate_masks(host_span<column_view const> views,
 }
 
 // Concatenates the elements from a vector of column_views
-std::unique_ptr<column> concatenate(host_span<column_view const> columns_to_concat,
+std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
                                     rmm::cuda_stream_view stream,
                                     rmm::device_async_resource_ref mr)
 {
@@ -596,7 +619,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns_to_conc
   return detail::concatenate(columns_to_concat, stream, mr);
 }
 
-std::unique_ptr<table> concatenate(host_span<table_view const> tables_to_concat,
+std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
                                    rmm::cuda_stream_view stream,
                                    rmm::device_async_resource_ref mr)
 {

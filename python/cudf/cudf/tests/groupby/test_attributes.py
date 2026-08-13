@@ -124,7 +124,8 @@ def test_groupby_iterate_groups():
         ["a", np.array([0, 1, 1, 2, 3, 2])],
     ],
 )
-def test_grouping(grouper):
+@pytest.mark.parametrize("sort", [True, False])
+def test_grouping(grouper, sort):
     pdf = pd.DataFrame(
         {
             "a": [1, 1, 1, 2, 2, 3],
@@ -135,7 +136,9 @@ def test_grouping(grouper):
     gdf = cudf.from_pandas(pdf)
 
     for pdf_group, gdf_group in zip(
-        pdf.groupby(grouper), gdf.groupby(grouper), strict=True
+        pdf.groupby(grouper, sort=sort),
+        gdf.groupby(grouper, sort=sort),
+        strict=True,
     ):
         assert pdf_group[0] == gdf_group[0]
         assert_eq(pdf_group[1], gdf_group[1])

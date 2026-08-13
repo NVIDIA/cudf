@@ -1,8 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/concatenate.hpp>
@@ -29,8 +30,13 @@ static void bench_concatenate(nvbench::state& state)
   state.add_global_memory_reads<int64_t>(num_rows * num_cols);
   state.add_global_memory_writes<int64_t>(num_rows * num_cols);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { auto result = cudf::concatenate(column_views); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_concatenate)
@@ -61,8 +67,13 @@ static void bench_concatenate_strings(nvbench::state& state)
   state.add_global_memory_reads<int8_t>(sv.chars_size(stream) * num_cols);
   state.add_global_memory_writes<int64_t>(sv.chars_size(stream) * num_cols);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { auto result = cudf::concatenate(column_views); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_concatenate_strings)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.string cimport string
@@ -49,6 +49,7 @@ from pylibcudf.libcudf.io.orc cimport (
 )
 
 from pylibcudf.libcudf.types cimport size_type
+from pylibcudf.libcudf.table.table_view cimport table_view
 
 from pylibcudf.types cimport DataType
 
@@ -720,8 +721,9 @@ cdef class OrcChunkedWriter:
         -------
         None
         """
+        cdef table_view c_table = table.view()
         with nogil:
-            self.c_obj.get()[0].write(table.view())
+            self.c_obj.get()[0].write(c_table)
 
     @staticmethod
     def from_options(ChunkedOrcWriterOptions options, object stream = None):

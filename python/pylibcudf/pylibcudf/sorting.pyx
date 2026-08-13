@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -7,7 +7,9 @@ from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport sorting as cpp_sorting
 from pylibcudf.libcudf.aggregation cimport rank_method
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport null_order, null_policy, order, size_type
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
@@ -28,6 +30,8 @@ __all__ = [
     "stable_sort",
     "stable_sort_by_key",
     "stable_sorted_order",
+    "top_k",
+    "top_k_order",
 ]
 
 cpdef Column sorted_order(
@@ -63,9 +67,10 @@ cpdef Column sorted_order(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_sorting.sorted_order(
-            source_table.view(),
+            c_source_table,
             c_orders,
             c_null_precedence,
             _cs,
@@ -108,9 +113,10 @@ cpdef Column stable_sorted_order(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_sorting.stable_sorted_order(
-            source_table.view(),
+            c_source_table,
             c_orders,
             c_null_precedence,
             _cs,
@@ -159,9 +165,10 @@ cpdef Column rank(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input_view = input_view.view()
     with nogil:
         c_result = cpp_sorting.rank(
-            input_view.view(),
+            c_input_view,
             method,
             column_order,
             null_handling,
@@ -200,10 +207,11 @@ cpdef bool is_sorted(
 
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
+    cdef table_view c_tbl = tbl.view()
 
     with nogil:
         c_result = cpp_sorting.is_sorted(
-            tbl.view(),
+            c_tbl,
             c_orders,
             c_null_precedence,
             _cs
@@ -250,11 +258,14 @@ cpdef Table segmented_sort_by_key(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_values = values.view()
+    cdef table_view c_keys = keys.view()
+    cdef column_view c_segment_offsets = segment_offsets.view()
     with nogil:
         c_result = cpp_sorting.segmented_sort_by_key(
-            values.view(),
-            keys.view(),
-            segment_offsets.view(),
+            c_values,
+            c_keys,
+            c_segment_offsets,
             c_orders,
             c_null_precedence,
             _cs,
@@ -303,11 +314,14 @@ cpdef Table stable_segmented_sort_by_key(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_values = values.view()
+    cdef table_view c_keys = keys.view()
+    cdef column_view c_segment_offsets = segment_offsets.view()
     with nogil:
         c_result = cpp_sorting.stable_segmented_sort_by_key(
-            values.view(),
-            keys.view(),
-            segment_offsets.view(),
+            c_values,
+            c_keys,
+            c_segment_offsets,
             c_orders,
             c_null_precedence,
             _cs,
@@ -352,10 +366,12 @@ cpdef Table sort_by_key(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_values = values.view()
+    cdef table_view c_keys = keys.view()
     with nogil:
         c_result = cpp_sorting.sort_by_key(
-            values.view(),
-            keys.view(),
+            c_values,
+            c_keys,
             c_orders,
             c_null_precedence,
             _cs,
@@ -400,10 +416,12 @@ cpdef Table stable_sort_by_key(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_values = values.view()
+    cdef table_view c_keys = keys.view()
     with nogil:
         c_result = cpp_sorting.stable_sort_by_key(
-            values.view(),
-            keys.view(),
+            c_values,
+            c_keys,
             c_orders,
             c_null_precedence,
             _cs,
@@ -445,9 +463,10 @@ cpdef Table sort(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_sorting.sort(
-            source_table.view(),
+            c_source_table,
             c_orders,
             c_null_precedence,
             _cs,
@@ -489,9 +508,10 @@ cpdef Table stable_sort(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_sorting.stable_sort(
-            source_table.view(),
+            c_source_table,
             c_orders,
             c_null_precedence,
             _cs,
@@ -533,9 +553,10 @@ cpdef Column top_k(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_col = col.view()
     with nogil:
         c_result = cpp_sorting.top_k(
-            col.view(),
+            c_col,
             k,
             sort_order,
             _cs,
@@ -580,9 +601,10 @@ cpdef Column top_k_order(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_col = col.view()
     with nogil:
         c_result = cpp_sorting.top_k_order(
-            col.view(),
+            c_col,
             k,
             sort_order,
             _cs,

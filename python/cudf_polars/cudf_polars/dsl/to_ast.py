@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Conversion of expression nodes to libcudf AST nodes."""
@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import partial, reduce, singledispatch
 from typing import TYPE_CHECKING, TypeAlias, TypedDict, cast
 
-import polars as pl
+import polars as pl  # noqa: TC002 (used at runtime for pl.datatypes, pl.Series etc.)
 
 import pylibcudf as plc
 from pylibcudf import expressions as plc_expr
@@ -75,6 +75,8 @@ UOP_TO_ASTOP = {
     plc.unary.UnaryOperator.BIT_INVERT: plc_expr.ASTOperator.BIT_INVERT,
     plc.unary.UnaryOperator.NOT: plc_expr.ASTOperator.NOT,
 }
+
+_DECIMAL_IDS = {plc.TypeId.DECIMAL32, plc.TypeId.DECIMAL64, plc.TypeId.DECIMAL128}
 
 
 class ASTState(TypedDict):
@@ -176,7 +178,26 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
                 )
             ),
         )
-    return plc_expr.Operation(BINOP_TO_ASTOP[node.op], *map(self, node.children))
+    c1, c2 = node.children
+    if c1.dtype != c2.dtype:
+        if isinstance(c1, expr.Literal):  # pragma: no cover
+            c1 = c1.astype(c2.dtype)
+        elif isinstance(c2, expr.Literal):
+            c2 = c2.astype(c1.dtype)
+        elif (
+            isinstance(c1, (expr.Col, expr.ColRef)) and c1.dtype.id() in _DECIMAL_IDS
+        ) or (
+            isinstance(c2, (expr.Col, expr.ColRef)) and c2.dtype.id() in _DECIMAL_IDS
+        ):
+            # Allow mixed-precision decimal, or mixed decimal-float operations through
+            # unchanged.
+            pass
+        else:
+            raise NotImplementedError(
+                "BinOp with mismatching dtypes"
+            )  # pragma: no cover
+    children = (c1, c2)
+    return plc_expr.Operation(BINOP_TO_ASTOP[node.op], *map(self, children))
 
 
 @_to_ast.register
@@ -191,7 +212,9 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 # to a expr.LiteralColumn, so the actual type is in the inner type
                 # .inner returns DataTypeClass | DataType, need to cast to DataType
                 plc_dtype = DataType(
-                    cast(pl.DataType, cast(pl.List, haystack.dtype.polars_type).inner)
+                    cast(
+                        "pl.DataType", cast("pl.List", haystack.dtype.polars_type).inner
+                    )
                 ).plc_type
             else:
                 plc_dtype = haystack.dtype.plc_type  # pragma: no cover

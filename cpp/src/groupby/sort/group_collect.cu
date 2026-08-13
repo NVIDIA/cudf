@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,7 +44,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
 {
   auto values_device_view = column_device_view::create(values, stream);
 
-  auto not_null_pred = [d_value = *values_device_view] __device__(auto i) {
+  auto not_null_pred = [d_value = *values_device_view] __device__(auto i) -> bool {
     return d_value.is_valid_nocheck(i);
   };
 

@@ -1,12 +1,22 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import pytest
 
 import polars as pl
+from polars.exceptions import ShapeError
 
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+
+
+def test_when_then_mismatched_branch_lengths_raises(
+    engine_raise_on_fail: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame({"x": range(5)})
+    q = df.select(pl.when(True).then(pl.col("x").head(2)).otherwise(pl.col("x")))  # noqa: FBT003
+    with pytest.raises(ShapeError):
+        q.collect(engine=engine_raise_on_fail)
 
 
 @pytest.mark.parametrize(

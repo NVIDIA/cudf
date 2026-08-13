@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -16,6 +16,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_edit_distance
  * @{
  * @file
+ * @brief APIs for computing the Levenshtein edit distance between strings.
  */
 
 /**
@@ -23,7 +24,7 @@ namespace CUDF_EXPORT nvtext {
  *
  * The `output[i]` is the edit distance between `input[i]` and `targets[i]`.
  * This edit distance calculation uses the Levenshtein algorithm as documented here:
- * https://www.cuelogic.com/blog/the-levenshtein-algorithm
+ * https://en.wikipedia.org/wiki/Levenshtein_distance
  *
  * @code{.pseudo}
  * Example:
@@ -51,47 +52,6 @@ namespace CUDF_EXPORT nvtext {
 std::unique_ptr<cudf::column> edit_distance(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& targets,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Compute the edit distance between all the strings in the input column.
- *
- * @deprecated Deprecated since release 26.04
- *
- * This uses the Levenshtein algorithm to calculate the edit distance between
- * two strings as documented here: https://www.cuelogic.com/blog/the-levenshtein-algorithm
- *
- * The output is essentially a `input.size() x input.size()` square matrix of integers.
- * All values at diagonal `row == col` are 0 since the edit distance between two identical
- * strings is zero. All values above the diagonal are reflected below since the edit distance
- * calculation is also commutative.
- *
- * @code{.pseudo}
- * Example:
- * s = ["hello", "hallo", "hella"]
- * d = edit_distance_matrix(s)
- * d is now [[0, 1, 1],
- *           [1, 0, 2]
- *           [1, 2, 0]]
- * @endcode
- *
- * Null entries for `input` are ignored and the edit distance
- * is computed as though the null entry is an empty string.
- *
- * The output is a lists column of size `input.size()` and where each list item
- * is `input.size()` elements.
- *
- * @throw std::invalid_argument if `input.size() == 1`
- * @throw std::overflow_error if `input.size() * input.size()` greater than max size_type
- *
- * @param input Strings column of input strings
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return New lists column of edit distance values
- */
-[[deprecated]] std::unique_ptr<cudf::column> edit_distance_matrix(
-  cudf::strings_column_view const& input,
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

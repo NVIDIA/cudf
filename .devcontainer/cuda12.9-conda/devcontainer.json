@@ -5,13 +5,16 @@
     "args": {
       "CUDA": "12.9",
       "PYTHON_PACKAGE_MANAGER": "conda",
-      "BASE": "rapidsai/devcontainers:26.08-cpp-mambaforge"
-    }
+      "BASE": "rapidsai/devcontainers:26.10-cpp-mambaforge"
+    },
+    "cacheFrom": [
+      "ghcr.io/rapidsai/cudf/devcontainer:26.10-cuda12.9-conda"
+    ]
   },
   "runArgs": [
     "--rm",
     "--name",
-    "${localEnv:USER:anon}-rapids-${localWorkspaceFolderBasename}-26.08-cuda12.9-conda",
+    "${localEnv:USER:anon}-rapids-${localWorkspaceFolderBasename}-26.10-cuda12.9-conda",
     "--ulimit",
     "nofile=500000"
   ],
@@ -19,7 +22,7 @@
     "gpu": "optional"
   },
   "features": {
-    "ghcr.io/rapidsai/devcontainers/features/cuda:26.8": {
+    "ghcr.io/rapidsai/devcontainers/features/cuda:26.10": {
       "version": "12.9",
       "installCompilers": false,
       "installProfilers": true,
@@ -40,7 +43,7 @@
       "installnvJPEG": false,
       "pruneStaticLibs": true
     },
-    "ghcr.io/rapidsai/devcontainers/features/rapids-build-utils:26.8": {}
+    "ghcr.io/rapidsai/devcontainers/features/rapids-build-utils:26.10": {}
   },
   "overrideFeatureInstallOrder": [
     "ghcr.io/rapidsai/devcontainers/features/cuda",
@@ -49,7 +52,7 @@
   "initializeCommand": [
     "/bin/bash",
     "-c",
-    "mkdir -m 0755 -p ${localWorkspaceFolder}/../.{aws,cache,config,conda/pkgs,conda/${localWorkspaceFolderBasename}-cuda12.9-envs} ${localWorkspaceFolder}/../rapidsmpf"
+    "mkdir -m 0755 -p ${localWorkspaceFolder}/../.{aws,cache,config,conda/pkgs,conda/${localWorkspaceFolderBasename}-cuda12.9-envs}"
   ],
   "postAttachCommand": [
     "/bin/bash",
@@ -63,8 +66,7 @@
     "source=${localWorkspaceFolder}/../.cache,target=/home/coder/.cache,type=bind,consistency=consistent",
     "source=${localWorkspaceFolder}/../.config,target=/home/coder/.config,type=bind,consistency=consistent",
     "source=${localWorkspaceFolder}/../.conda/pkgs,target=/home/coder/.conda/pkgs,type=bind,consistency=consistent",
-    "source=${localWorkspaceFolder}/../.conda/${localWorkspaceFolderBasename}-cuda12.9-envs,target=/home/coder/.conda/envs,type=bind,consistency=consistent",
-    "source=${localWorkspaceFolder}/../rapidsmpf,target=/home/coder/rapidsmpf,type=bind,consistency=consistent"
+    "source=${localWorkspaceFolder}/../.conda/${localWorkspaceFolderBasename}-cuda12.9-envs,target=/home/coder/.conda/envs,type=bind,consistency=consistent"
   ],
   "customizations": {
     "vscode": {

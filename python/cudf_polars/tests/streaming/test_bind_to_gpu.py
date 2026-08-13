@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import functools
 import multiprocessing
 import traceback
 from typing import TYPE_CHECKING
@@ -36,7 +37,7 @@ def _wrapper(child_conn: Connection, target: Callable[[], None]) -> None:
         child_conn.close()
 
 
-def _run_in_subprocess(target: Callable[[], None]) -> None:
+def _run_in_subprocess(target: Callable[[], None], timeout_seconds: int) -> None:
     """Execute ``target()`` in a spawned child process.
 
     Spawn (rather than fork) is used so the child starts from a clean
@@ -58,14 +59,14 @@ def _run_in_subprocess(target: Callable[[], None]) -> None:
     proc = ctx.Process(target=_wrapper, args=(child_conn, target))
     proc.start()
     try:
-        proc.join(timeout=30)
+        proc.join(timeout=timeout_seconds)
 
         if proc.is_alive():
             proc.kill()
-            proc.join()
-            raise RuntimeError("Subprocess timed out after 30 seconds")
+            proc.join(timeout=5)
+            raise RuntimeError(f"Subprocess timed out after {timeout_seconds} seconds")
 
-        if parent_conn.poll():
+        if parent_conn.poll(timeout=timeout_seconds):
             exc = parent_conn.recv()
             if exc is not None:
                 raise exc
@@ -103,9 +104,9 @@ def _body_bind_called_once() -> None:
         assert mock_bind.call_count == 1
 
 
-def test_bind_called_once() -> None:
+def test_bind_called_once(timeout_seconds: int) -> None:
     """bind() is called exactly once even when bind_to_gpu() is called twice."""
-    _run_in_subprocess(_body_bind_called_once)
+    _run_in_subprocess(_body_bind_called_once, timeout_seconds)
 
 
 def _body_bind_falls_back_to_gpu_0() -> None:
@@ -134,9 +135,9 @@ def _body_bind_falls_back_to_gpu_0() -> None:
         ]
 
 
-def test_bind_falls_back_to_gpu_0() -> None:
+def test_bind_falls_back_to_gpu_0(timeout_seconds: int) -> None:
     """When bind() raises RuntimeError, falls back to gpu_id=0."""
-    _run_in_subprocess(_body_bind_falls_back_to_gpu_0)
+    _run_in_subprocess(_body_bind_falls_back_to_gpu_0, timeout_seconds)
 
 
 def _body_bind_raise_on_fail_propagates_exception() -> None:
@@ -155,9 +156,9 @@ def _body_bind_raise_on_fail_propagates_exception() -> None:
             bind_to_gpu(HardwareBindingPolicy(raise_on_fail=True))
 
 
-def test_bind_raise_on_fail_propagates_exception() -> None:
+def test_bind_raise_on_fail_propagates_exception(timeout_seconds: int) -> None:
     """raise_on_fail=True lets RuntimeError from bind() propagate."""
-    _run_in_subprocess(_body_bind_raise_on_fail_propagates_exception)
+    _run_in_subprocess(_body_bind_raise_on_fail_propagates_exception, timeout_seconds)
 
 
 def _body_bind_raise_on_fail_false_suppresses_exception() -> None:
@@ -175,12 +176,14 @@ def _body_bind_raise_on_fail_false_suppresses_exception() -> None:
         bind_to_gpu(HardwareBindingPolicy(raise_on_fail=False))
 
 
-def test_bind_raise_on_fail_false_suppresses_exception() -> None:
+def test_bind_raise_on_fail_false_suppresses_exception(timeout_seconds: int) -> None:
     """raise_on_fail=False silently ignores RuntimeError from bind()."""
-    _run_in_subprocess(_body_bind_raise_on_fail_false_suppresses_exception)
+    _run_in_subprocess(
+        _body_bind_raise_on_fail_false_suppresses_exception, timeout_seconds
+    )
 
 
-def _body_bind_thread_safe() -> None:
+def _body_bind_thread_safe(timeout_seconds: int) -> None:
     import threading
 
     _reset_bind_state()
@@ -191,7 +194,7 @@ def _body_bind_thread_safe() -> None:
         )
 
         policy = HardwareBindingPolicy()
-        barrier = threading.Barrier(8)
+        barrier = threading.Barrier(8, timeout=timeout_seconds)
 
         def _call_bind() -> None:
             barrier.wait()
@@ -201,14 +204,16 @@ def _body_bind_thread_safe() -> None:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=timeout_seconds)
 
         assert mock_bind.call_count == 1
 
 
-def test_bind_thread_safe() -> None:
+def test_bind_thread_safe(timeout_seconds: int) -> None:
     """Concurrent calls from multiple threads result in exactly one bind() call."""
-    _run_in_subprocess(_body_bind_thread_safe)
+    _run_in_subprocess(
+        functools.partial(_body_bind_thread_safe, timeout_seconds), timeout_seconds
+    )
 
 
 def _body_bind_done_flag_set() -> None:
@@ -221,9 +226,9 @@ def _body_bind_done_flag_set() -> None:
         assert hardware_binding._bind_done
 
 
-def test_bind_done_flag_set() -> None:
+def test_bind_done_flag_set(timeout_seconds: int) -> None:
     """_bind_done is True after bind_to_gpu() succeeds."""
-    _run_in_subprocess(_body_bind_done_flag_set)
+    _run_in_subprocess(_body_bind_done_flag_set, timeout_seconds)
 
 
 def _body_bind_disabled() -> None:
@@ -238,9 +243,9 @@ def _body_bind_disabled() -> None:
         mock_bind.assert_not_called()
 
 
-def test_bind_disabled() -> None:
+def test_bind_disabled(timeout_seconds: int) -> None:
     """enabled=False skips binding entirely."""
-    _run_in_subprocess(_body_bind_disabled)
+    _run_in_subprocess(_body_bind_disabled, timeout_seconds)
 
 
 def _body_bind_enable_once_false() -> None:
@@ -257,9 +262,9 @@ def _body_bind_enable_once_false() -> None:
         assert mock_bind.call_count == 2
 
 
-def test_bind_enable_once_false() -> None:
+def test_bind_enable_once_false(timeout_seconds: int) -> None:
     """enable_once=False allows repeated bind() calls."""
-    _run_in_subprocess(_body_bind_enable_once_false)
+    _run_in_subprocess(_body_bind_enable_once_false, timeout_seconds)
 
 
 # ---------------------------------------------------------------------------

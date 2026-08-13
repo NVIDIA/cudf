@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_fixed_point as cpp_fixed_point,
 )
@@ -47,9 +47,10 @@ cpdef Column to_fixed_point(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.to_fixed_point(
-            input.view(),
+            c_input,
             output_type.c_obj,
             _cs,
             mr.get_mr()
@@ -84,9 +85,10 @@ cpdef Column from_fixed_point(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.from_fixed_point(
-            input.view(), _cs, mr.get_mr()
+            c_input, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -128,9 +130,10 @@ cpdef Column is_fixed_point(
     if decimal_type is None:
         decimal_type = DataType(type_id.DECIMAL64)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.is_fixed_point(
-            input.view(),
+            c_input,
             decimal_type.c_obj,
             _cs,
             mr.get_mr()

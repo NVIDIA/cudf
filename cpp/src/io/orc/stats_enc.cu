@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -140,7 +140,7 @@ struct stats_state_s {
 
 /*
  * Protobuf encoding - see
- * https://developers.google.com/protocol-buffers/docs/encoding
+ * https://protobuf.dev/programming-guides/encoding/
  */
 // Protobuf varint encoding for unsigned int
 __device__ inline uint8_t* pb_encode_uint(uint8_t* p, uint64_t v)
@@ -451,6 +451,7 @@ void orc_init_statistics_groups(statistics_group* groups,
   dim3 dim_block(init_threads_per_group, init_groups_per_block);
   gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.value()>>>(
     groups, cols, rowgroup_bounds);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -468,6 +469,7 @@ void orc_init_statistics_buffersize(statistics_merge_group* groups,
 {
   gpu_init_statistics_buffersize<block_size>
     <<<1, block_size, 0, stream.value()>>>(groups, chunks, statistics_count);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -490,6 +492,7 @@ void orc_encode_statistics(uint8_t* blob_bfr,
   dim3 dim_block(encode_threads_per_chunk, encode_chunks_per_block);
   gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.value()>>>(
     blob_bfr, groups, chunks, statistics_count);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::orc::detail

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
         if len(self) == 0:
             return super().strftime(format, dtype)
         return cast(
-            cudf.core.column.string.StringColumn,
+            "cudf.core.column.string.StringColumn",
             PylibcudfFunction(
                 plc.strings.convert.convert_durations.from_durations,
                 fixed_dtype_policy(dtype),
@@ -348,7 +348,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
             )
 
         return cast(
-            cudf.core.column.string.StringColumn,
+            "cudf.core.column.string.StringColumn",
             ColumnBase.create(plc_result, dtype),
         )
 

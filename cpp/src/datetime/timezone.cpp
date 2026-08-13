@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -129,7 +129,7 @@ struct timezone_file {
   [[nodiscard]] auto timecnt() const { return header.timecnt; }
   [[nodiscard]] auto typecnt() const { return header.typecnt; }
 
-  // Based on https://tools.ietf.org/id/draft-murchison-tzdist-tzif-00.html
+  // Based on https://datatracker.ietf.org/doc/html/draft-murchison-tzdist-tzif-16
   static constexpr auto leap_second_rec_size(bool is_64bit) noexcept
   {
     return (is_64bit ? sizeof(uint64_t) : sizeof(uint32_t)) + sizeof(uint32_t);

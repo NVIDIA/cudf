@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -144,7 +144,7 @@ int dispatch_to_arrow_host::operator()<bool>(ArrowArray* out) const
   NANOARROW_RETURN_NOT_OK(populate_validity_bitmap(ArrowArrayValidityBitmap(tmp.get())));
   auto bitmask = detail::bools_to_mask(column, stream, mr);
   NANOARROW_RETURN_NOT_OK(populate_data_buffer(
-    device_span<uint8_t const>(reinterpret_cast<const uint8_t*>(bitmask.first->data()),
+    device_span<uint8_t const>(reinterpret_cast<uint8_t const*>(bitmask.first->data()),
                                bitmask.first->size()),
     ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx)));
 
@@ -499,16 +499,15 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
 
     // build up the variadic buffers needed
     NANOARROW_THROW_NOT_OK(ArrowArrayAddVariadicBuffers(out.get(), num_buffers));
-    auto private_data     = static_cast<struct ArrowArrayPrivateData*>(out->private_data);
     auto const chars_data = longer_strings.chars_begin(stream);
     for (auto i = 0L; i < num_buffers; ++i) {
-      auto variadic_buf = &private_data->variadic_buffers[i];
+      auto variadic_buf = ArrowArrayBuffer(out.get(), NANOARROW_BINARY_VIEW_FIXED_BUFFERS + i);
       auto const offset = i == 0 ? 0 : h_offsets[i - 1];
       auto const size   = h_offsets[i] - offset;
       NANOARROW_THROW_NOT_OK(ArrowBufferReserve(variadic_buf, size));
       CUDF_CUDA_TRY(
         cudf::detail::memcpy_async(variadic_buf->data, chars_data + offset, size, stream));
-      private_data->variadic_buffer_sizes[i] = size;
+      variadic_buf->size_bytes = size;
     }
   }
 
@@ -527,6 +526,9 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
   NANOARROW_THROW_NOT_OK(ArrowBufferReserve(data_buffer, bv_size));
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(data_buffer->data, d_items.data(), bv_size, stream));
   data_buffer->size_bytes = bv_size;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(out.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
 
   out->length     = col.size();
   out->null_count = col.null_count();

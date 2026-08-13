@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -143,7 +143,7 @@ cudf::size_type distinct_count(table_view const& keys,
 
   auto const comparator_helper = [&](auto const row_equal) {
     using hasher_type = decltype(hash_key);
-    auto key_set      = cuco::static_set{cuco::extent{num_rows},
+    auto key_set      = cuco::static_set{cuco::extent{static_cast<std::size_t>(num_rows)},
                                     cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
                                     cuco::empty_key<cudf::size_type>{-1},
                                     row_equal,

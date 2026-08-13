@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
@@ -6,6 +6,7 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.strings cimport translate as cpp_translate
 from pylibcudf.libcudf.types cimport char_utf8
@@ -73,10 +74,10 @@ cpdef Column translate(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_translate.translate(
-            input.view(),
+            c_input,
             c_chars_table,
             _cs,
             mr.get_mr()
@@ -129,10 +130,10 @@ cpdef Column filter_characters(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_translate.filter_characters(
-            input.view(),
+            c_input,
             c_characters_to_filter,
             keep_characters,
             dereference(c_replacement),

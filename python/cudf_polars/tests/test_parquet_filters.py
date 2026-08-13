@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -81,3 +81,15 @@ def test_parquet_filter_boolean_column(engine: pl.GPUEngine, tmp_path):
     df.write_parquet(tmp_path / "df.parquet")
     q = pl.scan_parquet(tmp_path / "df.parquet").filter(pl.col("y"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_jit_filter(pq_file):
+    q = pq_file.filter((pl.col("a") >= 2) & (pl.col("a") <= 4)).select("a", "c")
+    assert_gpu_result_equal(
+        q,
+        engine=pl.GPUEngine(
+            executor="in-memory",
+            raise_on_fail=True,
+            parquet_options={"use_jit_filter": True},
+        ),
+    )

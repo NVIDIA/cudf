@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,13 +12,16 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief Column APIs for binary ops
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup transformation_binaryops
  * @{
- * @file
- * @brief Column APIs for binary ops
  */
 
 /**

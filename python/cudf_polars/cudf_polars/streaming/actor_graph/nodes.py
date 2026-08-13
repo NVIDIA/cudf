@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Core node definitions for the RapidsMPF streaming runtime."""
 
@@ -7,22 +7,23 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, cast
 
+from cudf_streaming.channel_metadata import ChannelMetadata
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
-from rapidsmpf.streaming.cudf.channel_metadata import ChannelMetadata
-from rapidsmpf.streaming.cudf.table_chunk import (
-    TableChunk,
-    make_table_chunks_available_or_wait,
-)
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, Empty
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     chunkwise_evaluate,
@@ -80,7 +81,9 @@ async def default_node_single(
         metadata_in = await recv_metadata(ch_in, context)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
-            partitioning=maybe_remap_partitioning(ir, metadata_in.partitioning),
+            partitioning=maybe_remap_partitioning(
+                ir, metadata_in.partitioning, context=context
+            ),
             duplicated=metadata_in.duplicated,
         )
 
@@ -144,7 +147,10 @@ async def default_node_multi(
             if idx == partitioning_index:
                 # Remap partitioning from child schema to output schema
                 partitioning = maybe_remap_partitioning(
-                    ir, md_child.partitioning, child_ir=ir.children[idx]
+                    ir,
+                    md_child.partitioning,
+                    child_ir=ir.children[idx],
+                    context=context,
                 )
         metadata = ChannelMetadata(
             local_count=local_count,
@@ -198,7 +204,7 @@ async def default_node_multi(
                 ready_chunks,
                 reserve_extra=sum(
                     chunk.data_alloc_size()
-                    for chunk in cast(list[TableChunk], ready_chunks)
+                    for chunk in cast("list[TableChunk]", ready_chunks)
                 ),
                 net_memory_delta=0,
             )
@@ -219,20 +225,13 @@ async def default_node_multi(
                     context=ir_context,
                 )
                 del dfs
-            if tracer is not None:
-                tracer.add_chunk(table=df.table)
-            await ch_out.send(
-                context,
-                Message(
-                    seq_num,
-                    TableChunk.from_pylibcudf_table(
-                        df.table,
-                        df.stream,
-                        exclusive_view=True,
-                        br=context.br(),
-                    ),
-                ),
+            output_chunk = TableChunk.from_pylibcudf_table(
+                df.table,
+                df.stream,
+                exclusive_view=True,
+                br=context.br(),
             )
+            await send_chunk(context, ch_out, output_chunk, seq_num, tracer=tracer)
             seq_num += 1
             del df
 

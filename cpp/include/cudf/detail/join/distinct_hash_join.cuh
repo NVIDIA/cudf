@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -111,20 +111,24 @@ class distinct_hash_join {
    * @param right The right table, from which the hash table is built
    * @param compare_nulls Controls whether null join-key values should match or not.
    * @param stream CUDA stream used for device memory operations and kernel launches.
+   * @param mr Device memory resource used to allocate the internal hash table.
    */
   distinct_hash_join(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
-                     rmm::cuda_stream_view stream);
+                     rmm::cuda_stream_view stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * @copydoc distinct_hash_join(cudf::table_view const&, null_equality, rmm::cuda_stream_view)
+   * @copydoc distinct_hash_join(cudf::table_view const&, null_equality, rmm::cuda_stream_view,
+   * cuda::mr::any_resource<cuda::mr::device_accessible>)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
   distinct_hash_join(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
                      double load_factor,
-                     rmm::cuda_stream_view stream);
+                     rmm::cuda_stream_view stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
    * @copydoc cudf::distinct_hash_join::inner_join

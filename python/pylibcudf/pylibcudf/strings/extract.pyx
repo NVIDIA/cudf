@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport extract as cpp_extract
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.strings.regex_program cimport RegexProgram
@@ -45,10 +46,10 @@ cpdef Table extract(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_extract.extract(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             _cs,
             mr.get_mr()
@@ -85,10 +86,10 @@ cpdef Column extract_all_record(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_extract.extract_all_record(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             _cs,
             mr.get_mr()
@@ -130,10 +131,10 @@ cpdef Column extract_single(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_extract.extract_single(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             group,
             _cs,

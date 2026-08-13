@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport padding as cpp_padding
 from pylibcudf.libcudf.strings.side_type cimport side_type
 from pylibcudf.libcudf.types cimport size_type
@@ -50,10 +51,10 @@ cpdef Column pad(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_padding.pad(
-            input.view(),
+            c_input,
             width,
             side,
             c_fill_char,
@@ -89,10 +90,10 @@ cpdef Column zfill(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_padding.zfill(
-            input.view(),
+            c_input,
             width,
             _cs,
             mr.get_mr()
@@ -126,11 +127,12 @@ cpdef Column zfill_by_widths(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
+    cdef column_view c_widths = widths.view()
     with nogil:
         c_result = cpp_padding.zfill_by_widths(
-            input.view(),
-            widths.view(),
+            c_input,
+            c_widths,
             _cs,
             mr.get_mr()
         )

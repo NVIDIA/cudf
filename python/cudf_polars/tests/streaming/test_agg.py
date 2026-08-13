@@ -24,7 +24,9 @@ def decimal_df() -> pl.LazyFrame:
     )
 
 
-def test_decimal_aggs(decimal_df: pl.LazyFrame, streaming_engine) -> None:
+def test_decimal_aggs(
+    decimal_df: pl.LazyFrame, streaming_engine, xfail_decimal_sum_precision_polars_140
+) -> None:
     q = decimal_df.with_columns(
         sum=pl.col("a").sum(),
         min=pl.col("a").min(),

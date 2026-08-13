@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/config_utils.hpp>
@@ -27,6 +28,7 @@
 #include <vector>
 
 #ifdef CUDF_KVIKIO_REMOTE_IO
+#include <kvikio/hdfs.hpp>
 #include <kvikio/remote_handle.hpp>
 #endif
 
@@ -354,13 +356,27 @@ class user_datasource_wrapper : public datasource {
 };
 
 #ifdef CUDF_KVIKIO_REMOTE_IO
+kvikio::RemoteHandle open_remote_handle(char const* filepath, std::optional<std::size_t> known_size)
+{
+  if (known_size.has_value()) {
+    auto const endpoint_type = kvikio::infer_remote_endpoint_type(filepath);
+    return kvikio::RemoteHandle::open(filepath, endpoint_type, std::nullopt, *known_size);
+  }
+  return kvikio::RemoteHandle::open(filepath);
+}
+
 /**
  * @brief Remote file source backed by KvikIO, which handles S3 filepaths seamlessly.
+ *
+ * Note that this datasource does not currently support anonymously reading a public
+ * 's3://'-style URL when 'known_size' is provided.
+ *
  */
 class remote_file_source : public kvikio_source<kvikio::RemoteHandle> {
  public:
-  explicit remote_file_source(char const* filepath)
-    : kvikio_source{kvikio::RemoteHandle::open(filepath)}
+  explicit remote_file_source(char const* filepath,
+                              std::optional<std::size_t> known_size = std::nullopt)
+    : kvikio_source{open_remote_handle(filepath, known_size)}
   {
   }
 
@@ -389,7 +405,10 @@ class remote_file_source : public kvikio_source<kvikio::RemoteHandle> {
  */
 class remote_file_source : public file_source {
  public:
-  explicit remote_file_source(char const* filepath) : file_source(filepath) {}
+  explicit remote_file_source(char const* filepath, std::optional<std::size_t> = std::nullopt)
+    : file_source(filepath)
+  {
+  }
   static constexpr bool could_be_remote_url(std::string const&) { return false; }
 };
 #endif
@@ -397,7 +416,8 @@ class remote_file_source : public file_source {
 
 std::unique_ptr<datasource> datasource::create(std::string const& filepath,
                                                size_t offset,
-                                               size_t max_size_estimate)
+                                               size_t max_size_estimate,
+                                               std::optional<std::size_t> known_size)
 {
   auto const use_memory_mapping = [] {
     auto const policy = cudf::detail::getenv_or("LIBCUDF_MMAP_ENABLED", std::string{"OFF"});
@@ -410,7 +430,7 @@ std::unique_ptr<datasource> datasource::create(std::string const& filepath,
 
   if (remote_file_source::could_be_remote_url(filepath)) {
     try {
-      return std::make_unique<remote_file_source>(filepath.c_str());
+      return std::make_unique<remote_file_source>(filepath.c_str(), known_size);
     } catch (std::exception const& ex) {
       std::string redacted_msg;
       try {
@@ -450,7 +470,7 @@ std::unique_ptr<datasource> datasource::create(std::string const& filepath,
       // Create a remote file resource only when the pattern is found and replaced; otherwise, still
       // create a local file resource
       if (filepath != remote_file_path) {
-        return std::make_unique<remote_file_source>(remote_file_path.c_str());
+        return std::make_unique<remote_file_source>(remote_file_path.c_str(), known_size);
       }
     }
 
@@ -478,14 +498,15 @@ std::unique_ptr<datasource> datasource::create(datasource* source)
 std::future<std::unique_ptr<datasource::buffer>> datasource::host_read_async(size_t offset,
                                                                              size_t size)
 {
-  return std::async(std::launch::deferred,
-                    [this, offset, size] { return host_read(offset, size); });
+  // Run on the host worker pool so fanned-out reads execute in parallel instead of serially.
+  return cudf::detail::host_worker_pool().submit_task(
+    [this, offset, size] { return host_read(offset, size); });
 }
 
 std::future<size_t> datasource::host_read_async(size_t offset, size_t size, uint8_t* dst)
 {
-  return std::async(std::launch::deferred,
-                    [this, offset, size, dst] { return host_read(offset, size, dst); });
+  return cudf::detail::host_worker_pool().submit_task(
+    [this, offset, size, dst] { return host_read(offset, size, dst); });
 }
 
 }  // namespace io

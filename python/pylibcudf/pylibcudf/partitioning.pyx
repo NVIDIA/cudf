@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 cimport pylibcudf.libcudf.types as libcudf_types
@@ -8,7 +8,9 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport partitioning as cpp_partitioning
 from pylibcudf.libcudf.partitioning import hash_id as HashId  # no-cython-lint
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -67,11 +69,14 @@ cpdef tuple[Table, list] hash_partition(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef table_view c_input = input.view()
+    cdef table_view c_keys
     if TableOrList is Table:
+        c_keys = keys.view()
         with nogil:
             c_result = cpp_partitioning.hash_partition(
-                input.view(),
-                keys.view(),
+                c_input,
+                c_keys,
                 c_num_partitions,
                 hash_function,
                 seed,
@@ -82,7 +87,7 @@ cpdef tuple[Table, list] hash_partition(
         columns_to_hash = keys
         with nogil:
             c_result = cpp_partitioning.hash_partition(
-                input.view(),
+                c_input,
                 columns_to_hash,
                 c_num_partitions,
                 hash_function,
@@ -132,10 +137,12 @@ cpdef tuple[Table, list] partition(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = t.view()
+    cdef column_view c_partition_map = partition_map.view()
     with nogil:
         c_result = cpp_partitioning.partition(
-            t.view(),
-            partition_map.view(),
+            c_input,
+            c_partition_map,
             c_num_partitions,
             _cs,
             mr.get_mr()
@@ -183,9 +190,10 @@ cpdef tuple[Table, list] round_robin_partition(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_partitioning.round_robin_partition(
-            input.view(),
+            c_input,
             c_num_partitions,
             c_start_partition,
             _cs,

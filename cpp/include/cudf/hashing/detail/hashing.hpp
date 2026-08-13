@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -68,7 +68,7 @@ std::unique_ptr<column> xxhash_64(table_view const& input,
  * Copyright 2005-2014 Daniel James.
  * Use, modification and distribution is subject to the Boost Software
  * License, Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at
- * http://www.boost.org/LICENSE_1_0.txt)
+ * https://www.boost.org/LICENSE_1_0.txt)
  */
 /**
  * @brief Combines two hash values into a single hash value.
@@ -93,7 +93,7 @@ CUDF_HOST_DEVICE constexpr uint32_t hash_combine(uint32_t lhs, uint32_t rhs)
  * Copyright 2005-2014 Daniel James.
  * Use, modification and distribution is subject to the Boost Software
  * License, Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at
- * http://www.boost.org/LICENSE_1_0.txt)
+ * https://www.boost.org/LICENSE_1_0.txt)
  */
 /**
  * @brief Combines two 64-bit hash values into a single hash value.

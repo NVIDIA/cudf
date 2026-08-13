@@ -483,6 +483,7 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
   dim3 const dim_grid(frags.size().second, frags.size().first);
   populate_chunk_hash_maps_kernel<DEFAULT_BLOCK_SIZE>
     <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.value()>>>(map_storage, frags);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void collect_map_entries(device_span<slot_type> const map_storage,
@@ -496,6 +497,7 @@ void collect_map_entries(device_span<slot_type> const map_storage,
                 "each histogram bucket.");
   collect_map_entries_kernel<block_size>
     <<<chunks.size(), block_size, 0, stream.value()>>>(map_storage, chunks, frags);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void get_dictionary_indices(device_span<slot_type> const map_storage,
@@ -505,6 +507,7 @@ void get_dictionary_indices(device_span<slot_type> const map_storage,
   dim3 const dim_grid(frags.size().second, frags.size().first);
   get_dictionary_indices_kernel<DEFAULT_BLOCK_SIZE>
     <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.value()>>>(map_storage, frags);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void compute_per_page_dict_bits(device_span<EncPage> pages, rmm::cuda_stream_view stream)
@@ -514,6 +517,7 @@ void compute_per_page_dict_bits(device_span<EncPage> pages, rmm::cuda_stream_vie
   auto const num_blocks =
     cudf::util::div_rounding_up_safe(static_cast<size_type>(pages.size()), warps_per_block);
   compute_page_dict_bits_kernel<<<num_blocks, DEFAULT_BLOCK_SIZE, 0, stream.value()>>>(pages);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::parquet::detail

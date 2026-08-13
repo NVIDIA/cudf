@@ -195,3 +195,35 @@ def test_to_numpy_object_dtype_boxes_values(constructor, data, dtype):
     # Ensure boxed values are real Python scalars, not strings.
     for value in result.flat:
         assert not isinstance(value, str)
+
+
+@pytest.mark.parametrize("constructor", ["DataFrame", "Series"])
+@pytest.mark.parametrize(
+    "data",
+    [
+        [],
+        [None],
+        [None, None],
+        ["a", "b", None],
+    ],
+)
+def test_to_numpy_object_dtype_preserves_none_string_nulls(constructor, data):
+    values = pd.Series(data, dtype=object, name="x")
+    if constructor == "DataFrame":
+        pd_obj = pd.DataFrame({"x": values})
+    else:
+        pd_obj = values
+    cudf_obj = getattr(cudf, constructor)(pd_obj)
+
+    expected = pd_obj.to_numpy(dtype=object)
+    result = cudf_obj.to_numpy(dtype=object)
+    null_mask = pd.isna(expected)
+
+    assert result.dtype == np.dtype("O")
+    np.testing.assert_array_equal(result, expected)
+    assert all(value is None for value in result[null_mask].flat)
+
+    expected = pd_obj.to_numpy(dtype=object, na_value="missing")
+    result = cudf_obj.to_numpy(dtype=object, na_value="missing")
+    np.testing.assert_array_equal(result, expected)
+    assert all(value == "missing" for value in result[null_mask].flat)

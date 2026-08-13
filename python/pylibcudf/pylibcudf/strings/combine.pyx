@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_string_scalar as cpp_make_string_scalar,
@@ -11,6 +12,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 from pylibcudf.libcudf.strings cimport combine as cpp_combine
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.table cimport Table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
@@ -72,6 +74,8 @@ cpdef Column concatenate(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef table_view c_strings_columns
+    cdef column_view c_separator_view
 
     if narep is None:
         narep = Scalar.from_libcudf(
@@ -89,11 +93,13 @@ cpdef Column concatenate(
         c_col_narep = <const string_scalar*>(
             col_narep.c_obj.get()
         )
+        c_strings_columns = strings_columns.view()
+        c_separator_view = separator.view()
         with nogil:
             c_result = move(
                 cpp_combine.concatenate(
-                    strings_columns.view(),
-                    separator.view(),
+                    c_strings_columns,
+                    c_separator_view,
                     dereference(c_narep),
                     dereference(c_col_narep),
                     separate_nulls,
@@ -107,10 +113,11 @@ cpdef Column concatenate(
                 "col_narep cannot be specified when separator is a Scalar"
             )
         c_separator = <const string_scalar*>(separator.c_obj.get())
+        c_strings_columns = strings_columns.view()
         with nogil:
             c_result = move(
                 cpp_combine.concatenate(
-                    strings_columns.view(),
+                    c_strings_columns,
                     dereference(c_separator),
                     dereference(c_narep),
                     separate_nulls,
@@ -154,16 +161,18 @@ cpdef Column join_strings(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
     cdef const string_scalar* c_separator = <const string_scalar*>(
         separator.c_obj.get()
     )
     cdef const string_scalar* c_narep = <const string_scalar*>(
         narep.c_obj.get()
     )
+    c_input = input.view()
     with nogil:
         c_result = move(
             cpp_combine.join_strings(
-                input.view(),
+                c_input,
                 dereference(c_separator),
                 dereference(c_narep),
                 _cs,
@@ -223,6 +232,8 @@ cpdef Column join_list_elements(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_lists_strings_column
+    cdef column_view c_separator_view
     cdef const string_scalar* c_separator_narep = <const string_scalar*>(
         separator_narep.c_obj.get()
     )
@@ -232,11 +243,13 @@ cpdef Column join_list_elements(
     cdef const string_scalar* c_separator
 
     if ColumnOrScalar is Column:
+        c_lists_strings_column = lists_strings_column.view()
+        c_separator_view = separator.view()
         with nogil:
             c_result = move(
                 cpp_combine.join_list_elements(
-                    lists_strings_column.view(),
-                    separator.view(),
+                    c_lists_strings_column,
+                    c_separator_view,
                     dereference(c_separator_narep),
                     dereference(c_string_narep),
                     separate_nulls,
@@ -247,10 +260,11 @@ cpdef Column join_list_elements(
             )
     elif ColumnOrScalar is Scalar:
         c_separator = <const string_scalar*>(separator.c_obj.get())
+        c_lists_strings_column = lists_strings_column.view()
         with nogil:
             c_result = move(
                 cpp_combine.join_list_elements(
-                    lists_strings_column.view(),
+                    c_lists_strings_column,
                     dereference(c_separator),
                     dereference(c_separator_narep),
                     separate_nulls,

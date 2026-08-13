@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,12 +11,15 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 
+/**
+ * @file
+ * @brief Conversion functions for fixed-point numbers
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup fixed_point_classes
  * @{
- * @file
- * @brief Conversion functions for fixed-point numbers
  */
 
 /**

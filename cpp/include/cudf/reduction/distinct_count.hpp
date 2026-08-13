@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,18 +13,20 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
+/**
+ * @file
+ * @brief API for counting the number of distinct elements in a column
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_reduction
  * @{
- * @file
  */
 
 /**
  * @brief Count the distinct elements in the column_view.
- *
- * If `nulls_equal == nulls_equal::UNEQUAL`, all `null`s are distinct.
  *
  * Given an input column_view, number of distinct elements in this column_view is returned.
  *

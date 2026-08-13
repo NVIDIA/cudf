@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -253,7 +253,7 @@ def test_orc_read_stripes(datadir, engine):
     except pa.ArrowIOError as e:
         pytest.skip(".orc file is not found: %s" % e)
 
-    num_rows, stripes, col_names = cudf.io.read_orc_metadata(path)
+    _num_rows, stripes, _col_names = cudf.io.read_orc_metadata(path)
 
     # Read stripes one at a time
     gdf = [
@@ -1798,7 +1798,7 @@ def test_orc_writer_cols_as_map_type_error():
     )
     buffer = BytesIO()
     with pytest.raises(
-        TypeError, match="cols_as_map_type must be a list of column names."
+        TypeError, match=r"cols_as_map_type must be a list of column names."
     ):
         df.to_orc(buffer, cols_as_map_type=1)
 
@@ -1882,7 +1882,7 @@ def test_statistics_string_sum():
     df = cudf.DataFrame({"str": strings})
     df.to_orc(buff)
 
-    file_stats, stripe_stats = cudf.io.orc.read_orc_statistics([buff])
+    file_stats, _stripe_stats = cudf.io.orc.read_orc_statistics([buff])
     assert_eq(file_stats[0]["str"].get("sum"), sum(len(s) for s in strings))
 
 

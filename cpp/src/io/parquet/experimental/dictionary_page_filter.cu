@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1093,6 +1093,7 @@ struct dictionary_caster {
                                                                      num_dictionary_columns,
                                                                      dictionary_col_idx,
                                                                      error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
 
     } else {
       // Check if the decode block size is a multiple of the warp size
@@ -1119,6 +1120,7 @@ struct dictionary_caster {
         num_dictionary_columns,
         dictionary_col_idx,
         error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
     }
 
     // Check if there are any errors in data decoding
@@ -1158,6 +1160,7 @@ struct dictionary_caster {
                                                                     value_offsets.data(),
                                                                     total_row_groups,
                                                                     physical_type);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     // Build the BOOL8 columns from the results buffers
     return build_columns(results_buffers, stream, mr);
@@ -1233,6 +1236,7 @@ struct dictionary_caster {
                                                                      num_dictionary_columns,
                                                                      dictionary_col_idx,
                                                                      error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       static_assert(DECODE_BLOCK_SIZE % cudf::detail::warp_size == 0,
                     "decoder block size must be a multiple of warp_size");
@@ -1256,6 +1260,7 @@ struct dictionary_caster {
         num_dictionary_columns,
         dictionary_col_idx,
         error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
     }
 
     // Check if there are any errors in data decoding
@@ -1435,12 +1440,12 @@ std::optional<std::vector<std::vector<cudf::size_type>>>
 aggregate_reader_metadata::apply_dictionary_filter(
   cudf::detail::hostdevice_span<parquet::detail::ColumnChunkDesc const> chunks,
   cudf::detail::hostdevice_span<parquet::detail::PageInfo const> pages,
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  host_span<std::vector<ast::literal*> const> literals,
-  cudf::host_span<std::vector<ast::ast_operator> const> operators,
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<ast::literal*> const> literals,
+  std::span<std::vector<ast::ast_operator> const> operators,
   std::size_t total_row_groups,
-  cudf::host_span<data_type const> output_dtypes,
-  cudf::host_span<int const> dictionary_col_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<int const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
   rmm::cuda_stream_view stream) const
 {
@@ -1449,7 +1454,10 @@ aggregate_reader_metadata::apply_dictionary_filter(
   // Number of columns with dictionaries
   auto const num_dictionary_columns = static_cast<cudf::size_type>(dictionary_col_schemas.size());
   // Get parquet types for the predicate columns
-  auto const parquet_types = get_parquet_types(input_row_group_indices, dictionary_col_schemas);
+  auto const parquet_types = get_parquet_types(
+    cudf::host_span<std::vector<size_type> const>{input_row_group_indices.data(),
+                                                  input_row_group_indices.size()},
+    cudf::host_span<int const>{dictionary_col_schemas.data(), dictionary_col_schemas.size()});
 
   // Convert dictionary membership for (in)equality predicate columns to a table
   // containing a column for each `col[i] == literal` or `col[i] != literal` predicate
@@ -1508,20 +1516,27 @@ aggregate_reader_metadata::apply_dictionary_filter(
 
   // Convert AST to DictionaryAST expression with reference to dictionary membership
   // in above `dictionary_membership_table`
-  dictionary_expression_converter dictionary_expr{filter.get(), output_dtypes, literals, stream};
+  dictionary_expression_converter dictionary_expr{
+    filter.get(),
+    cudf::host_span<cudf::data_type const>{output_dtypes.data(), output_dtypes.size()},
+    cudf::host_span<std::vector<ast::literal*> const>{literals.data(), literals.size()},
+    stream};
 
   // Filter dictionary membership table with the DictionaryAST expression and collect
   // filtered row group indices
-  return parquet::detail::collect_filtered_row_group_indices(dictionary_membership_table,
-                                                             dictionary_expr.get_dictionary_expr(),
-                                                             input_row_group_indices,
-                                                             stream);
+  return parquet::detail::collect_filtered_row_group_indices(
+    dictionary_membership_table,
+    dictionary_expr.get_dictionary_expr(),
+    cudf::host_span<std::vector<size_type> const>{input_row_group_indices.data(),
+                                                  input_row_group_indices.size()},
+    stream);
 }
 
 dictionary_literals_collector::dictionary_literals_collector(
-  ast::expression const& expr, cudf::host_span<cudf::data_type const> output_dtypes)
+  ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
 {
-  _output_dtypes               = output_dtypes;
+  _output_dtypes =
+    cudf::host_span<cudf::data_type const>{output_dtypes.data(), output_dtypes.size()};
   auto const num_input_columns = static_cast<cudf::size_type>(_output_dtypes.size());
   _literals.resize(num_input_columns);
   _operators.resize(num_input_columns);

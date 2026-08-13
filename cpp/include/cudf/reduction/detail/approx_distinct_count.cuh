@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
@@ -28,17 +29,20 @@ namespace detail {
  * @brief HyperLogLog-based approximate distinct count sketch for use by the public API
  *
  * This detail implementation provides the core HyperLogLog functionality used by the
- * public `cudf::approx_distinct_count` class. It supports both owning and non-owning
- * storage modes:
+ * public `cudf::approx_distinct_count` class. In the HLL literature, "sketch" refers to
+ * the register array that summarizes the input. This class supports both owning and
+ * non-owning sketch storage modes:
  *
- * - **Owning mode**: Allocates and manages its own `rmm::device_uvector<int32_t>` storage.
- *   Used when constructing from a table or when copying from a span.
+ * - **Owning mode**: Allocates and manages its own sketch storage as an
+ *   `rmm::device_uvector<int32_t>`. Used when constructing from a table or when copying
+ *   from a span.
  *
- * - **Non-owning mode**: Operates on user-provided `cuda::std::span<int32_t>` storage.
- *   Enables zero-copy operations on pre-existing buffers.
+ * - **Non-owning mode**: Operates on user-provided `cuda::std::span<int32_t>` sketch
+ *   storage. Enables zero-copy operations on pre-existing buffers.
  *
- * Internally, storage uses `int32_t` for efficient 32-bit GPU atomics. The public API
- * exposes storage as `cuda::std::byte` spans for generic serialization.
+ * Internally, the sketch uses `int32_t` registers for efficient 32-bit GPU atomics. The
+ * public API exposes the sketch storage as `cuda::std::byte` spans for generic
+ * serialization.
  *
  * @tparam Hasher The hash function template to use for hashing table rows. Must be compatible
  *                with cudf's row_hasher device_hasher interface (a template taking a Key type).
@@ -75,12 +79,14 @@ class approx_distinct_count {
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL`
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the sketch storage
    */
   approx_distinct_count(table_view const& input,
                         std::int32_t precision,
                         null_policy null_handling,
                         nan_policy nan_handling,
-                        rmm::cuda_stream_view stream);
+                        rmm::cuda_stream_view stream,
+                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
    * @brief Constructs an owning approximate distinct count sketch from a table with standard
@@ -99,12 +105,14 @@ class approx_distinct_count {
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL`
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the sketch storage
    */
   approx_distinct_count(table_view const& input,
                         cudf::approx_distinct_count::desired_standard_error error,
                         null_policy null_handling,
                         nan_policy nan_handling,
-                        rmm::cuda_stream_view stream);
+                        rmm::cuda_stream_view stream,
+                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
    * @brief Constructs a non-owning approximate distinct count sketch from user-allocated storage
@@ -120,11 +128,13 @@ class approx_distinct_count {
    * @param precision The precision parameter for the sketch (4-18)
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL`
+   * @param mr Device memory resource (unused in non-owning mode, retained for member consistency)
    */
   approx_distinct_count(cuda::std::span<cuda::std::byte> sketch_span,
                         std::int32_t precision,
                         null_policy null_handling,
-                        nan_policy nan_handling);
+                        nan_policy nan_handling,
+                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   approx_distinct_count()                                        = delete;
   ~approx_distinct_count()                                       = default;
@@ -260,6 +270,9 @@ class approx_distinct_count {
                  cuda::std::span<cuda::std::byte>     ///< Non-owning storage (user-provided)
                  >;
 
+  // Declared before `_storage` so it outlives the owning `device_uvector`, which only holds a
+  // reference to this resource. Unused in non-owning (span) mode.
+  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;  ///< Owns the sketch storage resource
   storage_type _storage;       ///< Sketch register storage (owning or non-owning)
   std::int32_t _precision;     ///< HLL precision parameter (determines 2^p registers)
   null_policy _null_handling;  ///< Null handling policy (immutable after construction)

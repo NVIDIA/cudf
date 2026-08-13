@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,15 +16,19 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <memory>
+#include <span>
 #include <vector>
+
+/**
+ * @file
+ * @brief Column APIs for gather, scatter, split, slice, etc.
+ */
 
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_copy
  * @{
- * @file
- * @brief Column APIs for gather, scatter, split, slice, etc.
  */
 
 /**
@@ -490,11 +494,11 @@ std::unique_ptr<column> shift(
  * @return Vector of views of `input` indicated by the ranges in `indices`
  */
 std::vector<column_view> slice(column_view const& input,
-                               host_span<size_type const> indices,
+                               std::span<size_type const> indices,
                                rmm::cuda_stream_view stream = cudf::get_default_stream());
 /**
  * @ingroup copy_slice
- * @copydoc cudf::slice(column_view const&, host_span<size_type const>, rmm::cuda_stream_view)
+ * @copydoc cudf::slice(column_view const&, std::span<size_type const>, rmm::cuda_stream_view)
  */
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
@@ -534,11 +538,11 @@ std::vector<column_view> slice(column_view const& input,
  * @return Vector of views of `input` indicated by the ranges in `indices`
  */
 std::vector<table_view> slice(table_view const& input,
-                              host_span<size_type const> indices,
+                              std::span<size_type const> indices,
                               rmm::cuda_stream_view stream = cudf::get_default_stream());
 /**
  * @ingroup copy_slice
- * @copydoc cudf::slice(table_view const&, host_span<size_type const>, rmm::cuda_stream_view stream)
+ * @copydoc cudf::slice(table_view const&, std::span<size_type const>, rmm::cuda_stream_view stream)
  */
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
@@ -578,11 +582,11 @@ std::vector<table_view> slice(table_view const& input,
  * @return The set of requested views of `input` indicated by the `splits`
  */
 std::vector<column_view> split(column_view const& input,
-                               host_span<size_type const> splits,
+                               std::span<size_type const> splits,
                                rmm::cuda_stream_view stream = cudf::get_default_stream());
 /**
  * @ingroup copy_split
- * @copydoc cudf::split(column_view const&, host_span<size_type const>, rmm::cuda_stream_view)
+ * @copydoc cudf::split(column_view const&, std::span<size_type const>, rmm::cuda_stream_view)
  */
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
@@ -624,11 +628,11 @@ std::vector<column_view> split(column_view const& input,
  * @return The set of requested views of `input` indicated by the `splits`
  */
 std::vector<table_view> split(table_view const& input,
-                              host_span<size_type const> splits,
+                              std::span<size_type const> splits,
                               rmm::cuda_stream_view stream = cudf::get_default_stream());
 /**
  * @ingroup copy_split
- * @copydoc cudf::split(table_view const&, host_span<size_type const>, rmm::cuda_stream_view)
+ * @copydoc cudf::split(table_view const&, std::span<size_type const>, rmm::cuda_stream_view)
  */
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,

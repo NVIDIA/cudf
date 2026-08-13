@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -91,8 +91,8 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     rmm::exec_policy_nosync(stream),
     validity.begin(),
     validity.end(),
-    [lhs            = cudf::detail::lists_column_device_view{*lhs_cdv_ptr},
-     rhs            = cudf::detail::lists_column_device_view{*rhs_cdv_ptr},
+    [lhs            = cudf::lists_column_device_view{*lhs_cdv_ptr},
+     rhs            = cudf::lists_column_device_view{*rhs_cdv_ptr},
      overlap_result = *overlap_cdv_ptr] __device__(auto const idx) {
       if (overlap_result.is_null(idx) || overlap_result.template element<bool>(idx)) {
         return true;

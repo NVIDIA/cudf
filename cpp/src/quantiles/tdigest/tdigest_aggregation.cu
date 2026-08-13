@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,18 +24,20 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cub/device/device_reduce.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/span>
 #include <cuda/std/tuple>
+#include <cuda/stream_ref>
 #include <thrust/binary_search.h>
+#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
-#include <thrust/merge.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
 #include <thrust/replace.h>
@@ -621,6 +623,7 @@ void generate_cluster_limits(int delta,
       group_num_clusters,
       group_cluster_start,
       has_nulls);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   // overlap CPU work
@@ -1042,18 +1045,24 @@ std::unique_ptr<column> compute_tdigests(int delta,
   cudf::mutable_column_view weight_col(*centroid_weights);
 
   // reduce the centroids into the clusters
-  auto output = thrust::make_zip_iterator(cuda::std::make_tuple(
+  auto output = cuda::make_zip_iterator(cuda::std::make_tuple(
     mean_col.begin<double>(), weight_col.begin<double>(), cuda::make_discard_iterator()));
 
   auto const num_values = std::distance(centroids_begin, centroids_end);
-  thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                        keys,
-                        keys + num_values,              // keys
-                        centroids_begin,                // values
-                        cuda::make_discard_iterator(),  // key output
-                        output,                         // output
-                        cuda::std::equal_to{},          // key equality check
-                        merge_centroids{});
+  // Use `cub::DeviceReduce::ReduceByKey` instead of `thrust::reduce_by_key`: nvcc 13.0
+  // mis-compiles thrust's reduce-by-key kernel for sm_100, causing illegal memory accesses
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, cuda::stream_ref{stream.value()}},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                               cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(keys,                           // keys in
+                                               cuda::make_discard_iterator(),  // unique keys out
+                                               centroids_begin,                // values in
+                                               output,                         // reduced values out
+                                               cuda::make_discard_iterator(),  // number of runs out
+                                               merge_centroids{},              // reduction op
+                                               num_values,                     // number of items
+                                               env));
 
   // generate offsets column. if we are running in the simple case, cinfo.cluster_start will not
   // be accurate, so we need to compute with a scan. in the non-simple case, cinfo.cluster_start
@@ -1170,8 +1179,8 @@ struct typed_group_tdigest {
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::counting_iterator<cudf::size_type>{0} + num_groups,
-      thrust::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
-                                                      max_col->mutable_view().begin<double>())),
+      cuda::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
+                                                    max_col->mutable_view().begin<double>())),
       get_scalar_minmax_grouped<T>{*d_col, group_offsets, group_valid_counts.data()});
 
     // for simple input values, the "centroids" all have a weight of 1.
@@ -1249,8 +1258,8 @@ struct typed_reduce_tdigest {
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::counting_iterator<cudf::size_type>{0} + 1,
-      thrust::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
-                                                      max_col->mutable_view().begin<double>())),
+      cuda::make_zip_iterator(cuda::std::make_tuple(min_col->mutable_view().begin<double>(),
+                                                    max_col->mutable_view().begin<double>())),
       get_scalar_minmax<T>{*d_col, valid_count});
 
     // for simple input values, the "centroids" all have a weight of 1.
@@ -1441,7 +1450,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto merged_min_col = cudf::make_numeric_column(
     data_type{type_id::FLOAT64}, num_groups, mask_state::UNALLOCATED, stream, mr);
   auto min_iter =
-    thrust::make_transform_iterator(thrust::make_zip_iterator(cuda::std::make_tuple(
+    thrust::make_transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
                                       tdv.min_begin(), cudf::tdigest::detail::size_begin(tdv))),
                                     tdigest_min{});
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -1456,7 +1465,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto merged_max_col = cudf::make_numeric_column(
     data_type{type_id::FLOAT64}, num_groups, mask_state::UNALLOCATED, stream, mr);
   auto max_iter =
-    thrust::make_transform_iterator(thrust::make_zip_iterator(cuda::std::make_tuple(
+    thrust::make_transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
                                       tdv.max_begin(), cudf::tdigest::detail::size_begin(tdv))),
                                     tdigest_max{});
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

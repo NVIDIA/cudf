@@ -250,6 +250,7 @@ launch_partitioned_retrieve(probe_key_type const* keys,
 
   partitioned_retrieve_kernel<IsOuter><<<num_blocks, DEFAULT_JOIN_BLOCK_SIZE, 0, stream.value()>>>(
     keys, n, left_offset, left_indices->data(), right_indices->data(), output_counter.data(), ref);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   return std::pair(std::move(left_indices), std::move(right_indices));
 }

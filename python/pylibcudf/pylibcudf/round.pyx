@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp.memory cimport unique_ptr
@@ -13,6 +13,7 @@ from pylibcudf.libcudf.round import \
     rounding_method as RoundingMethod  # no-cython-lint
 
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -63,9 +64,10 @@ cpdef Column round(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source = source.view()
     with nogil:
         c_result = cpp_round(
-            source.view(),
+            c_source,
             decimal_places,
             round_method,
             _cs,
@@ -112,9 +114,10 @@ cpdef Column round_decimal(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source = source.view()
     with nogil:
         c_result = cpp_round_decimal(
-            source.view(),
+            c_source,
             decimal_places,
             round_method,
             _cs,

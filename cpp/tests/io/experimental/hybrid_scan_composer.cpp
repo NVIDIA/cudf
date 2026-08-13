@@ -1,15 +1,18 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "hybrid_scan_composer.hpp"
 
-#include <cudf/concatenate.hpp>
+#include "hybrid_scan_common.hpp"
+
+#include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/mr/aligned_resource_adaptor.hpp>
@@ -48,15 +51,14 @@ std::unique_ptr<hybrid_scan_reader> setup_reader(cudf::io::datasource& datasourc
 }
 
 /**
- * @brief Apply hybrid scan filters
+ * @brief Apply hybrid scan row group filters
  *
  * @param datasource Input datasource
  * @param options Reader options
  * @param stream CUDA stream
  * @param mr Device memory resource
  *
- * @return A tuple of the reader, filtered row group indices, and row mask and data page mask from
- * data page pruning
+ * @return Filtered row group indices
  */
 auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
                                hybrid_scan_reader const& reader,
@@ -120,44 +122,8 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
     current_row_group_indices = bloom_filtered_row_group_indices;
   }
 
-  // Build row mask using page index stats or all true if no filter is provided
-  auto row_mask = [&]() {
-    if (options.get_filter().has_value()) {
-      return reader.build_row_mask_with_page_index_stats(
-        current_row_group_indices, options, stream, mr);
-    } else {
-      return reader.build_all_true_row_mask(current_row_group_indices, stream, mr);
-    }
-  }();
-
-  std::vector<cudf::size_type> final_row_group_indices(current_row_group_indices.begin(),
-                                                       current_row_group_indices.end());
-
-  return std::tuple{std::move(final_row_group_indices), std::move(row_mask)};
-}
-
-/*
- * @brief Concatenate a vector of tables and return the resultant table
- *
- * @param tables Vector of tables to concatenate
- * @param stream CUDA stream to use
- *
- * @return Unique pointer to the resultant concatenated table.
- */
-std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>> tables,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
-{
-  if (tables.size() == 1) { return std::move(tables[0]); }
-
-  std::vector<cudf::table_view> table_views;
-  table_views.reserve(tables.size());
-  std::transform(
-    tables.begin(), tables.end(), std::back_inserter(table_views), [&](auto const& tbl) {
-      return tbl->view();
-    });
-  // Construct the final table
-  return cudf::concatenate(table_views, stream, mr);
+  return std::vector<cudf::size_type>(current_row_group_indices.begin(),
+                                      current_row_group_indices.end());
 }
 
 }  // namespace
@@ -182,10 +148,17 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   auto const reader = setup_reader(datasource, options);
   auto reader_ref   = std::ref(*reader);
 
-  auto [filtered_row_group_indices, row_mask] =
+  auto const filtered_row_group_indices =
     apply_hybrid_scan_filters(datasource, reader_ref, options, stream, mr);
 
-  auto current_row_group_indices = cudf::host_span<cudf::size_type>(filtered_row_group_indices);
+  auto const current_row_group_indices =
+    cudf::host_span<cudf::size_type const>(filtered_row_group_indices);
+
+  // Build a row mask for the filtered row groups using page index stats, or all true if no filter
+  auto row_mask =
+    options.get_filter().has_value()
+      ? reader->build_row_mask_with_page_index_stats(current_row_group_indices, options, stream, mr)
+      : reader->build_all_true_row_mask(current_row_group_indices, stream, mr);
 
   // Get column chunk byte ranges from the reader
   auto const filter_column_chunk_byte_ranges =
@@ -198,11 +171,11 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   filter_col_tasks.get();
 
   // Materialize the table with only the filter columns
-  auto row_mask_mutable_view = row_mask->mutable_view();
+  auto row_mask_view = row_mask->mutable_view();
   auto [filter_table, filter_metadata] =
     reader->materialize_filter_columns(current_row_group_indices,
                                        filter_col_data,
-                                       row_mask_mutable_view,
+                                       row_mask_view,
                                        cudf::io::parquet::experimental::use_data_page_mask::YES,
                                        options,
                                        stream,
@@ -222,7 +195,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   auto [payload_table, payload_metadata] =
     reader->materialize_payload_columns(current_row_group_indices,
                                         payload_col_data,
-                                        row_mask->view(),
+                                        row_mask_view,
                                         cudf::io::parquet::experimental::use_data_page_mask::YES,
                                         options,
                                         stream,
@@ -251,97 +224,97 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
   auto const reader = setup_reader(datasource, options);
   auto reader_ref   = std::ref(*reader);
 
-  auto [filtered_row_group_indices, row_mask] =
+  auto const filtered_row_group_indices =
     apply_hybrid_scan_filters(datasource, reader_ref, options, stream, mr);
 
-  auto current_row_group_indices = cudf::host_span<cudf::size_type>(filtered_row_group_indices);
+  auto const current_row_group_indices =
+    cudf::host_span<cudf::size_type const>(filtered_row_group_indices);
 
-  // Helper to split the materialization of filter columns into chunks
-  auto tables          = std::vector<std::unique_ptr<cudf::table>>{};
-  auto filter_metadata = cudf::io::table_metadata{};
-  auto const materialize_filter_columns =
-    [&](cudf::host_span<cudf::size_type const> row_group_indices) {
-      // Get column chunk byte ranges from the reader and fetch device buffers
-      auto const filter_column_chunk_byte_ranges =
-        reader->filter_column_chunks_byte_ranges(row_group_indices, options);
-      auto [filter_col_buffers, filter_col_data, filter_col_tasks] =
-        cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, filter_column_chunk_byte_ranges, stream, mr);
-      filter_col_tasks.get();
+  // Build a row mask for the filtered row groups using page index stats, or all true if no filter
+  auto row_mask =
+    options.get_filter().has_value()
+      ? reader->build_row_mask_with_page_index_stats(current_row_group_indices, options, stream, mr)
+      : reader->build_all_true_row_mask(current_row_group_indices, stream, mr);
 
-      // Setup chunking for filter columns and materialize the columns
-      reader->setup_chunking_for_filter_columns(
-        1024,
-        10240,
-        row_group_indices,
-        row_mask->view(),
-        cudf::io::parquet::experimental::use_data_page_mask::YES,
-        filter_col_data,
-        options,
-        stream,
-        mr);
+  auto filter_tables  = std::vector<std::unique_ptr<cudf::table>>{};
+  auto payload_tables = std::vector<std::unique_ptr<cudf::table>>{};
 
-      auto row_mask_mutable_view = row_mask->mutable_view();
-      while (reader->has_next_table_chunk()) {
-        auto chunk = reader->materialize_filter_columns_chunk(row_mask_mutable_view);
-        tables.push_back(std::move(chunk.tbl));
-        filter_metadata = std::move(chunk.metadata);
-      }
-    };
+  // Helper to materialize filter and payload columns for a row group pass
+  std::size_t rows_materialized = 0;
+  auto const materialize_pass   = [&](cudf::host_span<cudf::size_type const> row_group_indices) {
+    // Sliced row mask view for the current pass
+    auto const rows_in_pass = reader->total_rows_in_row_groups(row_group_indices);
+    auto* null_mask         = row_mask->nullable() ? row_mask->mutable_view().null_mask() : nullptr;
+    auto const slice_null_count =
+      cudf::null_count(null_mask, rows_materialized, rows_materialized + rows_in_pass, stream);
+    auto row_mask_view = cudf::mutable_column_view(row_mask->type(),
+                                                   rows_in_pass,
+                                                   row_mask->mutable_view().data<bool>(),
+                                                   null_mask,
+                                                   slice_null_count,
+                                                   rows_materialized);
+
+    // Materialize filter columns
+    auto const filter_byte_ranges =
+      reader->filter_column_chunks_byte_ranges(row_group_indices, options);
+    auto [filter_buffers, filter_data, filter_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        datasource, filter_byte_ranges, stream, mr);
+    filter_tasks.get();
+
+    reader->setup_chunking_for_filter_columns(
+      1024,
+      10240,
+      row_group_indices,
+      row_mask_view,
+      cudf::io::parquet::experimental::use_data_page_mask::YES,
+      filter_data,
+      options,
+      stream,
+      mr);
+
+    while (reader->has_next_table_chunk()) {
+      filter_tables.push_back(reader->materialize_filter_columns_chunk(row_mask_view).tbl);
+    }
+
+    // Materialize payload columns
+    auto const payload_byte_ranges =
+      reader->payload_column_chunks_byte_ranges(row_group_indices, options);
+    auto [payload_buffers, payload_data, payload_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        datasource, payload_byte_ranges, stream, mr);
+    payload_tasks.get();
+
+    reader->setup_chunking_for_payload_columns(
+      1024,
+      10240,
+      row_group_indices,
+      row_mask_view,
+      cudf::io::parquet::experimental::use_data_page_mask::YES,
+      payload_data,
+      options,
+      stream,
+      mr);
+
+    while (reader->has_next_table_chunk()) {
+      payload_tables.push_back(reader->materialize_payload_columns_chunk(row_mask_view).tbl);
+    }
+
+    // Update the number of rows materialized
+    rows_materialized += rows_in_pass;
+  };
 
   if (current_row_group_indices.size() > 1) {
     auto const row_group_split = current_row_group_indices.size() / 2;
-    materialize_filter_columns(current_row_group_indices.subspan(0, row_group_split));
-    materialize_filter_columns(current_row_group_indices.subspan(
+    materialize_pass(current_row_group_indices.subspan(0, row_group_split));
+    materialize_pass(current_row_group_indices.subspan(
       row_group_split, current_row_group_indices.size() - row_group_split));
   } else {
-    materialize_filter_columns(current_row_group_indices);
+    materialize_pass(current_row_group_indices);
   }
 
-  auto filter_table = concatenate_tables(std::move(tables), stream, mr);
-
-  // Helper to split the materialization of payload columns into chunks
-  tables.clear();
-  auto payload_metadata = cudf::io::table_metadata{};
-  auto const materialize_payload_columns =
-    [&](cudf::host_span<cudf::size_type const> row_group_indices) {
-      // Get column chunk byte ranges from the reader and fetch device buffers
-      auto const payload_column_chunk_byte_ranges =
-        reader->payload_column_chunks_byte_ranges(row_group_indices, options);
-      auto [payload_col_buffers, payload_col_data, payload_col_tasks] =
-        cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, payload_column_chunk_byte_ranges, stream, mr);
-      payload_col_tasks.get();
-
-      // Setup chunking for payload columns and materialize the table
-      reader->setup_chunking_for_payload_columns(
-        1024,
-        10240,
-        row_group_indices,
-        row_mask->view(),
-        cudf::io::parquet::experimental::use_data_page_mask::YES,
-        payload_col_data,
-        options,
-        stream,
-        mr);
-
-      while (reader->has_next_table_chunk()) {
-        auto chunk = reader->materialize_payload_columns_chunk(row_mask->view());
-        tables.push_back(std::move(chunk.tbl));
-        payload_metadata = std::move(chunk.metadata);
-      }
-    };
-
-  if (current_row_group_indices.size() > 1) {
-    auto const row_group_split = current_row_group_indices.size() / 2;
-    materialize_payload_columns(current_row_group_indices.subspan(0, row_group_split));
-    materialize_payload_columns(current_row_group_indices.subspan(
-      row_group_split, current_row_group_indices.size() - row_group_split));
-  } else {
-    materialize_payload_columns(current_row_group_indices);
-  }
-
-  auto payload_table = concatenate_tables(std::move(tables), stream, mr);
+  auto filter_table  = concatenate_tables(std::move(filter_tables), stream, mr);
+  auto payload_table = concatenate_tables(std::move(payload_tables), stream, mr);
 
   return std::tuple{std::move(filter_table), std::move(payload_table)};
 }
@@ -365,10 +338,11 @@ std::unique_ptr<cudf::table> hybrid_scan_single_step(
   auto const reader = setup_reader(datasource, options);
   auto reader_ref   = std::ref(*reader);
 
-  auto [filtered_row_group_indices, _ /* row_mask */] =
+  auto const filtered_row_group_indices =
     apply_hybrid_scan_filters(datasource, reader_ref, options, stream, mr);
 
-  auto current_row_group_indices = cudf::host_span<cudf::size_type>(filtered_row_group_indices);
+  auto const current_row_group_indices =
+    cudf::host_span<cudf::size_type const>(filtered_row_group_indices);
 
   // Get all column chunk byte ranges from the reader
   auto const all_column_chunk_byte_ranges =
@@ -405,7 +379,7 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_single_step(
   auto const reader = setup_reader(datasource, options);
   auto reader_ref   = std::ref(*reader);
 
-  auto [filtered_row_group_indices, _ /*row_mask*/] =
+  auto filtered_row_group_indices =
     apply_hybrid_scan_filters(datasource, reader_ref, options, stream, mr);
 
   auto current_row_group_indices = cudf::host_span<cudf::size_type>(filtered_row_group_indices);

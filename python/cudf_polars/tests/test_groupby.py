@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ import pytest
 
 import polars as pl
 
+from cudf_polars import Translator
+from cudf_polars.containers import DataType
+from cudf_polars.dsl.expressions.aggregation import Agg
+from cudf_polars.dsl.expressions.base import Col, ExecutionContext, NamedExpr
+from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -18,6 +23,7 @@ from cudf_polars.testing.asserts import (
 from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
+    POLARS_VERSION_LT_140,
 )
 
 
@@ -131,6 +137,21 @@ def test_groupby(engine: pl.GPUEngine, df: pl.LazyFrame, maintain_order, keys, e
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Int8, pl.Int32, pl.Int64, pl.UInt16, pl.Float64],
+)
+def test_groupby_product_all_null_1(engine: pl.GPUEngine, dtype: pl.DataType) -> None:
+    lf = pl.LazyFrame(
+        {
+            "key": [1, 1, 2, 2, 3, 3, 3],
+            "value": pl.Series([2, 3, 4, None, None, None, None], dtype=dtype),
+        }
+    )
+    q = lf.group_by("key").agg(pl.col("value").product()).sort("key")
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
 def test_groupby_sorted_keys(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
@@ -172,6 +193,198 @@ def test_groupby_len(engine: pl.GPUEngine, df, keys):
     q = df.group_by(*keys).agg(pl.len())
 
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_item(engine: pl.GPUEngine):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1, 2, 3],
+            "value": [10.0, None, 30.0],
+        }
+    )
+    q = lf.group_by("bucket").agg(pl.col("value").item())
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_item_empty_result(engine: pl.GPUEngine):
+    lf = pl.LazyFrame(
+        schema={
+            "bucket": pl.Int64,
+            "value": pl.Float64,
+        }
+    )
+    q = lf.group_by("bucket").agg(pl.col("value").item(allow_empty=True))
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_filtered_item_allow_empty(engine: pl.GPUEngine):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1, 1, 2, 2, 3],
+            "exchange": ["A", "B", "A", "B", "A"],
+            "value": [10.0, 20.0, 30.0, 40.0, None],
+        }
+    )
+    q = lf.group_by("bucket").agg(
+        A=pl.col("value").filter(pl.col("exchange") == "A").item(allow_empty=True),
+        B=pl.col("value").filter(pl.col("exchange") == "B").item(allow_empty=True),
+        C=pl.col("value").filter(pl.col("exchange") == "C").item(allow_empty=True),
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_filtered_item_missing_cell_raise(engine_raise_on_fail):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1],
+            "exchange": ["B"],
+            "value": [10.0],
+        }
+    )
+    q = lf.group_by("bucket").agg(
+        A=pl.col("value").filter(pl.col("exchange") == "A").item(),
+    )
+
+    with pytest.raises(
+        pl.exceptions.ComputeError,
+        match="aggregation 'item' expected a single value, got none",
+    ):
+        q.collect(engine=engine_raise_on_fail)
+
+
+def test_groupby_filtered_item_nested_agg_raises(engine: pl.GPUEngine):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1, 1],
+            "value": [10.0, 20.0],
+        }
+    )
+    q = lf.group_by("bucket").agg(
+        pl.col("value").filter(pl.col("value").sum() > 0).item(allow_empty=True),
+    )
+
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_groupby_item_nested_agg_raises(engine: pl.GPUEngine):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1, 1],
+            "value": [10.0, 20.0],
+        }
+    )
+    q = lf.group_by("bucket").agg(
+        pl.col("value").sum().item(allow_empty=True),
+    )
+
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_item_decomposition_outside_groupby_raises():
+    dtype = DataType(pl.Int64())
+    allow_empty = True
+    named_expr = NamedExpr(
+        "value",
+        Agg(dtype, "item", allow_empty, ExecutionContext.FRAME, Col(dtype, "value")),
+    )
+    name_generator = (f"__{i}" for i in itertools.count())
+
+    with pytest.raises(
+        NotImplementedError, match="item is only supported in groupby context"
+    ):
+        decompose_single_agg(
+            named_expr,
+            name_generator,
+            is_top=True,
+            context=ExecutionContext.FRAME,
+        )
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_136, reason="LazyFrame.pivot added in Polars 1.36"
+)
+def test_groupby_pivot_item(engine: pl.GPUEngine):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1, 1, 2, 2, 3],
+            "exchange": ["A", "B", "A", "B", "A"],
+            "value": [10.0, 20.0, 30.0, 40.0, None],
+        }
+    )
+    q = lf.pivot(
+        on="exchange",
+        on_columns=["A", "B", "C"],
+        index="bucket",
+        values="value",
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_filtered_item_duplicate_cells_raise(engine_raise_on_fail):
+    lf = pl.LazyFrame(
+        {
+            "bucket": [1, 1],
+            "exchange": ["A", "A"],
+            "value": [10.0, 20.0],
+        }
+    )
+    q = lf.group_by("bucket").agg(
+        A=pl.col("value").filter(pl.col("exchange") == "A").item(allow_empty=True),
+    )
+
+    with pytest.raises(
+        pl.exceptions.ComputeError,
+        match="aggregation 'item' expected no or a single value",
+    ):
+        q.collect(engine=engine_raise_on_fail)
+
+
+@pytest.mark.parametrize(
+    "values, expr",
+    [
+        ([10.0], pl.col("value").item()),
+        ([], pl.col("value").item(allow_empty=True)),
+    ],
+)
+def test_select_item(engine_raise_on_fail, values, expr):
+    lf = pl.LazyFrame({"value": pl.Series(values, dtype=pl.Float64)})
+    q = lf.select(expr)
+
+    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
+
+
+@pytest.mark.parametrize(
+    "values, match",
+    [
+        ([], "aggregation 'item' expected a single value, got none"),
+        ([10.0, 20.0], "aggregation 'item' expected a single value, got 2 values"),
+    ],
+)
+def test_select_item_raises(engine_raise_on_fail, values, match):
+    lf = pl.LazyFrame({"value": pl.Series(values, dtype=pl.Float64)})
+    q = lf.select(pl.col("value").item())
+
+    with pytest.raises(pl.exceptions.ComputeError, match=match):
+        q.collect(engine=engine_raise_on_fail)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [],
+        [10.0, 20.0],
+        [None, 10.0, 20.0],
+    ],
+)
+def test_select_first_non_null(engine_raise_on_fail, values):
+    lf = pl.LazyFrame({"value": pl.Series(values, dtype=pl.Float64)})
+    q = lf.select(pl.col("value").drop_nulls().first())
+
+    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
 
 
 @pytest.mark.parametrize(
@@ -247,17 +460,30 @@ def test_groupby_nan_minmax_raises(engine: pl.GPUEngine, op):
         pytest.param(
             pl.Series("value", [[4, 5, 6]], dtype=pl.List(pl.Int32)),
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/19610",
+                condition=POLARS_VERSION_LT_140,
+                reason="polars < 1.40 emits the list literal at its inner dtype, "
+                "nested per group, which we mishandle: "
+                "https://github.com/rapidsai/cudf/issues/19610",
             ),
         ),
         pl.col("float") * (1 - pl.col("int")),
         [pl.lit(2).alias("value"), pl.col("float") * 2],
     ],
 )
-def test_groupby_literal_in_agg(engine: pl.GPUEngine, df, key, expr):
+def test_groupby_literal_in_agg(engine: pl.GPUEngine, df, key, expr, request):
     # check_row_order=False doesn't work for list aggregations
     # so just sort by the group key
     q = df.group_by(key).agg(expr).sort(key, maintain_order=True)
+    if not POLARS_VERSION_LT_140 and isinstance(key, int):
+        translator = Translator(q._ldf.visit(), pl.GPUEngine())
+        translator.translate_ir()
+        if any("implode" in str(e) for e in translator.errors):
+            request.applymarker(
+                pytest.mark.xfail(
+                    reason="group_by(<literal>) wraps element-wise aggs in an "
+                    "unsupported implode on polars >= 1.40"
+                )
+            )
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -473,12 +699,28 @@ def test_groupby_rank_raises(engine: pl.GPUEngine, df: pl.LazyFrame) -> None:
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_groupby_sum_decimal_null_group(engine: pl.GPUEngine) -> None:
+def test_groupby_sum_decimal_null_group(
+    engine: pl.GPUEngine, xfail_decimal_sum_precision_polars_140
+) -> None:
     df = pl.LazyFrame(
         {"key1": [1, 1, 2, 3], "foo": [None, None, Decimal("1.00"), Decimal("2.00")]},
         schema={"key1": pl.Int32, "foo": pl.Decimal(9, 2)},
     )
     q = df.group_by("key1").agg(pl.col("foo").sum())
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_quantile_nearest_even_length(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "a", "b", "b"],
+            "val": [1.5, 2.5, 10.0, 20.0],
+        }
+    )
+    q = df.group_by("key").agg(
+        pl.col("val").quantile(0.5, interpolation="nearest").alias("q50"),
+        (-pl.col("val")).quantile(0.5, interpolation="nearest").alias("q50_neg"),
+    )
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
@@ -495,4 +737,7 @@ def test_groupby_literal_agg(engine: pl.GPUEngine):
 def test_groupby_empty_keys_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame({"x": [1, 2, 3]})
     q = df.group_by([]).agg(pl.len())
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    if POLARS_VERSION_LT_140:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)

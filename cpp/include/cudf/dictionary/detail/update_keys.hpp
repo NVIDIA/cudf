@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,6 +12,8 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
+
+#include <span>
 
 namespace cudf {
 namespace dictionary::detail {
@@ -65,7 +67,7 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::vector<std::unique_ptr<column>> match_dictionaries(
-  cudf::host_span<dictionary_column_view const> input,
+  std::span<dictionary_column_view const> input,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr);
 

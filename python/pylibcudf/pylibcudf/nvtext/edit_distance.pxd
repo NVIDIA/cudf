@@ -11,9 +11,3 @@ cpdef Column edit_distance(
     object stream = *,
     DeviceMemoryResource mr=*,
 )
-
-cpdef Column edit_distance_matrix(
-    Column input,
-    object stream = *,
-    DeviceMemoryResource mr=*,
-)

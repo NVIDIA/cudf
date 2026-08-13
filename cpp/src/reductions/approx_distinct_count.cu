@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,6 +23,7 @@
 #include <cuda/std/type_traits>
 
 #include <cmath>
+#include <utility>
 
 namespace cudf {
 namespace detail {
@@ -160,13 +161,16 @@ struct check_nans_predicate {
 }  // namespace
 
 template <template <typename> class Hasher>
-approx_distinct_count<Hasher>::approx_distinct_count(table_view const& input,
-                                                     std::int32_t precision,
-                                                     null_policy null_handling,
-                                                     nan_policy nan_handling,
-                                                     rmm::cuda_stream_view stream)
-  : _storage{rmm::device_uvector<register_type>{
-      sketch_bytes(check_precision(precision)) / sizeof(register_type), stream}},
+approx_distinct_count<Hasher>::approx_distinct_count(
+  table_view const& input,
+  std::int32_t precision,
+  null_policy null_handling,
+  nan_policy nan_handling,
+  rmm::cuda_stream_view stream,
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _mr{std::move(mr)},
+    _storage{rmm::device_uvector<register_type>{
+      sketch_bytes(check_precision(precision)) / sizeof(register_type), stream, _mr}},
     _precision{precision},
     _null_handling{null_handling},
     _nan_handling{nan_handling}
@@ -183,18 +187,26 @@ approx_distinct_count<Hasher>::approx_distinct_count(
   cudf::approx_distinct_count::desired_standard_error error,
   null_policy null_handling,
   nan_policy nan_handling,
-  rmm::cuda_stream_view stream)
-  : approx_distinct_count{
-      input, precision_from_standard_error(error.value), null_handling, nan_handling, stream}
+  rmm::cuda_stream_view stream,
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : approx_distinct_count{input,
+                          precision_from_standard_error(error.value),
+                          null_handling,
+                          nan_handling,
+                          stream,
+                          std::move(mr)}
 {
 }
 
 template <template <typename> class Hasher>
-approx_distinct_count<Hasher>::approx_distinct_count(cuda::std::span<cuda::std::byte> sketch_span,
-                                                     std::int32_t precision,
-                                                     null_policy null_handling,
-                                                     nan_policy nan_handling)
-  : _storage{check_sketch_span(sketch_span, check_precision(precision))},
+approx_distinct_count<Hasher>::approx_distinct_count(
+  cuda::std::span<cuda::std::byte> sketch_span,
+  std::int32_t precision,
+  null_policy null_handling,
+  nan_policy nan_handling,
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _mr{std::move(mr)},
+    _storage{check_sketch_span(sketch_span, check_precision(precision))},
     _precision{precision},
     _null_handling{null_handling},
     _nan_handling{nan_handling}
@@ -362,8 +374,10 @@ approx_distinct_count::approx_distinct_count(table_view const& input,
                                              std::int32_t precision,
                                              null_policy null_handling,
                                              nan_policy nan_handling,
-                                             rmm::cuda_stream_view stream)
-  : _impl(std::make_unique<impl_type>(input, precision, null_handling, nan_handling, stream))
+                                             rmm::cuda_stream_view stream,
+                                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _impl(std::make_unique<impl_type>(
+      input, precision, null_handling, nan_handling, stream, std::move(mr)))
 {
 }
 
@@ -371,8 +385,10 @@ approx_distinct_count::approx_distinct_count(table_view const& input,
                                              desired_standard_error error,
                                              null_policy null_handling,
                                              nan_policy nan_handling,
-                                             rmm::cuda_stream_view stream)
-  : _impl(std::make_unique<impl_type>(input, error, null_handling, nan_handling, stream))
+                                             rmm::cuda_stream_view stream,
+                                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _impl(
+      std::make_unique<impl_type>(input, error, null_handling, nan_handling, stream, std::move(mr)))
 {
 }
 
@@ -380,7 +396,8 @@ approx_distinct_count::approx_distinct_count(cuda::std::span<cuda::std::byte> sk
                                              std::int32_t precision,
                                              null_policy null_handling,
                                              nan_policy nan_handling)
-  : _impl(std::make_unique<impl_type>(sketch_span, precision, null_handling, nan_handling))
+  : _impl(std::make_unique<impl_type>(
+      sketch_span, precision, null_handling, nan_handling, cudf::get_current_device_resource_ref()))
 {
 }
 

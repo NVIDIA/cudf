@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -109,7 +109,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
       rotated_iter_begin,
       rotated_iter_begin + num_partitions,
       d_row_indices.begin(),
-      [nrows] __device__(auto index) { return (index < nrows); },
+      [nrows] __device__(auto index) -> bool { return (index < nrows); },
       stream);
 
     //...and then use the result, d_row_indices, as gather map:

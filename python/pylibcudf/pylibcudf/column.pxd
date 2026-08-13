@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -53,9 +53,10 @@ cdef class Column:
         # _children: List[Column]
         list _children
         size_type _num_children
+        object __weakref__
 
-    cdef column_view view(self) nogil
-    cdef mutable_column_view mutable_view(self) nogil
+    cdef column_view view(self)
+    cdef mutable_column_view mutable_view(self)
 
     @staticmethod
     cdef Column from_libcudf(
@@ -83,6 +84,7 @@ cdef class Column:
         object stream=*,
     )
 
+    cpdef list to_pylist(self)
     cpdef Scalar to_scalar(self, object stream=*, DeviceMemoryResource mr=*)
     cpdef DataType type(self)
     cpdef Column child(self, size_type index)
@@ -106,11 +108,11 @@ cdef class ListsColumnView:
     cdef Column _column
     cpdef child(self)
     cpdef offsets(self)
-    cdef lists_column_view view(self) nogil
+    cdef lists_column_view view(self)
     cpdef Column get_sliced_child(self, object stream=*)
 
 
 cdef class StructsColumnView:
     cdef Column _column
-    cdef structs_column_view view(self) nogil
+    cdef structs_column_view view(self)
     cpdef Column get_sliced_child(self, int index, object stream=*)

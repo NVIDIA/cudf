@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -14,6 +14,7 @@ from pylibcudf.libcudf.reshape cimport (
     byte,
 )
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 
 from pylibcudf.libcudf.utilities.span cimport device_span
@@ -60,9 +61,10 @@ cpdef Column interleave_columns(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_interleave_columns(
-            source_table.view(), _cs, mr.get_mr()
+            c_source_table, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -99,9 +101,10 @@ cpdef Table tile(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_tile(
-            source_table.view(), count, _cs, mr.get_mr()
+            c_source_table, count, _cs, mr.get_mr()
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -138,10 +141,11 @@ cpdef void table_to_array(
     cdef device_span[byte] span = device_span[byte](
         <byte*> ptr, size
     )
+    cdef table_view c_input_table = input_table.view()
 
     with nogil:
         cpp_table_to_array(
-            input_table.view(),
+            c_input_table,
             span,
             _cs
         )

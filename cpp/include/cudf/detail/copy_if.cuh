@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -48,7 +48,7 @@ std::unique_ptr<table> copy_if(table_view const& input,
 {
   CUDF_FUNC_RANGE();
 
-  if (0 == input.num_rows() || 0 == input.num_columns()) { return empty_like(input); }
+  if (0 == input.num_rows()) { return empty_like(input); }
 
   auto indices     = rmm::device_uvector<size_type>(input.num_rows(), stream);
   auto const begin = cuda::counting_iterator<size_type>{0};

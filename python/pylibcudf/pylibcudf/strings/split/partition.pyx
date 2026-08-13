@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
+from pylibcudf.libcudf.column.column cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_string_scalar as cpp_make_string_scalar,
@@ -60,9 +61,10 @@ cpdef Table partition(
         delimiter.c_obj.get()
     )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_partition.partition(
-            input.view(),
+            c_input,
             dereference(c_delimiter),
             _cs,
             mr.get_mr()
@@ -110,9 +112,10 @@ cpdef Table rpartition(
         delimiter.c_obj.get()
     )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_partition.rpartition(
-            input.view(),
+            c_input,
             dereference(c_delimiter),
             _cs,
             mr.get_mr()

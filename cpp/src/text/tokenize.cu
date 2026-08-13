@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -206,7 +206,7 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
     cuda::counting_iterator<int64_t>{0},
     cuda::counting_iterator<int64_t>{chars_bytes + 1},
     d_new_offsets,
-    [d_chars, chars_bytes] __device__(auto idx) {
+    [d_chars, chars_bytes] __device__(auto idx) -> bool {
       // this will also set the final value to the size chars_bytes
       return idx < chars_bytes ? cudf::strings::detail::is_begin_utf8_char(d_chars[idx]) : true;
     },

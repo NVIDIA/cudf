@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -113,6 +113,7 @@ std::unique_ptr<column> find_instance(strings_column_view const& input,
                                    grid.num_threads_per_block,
                                    0,
                                    stream.value()>>>(*d_strings, d_target, instance, d_results);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   return results;
 }

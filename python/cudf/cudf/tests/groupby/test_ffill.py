@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -61,3 +61,42 @@ def test_groupby_ffill_multi_value():
     got = gdf.groupby(key_col).ffill()
 
     assert_groupby_results_equal(expect[value_cols], got[value_cols])
+
+
+@pytest.mark.parametrize("method", ["ffill", "bfill"])
+@pytest.mark.parametrize("limit", [0, 1, 2, -1, None])
+@pytest.mark.parametrize(
+    "values",
+    [
+        [1.0, None, None, None, 2.0, None, None],
+        ["x", None, None, None, "y", None, None],
+    ],
+)
+def test_groupby_fill_limit(method, limit, values):
+    # interleaved keys: limit counts group-relative positions
+    keys = ["a", "b"] * 7
+    data = {"key": keys, "val": [v for v in values for _ in range(2)]}
+    pdf = pd.DataFrame(data)
+    gdf = cudf.DataFrame(data)
+
+    expect = getattr(pdf.groupby("key"), method)(limit=limit)
+    got = getattr(gdf.groupby("key"), method)(limit=limit)
+
+    assert_groupby_results_equal(expect, got)
+
+
+@pytest.mark.parametrize("method", ["ffill", "bfill"])
+def test_groupby_fill_limit_null_keys(method):
+    # null-key rows must stay null under dropna=True even with a limit
+    pdf = pd.DataFrame(
+        {
+            "key": [1.0, 1.0, None, 1.0, None, 1.0],
+            "val": [1.0, None, None, None, 2.0, None],
+        }
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = getattr(pdf.groupby("key", dropna=True), method)(limit=1)
+    got = getattr(gdf.groupby("key", dropna=True), method)(limit=1)
+
+    assert_groupby_results_equal(expect, got)

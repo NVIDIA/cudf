@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,6 +9,11 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for extracting matched regex groups from each string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -17,7 +22,6 @@ struct regex_program;
 /**
  * @addtogroup strings_extract
  * @{
- * @file
  */
 
 /**

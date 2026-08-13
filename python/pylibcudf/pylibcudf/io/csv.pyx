@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
@@ -869,6 +869,24 @@ cdef class CsvWriterOptionsBuilder:
             Builder to build CsvWriterOptions
         """
         self.c_obj.false_value(val.encode())
+        return self
+
+    cpdef CsvWriterOptionsBuilder quoting(self, quote_style style):
+        """Sets quoting style for string columns.
+
+        Parameters
+        ----------
+        style : quote_style
+            Quoting style (MINIMAL or NONE).
+            MINIMAL: Quote only fields containing special characters.
+            NONE: Never quote fields.
+
+        Returns
+        -------
+        CsvWriterOptionsBuilder
+            Builder to build CsvWriterOptions
+        """
+        self.c_obj.quoting(style)
         return self
 
     cpdef CsvWriterOptions build(self):

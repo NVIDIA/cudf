@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport reverse as cpp_reverse
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -36,7 +37,8 @@ cpdef Column reverse(Column input, object stream=None, DeviceMemoryResource mr=N
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_reverse.reverse(input.view(), _cs, mr.get_mr())
+        c_result = cpp_reverse.reverse(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(c_result), _stream, mr)

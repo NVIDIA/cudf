@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -77,6 +77,19 @@ public class CompiledExpression implements AutoCloseable {
     return new ColumnVector(computeColumn(cleaner.nativeHandle, table.getNativeView()));
   }
 
+  /**
+   * Compute a new column by applying this expression with the libcudf JIT executor, independent
+   * of the process-level backend selected for {@link #computeColumn}.
+   *
+   * @param table input table for this expression
+   * @return new column computed from this expression applied to the input table
+   * @throws ai.rapids.cudf.CudfException if the expression refers to
+   *         {@link TableReference#RIGHT}, or if JIT compilation or evaluation fails
+   */
+  public ColumnVector computeColumnJit(Table table) {
+    return new ColumnVector(computeColumnJit(cleaner.nativeHandle, table.getNativeView()));
+  }
+
   @Override
   public synchronized void close() {
     cleaner.delRef();
@@ -95,5 +108,6 @@ public class CompiledExpression implements AutoCloseable {
 
   private static native long compile(byte[] serializedExpression);
   private static native long computeColumn(long astHandle, long tableHandle);
+  private static native long computeColumnJit(long astHandle, long tableHandle);
   private static native void destroy(long handle);
 }

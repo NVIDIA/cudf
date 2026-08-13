@@ -20,7 +20,6 @@ This container is a turnkey development environment for building and testing the
 By default, the following directories are bind-mounted into the devcontainer:
 
 * `${repo}:/home/coder/cudf`
-* `${repo}/../rapidsmpf:/home/coder/rapidsmpf`
 * `${repo}/../.aws:/home/coder/.aws`
 * `${repo}/../.local:/home/coder/.local`
 * `${repo}/../.cache:/home/coder/.cache`
@@ -28,13 +27,6 @@ By default, the following directories are bind-mounted into the devcontainer:
 * `${repo}/../.config:/home/coder/.config`
 
 This ensures caches, configurations, dependencies, and your commits are persisted on the host across container runs.
-
-The [rapidsmpf](https://github.com/rapidsai/rapidsmpf) repository is a required dependency of `cudf_polars` (that also requires `libcudf`) and must be cloned as a sibling directory to the cudf repo before launching the devcontainer:
-
-```
-# from the parent directory of your cudf clone
-git clone https://github.com/rapidsai/rapidsmpf.git
-```
 
 ## Launch a Dev Container
 

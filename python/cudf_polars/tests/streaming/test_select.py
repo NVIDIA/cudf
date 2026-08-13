@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -85,6 +85,22 @@ def test_select_fill_null_with_strategy(df, streaming_engine_factory):
         StreamingOptions(max_rows_per_partition=3, fallback_mode="warn"),
     )
     q = df.select(pl.col("a").forward_fill())
+
+    with warns_on_spmd(
+        engine,
+        UserWarning,
+        match="fill_null with strategy other than 'zero' or 'one' is not supported for multiple partitions",
+    ):
+        assert_gpu_result_equal(q, engine=engine)
+
+
+def test_select_scan_fill_null_with_strategy_fallback(tmp_path, spmd_engine_factory):
+    engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=1, fallback_mode="warn"),
+    )
+    path = tmp_path / "data.parquet"
+    pl.DataFrame({"a": [None, 1, None, 3]}).write_parquet(path)
+    q = pl.scan_parquet(path).select(pl.col("a").fill_null(strategy="forward"))
 
     with warns_on_spmd(
         engine,

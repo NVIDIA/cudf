@@ -92,7 +92,7 @@ bindings with Maven.
 The JNI code can be built with *per-thread default stream* (PTDS), which gives each host thread its
 own default CUDA stream, and can potentially increase the overlap of data copying and compute
 between different threads (see
-[blog post](https://devblogs.nvidia.com/gpu-pro-tip-cuda-7-streams-simplify-concurrency/)).
+[blog post](https://developer.nvidia.com/blog/gpu-pro-tip-cuda-7-streams-simplify-concurrency/)).
 
 Since the PTDS option is for each compilation unit, it should be done at the same time across the
 whole codebase. To enable PTDS, first build cuDF:

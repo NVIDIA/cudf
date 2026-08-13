@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -179,7 +179,7 @@ int main(int argc, char const** argv)
     try {
       return extract_input_sources(
         input_paths, input_multiplier, num_threads, io_source_type, default_stream);
-    } catch (const std::exception& e) {
+    } catch (std::exception const& e) {
       print_usage();
       throw std::runtime_error(e.what());
     }

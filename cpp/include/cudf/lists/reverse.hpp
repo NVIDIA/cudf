@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,12 +11,16 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief API for reversing the element order within each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_modify
  * @{
- * @file
  */
 
 /**

@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -629,14 +628,9 @@ def test_groupby_agg_params(
         1 if split_out == "use_dask_default" else split_out
     )
 
-    with warnings.catch_warnings():
-        # dask<=2025.7.0 uses a deprecated "grouper" attribute
-        # in some of these computations. We'll silence the warning
-        # here and fix it upstream.
-        warnings.filterwarnings("ignore", category=FutureWarning)
-        # Compute for easier multiindex handling
-        gf = gr.compute()
-        pf = pr.compute()
+    # Compute for easier multiindex handling
+    gf = gr.compute()
+    pf = pr.compute()
 
     # Reset index and sort by groupby columns
     if as_index:

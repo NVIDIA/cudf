@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ def test_can_parse_no_data(avro_type_params):
     reason="cudf avro reader is unable to parse zero-field metadata."
 )
 def test_can_parse_no_fields(avro_type_params):
-    avro_type, expected_dtype = avro_type_params
+    _avro_type, _expected_dtype = avro_type_params
     schema_root = {
         "name": "root",
         "type": "record",

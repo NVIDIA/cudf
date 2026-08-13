@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: Document StructFunction to remove noqa
 # ruff: noqa: D101
@@ -10,7 +10,7 @@ from enum import IntEnum, auto
 from io import StringIO
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-import polars as pl
+import polars as pl  # noqa: TC002 (used at runtime for pl.Struct, pl.Series etc.)
 
 import pylibcudf as plc
 
@@ -96,7 +96,7 @@ class StructFunction(Expr):
                 (
                     i
                     for i, field in enumerate(
-                        cast(pl.Struct, self.children[0].dtype.polars_type).fields
+                        cast("pl.Struct", self.children[0].dtype.polars_type).fields
                     )
                     if field.name == self.options[0]
                 ),
@@ -126,7 +126,7 @@ class StructFunction(Expr):
                 [
                     (field.name, [])
                     for field in cast(
-                        pl.Struct, self.children[0].dtype.polars_type
+                        "pl.Struct", self.children[0].dtype.polars_type
                     ).fields
                 ],
             )

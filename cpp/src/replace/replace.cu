@@ -207,6 +207,7 @@ struct replace_kernel_forwarder {
                                                                 output_view.size(),
                                                                 *device_values_to_replace,
                                                                 *device_replacement_values);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     if (output_view.nullable()) {
       output->set_null_count(output->size() - valid_counter.value(stream));

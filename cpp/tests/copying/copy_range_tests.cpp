@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,7 @@ class CopyRangeTypedTestFixture : public cudf::test::BaseFixture {
 
     // test the out-of-place version first
 
-    const cudf::column_view immutable_view{target};
+    cudf::column_view const immutable_view{target};
     auto p_ret = cudf::copy_range(source, immutable_view, source_begin, source_end, target_begin);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*p_ret, expected);
 

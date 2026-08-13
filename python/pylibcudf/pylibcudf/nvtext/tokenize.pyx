@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -88,9 +88,10 @@ cpdef Column tokenize_scalar(
             cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_tokenize(
-            input.view(),
+            c_input,
             dereference(<const string_scalar*>delimiter.c_obj.get()),
             _cs,
             mr.get_mr()
@@ -126,10 +127,12 @@ cpdef Column tokenize_column(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_delimiters = delimiters.view()
     with nogil:
         c_result = cpp_tokenize(
-            input.view(),
-            delimiters.view(),
+            c_input,
+            c_delimiters,
             _cs,
             mr.get_mr()
         )
@@ -172,9 +175,10 @@ cpdef Column count_tokens_scalar(
             cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_count_tokens(
-            input.view(),
+            c_input,
             dereference(<const string_scalar*>delimiter.c_obj.get()),
             _cs,
             mr.get_mr()
@@ -210,10 +214,12 @@ cpdef Column count_tokens_column(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_delimiters = delimiters.view()
     with nogil:
         c_result = cpp_count_tokens(
-            input.view(),
-            delimiters.view(),
+            c_input,
+            c_delimiters,
             _cs,
             mr.get_mr()
         )
@@ -245,8 +251,9 @@ cpdef Column character_tokenize(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_character_tokenize(input.view(), _cs, mr.get_mr())
+        c_result = cpp_character_tokenize(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -289,10 +296,12 @@ cpdef Column detokenize(
             cpp_make_string_scalar(" ".encode(), _stream.view().value(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_row_indices = row_indices.view()
     with nogil:
         c_result = cpp_detokenize(
-            input.view(),
-            row_indices.view(),
+            c_input,
+            c_row_indices,
             dereference(<const string_scalar*>separator.c_obj.get()),
             _cs,
             mr.get_mr()
@@ -337,9 +346,10 @@ cpdef Column tokenize_with_vocabulary(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_tokenize_with_vocabulary(
-            input.view(),
+            c_input,
             dereference(vocabulary.c_obj.get()),
             dereference(<const string_scalar*>delimiter.c_obj.get()),
             default_id,

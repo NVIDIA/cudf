@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,8 +40,8 @@ namespace detail {
 std::pair<rmm::device_buffer, size_type> construct_child_nullmask(
   rmm::device_uvector<unbound_list_view> const& parent_list_vector,
   column_view const& parent_list_offsets,
-  cudf::detail::lists_column_device_view const& source_lists,
-  cudf::detail::lists_column_device_view const& target_lists,
+  cudf::lists_column_device_view const& source_lists,
+  cudf::lists_column_device_view const& target_lists,
   size_type num_child_rows,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
@@ -156,8 +156,8 @@ struct list_child_constructor {
       column_device_view::create(source_lists_column_view.parent(), stream);
     auto target_column_device_view =
       column_device_view::create(target_lists_column_view.parent(), stream);
-    auto source_lists = cudf::detail::lists_column_device_view(*source_column_device_view);
-    auto target_lists = cudf::detail::lists_column_device_view(*target_column_device_view);
+    auto source_lists = cudf::lists_column_device_view(*source_column_device_view);
+    auto target_lists = cudf::lists_column_device_view(*target_column_device_view);
 
     auto const num_child_rows{
       cudf::detail::get_value<size_type>(list_offsets, list_offsets.size() - 1, stream)};
@@ -215,8 +215,8 @@ struct list_child_constructor {
       column_device_view::create(source_lists_column_view.parent(), stream);
     auto target_column_device_view =
       column_device_view::create(target_lists_column_view.parent(), stream);
-    auto source_lists = cudf::detail::lists_column_device_view(*source_column_device_view);
-    auto target_lists = cudf::detail::lists_column_device_view(*target_column_device_view);
+    auto source_lists = cudf::lists_column_device_view(*source_column_device_view);
+    auto target_lists = cudf::lists_column_device_view(*target_column_device_view);
 
     auto const num_child_rows{
       cudf::detail::get_value<size_type>(list_offsets, list_offsets.size() - 1, stream)};
@@ -278,8 +278,8 @@ struct list_child_constructor {
       column_device_view::create(source_lists_column_view.parent(), stream);
     auto target_column_device_view =
       column_device_view::create(target_lists_column_view.parent(), stream);
-    auto source_lists = cudf::detail::lists_column_device_view(*source_column_device_view);
-    auto target_lists = cudf::detail::lists_column_device_view(*target_column_device_view);
+    auto source_lists = cudf::lists_column_device_view(*source_column_device_view);
+    auto target_lists = cudf::lists_column_device_view(*target_column_device_view);
 
     auto const num_child_rows{
       cudf::detail::get_value<size_type>(list_offsets, list_offsets.size() - 1, stream)};
@@ -372,8 +372,8 @@ struct list_child_constructor {
       column_device_view::create(source_lists_column_view.parent(), stream);
     auto const target_column_device_view =
       column_device_view::create(target_lists_column_view.parent(), stream);
-    auto const source_lists = cudf::detail::lists_column_device_view(*source_column_device_view);
-    auto const target_lists = cudf::detail::lists_column_device_view(*target_column_device_view);
+    auto const source_lists = cudf::lists_column_device_view(*source_column_device_view);
+    auto const target_lists = cudf::lists_column_device_view(*target_column_device_view);
 
     auto const source_structs = source_lists_column_view.child();
     auto const target_structs = target_lists_column_view.child();

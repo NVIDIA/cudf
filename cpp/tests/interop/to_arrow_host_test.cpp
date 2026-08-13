@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,12 +35,12 @@ struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
     requires(cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>)
   {
     for (int64_t i = 0; i < length; ++i) {
-      const bool is_null = ArrowArrayViewIsNull(expected, start_offset_expected + i);
+      bool const is_null = ArrowArrayViewIsNull(expected, start_offset_expected + i);
       EXPECT_EQ(is_null, ArrowArrayViewIsNull(actual, start_offset_actual + i));
       if (is_null) continue;
 
-      const auto expected_val = ArrowArrayViewGetIntUnsafe(expected, start_offset_expected + i);
-      const auto actual_val   = ArrowArrayViewGetIntUnsafe(actual, start_offset_actual + i);
+      auto const expected_val = ArrowArrayViewGetIntUnsafe(expected, start_offset_expected + i);
+      auto const actual_val   = ArrowArrayViewGetIntUnsafe(actual, start_offset_actual + i);
 
       EXPECT_EQ(expected_val, actual_val);
     }
@@ -55,12 +55,12 @@ struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
     requires(std::is_same_v<T, cudf::string_view>)
   {
     for (int64_t i = 0; i < length; ++i) {
-      const bool is_null = ArrowArrayViewIsNull(expected, start_offset_expected + i);
+      bool const is_null = ArrowArrayViewIsNull(expected, start_offset_expected + i);
       EXPECT_EQ(is_null, ArrowArrayViewIsNull(actual, start_offset_actual + i));
       if (is_null) continue;
 
-      const auto expected_view = ArrowArrayViewGetBytesUnsafe(expected, start_offset_expected + i);
-      const auto actual_view   = ArrowArrayViewGetBytesUnsafe(actual, start_offset_actual + i);
+      auto const expected_view = ArrowArrayViewGetBytesUnsafe(expected, start_offset_expected + i);
+      auto const actual_view   = ArrowArrayViewGetBytesUnsafe(actual, start_offset_actual + i);
 
       EXPECT_EQ(expected_view.size_bytes, actual_view.size_bytes);
       EXPECT_TRUE(
@@ -80,25 +80,25 @@ struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
     switch (expected->storage_type) {
       case NANOARROW_TYPE_LIST:
         for (int64_t i = 0; i < length; ++i) {
-          const auto expected_start = exp_start_offset + i;
-          const auto actual_start   = act_start_offset + i;
+          auto const expected_start = exp_start_offset + i;
+          auto const actual_start   = act_start_offset + i;
 
           // ArrowArrayViewIsNull accounts for the array offset, so we can properly
           // compare the validity of indexes
-          const bool is_null = ArrowArrayViewIsNull(expected, expected_start);
+          bool const is_null = ArrowArrayViewIsNull(expected, expected_start);
           EXPECT_EQ(is_null, ArrowArrayViewIsNull(actual, actual_start));
           if (is_null) continue;
 
           // ArrowArrayViewListChildOffset does not account for array offset, so we need
           // to add the offset to the index in order to get the correct offset into the list
-          const int64_t start_offset_expected =
+          int64_t const start_offset_expected =
             ArrowArrayViewListChildOffset(expected, expected->offset + expected_start);
-          const int64_t start_offset_actual =
+          int64_t const start_offset_actual =
             ArrowArrayViewListChildOffset(actual, actual->offset + actual_start);
 
-          const int64_t end_offset_expected =
+          int64_t const end_offset_expected =
             ArrowArrayViewListChildOffset(expected, expected->offset + expected_start + 1);
-          const int64_t end_offset_actual =
+          int64_t const end_offset_actual =
             ArrowArrayViewListChildOffset(actual, actual->offset + actual_start + 1);
 
           // verify the list lengths are the same
@@ -115,10 +115,10 @@ struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
       case NANOARROW_TYPE_STRUCT:
         for (int64_t i = 0; i < length; ++i) {
           SCOPED_TRACE("idx: " + std::to_string(i));
-          const auto expected_start = exp_start_offset + i;
-          const auto actual_start   = act_start_offset + i;
+          auto const expected_start = exp_start_offset + i;
+          auto const actual_start   = act_start_offset + i;
 
-          const bool is_null = ArrowArrayViewIsNull(expected, expected_start);
+          bool const is_null = ArrowArrayViewIsNull(expected, expected_start);
           EXPECT_EQ(is_null, ArrowArrayViewIsNull(actual, actual_start));
           if (is_null) continue;
 
@@ -213,6 +213,19 @@ TEST_F(ToArrowHostDeviceTest, EmptyTable)
 
   ArrowArrayViewReset(&expected);
   ArrowArrayViewReset(&actual);
+}
+
+TEST_F(ToArrowHostDeviceTest, Nullable)
+{
+  auto const input = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2, 3, 4}, {1, 1, 1, 1});
+  auto const tv    = cudf::table_view{{input}};
+
+  auto schema       = cudf::to_arrow_schema(tv, cudf::interop::get_table_metadata(tv));
+  auto arrow        = cudf::to_arrow_host(tv);
+  auto roundtripped = cudf::from_arrow_host(schema.get(), arrow.get());
+  auto const after  = roundtripped->view().column(0);
+
+  EXPECT_TRUE(after.nullable());
 }
 
 TEST_F(ToArrowHostDeviceTest, EmptyDictionary)
@@ -328,7 +341,7 @@ TYPED_TEST(ToArrowHostDeviceTestDurationsTest, DurationTable)
   NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(expected_schema.get(), 1));
 
   ArrowSchemaInit(expected_schema->children[0]);
-  const ArrowTimeUnit arrow_unit = [&] {
+  ArrowTimeUnit const arrow_unit = [&] {
     switch (cudf::type_to_id<TypeParam>()) {
       case cudf::type_id::DURATION_SECONDS: return NANOARROW_TIME_UNIT_SECOND;
       case cudf::type_id::DURATION_MILLISECONDS: return NANOARROW_TIME_UNIT_MILLI;

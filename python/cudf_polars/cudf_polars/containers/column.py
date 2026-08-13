@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """A column, with some properties."""
@@ -353,6 +353,29 @@ class Column:
                 dtype=dtype,
                 name=self.name,
             ).sorted_like(self)
+        elif plc.traits.is_integral_not_bool(plc_dtype) and plc.traits.is_duration(
+            self.obj.type()
+        ):
+            # A duration is stored as an integer tick count, so casting to that
+            # integer type is a no-op reinterpret of the same bytes. Relabel the
+            # column instead of launching a cast kernel.
+            rep = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id() == plc.TypeId.DURATION_DAYS
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                rep,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            if rep.id() != plc_dtype.id():
+                plc_col = plc.unary.cast(plc_col, plc_dtype, stream=stream)
+            return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
         elif plc.traits.is_floating_point(
             self.obj.type()
         ) and plc.traits.is_fixed_point(plc_dtype):

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1409,6 +1409,56 @@ using FixedWidthTypesWithoutChrono =
   cudf::test::Concat<cudf::test::NumericTypes, cudf::test::FixedPointTypes>;
 
 TYPED_TEST_SUITE(ContiguousSplitTest, FixedWidthTypesWithoutChrono);
+
+struct ContiguousSplitZeroColumnTest : public cudf::test::BaseFixture {};
+
+TEST_F(ContiguousSplitZeroColumnTest, PreservesRowCount)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 7};
+
+  // With splits: each partition's row count comes from the split boundaries, and
+  // unpacking preserves it.
+  auto const split = cudf::contiguous_split(input, {3});
+  ASSERT_EQ(split.size(), 2);
+  EXPECT_EQ(split[0].table.num_columns(), 0);
+  EXPECT_EQ(split[0].table.num_rows(), 3);
+  EXPECT_EQ(split[1].table.num_rows(), 4);
+  EXPECT_EQ(cudf::unpack(split[0].data).num_rows(), 3);
+  EXPECT_EQ(cudf::unpack(split[1].data).num_rows(), 4);
+
+  // No splits: a single partition with all the rows.
+  auto const whole = cudf::contiguous_split(input, {});
+  ASSERT_EQ(whole.size(), 1);
+  EXPECT_EQ(whole[0].table.num_rows(), 7);
+  EXPECT_EQ(cudf::unpack(whole[0].data).num_rows(), 7);
+
+  // A genuinely empty (0 columns, 0 rows) table still produces no outputs.
+  cudf::table_view empty{std::vector<cudf::column_view>{}, 0};
+  EXPECT_TRUE(cudf::contiguous_split(empty, {}).empty());
+}
+
+TEST_F(ContiguousSplitZeroColumnTest, InvalidSplitsThrow)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 7};
+  EXPECT_THROW(cudf::contiguous_split(input, {8}), std::out_of_range);         // beyond row count
+  EXPECT_THROW(cudf::contiguous_split(input, {5, 3}), std::invalid_argument);  // non-monotonic
+}
+
+TEST_F(ContiguousSplitZeroColumnTest, ChunkedPackPreservesRowCount)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 7};
+  auto mr = cudf::get_current_device_resource_ref();
+  auto cp = cudf::chunked_pack::create(input, 1 * 1024 * 1024, cudf::get_default_stream(), mr);
+  // No device data to copy: zero total size and no chunks.
+  EXPECT_EQ(cp->get_total_contiguous_size(), 0u);
+  EXPECT_FALSE(cp->has_next());
+  // Metadata is still emitted and unpacks to the original row count.
+  auto const metadata = cp->build_metadata();
+  ASSERT_NE(metadata, nullptr);
+  auto const unpacked = cudf::unpack(metadata->data(), nullptr);
+  EXPECT_EQ(unpacked.num_columns(), 0);
+  EXPECT_EQ(unpacked.num_rows(), 7);
+}
 
 TYPED_TEST(ContiguousSplitTest, LongColumn)
 {

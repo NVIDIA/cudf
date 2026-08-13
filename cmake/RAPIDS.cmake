@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -67,9 +67,11 @@ if(rapids-cmake-fetch-via-git)
     GIT_REPOSITORY "${rapids-cmake-url}"
     GIT_TAG "${rapids-cmake-value-to-clone}"
   )
+  message(STATUS "Fetching rapids-cmake from ${rapids-cmake-url}@${rapids-cmake-value-to-clone}")
 else()
   string(APPEND rapids-cmake-url "${rapids-cmake-value-to-clone}")
   FetchContent_Declare(rapids-cmake URL "${rapids-cmake-url}")
+  message(STATUS "Fetching rapids-cmake from ${rapids-cmake-url}")
 endif()
 FetchContent_GetProperties(rapids-cmake)
 if(rapids-cmake_POPULATED)

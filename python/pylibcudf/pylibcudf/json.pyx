@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -8,6 +8,7 @@ from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf cimport json as cpp_json
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.scalar cimport Scalar
 
@@ -149,6 +150,8 @@ cpdef Column get_json_object(
         New strings column containing the retrieved json object strings.
     """
     cdef unique_ptr[column] c_result
+    cdef column_view c_col
+
     cdef string_scalar* c_json_path = <string_scalar*>(
         json_path.c_obj.get()
     )
@@ -160,9 +163,10 @@ cpdef Column get_json_object(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    c_col = col.view()
     with nogil:
         c_result = cpp_json.get_json_object(
-            col.view(),
+            c_col,
             dereference(c_json_path),
             c_options,
             _cs,

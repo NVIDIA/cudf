@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -11,6 +11,8 @@ from pylibcudf.libcudf cimport distinct_count as cpp_distinct_count
 from pylibcudf.libcudf cimport unique_count as cpp_unique_count
 from pylibcudf.libcudf.aggregation cimport reduce_aggregation, scan_aggregation
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.reduce cimport (
     reduce as cpp_reduce,
     scan as cpp_scan,
@@ -92,9 +94,10 @@ cpdef Scalar reduce(
     else:
         c_init = nullopt
 
+    cdef column_view c_col = col.view()
     with nogil:
         result = cpp_reduce(
-            col.view(),
+            c_col,
             dereference(c_agg),
             data_type.c_obj,
             c_init,
@@ -140,9 +143,10 @@ cpdef Column scan(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_col = col.view()
     with nogil:
         result = cpp_scan(
-            col.view(),
+            c_col,
             dereference(c_agg),
             inclusive,
             null_policy.EXCLUDE,
@@ -180,8 +184,9 @@ cpdef tuple minmax(Column col, object stream=None, DeviceMemoryResource mr=None)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_col = col.view()
     with nogil:
-        result = cpp_minmax(col.view(), _cs, mr.get_mr())
+        result = cpp_minmax(c_col, _cs, mr.get_mr())
 
     min_scalar = Scalar.from_libcudf(move(result.first))
     max_scalar = Scalar.from_libcudf(move(result.second))
@@ -221,9 +226,11 @@ cpdef size_type unique_count(
     source : Column
         The input column to count the unique elements of.
     null_handling : null_policy
-        Flag to include or exclude nulls from the count.
+        Flag to include or exclude nulls from the count. If included, all
+        nulls compare equal.
     nan_handling : nan_policy
-        Flag to include or exclude NaNs from the count.
+        Whether to treat NaNs as null, or valid elements. If valid all NaNs
+        compare equal.
 
     Returns
     -------
@@ -236,10 +243,12 @@ cpdef size_type unique_count(
     same result as distinct_count, but faster.
     """
     cdef Stream _stream = _get_stream(stream)
+    cdef column_view c_source = source.view()
 
-    return cpp_unique_count.unique_count(
-        source.view(), null_handling, nan_handling, _stream.view().value()
-    )
+    with nogil:
+        return cpp_unique_count.unique_count(
+            c_source, null_handling, nan_handling, _stream.view().value()
+        )
 
 
 cpdef size_type distinct_count(
@@ -257,9 +266,11 @@ cpdef size_type distinct_count(
     source : Column
         The input column to count the unique elements of.
     null_handling : null_policy
-        Flag to include or exclude nulls from the count.
+        Flag to include or exclude nulls from the count. If included, all
+        nulls compare equal.
     nan_handling : nan_policy
-        Flag to include or exclude NaNs from the count.
+        Whether to treat NaNs as null, or valid elements. If valid all NaNs
+        compare equal.
 
     Returns
     -------
@@ -267,10 +278,80 @@ cpdef size_type distinct_count(
         The number of distinct elements in the input column.
     """
     cdef Stream _stream = _get_stream(stream)
+    cdef column_view c_source = source.view()
 
-    return cpp_distinct_count.distinct_count(
-        source.view(), null_handling, nan_handling, _stream.view().value()
-    )
+    with nogil:
+        return cpp_distinct_count.distinct_count(
+            c_source, null_handling, nan_handling, _stream.view().value()
+        )
+
+
+cpdef size_type unique_count_table(
+    Table source,
+    null_equality nulls_equal,
+    object stream=None
+):
+    """Returns the number of unique consecutive rows in the input table.
+
+    For details, see :cpp:func:`cudf::unique_count`.
+
+    Parameters
+    ----------
+    source : Table
+        The input table to count the unique elements of.
+    nulls_equal : null_equality
+        Whether nulls should compare equal.
+
+    Returns
+    -------
+    size_type
+        The number of unique consecutive rows.
+
+    Notes
+    -----
+    NaNs compare equal in this comparison.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef table_view c_source = source.view()
+
+    with nogil:
+        return cpp_unique_count.unique_count(
+            c_source, nulls_equal, _stream.view().value()
+        )
+
+
+cpdef size_type distinct_count_table(
+    Table source,
+    null_equality nulls_equal,
+    object stream=None
+):
+    """Returns the number of distinct rows in the input table.
+
+    For details, see :cpp:func:`cudf::distinct_count`.
+
+    Parameters
+    ----------
+    source : Table
+        The input table to count the unique rows of.
+    nulls_equal : null_equality
+        Whether nulls should compare equal.
+
+    Returns
+    -------
+    size_type
+        The number of distinct rows.
+
+    Notes
+    -----
+    NaNs compare equal in this comparison.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef table_view c_source = source.view()
+
+    with nogil:
+        return cpp_distinct_count.distinct_count(
+            c_source, nulls_equal, _stream.view().value()
+        )
 
 
 ScanType.__str__ = ScanType.__repr__

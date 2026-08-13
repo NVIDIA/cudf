@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -20,10 +20,10 @@ namespace ast::detail {
 
 // Traits for valid operator / type combinations
 template <typename Op, typename LHS, typename RHS>
-constexpr bool is_valid_binary_op = cuda::std::is_invocable_v<Op, LHS, RHS>;
+constexpr bool is_valid_binary_op = requires(Op op, LHS lhs, RHS rhs) { op(lhs, rhs); };
 
 template <typename Op, typename T>
-constexpr bool is_valid_unary_op = cuda::std::is_invocable_v<Op, T>;
+constexpr bool is_valid_unary_op = requires(Op op, T value) { op(value); };
 
 /**
  * @brief Operator dispatcher

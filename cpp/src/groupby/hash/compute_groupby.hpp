@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -42,7 +42,7 @@ namespace cudf::groupby::detail::hash {
  */
 template <typename Equal, typename Hash>
 std::unique_ptr<cudf::table> compute_groupby(table_view const& keys,
-                                             host_span<aggregation_request const> requests,
+                                             std::span<aggregation_request const> requests,
                                              bool skip_rows_with_nulls,
                                              Equal const& d_row_equal,
                                              Hash const& d_row_hash,

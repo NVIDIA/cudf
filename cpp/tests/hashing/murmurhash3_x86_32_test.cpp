@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -461,6 +461,14 @@ TYPED_TEST(MurmurHashTestFloatTyped, TestExtremes)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hash_col, *hash_col_neg_zero, verbosity);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hash_col, *hash_col_neg_nan, verbosity);
+}
+
+TEST_F(MurmurHashTest, ZeroColumns)
+{
+  auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
+  auto const output = cudf::hashing::murmurhash3_x86_32(input, 42);
+  cudf::test::fixed_width_column_wrapper<uint32_t> const expected({42, 42, 42, 42, 42});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Typing utilities for cudf_polars."""
 
 from __future__ import annotations
 
-from collections.abc import Hashable, MutableMapping
+from collections.abc import Hashable, Iterator, MutableMapping, Sized
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -44,6 +44,7 @@ __all__: list[str] = [
     "PolarsIR",
     "RankMethod",
     "Schema",
+    "SizedIterator",
     "Slice",
 ]
 
@@ -156,6 +157,11 @@ U_contra = TypeVar("U_contra", bound=Hashable, contravariant=True)
 V_co = TypeVar("V_co", covariant=True)
 StateT_co = TypeVar("StateT_co", covariant=True)
 NodeT = TypeVar("NodeT", bound="nodebase.Node[Any]")
+ItemT_co = TypeVar("ItemT_co", covariant=True)
+
+
+class SizedIterator(Iterator[ItemT_co], Sized, Protocol[ItemT_co]):
+    """An iterator that also reports how many items it will yield."""
 
 
 class GenericTransformer(Protocol[U_contra, V_co, StateT_co]):

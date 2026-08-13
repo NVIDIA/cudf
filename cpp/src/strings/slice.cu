@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -159,9 +159,9 @@ CUDF_KERNEL void substring_from_kernel(column_device_view const d_strings,
  */
 struct substring_fn {
   column_device_view const d_column;
-  numeric_scalar_device_view<size_type> const d_start;
-  numeric_scalar_device_view<size_type> const d_stop;
-  numeric_scalar_device_view<size_type> const d_step;
+  cuda::std::optional<size_type> const d_start;
+  cuda::std::optional<size_type> const d_stop;
+  size_type const d_step;
   size_type* d_sizes{};
   char* d_chars{};
   cudf::detail::input_offsetalator d_offsets;
@@ -178,10 +178,10 @@ struct substring_fn {
       if (!d_chars) { d_sizes[idx] = 0; }
       return;
     }
-    size_type const step = d_step.is_valid() ? d_step.value() : 1;
-    auto const begin     = [&] {  // always inclusive
+    auto const step  = d_step;
+    auto const begin = [&] {  // always inclusive
       // when invalid, default depends on step
-      if (!d_start.is_valid()) return (step > 0) ? d_str.begin() : (d_str.end() - 1);
+      if (!d_start.has_value()) { return (step > 0) ? d_str.begin() : (d_str.end() - 1); }
       // normal positive position logic
       auto start = d_start.value();
       if (start >= 0) {
@@ -195,7 +195,7 @@ struct substring_fn {
     }();
     auto const end = [&] {  // always exclusive
       // when invalid, default depends on step
-      if (!d_stop.is_valid()) return step > 0 ? d_str.end() : (d_str.begin() - 1);
+      if (!d_stop.has_value()) { return step > 0 ? d_str.end() : (d_str.begin() - 1); }
       // normal positive position logic
       auto stop = d_stop.value();
       if (stop >= 0) return (stop < length) ? (d_str.begin() + stop) : d_str.end();
@@ -260,13 +260,13 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
     auto const num_blocks = util::div_rounding_up_safe(threads, block_size);
     substring_from_kernel<IndexIterator>
       <<<num_blocks, block_size, 0, stream.value()>>>(*d_column, starts, stops, results.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
   return make_strings_column(results.begin(), results.end(), stream, mr);
 }
 
 }  // namespace
 
-//
 std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       numeric_scalar<size_type> const& start,
                                       numeric_scalar<size_type> const& stop,
@@ -300,12 +300,60 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
 
   auto const d_column = column_device_view::create(input.parent(), stream);
 
-  auto const d_start = get_scalar_device_view(const_cast<numeric_scalar<size_type>&>(start));
-  auto const d_stop  = get_scalar_device_view(const_cast<numeric_scalar<size_type>&>(stop));
-  auto const d_step  = get_scalar_device_view(const_cast<numeric_scalar<size_type>&>(step));
+  auto const d_start = start.is_valid(stream) ? cuda::std::optional<size_type>{start.value(stream)}
+                                              : cuda::std::nullopt;
+  auto const d_stop =
+    stop.is_valid(stream) ? cuda::std::optional<size_type>{stop.value(stream)} : cuda::std::nullopt;
 
   auto [offsets, chars] = make_strings_children(
-    substring_fn{*d_column, d_start, d_stop, d_step}, input.size(), stream, mr);
+    substring_fn{*d_column, d_start, d_stop, step_value}, input.size(), stream, mr);
+
+  return make_strings_column(input.size(),
+                             std::move(offsets),
+                             chars.release(),
+                             input.null_count(),
+                             cudf::detail::copy_bitmask(input.parent(), stream, mr));
+}
+
+std::unique_ptr<column> slice_strings(strings_column_view const& input,
+                                      std::optional<size_type> start,
+                                      std::optional<size_type> stop,
+                                      std::optional<size_type> step,
+                                      rmm::cuda_stream_view stream,
+                                      rmm::device_async_resource_ref mr)
+{
+  if (input.size() == input.null_count()) {
+    return std::make_unique<column>(input.parent(), stream, mr);
+  }
+
+  auto const step_valid = step.has_value();
+  auto const step_value = step_valid ? step.value() : 1;
+  if (step_valid) { CUDF_EXPECTS(step_value != 0, "Step parameter must not be 0"); }
+
+  // optimization for (step==1 and start < stop) -- expect this to be most common
+  if (step_value == 1) {
+    auto const start_value = start.has_value() ? start.value() : 0;
+    auto const stop_value = stop.has_value() ? stop.value() : std::numeric_limits<size_type>::max();
+    // note that any negative values here must use the alternate function below
+    if ((start_value >= 0) && (start_value < stop_value)) {
+      // this is about 2x faster on long strings for this common case
+      return compute_substrings_from_fn(input,
+                                        cuda::constant_iterator<size_type>(start_value),
+                                        cuda::constant_iterator<size_type>(stop_value),
+                                        stream,
+                                        mr);
+    }
+  }
+
+  auto const d_column = column_device_view::create(input.parent(), stream);
+
+  auto const d_start =
+    start.has_value() ? cuda::std::optional<size_type>{start.value()} : cuda::std::nullopt;
+  auto const d_stop =
+    stop.has_value() ? cuda::std::optional<size_type>{stop.value()} : cuda::std::nullopt;
+
+  auto [offsets, chars] = make_strings_children(
+    substring_fn{*d_column, d_start, d_stop, step_value}, input.size(), stream, mr);
 
   return make_strings_column(input.size(),
                              std::move(offsets),
@@ -344,6 +392,17 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       numeric_scalar<size_type> const& start,
                                       numeric_scalar<size_type> const& stop,
                                       numeric_scalar<size_type> const& step,
+                                      rmm::cuda_stream_view stream,
+                                      rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::slice_strings(input, start, stop, step, stream, mr);
+}
+
+std::unique_ptr<column> slice_strings(strings_column_view const& input,
+                                      std::optional<size_type> start,
+                                      std::optional<size_type> stop,
+                                      std::optional<size_type> step,
                                       rmm::cuda_stream_view stream,
                                       rmm::device_async_resource_ref mr)
 {

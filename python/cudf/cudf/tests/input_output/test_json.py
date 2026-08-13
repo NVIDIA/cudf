@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import copy
@@ -82,7 +82,6 @@ def gdf_writer_types(request):
     return test_pdf
 
 
-@pytest.mark.filterwarnings("ignore:Strings are not yet supported")
 @pytest.mark.filterwarnings("ignore:Using CPU")
 @pytest.mark.parametrize("index", [True, False])
 # tests limited to compressions formats supported by pandas and cudf: bz2, gzip, zip, zstd
@@ -186,6 +185,24 @@ def test_cudf_json_writer(pdf, lines):
 
     gdf_string = gdf.to_json(
         orient="records", lines=lines, engine="cudf", rows_per_chunk=8
+    )
+
+    assert_eq(pdf_string, gdf_string)
+
+
+@pytest.mark.parametrize("force_ascii", [True, False])
+def test_cudf_json_writer_force_ascii(force_ascii):
+    pdf = pd.DataFrame({"a": [1, 2, 3], "b": ["4", "5", "\U0001f331"]})
+    gdf = cudf.DataFrame(pdf)
+
+    pdf_string = pdf.to_json(
+        orient="records", lines=True, force_ascii=force_ascii
+    )
+    gdf_string = gdf.to_json(
+        orient="records",
+        lines=True,
+        engine="cudf",
+        force_ascii=force_ascii,
     )
 
     assert_eq(pdf_string, gdf_string)
@@ -1325,9 +1342,11 @@ def test_json_nested_mixed_types_in_list(jsonl_string):
         for col in df.columns:
             if df[col].dtype == "object":
                 df[col] = df[col].apply(
-                    lambda x: _replace_in_list(x, replace_items)
-                    if isinstance(x, list)
-                    else x
+                    lambda x: (
+                        _replace_in_list(x, replace_items)
+                        if isinstance(x, list)
+                        else x
+                    )
                 )
         return df
 

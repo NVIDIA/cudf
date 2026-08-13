@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import textwrap
 import warnings
 from collections.abc import Mapping
 from functools import cached_property, singledispatch
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import cupy as cp
 import numpy as np
@@ -55,6 +55,8 @@ from cudf.utils.dtypes import (
     cudf_dtype_to_pa_type,
     dtype_from_pylibcudf_column,
     get_dtype_of_same_kind,
+    is_pandas_nullable_extension_dtype,
+    is_pandas_nullable_numpy_dtype,
 )
 from cudf.utils.performance_tracking import _performance_tracking
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
@@ -65,6 +67,7 @@ if TYPE_CHECKING:
     from cudf._typing import (
         AggType,
         DataFrameOrSeries,
+        DtypeObj,
         MultiColumnAggType,
         ScalarLike,
     )
@@ -75,6 +78,20 @@ if TYPE_CHECKING:
 # different dtypes. These strings must be elements of the AggregationKind enum.
 # The libcudf infrastructure exists for "COLLECT" support on
 # categoricals, but the dtype support in python does not.
+# Reductions whose result for a group becomes null when that group contains
+# any null value and ``skipna=False`` (libcudf otherwise always drops nulls).
+_NULL_PROPAGATING_REDUCTIONS = {
+    "sum",
+    "prod",
+    "product",
+    "mean",
+    "median",
+    "var",
+    "std",
+    "min",
+    "max",
+}
+
 _CATEGORICAL_AGGS = {"COUNT", "NUNIQUE", "SIZE", "UNIQUE"}
 _STRING_AGGS = {
     "COLLECT",
@@ -198,7 +215,28 @@ def _is_all_scan_aggregate(all_aggs: list[list[str]]) -> bool:
     }
 
     def get_name(agg):
-        return agg.__name__ if callable(agg) else agg
+        if not callable(agg):
+            return agg
+        if agg is not list:
+            # A ``lambda x: x.cumsum()``-style aggregation carries its
+            # scan-ness only in the aggregation name it resolves to
+            # (``Aggregation.cumsum`` is an alias of ``sum``; libcudf
+            # separates scan from reduction by the *call*, not the
+            # aggregation object). Probe the callable with a
+            # name-recording stand-in mirroring ``make_aggregation``'s
+            # ``op(Aggregation)`` protocol; true UDFs raise inside the
+            # probe and fall back to ``__name__``.
+            class _NameProbe:
+                def __getattr__(self, name):
+                    return lambda *args, **kwargs: name
+
+            try:
+                name = agg(_NameProbe())
+            except Exception:
+                return agg.__name__
+            if isinstance(name, str):
+                return name
+        return agg.__name__
 
     all_scan = all(
         get_name(agg_name) in groupby_scans
@@ -479,6 +517,25 @@ def _collect_series_key_column_names(obj, by) -> dict[int, Hashable]:
     return result
 
 
+class GroupByNthSelector:
+    """Mirror of :class:`pandas.core.groupby.indexing.GroupByNthSelector`.
+
+    ``GroupBy.nth`` supports both the call form ``gb.nth(n, dropna=...)``
+    and the index form ``gb.nth[n]``.
+    """
+
+    def __init__(self, groupby_object: GroupBy) -> None:
+        self.groupby_object = groupby_object
+
+    def __call__(
+        self, n, dropna: Literal["any", "all", None] = None
+    ) -> Series | DataFrame:
+        return self.groupby_object._nth(n, dropna)
+
+    def __getitem__(self, n) -> Series | DataFrame:
+        return self.groupby_object._nth(n)
+
+
 class GroupBy(Serializable, Reducible, Scannable):
     obj: Series | DataFrame
 
@@ -558,6 +615,10 @@ class GroupBy(Serializable, Reducible, Scannable):
         # Must be done before ``nans_to_nulls`` which breaks identity.
         by_series_col_names = _collect_series_key_column_names(obj, by)
 
+        # Row-filter operations (``nth``) must return the original values,
+        # preserving the NaN-vs-null distinction that ``nans_to_nulls``
+        # erases below.
+        self._obj_original = obj
         if get_option("mode.pandas_compatible"):
             obj = obj.nans_to_nulls()
         self.obj = obj
@@ -574,7 +635,7 @@ class GroupBy(Serializable, Reducible, Scannable):
             self.grouping = self._by
         else:
             self.grouping = _Grouping(
-                obj, self._by, level, by_series_col_names
+                obj, self._by, level, by_series_col_names, dropna=self._dropna
             )
 
         self._groupby_manager = _GroupByContextManager(
@@ -589,7 +650,24 @@ class GroupBy(Serializable, Reducible, Scannable):
         group_names, offsets, _, grouped_values = self._grouped()
         if isinstance(group_names, Index):
             group_names = group_names.to_pandas()
-        for i, name in enumerate(group_names):
+        if self._sort or len(offsets) <= 2:
+            order: Iterable[int] = range(len(offsets) - 1)
+        else:
+            # libcudf returns groups sorted by key, but with ``sort=False``
+            # pandas iterates groups in order of first appearance. Reorder by
+            # the earliest original row position in each group (group order
+            # matches between the two ``_groups`` calls since the grouping is
+            # identical).
+            pos_offsets, _, (positions,) = self._groups(
+                [self._range_column_from_obj]
+            )
+            # Gather the earliest original row position of each group and sort
+            # the groups by it entirely on the device; only the small ``order``
+            # array (one entry per group) is copied back to the host.
+            first_pos = positions.take(as_column(pos_offsets[:-1]))
+            order = first_pos.argsort().to_numpy()
+        for i in order:
+            name = group_names[i]
             yield (
                 (name,)
                 if isinstance(self._by, list) and len(self._by) == 1
@@ -683,10 +761,11 @@ class GroupBy(Serializable, Reducible, Scannable):
             index = MultiIndex.from_arrays(group_keys)
         else:
             index = Index._from_column(group_keys[0])
+        split = cp.split(indices.values, offsets[1:-1])
         return dict(
             zip(
                 index.to_pandas(),
-                cp.split(indices.values, offsets[1:-1]),
+                split,
                 strict=True,
             )
         )
@@ -756,8 +835,14 @@ class GroupBy(Serializable, Reducible, Scannable):
             isinstance(obj_dtype, pd.StringDtype)
             and obj_dtype.storage == "pyarrow"
             and obj_dtype.na_value is pd.NA
+        ) or (
+            self.obj.ndim == 1
+            and not isinstance(obj_dtype, pd.StringDtype)
+            and is_pandas_nullable_extension_dtype(obj_dtype)
         ):
-            # Series.groupby.size() on ``string[pyarrow]`` returns Int64.
+            # Series.groupby.size() returns Int64 for ``string[pyarrow]``
+            # and for masked (Int*/UInt*/Float*/boolean) dtypes
+            # (pandas GH#54132).
             int64_dtype = pd.Int64Dtype()
             if isinstance(result, Series):
                 result = Series._from_column(
@@ -795,7 +880,7 @@ class GroupBy(Serializable, Reducible, Scannable):
                 column_empty(len(self.obj), np.dtype(np.int8)),
                 index=self.obj.index,
             )
-            .groupby(self.grouping, sort=self._sort)
+            .groupby(self.grouping, sort=self._sort, dropna=self._dropna)
             .agg("cumcount")
         )
 
@@ -841,8 +926,26 @@ class GroupBy(Serializable, Reducible, Scannable):
 
         result = self.agg(rank)
 
-        # pandas always returns floats:
-        return result.astype(np.dtype(np.float64))
+        # pandas always returns floats, staying within the value column's
+        # dtype family: numpy -> float64, masked (Int64/Float32/...) ->
+        # Float64, arrow -> double[pyarrow]
+        target = np.dtype(np.float64)
+        if result.ndim == 1:
+            source_dtype = (
+                self.obj.dtype if self.obj.ndim == 1 else result.dtype
+            )
+            return result.astype(get_dtype_of_same_kind(source_dtype, target))
+        return result.astype(
+            {
+                label: get_dtype_of_same_kind(
+                    self.obj._data[label].dtype
+                    if self.obj.ndim == 2 and label in self.obj._data
+                    else result_dtype,
+                    target,
+                )
+                for label, result_dtype in result._dtypes
+            }
+        )
 
     @property
     def _groupby(self):
@@ -1138,6 +1241,28 @@ class GroupBy(Serializable, Reducible, Scannable):
                     create_dtype = get_dtype_of_same_kind(
                         orig_dtype, ListDtype(orig_dtype)
                     )
+                if agg_kind in {"ARGMIN", "ARGMAX"} and not isinstance(
+                    self.obj.index, MultiIndex
+                ):
+                    # libcudf returns the integer row-position of the
+                    # min/max element within each group (null if the
+                    # group's values are all NA); pandas returns the
+                    # *label* of that row from the source index and raises
+                    # for all-NA groups. Gather from the raw position
+                    # column before any dtype morphing (a masked gather
+                    # map cannot feed ``take``). MultiIndex sources fall
+                    # through and stay positional: pandas maps them to
+                    # tuple labels in an object column, which is not
+                    # currently supported.
+                    pos_col = ColumnBase.create(plc_result, create_dtype)
+                    if pos_col.has_nulls():
+                        how = "idxmin" if agg_kind == "ARGMIN" else "idxmax"
+                        raise ValueError(
+                            f"{how} with skipna=True encountered all NA "
+                            "values in a group."
+                        )
+                    data[key] = self.obj.index._column.take(pos_col)
+                    continue
                 # Override for specific aggregation types that need dtype adjustments
                 if agg_kind in {"COUNT", "SIZE", "ARGMIN", "ARGMAX"}:
                     if isinstance(orig_dtype, pd.StringDtype):
@@ -1148,6 +1273,17 @@ class GroupBy(Serializable, Reducible, Scannable):
                         )
                 elif agg_kind == "NUNIQUE":
                     cast_dtype = np.dtype(np.int64)
+                elif (
+                    agg_name in {"cumsum", "cumprod"}
+                    and is_pandas_nullable_extension_dtype(orig_dtype)
+                    and orig_dtype.kind in {"i", "u"}
+                ):
+                    # libcudf's SUM/PRODUCT scans promote narrow integers
+                    # to 64-bit. pandas does the same for numpy dtypes
+                    # (int8 -> int64, GH#37493) but preserves masked
+                    # extension dtypes (Int16 stays Int16, GH#58811),
+                    # wrapping on overflow.
+                    cast_dtype = orig_dtype
                 elif (
                     (
                         isinstance(agg_name, str)
@@ -1161,9 +1297,34 @@ class GroupBy(Serializable, Reducible, Scannable):
                 ):
                     cast_dtype = orig_dtype
                 elif agg not in {list, "collect"}:
-                    create_dtype = get_dtype_of_same_kind(
-                        orig_dtype, create_dtype
-                    )
+                    if (
+                        isinstance(orig_dtype, np.dtype)
+                        and orig_dtype.kind == "O"
+                        and is_dtype_obj_string(create_dtype)
+                    ):
+                        # a string-producing aggregation (first/last/min/
+                        # max/nth) on an object-dtype column stays object,
+                        # matching pandas. Scoped here rather than in
+                        # get_dtype_of_same_kind: other callers (e.g. merge
+                        # key coalescing) re-infer str for object inputs.
+                        create_dtype = orig_dtype
+                    elif (
+                        isinstance(orig_dtype, pd.DatetimeTZDtype)
+                        and isinstance(create_dtype, np.dtype)
+                        and create_dtype.kind == "M"
+                    ):
+                        # libcudf has no timezone notion: a DatetimeTZColumn
+                        # feeds its stored UTC instants to libcudf and the
+                        # result comes back as a tz-naive timestamp column.
+                        # Reattach the original tz (the values are unchanged
+                        # UTC instants, so this is lossless).
+                        create_dtype = pd.DatetimeTZDtype(
+                            np.datetime_data(create_dtype)[0], orig_dtype.tz
+                        )
+                    else:
+                        create_dtype = get_dtype_of_same_kind(
+                            orig_dtype, create_dtype
+                        )
 
                 result_col = ColumnBase.create(plc_result, create_dtype)
                 if agg == "cumcount":
@@ -1176,20 +1337,53 @@ class GroupBy(Serializable, Reducible, Scannable):
         # Preserve the column axis label-dtype/level_names from the source
         # DataFrame so that aggregations such as ``nunique`` keep the column
         # axis name (matching pandas behavior).
-        if (
+        if len(data) == 0 and not multilevel and self.obj.ndim == 2:
+            # No columns were aggregated (e.g. a frame with no value
+            # columns): mirror the source column axis so its dtype and
+            # RangeIndex-ness are preserved. Otherwise an empty
+            # ColumnAccessor reconstructs its columns as a string/object
+            # Index, whereas pandas keeps the original (e.g. empty
+            # RangeIndex) columns.
+            data = ColumnAccessor(
+                data,
+                multiindex=self.obj._data.multiindex,
+                level_names=self.obj._data.level_names,
+                rangeindex=self.obj._data.rangeindex,
+                label_dtype=self.obj._data.label_dtype,
+                level_dtypes=self.obj._data.level_dtypes,
+            )
+        elif (
             not multilevel
             and self.obj.ndim == 2
             and self.obj._data.level_names != (None,)
         ):
+            mi_kwargs: dict[str, Any] = {}
+            if self.obj._data.multiindex and all(
+                isinstance(label, tuple)
+                and len(label) == self.obj._data.nlevels
+                for label in data
+            ):
+                # the aggregation kept the source's tuple labels: preserve
+                # the MultiIndex columns and their per-level metadata.
+                # Relabeling aggregations (``agg(new=(col, func))``) emit
+                # new flat labels the source's multi-level metadata does
+                # not describe, so they keep the flat default.
+                mi_kwargs = {
+                    "multiindex": True,
+                    "level_dtypes": self.obj._data.level_dtypes,
+                }
             data = ColumnAccessor(
                 data,
-                multiindex=False,
                 level_names=self.obj._data.level_names,
                 label_dtype=self.obj._data.label_dtype,
+                **mi_kwargs,
             )
         else:
             data = ColumnAccessor(data, multiindex=multilevel)
-        if not multilevel:
+        if not multilevel and len(data) > 0:
+            # Skip when there are no columns: there is nothing to rename, and
+            # rebuilding the ColumnAccessor would discard column-axis metadata
+            # (e.g. the preserved RangeIndex/dtype set above).
             data = data.rename_levels({np.nan: None}, level=0)
 
         result = DataFrame._from_data(data, index=result_index)
@@ -1268,43 +1462,15 @@ class GroupBy(Serializable, Reducible, Scannable):
                     )
                 )
 
-        if not self._as_index:
+        is_scan = _is_all_scan_aggregate(normalized_aggs)
+        if not self._as_index and not is_scan:
             result = result.reset_index()
-        if _is_all_scan_aggregate(normalized_aggs):
-            # Scan aggregations return rows in original index order
+        if is_scan:
+            # Scan aggregations are transforms: rows are returned in the
+            # original index order and the grouping keys are never part of
+            # the output, regardless of ``as_index``.
             return self._mimic_pandas_order(result)
 
-        return result
-
-    def _wrap_idxmin_idxmax(self, result: DataFrame | Series, *, skipna: bool):
-        if skipna and (
-            (result.ndim == 2 and result.isna().any().any())
-            or (result.ndim == 1 and result.isna().any())
-        ):
-            raise ValueError(
-                "Encountered all NA values in a group with skipna=True"
-            )
-        # idxmin/idxmax return positional/label indices, which take their
-        # dtype from the source object's row index — not from the values
-        # being reduced. Cast the (non-key) result columns accordingly to
-        # match pandas, where reducing an Int64 column still yields int64
-        # indices for a default RangeIndex. Skip the cast when the source
-        # uses a MultiIndex (no single representative dtype) to avoid
-        # lossy/unsupported casts.
-        from cudf.core.multiindex import MultiIndex
-
-        if isinstance(self.obj.index, MultiIndex):
-            return result
-        index_dtype = self.obj.index.dtype
-        key_names = set(self.grouping.names)
-        if result.ndim == 2:
-            for name, col in result._column_labels_and_values:
-                if name in key_names:
-                    continue
-                if col.dtype != index_dtype:
-                    result._data[name] = col.astype(index_dtype)
-        elif result.dtype != index_dtype:
-            result = result.astype(index_dtype)
         return result
 
     def _reduce_numeric_only(self, op: str):
@@ -1351,7 +1517,44 @@ class GroupBy(Serializable, Reducible, Scannable):
                 skipna=kwargs.get("skipna", True), min_count=min_count
             )
 
-        result = self.agg(op)
+        skipna = kwargs.get("skipna", True)
+        agg_op: str | _FirstLastAggSpec = op
+        if op in {"first", "last"} and not skipna:
+            # ``first``/``last`` default to dropping nulls (skipna=True). With
+            # ``skipna=False`` the actual first/last element of each group is
+            # returned even when it is null, matching pandas.
+            agg_op = _FirstLastAggSpec(op, skipna=False)
+
+        result = self.agg(agg_op)
+        if op in _NULL_PROPAGATING_REDUCTIONS and not skipna:
+            # libcudf reductions always drop nulls. With ``skipna=False`` a
+            # group containing any null in a column yields a null result for
+            # that (group, column), matching pandas. A (group, column) is
+            # all-non-null when its non-null count equals the group size
+            # (``size()`` is used instead of the ``size`` aggregation because
+            # the latter is unsupported for string columns).
+            from cudf.core.dataframe import DataFrame
+
+            non_null_counts = self.agg("count")
+            group_sizes = self.size()
+            if isinstance(group_sizes, DataFrame):
+                # With ``as_index=False`` the per-group counts are returned as
+                # the "size" column of a DataFrame; reduce it to a Series so it
+                # aligns with each value column below.
+                group_sizes = group_sizes["size"]
+            if isinstance(result, DataFrame):
+                # ``as_index=False`` keeps the grouping keys as columns of
+                # ``result``; they must never be nulled out, so mask only the
+                # value columns.
+                key_names = set(self.grouping.names)
+                for name in result._column_names:
+                    if name in key_names:
+                        continue
+                    result[name] = result[name].where(
+                        non_null_counts[name] == group_sizes, None
+                    )
+            else:
+                result = result.where(non_null_counts == group_sizes, None)
         if min_count and min_count > 0:
             counts = self.agg("count")
             result = result.where(counts >= min_count, None)
@@ -1636,27 +1839,137 @@ class GroupBy(Serializable, Reducible, Scannable):
             n, take_head=False, preserve_order=preserve_order
         )
 
+    @property
+    def nth(self):
+        """
+        Take the nth row from each group if n is an int, otherwise a
+        subset of rows.
+
+        Like pandas, supports both the call form ``gb.nth(n, dropna=...)``
+        and the index form ``gb.nth[n]``.
+
+        Parameters
+        ----------
+        n : int, slice or list of ints and slices
+            A single nth value for the row, a slice with non-negative
+            step or a list of nth values and slices. Negative values
+            count from the end of each group.
+        dropna : {'any', 'all', None}, default None
+            Apply the specified dropna operation before counting which
+            row is the nth row. Only supported in the call form and not
+            currently implemented in cuDF (raises ``NotImplementedError``;
+            falls back to pandas under ``cudf.pandas``).
+
+        Returns
+        -------
+        Series or DataFrame
+            The nth row(s) of each group, keeping the original index and
+            row order (like a filter operation, the group keys are not
+            added as an index level).
+
+        Examples
+        --------
+        >>> import cudf
+        >>> df = cudf.DataFrame({"A": [1, 1, 2, 1, 2],
+        ...                      "B": [None, 2, 3, 4, 5]})
+        >>> gb = df.groupby("A")
+        >>> gb.nth(0)
+           A     B
+        0  1  <NA>
+        2  2     3
+        >>> gb.nth(-1)
+           A  B
+        3  1  4
+        4  2  5
+        >>> gb.nth[:2]
+           A     B
+        0  1  <NA>
+        1  1     2
+        2  2     3
+        4  2     5
+        """
+        return GroupByNthSelector(self)
+
     @_performance_tracking
-    def nth(self, n, dropna: Literal["any", "all", None] = None):
-        """
-        Return the nth row from each group.
-        """
+    def _nth(self, n, dropna: Literal["any", "all", None] = None):
+        """Positional row filter mirroring pandas' GroupBy.nth."""
         if dropna is not None:
             raise NotImplementedError("dropna is not currently supported.")
-        self.obj["__groupbynth_order__"] = range(0, len(self.obj))
-        # We perform another groupby here to have the grouping columns
-        # be a part of dataframe columns.
-        result = self.obj.groupby(self.grouping.keys).agg(lambda x: x.nth(n))
-        sizes = self.size().reindex(result.index)
 
-        result = result[sizes > n]
+        # Normalize and validate ``n`` like pandas'
+        # GroupByIndexingMixin._make_mask_from_positional_indexer.
+        if isinstance(n, (int, np.integer)):
+            args: list = [int(n)]
+        elif isinstance(n, slice):
+            args = [n]
+        elif isinstance(n, (list, tuple, np.ndarray)):
+            args = list(n)
+        else:
+            raise TypeError(
+                f"Invalid index {type(n)}. "
+                "Must be integer, list-like, slice or a tuple of "
+                "integers and slices"
+            )
+        for arg in args:
+            if isinstance(arg, slice):
+                if (arg.step or 1) < 0:
+                    raise ValueError(
+                        f"Invalid step {arg.step}. Must be non-negative"
+                    )
+            elif not isinstance(arg, (int, np.integer)):
+                raise TypeError(
+                    f"Invalid index {type(n)}. "
+                    "Must be integer, list-like, slice or a tuple of "
+                    "integers and slices"
+                )
 
-        result.index = self.obj.index.take(
-            result._data["__groupbynth_order__"]
+        # Per-row position within its group and group size, in group-major
+        # order (same construction as ``_head_tail``).
+        _, offsets, _, _ = self._grouped()
+        group_offsets = np.asarray(offsets, dtype=SIZE_TYPE_DTYPE)
+        size_per_group = np.diff(group_offsets)
+        sizes = np.repeat(size_per_group, size_per_group)
+        pos = np.arange(len(sizes), dtype=SIZE_TYPE_DTYPE) - np.repeat(
+            group_offsets[:-1], size_per_group
         )
-        del result._data["__groupbynth_order__"]
-        del self.obj._data["__groupbynth_order__"]
-        return result
+
+        mask = np.zeros(len(sizes), dtype=bool)
+        for arg in args:
+            if isinstance(arg, slice):
+                step = arg.step or 1
+                if arg.start is None:
+                    start = np.zeros_like(sizes)
+                elif arg.start >= 0:
+                    start = np.full_like(sizes, arg.start)
+                else:
+                    # ``slice.indices`` clamps a negative start at 0 and
+                    # the step alignment begins at the clamped value
+                    start = np.maximum(sizes + arg.start, 0)
+                submask = pos >= start
+                if step > 1:
+                    submask &= (pos - start) % step == 0
+                if arg.stop is not None:
+                    if arg.stop >= 0:
+                        submask &= pos < arg.stop
+                    else:
+                        submask &= pos < np.maximum(sizes + arg.stop, 0)
+                mask |= submask
+            elif arg >= 0:
+                mask |= pos == arg
+            else:
+                mask |= pos == sizes + arg
+
+        # Map the selected group-major rows back to positions in the
+        # original object and gather from the *pre-nans_to_nulls* object:
+        # pandas' nth is a row filter, so values, dtypes, index and row
+        # order are those of the original rows.
+        to_take = as_column(np.nonzero(mask)[0].astype(SIZE_TYPE_DTYPE))
+        _, _, (ordering,) = self._groups([self._range_column_from_obj])
+        original_positions = ordering.take(to_take)
+        original_positions = original_positions.take(
+            original_positions.argsort()
+        )
+        return self._obj_original.take(original_positions)
 
     @_performance_tracking
     def ngroup(self, ascending=True):
@@ -1714,32 +2027,53 @@ class GroupBy(Serializable, Reducible, Scannable):
         0    0
         1    0
         2    1
-        3    3
-        4    2
+        3    2
+        4    3
         5    0
         dtype: int64
         """
         from cudf.core.series import Series
 
-        index = self.grouping.keys.unique().sort_values()
+        index = self.grouping.keys.unique()
+        # Groups are numbered in the order they would be iterated over: sorted
+        # order when ``sort=True``, otherwise order of first appearance.
+        if self._sort:
+            index = index.sort_values()
         num_groups = len(index)
-        has_null_group = any(col.has_nulls() for col in index._columns)
-        if ascending:
-            # Count ascending from 0 to num_groups - 1
-            groups = range(num_groups)
-        elif has_null_group:
-            # Count descending from num_groups - 1 to 0, but subtract one more
-            # for the null group making it num_groups - 2 to -1.
-            groups = range(num_groups - 2, -2, -1)
+
+        if not self._dropna:
+            # ``dropna=False``: a group whose key contains a null is a regular
+            # group numbered like any other, so the labels are simply the
+            # group positions in iteration order.
+            seq = (
+                range(num_groups)
+                if ascending
+                else range(num_groups - 1, -1, -1)
+            )
+            group_ids = Series._from_column(
+                as_column(seq, dtype=np.dtype(np.int64))
+            )
         else:
-            # Count descending from num_groups - 1 to 0
-            groups = range(num_groups - 1, -1, -1)
-
-        group_ids = Series._from_column(as_column(groups))
-
-        if has_null_group:
-            group_ids.iloc[-1] = pd.NA
-
+            # ``dropna=True``: pandas labels rows whose key contains a null
+            # with NA and excludes those groups from the numbering. A group is
+            # a "null group" when any of its key columns is null there.
+            null_group_col = functools.reduce(
+                lambda a, b: a | b,
+                (col.isnull() for col in index._columns),
+            )
+            non_null_mask = ~null_group_col
+            non_null = non_null_mask.astype(SIZE_TYPE_DTYPE)
+            # 0-based position of each labeled (non-null) group; the value at
+            # null positions is irrelevant as it is replaced with NA below.
+            rank = non_null.cumsum() - non_null
+            if not ascending:
+                rank = (int(non_null.sum()) - 1) - rank
+            group_ids = Series._from_column(
+                rank.astype(np.dtype(np.int64)).copy_if_else(
+                    pa_scalar_to_plc_scalar(pa.scalar(None, type=pa.int64())),
+                    non_null_mask,
+                )
+            )
         group_ids.index = index
         return self._broadcast(group_ids)
 
@@ -1785,8 +2119,7 @@ class GroupBy(Serializable, Reducible, Scannable):
             # https://doi.org/10.1016/j.ipl.2005.11.003, essentially,
             # do a segmented argsort sorting on weight-scaled
             # logarithmic deviates. See
-            # https://timvieira.github.io/blog/post/
-            # 2019/09/16/algorithms-for-sampling-without-replacement/
+            # https://timvieira.github.io/blog/algorithms-for-sampling-without-replacement/
             #
             # With replacement is trickier, one might be able to use
             # the alias method, otherwise we're back to bucketed
@@ -1937,7 +2270,7 @@ class GroupBy(Serializable, Reducible, Scannable):
         grouped_values = self.obj._from_columns_like_self(
             grouped_value_cols,
             column_names=self.obj._column_names,
-            index_names=self.obj._index_names,  # type: ignore[arg-type]
+            index_names=self.obj.index.names,
         )
         if not include_groups and isinstance(grouped_values, DataFrame):
             selection = getattr(self, "_selection", None)
@@ -2027,7 +2360,7 @@ class GroupBy(Serializable, Reducible, Scannable):
             list(agg) if is_list_like(agg) else [agg]  # type: ignore[arg-type]
             for agg in aggs_per_column
         ]
-        return column_names, columns, normalized_aggs
+        return column_names, columns, normalized_aggs  # type: ignore[return-value]  # (list-like narrowing is not represented)
 
     @_performance_tracking
     def pipe(self, func, *args, **kwargs):
@@ -2122,6 +2455,16 @@ class GroupBy(Serializable, Reducible, Scannable):
 
         if not len(chunk_results):
             return self.obj.head(0)
+        if (
+            isinstance(self.obj, DataFrame)
+            and not isinstance(chunk_results, ColumnBase)
+            and all(res is None for res in chunk_results)
+        ):
+            # pandas GH9684/GH57775: an all-None DataFrameGroupBy.apply
+            # returns an empty frame keeping the (non-grouping) columns and
+            # dtypes. (An all-None SeriesGroupBy.apply stays in the scalar
+            # branch below: pandas returns an object Series of Nones.)
+            return grouped_values.head(0).reset_index(drop=True)
         if isinstance(chunk_results, ColumnBase) or is_scalar(
             chunk_results[0]
         ):
@@ -2143,41 +2486,86 @@ class GroupBy(Serializable, Reducible, Scannable):
                 result = concat(chunk_results, axis=1).T
                 result.index = group_names
                 result.index.names = self.grouping.names
-            # When the UDF is like df.x + df.y, the result for each
-            # group is the same length as the original group
-            elif (total_rows := sum(len(chk) for chk in chunk_results)) in {
-                len(self.obj),
-                len(group_names),
-            }:
-                result = concat(chunk_results)
-                if total_rows == len(group_names):
-                    result.index = group_names
-                    # TODO: Is there a better way to determine what
-                    # the column name should be, especially if we applied
-                    # a nameless UDF.
-                    result = result.to_frame(
-                        name=grouped_values._column_names[0]
-                    )
-                else:
-                    index_data = group_keys._data.copy(deep=True)
-                    index_data[None] = grouped_values.index._column
-                    result.index = MultiIndex._from_data(index_data)
-            elif len(chunk_results) == len(group_names):
-                result = concat(chunk_results, axis=1).T
+                # pandas names the columns axis after the row-like Series
+                # returned by the UDF (e.g. ``iloc[0]`` carries the original
+                # row label as its name); ``concat(..., axis=1).T`` otherwise
+                # drops it, leaving an unnamed columns axis.
+                result.columns = result.columns.set_names(
+                    [chunk_results[0].name]
+                )
+            # pandas stacks Series results that share an identical index
+            # into a DataFrame with one row per group and columns given by
+            # the common index (DataFrameGroupBy._wrap_applied_output_series)
+            elif all(
+                chunk_results[0].index.equals(chk.index)
+                for chk in chunk_results[1:]
+            ):
+                # a consistent Series name becomes the columns-axis name
+                # (pandas GH6124). Chunks are renamed positionally before
+                # the axis=1 concat because cuDF rejects duplicate column
+                # names.
+                names = {chk.name for chk in chunk_results}
+                result = concat(
+                    [chk.rename(i) for i, chk in enumerate(chunk_results)],
+                    axis=1,
+                ).T
                 result.index = group_names
                 result.index.names = self.grouping.names
+                if len(names) == 1:
+                    result._data._level_names = (names.pop(),)
             else:
-                raise TypeError(
-                    "Error handling Groupby apply output with input of "
-                    f"type {type(self.obj)} and output of "
-                    f"type {type(chunk_results[0])}"
+                # pandas GH8467: Series results with differing indexes are
+                # concatenated along axis 0 into a Series with the group
+                # keys prepended as the outer index level(s), each key
+                # repeated by its chunk's actual length and the UDF-returned
+                # index kept as the inner level
+                # (GroupBy._concat_objects with ``not_indexed_same=True``).
+                # This also covers transform-like UDFs: chunks indexed like
+                # their input concatenate back to the grouped input's index.
+                lengths = [len(chk) for chk in chunk_results]
+                result = concat(chunk_results)
+                gather = as_column(
+                    np.repeat(np.arange(len(group_names)), lengths)
                 )
+                index_data = {
+                    i: col.take(gather)
+                    for i, col in enumerate(group_names._columns)
+                }
+                inner_name = result.index.name
+                index_data[None] = result.index._column
+                mi = MultiIndex._from_data(index_data)
+                mi.names = [*self.grouping.names, inner_name]
+                result.index = mi
         else:
             result = concat(chunk_results)
             if self._group_keys:
                 index_data = group_keys._data.copy(deep=True)
-                index_data[None] = grouped_values.index._column
-                result.index = MultiIndex._from_data(index_data)
+                # The inner index level is the index returned by the UDF for
+                # each group (preserved through ``concat``), not the original
+                # row positions of the grouped values. This matches pandas,
+                # e.g. a UDF returning ``DataFrame({"values": range(len(grp))})``
+                # contributes a fresh 0..len(grp)-1 range per group.
+                inner_name = result.index.name
+                index_data[None] = result.index._column
+                mi = MultiIndex._from_data(index_data)
+                # ColumnAccessor keys must be unique, so the inner level's
+                # name (which may duplicate a key name) is restored after
+                # construction.
+                mi.names = [*mi.names[:-1], inner_name]
+                result.index = mi
+            elif len(result) == len(grouped_values) and result.index.equals(
+                grouped_values.index
+            ):
+                # Every chunk result is indexed like its input chunk, i.e.
+                # the UDF acted as a transform. pandas restores the original
+                # row order in this case (GroupBy._concat_objects) regardless
+                # of ``sort``. The concatenated chunks are in key-sorted
+                # group order, so gather back through the inverse of the
+                # grouping permutation.
+                _, _, (positions,) = self._groups(
+                    [self._range_column_from_obj]
+                )
+                result = result.take(positions.argsort().values)
         return result
 
     @_performance_tracking
@@ -2206,15 +2594,15 @@ class GroupBy(Serializable, Reducible, Scannable):
           allowed. Binary operations are not yet supported, so syntax like
           `df['x'] * 2` is not yet allowed.
           For more information, see the `cuDF guide to user defined functions
-          <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs.html>`__.
+          <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
           Use `cudf` to select the iterative groupby apply algorithm which aims
           to provide maximum flexibility at the expense of performance.
           The default value `auto` will attempt to use the numba JIT pipeline
           where possible and will fall back to the iterative algorithm if
           necessary.
         include_groups : bool, default False
-            When True, will attempt to apply ``func`` to the groupings in
-            the case that they are columns of the DataFrame.
+            Only ``False`` is accepted (matching pandas 3.0, where
+            ``include_groups=True`` raises a ``ValueError``).
         kwargs : dict
             Optional keyword arguments to pass to the function.
             Currently not supported
@@ -2294,6 +2682,9 @@ class GroupBy(Serializable, Reducible, Scannable):
         dtype: int64
 
         """
+        if include_groups:
+            # matches pandas 3.0
+            raise ValueError("include_groups=True is no longer allowed.")
         if kwargs:
             raise NotImplementedError(
                 "Passing kwargs to func is currently not supported."
@@ -2319,6 +2710,34 @@ class GroupBy(Serializable, Reducible, Scannable):
         group_names, offsets, group_keys, grouped_values = self._grouped(
             include_groups=include_groups
         )
+
+        if not self._sort and len(offsets) > 2:
+            # libcudf returns groups sorted by key, but with ``sort=False``
+            # pandas processes groups in order of first appearance. Permute
+            # the grouped layout accordingly so both engines and the result
+            # assembly see pandas' iteration order.
+            pos_offsets, _, (positions,) = self._groups(
+                [self._range_column_from_obj]
+            )
+            first_pos = positions.take(as_column(pos_offsets[:-1]))
+            group_order = first_pos.argsort().to_numpy()
+            sizes = np.diff(np.asarray(offsets, dtype=SIZE_TYPE_DTYPE))
+            row_order = as_column(
+                np.concatenate(
+                    [
+                        np.arange(
+                            offsets[i], offsets[i + 1], dtype=SIZE_TYPE_DTYPE
+                        )
+                        for i in group_order
+                    ]
+                )
+            )
+            group_names = group_names.take(group_order)
+            group_keys = group_keys.take(row_order)
+            grouped_values = grouped_values.take(row_order)
+            new_offsets = np.zeros(len(sizes) + 1, dtype=SIZE_TYPE_DTYPE)
+            np.cumsum(sizes[group_order], out=new_offsets[1:])
+            offsets = new_offsets.tolist()
 
         if engine == "auto":
             if _can_be_jitted(grouped_values, func, args):
@@ -2346,8 +2765,10 @@ class GroupBy(Serializable, Reducible, Scannable):
         else:
             raise ValueError(f"Unsupported engine '{engine}'")
 
-        if self._sort:
-            result = result.sort_index()
+        # No final sort: group-keyed results are already produced in
+        # sorted group-key order, and pandas preserves the UDF's
+        # within-group row order (and a transform's original row order)
+        # regardless of ``sort`` (pandas GH52444).
         if self._as_index is False:
             result = result.reset_index()
         return result
@@ -2373,7 +2794,12 @@ class GroupBy(Serializable, Reducible, Scannable):
             values = values._align_to_index(
                 self.grouping.keys, how="right", allow_non_unique=True
             )
-            values.index = self.obj.index
+        # Even when no alignment is needed (every group is a single row,
+        # so the aggregated index already equals the group keys), the
+        # result must be indexed like the input rows, not the group
+        # labels (pandas GH#9941: transform returns an obj-indexed
+        # result).
+        values.index = self.obj.index
         return values
 
     @_performance_tracking
@@ -2434,8 +2860,27 @@ class GroupBy(Serializable, Reducible, Scannable):
             raise TypeError(
                 "Aggregation must be a named aggregation or a callable"
             )
+        gb = self
+        if not self._as_index:
+            # as_index has no effect on transform in pandas (GH#49834):
+            # the key-column reset that agg/size apply for as_index=False
+            # must not leak into the broadcast result.
+            gb = copy.copy(self)
+            gb._as_index = True
+        if func == "size":
+            # size counts group rows rather than aggregating each value
+            # column, so pandas broadcasts GroupBy.size() as a single
+            # Series (unnamed for DataFrameGroupBy, keeping the source
+            # name for SeriesGroupBy) instead of going per-column.
+            return gb._broadcast(gb.size())
+        if func == "cumcount":
+            # cumcount numbers the rows of each group: always an unnamed
+            # Series over the original index, never a per-column result.
+            return gb.cumcount()
+        if func == "ngroup":
+            return gb.ngroup()
         try:
-            result = self.agg(func)
+            result = gb.agg(func)
         except TypeError as e:
             raise NotImplementedError(
                 "Currently, `transform()` supports only aggregations."
@@ -2447,7 +2892,7 @@ class GroupBy(Serializable, Reducible, Scannable):
                     "Unexpected result length for scan transform"
                 )
             return result
-        return self._broadcast(result)
+        return gb._broadcast(result)
 
     def rolling(self, *args, **kwargs):
         """
@@ -2871,7 +3316,58 @@ class GroupBy(Serializable, Reducible, Scannable):
         def func(x):
             return getattr(x, "quantile")(q=q, interpolation=interpolation)
 
-        return self.agg(func)
+        result = self.agg(func)
+        return self._align_quantile_dtypes(result, interpolation)
+
+    @staticmethod
+    def _quantile_result_dtype(
+        orig_dtype: DtypeObj | None, exact: bool
+    ) -> DtypeObj | None:
+        """Return the dtype pandas produces for a quantile of ``orig_dtype``.
+
+        libcudf's quantile aggregation always yields ``float64``. pandas,
+        however, chooses the result dtype from the input dtype and the
+        interpolation method (``exact`` is ``True`` for ``lower``/``higher``/
+        ``nearest``, where the quantile is an actual element of the input):
+
+        * numpy / pyarrow integer columns -> ``int64`` when ``exact`` else
+          ``float64``; numpy / pyarrow floating columns -> always ``float64``.
+        * pandas nullable (masked) integer columns -> keep their dtype when
+          ``exact`` else ``Float64``; nullable floating columns -> always keep
+          their dtype (e.g. ``Float32`` stays ``Float32``).
+
+        Returns ``None`` to leave the (float64) result untouched.
+        """
+        if orig_dtype is None:
+            return None
+        if is_pandas_nullable_numpy_dtype(orig_dtype) and not isinstance(
+            orig_dtype, pd.ArrowDtype
+        ):
+            # pandas nullable (masked) extension dtype.
+            if orig_dtype.kind == "f":
+                return orig_dtype
+            if orig_dtype.kind in "iu":
+                return orig_dtype if exact else pd.Float64Dtype()
+            return None
+        # numpy and pyarrow-backed columns do not preserve their dtype; the
+        # result is always numpy-backed.
+        if orig_dtype.kind == "f":
+            return np.dtype(np.float64)
+        if orig_dtype.kind in "iu":
+            return np.dtype(np.int64) if exact else np.dtype(np.float64)
+        return None
+
+    def _align_quantile_dtypes(
+        self, result: DataFrameOrSeries, interpolation: str
+    ) -> DataFrameOrSeries:
+        """Cast quantile result columns to the dtype pandas would produce."""
+        exact = interpolation in {"lower", "higher", "nearest"}
+        orig_dtypes = dict(self.grouping.values._dtypes)
+        for name, col in list(result._data.items()):
+            target = self._quantile_result_dtype(orig_dtypes.get(name), exact)
+            if target is not None and target != col.dtype:
+                result._data[name] = col.astype(target)
+        return result
 
     def _quantile_array(self, qs, interpolation="linear"):
         """Compute multiple quantiles and return result with proper
@@ -2921,13 +3417,8 @@ class GroupBy(Serializable, Reducible, Scannable):
 
         combined.index = new_index
 
-        # If operating on a SeriesGroupBy, return a Series instead of
-        # a single-column DataFrame.
-        from cudf.core.series import Series
-
-        if isinstance(first, Series):
-            return combined.iloc[:, 0]
-
+        # If operating on a SeriesGroupBy, ``combined`` is already a Series;
+        # a DataFrameGroupBy yields a single-/multi-column DataFrame.
         return combined
 
     @_performance_tracking
@@ -2967,14 +3458,50 @@ class GroupBy(Serializable, Reducible, Scannable):
         values = self.grouping.values
         from cudf.core.dataframe import DataFrame
 
-        result = self.obj._from_data(
-            dict(
-                zip(
-                    values._column_names,
-                    self._replace_nulls(values._columns, method),
-                    strict=True,
+        value_columns = values._columns
+        if limit is not None and limit < 0:
+            # pandas treats a negative limit as unlimited
+            limit = None
+        if limit is None:
+            replaced = tuple(self._replace_nulls(value_columns, method))
+        else:
+            # pandas accepts integer-valued floats
+            limit = int(limit)
+            # Group-relative row position, masked null exactly where the
+            # value is null: group-filling the positions with the same
+            # policy yields, per row, the position of the value that
+            # sourced its fill, making (own position - source position)
+            # the fill distance. The unmasked positions column is passed
+            # through the same replace_nulls call because the output rows
+            # come back in grouped order, not the original row order.
+            cum = self.cumcount()._column
+            pos_columns = tuple(
+                cum.set_mask(col.mask, col.null_count) if col.nullable else cum
+                for col in value_columns
+            )
+            n = len(value_columns)
+            filled = tuple(
+                self._replace_nulls(
+                    (*value_columns, *pos_columns, cum), method
                 )
             )
+            grouped_cum = filled[-1]
+            limited = []
+            for fcol, fpos in zip(filled[:n], filled[n : 2 * n], strict=True):
+                if method == plc.replace.ReplacePolicy.PRECEDING:
+                    dist = grouped_cum - fpos
+                else:
+                    dist = fpos - grouped_cum
+                # Rows within limit of their fill source stay valid
+                # (originally-valid rows are their own source, distance
+                # 0); nulls no fill reached have a null distance and stay
+                # null, so ``keep`` alone is a valid final null mask.
+                keep = (dist <= limit).fillna(False)
+                limited.append(fcol.set_mask(*keep.as_mask()))
+            replaced = tuple(limited)
+
+        result = self.obj._from_data(
+            dict(zip(values._column_names, replaced, strict=True))
         )
         # Pandas' groupby.ffill/bfill builds the result columns via a ``take``
         # on the input columns, which converts integer-valued column labels
@@ -3006,7 +3533,9 @@ class GroupBy(Serializable, Reducible, Scannable):
         Parameters
         ----------
         limit : int, default None
-            Unsupported
+            The maximum number of consecutive NA values within a group
+            filled forward from the most recent valid value. ``None``
+            fills without limit.
         """
         return self._scan_fill(plc.replace.ReplacePolicy.PRECEDING, limit)
 
@@ -3016,7 +3545,9 @@ class GroupBy(Serializable, Reducible, Scannable):
         Parameters
         ----------
         limit : int, default None
-            Unsupported
+            The maximum number of consecutive NA values within a group
+            filled backward from the next valid value. ``None`` fills
+            without limit.
         """
         return self._scan_fill(plc.replace.ReplacePolicy.FOLLOWING, limit)
 
@@ -3111,7 +3642,7 @@ class GroupBy(Serializable, Reducible, Scannable):
         ----------
         periods : int, default 1
             Periods to shift for forming percent change.
-        fill_method : str, default 'ffill'
+        fill_method : None
             Must be None.
         freq : str, optional
             Increment to use from time series API.
@@ -3127,10 +3658,15 @@ class GroupBy(Serializable, Reducible, Scannable):
         if fill_method is not None:
             raise ValueError(f"fill_method must be None; got {fill_method=}.")
 
-        filled = self.ffill()
-        fill_grp = filled.groupby(self.grouping)
-        shifted = fill_grp.shift(periods=periods, freq=freq)
-        return (filled / shifted) - 1
+        # pandas 3.0 removed fill_method: no filling is performed, so NaN
+        # appears wherever the value or the group-shifted value is NA.
+        values = self.grouping.values
+        values.index = self.obj.index
+        value_grp = values.groupby(
+            self.grouping, sort=self._sort, dropna=self._dropna
+        )
+        shifted = value_grp.shift(periods=periods, freq=freq)
+        return (values / shifted) - 1
 
     def _mimic_pandas_order(
         self, result: DataFrameOrSeries
@@ -3259,11 +3795,24 @@ class GroupBy(Serializable, Reducible, Scannable):
             else:
                 # For numeric/bool inputs, cast to bool preserving nulls.
                 bool_col = col != 0
-            # Normalize away pandas-extension bool dtypes so the downstream
-            # aggregation always sees ``np.bool_``.
-            bool_col = bool_col.astype(bool_dtype, copy=False)
+            if col.has_nulls() and bool_col.null_count != col.null_count:
+                # ``na_value=np.nan`` dtypes don't propagate missingness
+                # through the comparison above (NaN compares as False), so
+                # restore the source column's null positions.
+                bool_col = bool_col.set_mask(col.mask, col.null_count)
             if not skipna:
+                # NA values must not flip ``all`` to False nor stop ``any``
+                # from being True, so treat them as True.
                 bool_col = bool_col.fillna(True)
+            # Normalize away pandas-extension bool dtypes so the downstream
+            # aggregation sees ``np.bool_``, but only when no nulls remain:
+            # casting a null-containing extension dtype to numpy bool is
+            # (intentionally) rejected in pandas-compatible mode. A nullable
+            # bool column aggregates correctly as-is, and the result is
+            # normalized to ``np.bool_`` after empty/skipna groups are
+            # filled below.
+            if not bool_col.has_nulls():
+                bool_col = bool_col.astype(bool_dtype, copy=False)
             return bool_col
 
         if is_series:
@@ -3289,16 +3838,37 @@ class GroupBy(Serializable, Reducible, Scannable):
         )
         result = bool_gb.agg(agg_name)
 
+        def _bool_result_dtype(input_dtype):
+            # Mirror pandas' any/all output dtype to the input's "flavor":
+            # masked nullable -> ``boolean``, pyarrow -> ``bool[pyarrow]``,
+            # numpy/string -> numpy ``bool``.
+            if isinstance(input_dtype, pd.ArrowDtype):
+                return pd.ArrowDtype(pa.bool_())
+            if is_pandas_nullable_extension_dtype(
+                input_dtype
+            ) and not is_dtype_obj_string(input_dtype):
+                return pd.BooleanDtype()
+            return np.dtype(np.bool_)
+
         # Empty groups (skipna=True with all-NA values) yield NA from
         # min/max — pandas treats these as ``True`` for ``all`` and
         # ``False`` for ``any``.
-        bool_np = np.dtype(np.bool_)
         if isinstance(result, Series):
-            result = result.fillna(fill_value).astype(bool_np)
+            result = result.fillna(fill_value).astype(
+                _bool_result_dtype(self.obj.dtype)
+            )
         else:
+            # With ``as_index=False`` the group-key columns are present in the
+            # result; only the aggregated value columns must be coerced to
+            # bool (casting a key column would corrupt it, e.g. a categorical
+            # key turning into ``[False, True]``).
+            key_names = set(self.grouping.names)
             for col_name in result._column_names:
+                if col_name in key_names:
+                    continue
+                target = _bool_result_dtype(self.obj._data[col_name].dtype)
                 result[col_name] = (
-                    result[col_name].fillna(fill_value).astype(bool_np)
+                    result[col_name].fillna(fill_value).astype(target)
                 )
 
         if min_count and min_count > 0:
@@ -3345,8 +3915,11 @@ class DataFrameGroupBy(GroupBy, GetAttrGetItemMixin):
         numeric_only: bool = False,
         **kwargs: Any,
     ) -> DataFrame:
-        result = self._reduce("idxmin", numeric_only=numeric_only)
-        return self._wrap_idxmin_idxmax(result, skipna=skipna)
+        if not skipna:
+            # pandas does not support positional idxmin with skipna=False
+            # (it cannot represent "the label of a NA").
+            raise ValueError("idxmin with skipna=False")
+        return self._reduce("idxmin", numeric_only=numeric_only)
 
     def idxmax(
         self,
@@ -3355,8 +3928,9 @@ class DataFrameGroupBy(GroupBy, GetAttrGetItemMixin):
         numeric_only: bool = False,
         **kwargs: Any,
     ) -> DataFrame:
-        result = self._reduce("idxmax", numeric_only=numeric_only)
-        return self._wrap_idxmin_idxmax(result, skipna=skipna)
+        if not skipna:
+            raise ValueError("idxmax with skipna=False")
+        return self._reduce("idxmax", numeric_only=numeric_only)
 
     def value_counts(
         self,
@@ -3426,46 +4000,46 @@ class DataFrameGroupBy(GroupBy, GetAttrGetItemMixin):
 
         >>> df.groupby('gender').value_counts()
         gender  education  country
-        female  high       FR         1
-                           US         1
         male    low        FR         2
                            US         1
                 medium     FR         1
+        female  high       US         1
+                           FR         1
         Name: count, dtype: int64
 
         >>> df.groupby('gender').value_counts(ascending=True)
         gender  education  country
-        female  high       FR         1
-                           US         1
         male    low        US         1
                 medium     FR         1
-                low        FR         2
+        female  high       US         1
+                           FR         1
+        male    low        FR         2
         Name: count, dtype: int64
 
         >>> df.groupby('gender').value_counts(normalize=True)
         gender  education  country
-        female  high       FR         0.50
-                           US         0.50
         male    low        FR         0.50
                            US         0.25
                 medium     FR         0.25
+        female  high       US         0.50
+                           FR         0.50
         Name: proportion, dtype: float64
 
         >>> df.groupby('gender', as_index=False).value_counts()
            gender education country  count
-        0  female      high      FR      1
-        1  female      high      US      1
-        2    male       low      FR      2
-        3    male       low      US      1
-        4    male    medium      FR      1
+        0    male       low      FR      2
+        1    male       low      US      1
+        2    male    medium      FR      1
+        3  female      high      US      1
+        4  female      high      FR      1
 
         >>> df.groupby('gender', as_index=False).value_counts(normalize=True)
            gender education country  proportion
-        0  female      high      FR        0.50
-        1  female      high      US        0.50
-        2    male       low      FR        0.50
-        3    male       low      US        0.25
-        4    male    medium      FR        0.25
+        0    male       low      FR        0.50
+        1    male       low      US        0.25
+        2    male    medium      FR        0.25
+        3  female      high      US        0.50
+        4  female      high      FR        0.50
         """
 
         df = self.obj.copy()
@@ -3487,37 +4061,134 @@ class DataFrameGroupBy(GroupBy, GetAttrGetItemMixin):
                 "cannot be in the groupby column keys."
             )
 
-        df["__placeholder"] = 1
+        subset = list(subset)
+        keys = list(groupings) + subset
+
+        # Use the grouping's actual key values rather than the raw object
+        # columns: a ``Grouper(freq=...)`` bins its key (e.g. floors a datetime
+        # to the resampling frequency), so the raw column would give the wrong
+        # group labels.
+        for kname, kcol in zip(
+            self.grouping.names, self.grouping._key_columns, strict=True
+        ):
+            if kname in df._column_names:
+                df[kname] = kcol
+
+        # Bookkeeping columns for counting and for recovering pandas' ordering
+        # (see below). Choose names that cannot clash with the user's columns.
+        taken = set(df._column_names)
+
+        def _free_name(base: str) -> str:
+            while base in taken:
+                base = f"_{base}"
+            taken.add(base)
+            return base
+
+        cnt_col = _free_name("__count")
+        pos_col = _free_name("__pos")
+        seq_col = _free_name("__seq")
+
+        # cudf's groupby does not preserve first-appearance order, so track the
+        # first row index of each unique (key + subset) combination alongside
+        # the count and reorder by it below. Group with ``dropna=False`` and
+        # filter afterwards so the groupby ``dropna`` (group keys) and the
+        # ``value_counts`` ``dropna`` (subset) can be applied independently,
+        # matching pandas.
+        df[cnt_col] = 1
+        df[pos_col] = as_column(range(len(df)))
         result = (
-            df.groupby(groupings + list(subset), dropna=dropna)[
-                "__placeholder"
-            ]
-            .count()
-            .sort_index()
-            .astype(np.dtype(np.int64))
+            df.groupby(keys, dropna=False, sort=False)
+            .agg({cnt_col: "count", pos_col: "min"})
+            .reset_index()
         )
+        result[cnt_col] = result[cnt_col].astype(np.dtype(np.int64))
+
+        drop_cols = (list(groupings) if self._dropna else []) + (
+            subset if dropna else []
+        )
+        keep = None
+        for col in drop_cols:
+            mask = result[col].notna()
+            keep = mask if keep is None else (keep & mask)
+        if keep is not None:
+            result = result[keep]
+
+        # pandas includes unobserved categorical combinations (count 0). cudf's
+        # groupby only emits observed combinations, so when a subset column is
+        # categorical, expand to the full product of the observed group-key
+        # combinations and the subset categories. The base order is the
+        # category product when the groupby is sorted, else first appearance
+        # with the unobserved combinations placed last.
+        cat_subset = [
+            s
+            for s in subset
+            if isinstance(self.obj._data[s].dtype, CategoricalDtype)
+        ]
+        if cat_subset and len(result):
+            # TODO: This conversion to host objects can be avoided once
+            # MultiIndex.from_product supports GPU inputs.
+            subset_levels = [
+                cast("CategoricalDtype", self.obj._data[s].dtype)
+                .categories.to_pandas()
+                .tolist()
+                if s in cat_subset
+                else result[s].dropna().unique().to_pandas().tolist()
+                for s in subset
+            ]
+            subset_prod = MultiIndex.from_product(
+                subset_levels, names=subset
+            ).to_frame(index=False)
+            for s in subset:
+                subset_prod[s] = subset_prod[s].astype(result[s].dtype)
+            group_combos = result[list(groupings)].drop_duplicates()
+            cross_col = _free_name("__cross")
+            group_combos[cross_col] = 1
+            subset_prod[cross_col] = 1
+            full = group_combos.merge(subset_prod, on=cross_col).drop(
+                columns=[cross_col]
+            )
+            result = full.merge(result, on=keys, how="left")
+            result[cnt_col] = (
+                result[cnt_col].fillna(0).astype(np.dtype(np.int64))
+            )
+            if self._sort:
+                result[pos_col] = as_column(range(len(result)))
+            else:
+                result[pos_col] = (
+                    result[pos_col].fillna(len(df) + 1).astype(SIZE_TYPE_DTYPE)
+                )
+
+        # Mirror pandas: order by first appearance, then -- as two independent
+        # steps -- optionally by value (``sort``) and by group key (the groupby
+        # ``sort``). A running sequence keeps each sort stable for ties (cudf's
+        # value sort is not guaranteed stable).
+        result = result.sort_values(pos_col)
+        result[seq_col] = as_column(range(len(result)))
+        if sort:
+            result = result.sort_values(
+                [cnt_col, seq_col], ascending=[ascending, True]
+            )
+            result[seq_col] = as_column(range(len(result)))
+        if self._sort:
+            result = result.sort_values([*list(groupings), seq_col])
 
         if normalize:
-            levels = list(range(len(groupings), result.index.nlevels))
-            result /= result.groupby(
-                result.index.droplevel(levels),
-            ).transform("sum")
+            # Divide each count by its group total. ``fillna`` handles
+            # non-observed categorical groups (0 / 0).
+            group_size = result.groupby(list(groupings), sort=False)[
+                cnt_col
+            ].transform("sum")
+            result[cnt_col] = (result[cnt_col] / group_size).fillna(0.0)
 
-        if sort:
-            result = result.sort_values(ascending=ascending).sort_index(
-                level=range(len(groupings)), sort_remaining=False
-            )
+        result = result.set_index(keys)[cnt_col]
+        result.name = name
 
         if not self._as_index:
-            if name in df._column_names:
+            if name in keys:
                 raise ValueError(
                     f"Column label '{name}' is duplicate of result column"
                 )
-            result.name = name
-            result = result.to_frame().reset_index()
-        else:
-            result.name = name
-
+            result = result.reset_index()
         return result
 
     @_performance_tracking
@@ -3643,9 +4314,17 @@ class SeriesGroupBy(GroupBy):
             if result.shape[1] == 1 and not is_list_like(func):
                 return result.iloc[:, 0]
 
-        # drop the first level if we have a multiindex
+        # Collapse the column MultiIndex produced by a list aggregation down to
+        # the aggregation names. With ``as_index=False`` the group-key columns
+        # have already been inserted (as ``(key, "")`` tuples by
+        # ``reset_index``); blindly dropping level 0 would replace each key
+        # name with the empty padding level, so keep the name for those.
         if result._data.nlevels > 1:
-            result.columns = result._data.to_pandas_index.droplevel(0)
+            key_names = set(self.grouping.names)
+            result.columns = [
+                top if (second == "" and top in key_names) else second
+                for top, second in result._data.to_pandas_index
+            ]
 
         return result
 
@@ -3662,14 +4341,16 @@ class SeriesGroupBy(GroupBy):
     def idxmin(
         self, skipna: bool = True, min_count: int = 0, **kwargs: Any
     ) -> Series:
-        result = self._reduce("idxmin")
-        return self._wrap_idxmin_idxmax(result, skipna=skipna)
+        if not skipna:
+            raise ValueError("idxmin with skipna=False")
+        return self._reduce("idxmin")
 
     def idxmax(
         self, skipna: bool = True, min_count: int = 0, **kwargs: Any
     ) -> Series:
-        result = self._reduce("idxmax")
-        return self._wrap_idxmin_idxmax(result, skipna=skipna)
+        if not skipna:
+            raise ValueError("idxmax with skipna=False")
+        return self._reduce("idxmax")
 
     @property
     def dtype(self) -> pd.Series:
@@ -3773,7 +4454,14 @@ class Grouper:
 
 
 class _Grouping(Serializable):
-    def __init__(self, obj, by=None, level=None, series_key_column_names=None):
+    def __init__(
+        self,
+        obj,
+        by=None,
+        level=None,
+        series_key_column_names=None,
+        dropna=True,
+    ):
         self._obj = obj
         self._key_columns = []
         self.names = []
@@ -3787,6 +4475,30 @@ class _Grouping(Serializable):
         # to mirror pandas' exclusion of such columns from value columns.
         self._series_key_column_names = dict(series_key_column_names or {})
         self._handle_by_or_level(by, level)
+
+        # pandas treats NaN and null group keys identically, and labels an
+        # all-null object key with a float64 NaN. Externally supplied key
+        # columns (e.g. a Series or array passed as ``by``) also bypass the
+        # ``nans_to_nulls`` conversion applied to ``obj``. Normalize the key
+        # columns here so that, e.g., a float key of ``[None, NaN]`` collapses
+        # to a single null group and an all-null object key produces a float64
+        # NaN group label, matching pandas.
+        normalized = []
+        for col in self._key_columns:
+            if (
+                # Only when ``dropna=False`` is the all-null group actually
+                # kept and labelled. With ``dropna=True`` the group is dropped,
+                # and pandas leaves the (empty) result index as the original
+                # object dtype rather than promoting it to float64.
+                not dropna
+                and isinstance(col.dtype, np.dtype)
+                and col.dtype.kind == "O"
+                and len(col)
+                and col.null_count == len(col)
+            ):
+                col = column_empty(len(col), np.dtype("float64"))
+            normalized.append(col.nans_to_nulls())
+        self._key_columns = normalized
 
         if len(obj) and not len(self._key_columns):
             raise ValueError("No group keys passed")
@@ -3948,6 +4660,28 @@ class _Grouping(Serializable):
         out._named_columns = copy.deepcopy(self._named_columns)
         out._key_columns = [col.copy(deep=deep) for col in self._key_columns]
         return out
+
+
+class _FirstLastAggSpec:
+    """Callable aggregation spec for groupby ``first``/``last``.
+
+    Lets :meth:`GroupBy._reduce` thread ``skipna`` to
+    :meth:`Aggregation.first`/:meth:`Aggregation.last` through
+    ``make_aggregation``'s callable path. ``__str__``/``__name__`` report the
+    op name so aggregation-validity checks and result-column naming behave
+    exactly as they do for the plain ``"first"``/``"last"`` string specs.
+    """
+
+    def __init__(self, op: str, skipna: bool) -> None:
+        self._op = op
+        self._skipna = skipna
+        self.__name__ = op
+
+    def __call__(self, agg):
+        return getattr(agg, self._op)(skipna=self._skipna)
+
+    def __str__(self) -> str:
+        return self._op
 
 
 def _is_multi_agg(aggs):

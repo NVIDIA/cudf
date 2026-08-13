@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,11 +28,11 @@
 #include <cuda/std/utility>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/permutation_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <thrust/unique.h>
+
+#include <algorithm>
 
 namespace cudf::io::json::detail {
 
@@ -111,7 +111,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
   rmm::device_uvector<NodeIndexT> unique_col_ids(num_columns, stream);
   rmm::device_uvector<size_type> max_row_offsets(num_columns, stream);
   auto ordered_row_offsets =
-    thrust::make_permutation_iterator(row_offsets.begin(), ordered_node_ids.begin());
+    cuda::make_permutation_iterator(row_offsets.begin(), ordered_node_ids.begin());
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         sorted_col_ids.begin(),
                         sorted_col_ids.end(),
@@ -127,7 +127,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     sorted_col_ids.begin(),
     sorted_col_ids.end(),
-    thrust::make_permutation_iterator(tree.node_categories.begin(), ordered_node_ids.begin()),
+    cuda::make_permutation_iterator(tree.node_categories.begin(), ordered_node_ids.begin()),
     unique_col_ids.begin(),
     column_categories.begin(),
     cuda::std::equal_to<size_type>(),
@@ -165,16 +165,16 @@ reduce_to_column_tree(tree_meta_t const& tree,
 
   thrust::copy_n(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    thrust::make_zip_iterator(
-      thrust::make_permutation_iterator(tree.node_levels.begin(), unique_node_ids.begin()),
-      thrust::make_permutation_iterator(tree.parent_node_ids.begin(), unique_node_ids.begin()),
-      thrust::make_permutation_iterator(tree.node_range_begin.begin(), unique_node_ids.begin()),
-      thrust::make_permutation_iterator(tree.node_range_end.begin(), unique_node_ids.begin())),
+    cuda::make_zip_iterator(
+      cuda::make_permutation_iterator(tree.node_levels.begin(), unique_node_ids.begin()),
+      cuda::make_permutation_iterator(tree.parent_node_ids.begin(), unique_node_ids.begin()),
+      cuda::make_permutation_iterator(tree.node_range_begin.begin(), unique_node_ids.begin()),
+      cuda::make_permutation_iterator(tree.node_range_end.begin(), unique_node_ids.begin())),
     unique_node_ids.size(),
-    thrust::make_zip_iterator(column_levels.begin(),
-                              parent_col_ids.begin(),
-                              col_range_begin.begin(),
-                              col_range_end.begin()));
+    cuda::make_zip_iterator(column_levels.begin(),
+                            parent_col_ids.begin(),
+                            col_range_begin.begin(),
+                            col_range_end.begin()));
 
   // convert parent_node_ids to parent_col_ids
   thrust::transform(
@@ -342,7 +342,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
         auto [normalized_d_input, col_offsets, col_lengths] =
           cudf::io::json::detail::normalize_whitespace(
             d_input, json_col.string_offsets, json_col.string_lengths, stream, mr);
-        auto offset_length_it = thrust::make_zip_iterator(col_offsets.begin(), col_lengths.begin());
+        auto offset_length_it = cuda::make_zip_iterator(col_offsets.begin(), col_lengths.begin());
         target_type           = data_type{type_id::STRING};
         // Convert strings to the inferred data type
         col = parse_data(normalized_d_input.data(),
@@ -355,8 +355,8 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
                          stream,
                          mr);
       } else {
-        auto offset_length_it = thrust::make_zip_iterator(json_col.string_offsets.begin(),
-                                                          json_col.string_lengths.begin());
+        auto offset_length_it =
+          cuda::make_zip_iterator(json_col.string_offsets.begin(), json_col.string_lengths.begin());
         if (schema.has_value()) {
 #ifdef NJP_DEBUG_PRINT
           std::cout << "-> explicit type: "
@@ -504,16 +504,25 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
   }
 }
 
-table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
-                                             cudf::io::json_reader_options const& options,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+namespace {
+
+// Shared body of `device_parse_nested_json` and `device_parse_nested_json_with_diagnostics`.
+// When `mismatched_columns_out` is non-null, the names of top-level output columns whose JSON
+// value tree contained a schema-mismatch are pushed onto it (deduplicated, order preserved by
+// the column order of the result). When null, schema-mismatch information is dropped.
+table_with_metadata device_parse_nested_json_impl(
+  device_span<SymbolT const> d_input,
+  cudf::io::json_reader_options const& options,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr,
+  std::vector<std::string>* mismatched_columns_out,
+  std::vector<schema_mismatch_rows>* mismatched_rows_out = nullptr)
 {
   CUDF_FUNC_RANGE();
 
   auto gpu_tree = [&]() {
     // Parse the JSON and get the token stream
-    const auto [tokens_gpu, token_indices_gpu] =
+    auto const [tokens_gpu, token_indices_gpu] =
       get_token_stream(d_input, options, stream, cudf::get_current_device_resource_ref());
     // gpu tree generation
     // Note that to normalize whitespaces in nested columns coerced to be string, we need the column
@@ -566,6 +575,7 @@ table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
                           gpu_row_offsets,
                           root_column,
                           is_array_of_arrays,
+                          mismatched_rows_out != nullptr,
                           options,
                           stream,
                           mr);
@@ -605,7 +615,10 @@ table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
     CUDF_EXPECTS(prune_schema->child_types.size() == col_order.size(),
                  "Input schema column order size mismatch with input schema child types");
   }
-  auto root_col_size = root_struct_col.num_rows;
+  auto root_col_size              = root_struct_col.num_rows;
+  auto column_had_schema_mismatch = [&root_column](std::string const& col_name) {
+    return root_column.schema_mismatch_column_names.contains(col_name);
+  };
 
   // Iterate over the struct's child columns/column_order and convert to cudf column
   size_type column_index = 0;
@@ -668,6 +681,9 @@ table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
                    "prune_columns is enabled");
       // inserts all null column
       out_column_names.emplace_back(make_column_name_info(child_schema_element.value(), col_name));
+      if (mismatched_columns_out != nullptr && column_had_schema_mismatch(col_name)) {
+        mismatched_columns_out->push_back(col_name);
+      }
       auto all_null_column =
         make_all_nulls_column(child_schema_element.value(), root_col_size, stream, mr);
       out_columns.emplace_back(std::move(all_null_column));
@@ -694,13 +710,62 @@ table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
       // }
 
       out_column_names.back().children = std::move(col_name_info);
+      // When the caller requested diagnostics, surface the per-top-level-column schema-mismatch
+      // signal so they can implement their own policy (e.g. spark-rapids-jni nulls the depth-1
+      // ancestor for Spark-compat).
+      if (mismatched_columns_out != nullptr && column_had_schema_mismatch(col_name)) {
+        mismatched_columns_out->push_back(col_name);
+      }
       out_columns.emplace_back(std::move(cudf_col));
 
       column_index++;
     }
   }
 
+  if (mismatched_rows_out != nullptr) {
+    mismatched_rows_out->clear();
+    mismatched_rows_out->reserve(root_column.rows_with_schema_mismatch.size());
+    for (auto const& column : out_column_names) {
+      auto row_it =
+        std::find_if(root_column.rows_with_schema_mismatch.begin(),
+                     root_column.rows_with_schema_mismatch.end(),
+                     [&column](auto const& rows) { return rows.column_name == column.name; });
+      if (row_it != root_column.rows_with_schema_mismatch.end()) {
+        mismatched_rows_out->push_back(std::move(*row_it));
+      }
+    }
+  }
+
   return table_with_metadata{std::make_unique<table>(std::move(out_columns)), {out_column_names}};
+}
+
+}  // namespace
+
+table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
+                                             cudf::io::json_reader_options const& options,
+                                             rmm::cuda_stream_view stream,
+                                             rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return device_parse_nested_json_impl(
+    d_input, options, stream, mr, /*mismatched_columns_out=*/nullptr);
+}
+
+device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
+  device_span<SymbolT const> d_input,
+  cudf::io::json_reader_options const& options,
+  bool collect_schema_mismatch_rows,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  std::vector<std::string> mismatched_columns;
+  std::vector<schema_mismatch_rows> mismatched_rows;
+  auto* mismatched_rows_out = collect_schema_mismatch_rows ? &mismatched_rows : nullptr;
+  auto data                 = device_parse_nested_json_impl(
+    d_input, options, stream, mr, &mismatched_columns, mismatched_rows_out);
+  return device_parse_nested_json_result{
+    std::move(data), std::move(mismatched_columns), std::move(mismatched_rows)};
 }
 
 }  // namespace cudf::io::json::detail

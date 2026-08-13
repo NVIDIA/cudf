@@ -6,6 +6,7 @@
 #include "rank_types_common.hpp"
 
 #include <benchmarks/common/generate_nested_types.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -18,6 +19,7 @@ void nvbench_rank_structs(nvbench::state& state, nvbench::type_list<nvbench::enu
   auto const table = create_structs_data(state);
 
   bool const nulls{static_cast<bool>(state.get_int64("Nulls"))};
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::rank(table->view().column(0),
@@ -29,6 +31,8 @@ void nvbench_rank_structs(nvbench::state& state, nvbench::type_list<nvbench::enu
                cudf::get_default_stream(),
                cudf::get_current_device_resource_ref());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH_TYPES(nvbench_rank_structs, NVBENCH_TYPE_AXES(methods))

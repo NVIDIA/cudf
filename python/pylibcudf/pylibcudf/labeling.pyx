@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport labeling as cpp_labeling
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.labeling cimport inclusive
 
 from pylibcudf.libcudf.labeling import inclusive as Inclusive  # no-cython-lint
@@ -59,12 +60,15 @@ cpdef Column label_bins(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_left_edges = left_edges.view()
+    cdef column_view c_right_edges = right_edges.view()
     with nogil:
         c_result = cpp_labeling.label_bins(
-            input.view(),
-            left_edges.view(),
+            c_input,
+            c_left_edges,
             left_inclusive,
-            right_edges.view(),
+            c_right_edges,
             right_inclusive,
             _cs,
             mr.get_mr()

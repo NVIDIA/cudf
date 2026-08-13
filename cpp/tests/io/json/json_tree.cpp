@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -420,7 +420,7 @@ records_orient_tree_traversal_cpu(cudf::host_span<cuio_json::SymbolT const> inpu
   std::vector<cuio_json::NodeIndexT> node_ids(tree.parent_node_ids.size());
   std::iota(node_ids.begin(), node_ids.end(), 0);
 
-  const cuio_json::NodeIndexT row_array_children_level = is_enabled_lines ? 1 : 2;
+  cuio_json::NodeIndexT const row_array_children_level = is_enabled_lines ? 1 : 2;
   std::unordered_map<cuio_json::NodeIndexT, cuio_json::NodeIndexT> list_indices;
   if (is_array_of_arrays) {
     cuio_json::NodeIndexT parent_node = -1, child_index = 0;

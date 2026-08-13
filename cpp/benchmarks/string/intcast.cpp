@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/strings/convert/int_cast.hpp>
 #include <cudf/types.hpp>
@@ -28,6 +29,7 @@ void bench_intcast(nvbench::state& state)
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (from_num) {
     state.add_global_memory_reads<int64_t>(num_rows);
     state.add_global_memory_writes<int8_t>(column->alloc_size());
@@ -41,6 +43,8 @@ void bench_intcast(nvbench::state& state)
       auto result = cudf::strings::cast_to_integer(sv, data_type, endian);
     });
   }
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_intcast)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,6 @@ namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup aggregation_factories
  * @{
- * @file
  */
 
 /**
@@ -77,48 +76,48 @@ class aggregation {
    * @brief Possible aggregation operations.
    */
   enum Kind : int32_t {
-    SUM = 0,            ///< sum reduction
-    SUM_WITH_OVERFLOW,  ///< sum reduction with overflow detection
-    PRODUCT,            ///< product reduction
-    MIN,                ///< min reduction
-    MAX,                ///< max reduction
-    COUNT_VALID,        ///< count number of valid elements
-    COUNT_ALL,          ///< count number of elements
-    ANY,                ///< any reduction
-    ALL,                ///< all reduction
-    SUM_OF_SQUARES,     ///< sum of squares reduction
-    MEAN,               ///< arithmetic mean reduction
-    M2,                 ///< sum of squares of differences from the mean
-    VARIANCE,           ///< variance
-    STD,                ///< standard deviation
-    MEDIAN,             ///< median reduction
-    QUANTILE,           ///< compute specified quantile(s)
-    ARGMAX,             ///< Index of max element
-    ARGMIN,             ///< Index of min element
-    NUNIQUE,            ///< count number of unique elements
-    NTH_ELEMENT,        ///< get the nth element
-    ROW_NUMBER,         ///< get row-number of current index (relative to rolling window)
-    EWMA,               ///< get exponential weighted moving average at current index
-    RANK,               ///< get rank of current index
-    COLLECT_LIST,       ///< collect values into a list
-    COLLECT_SET,        ///< collect values into a list without duplicate entries
-    LEAD,               ///< window function, accesses row at specified offset following current row
-    LAG,                ///< window function, accesses row at specified offset preceding current row
-    PTX,                ///< PTX  based UDF aggregation
-    CUDA,               ///< CUDA based UDF aggregation
-    HOST_UDF,           ///< host based UDF aggregation
-    MERGE_LISTS,        ///< merge multiple lists values into one list
-    MERGE_SETS,         ///< merge multiple lists values into one list then drop duplicate entries
-    MERGE_M2,           ///< merge partial values of M2 aggregation,
-    COVARIANCE,         ///< covariance between two sets of elements
-    CORRELATION,        ///< correlation between two sets of elements
-    TDIGEST,            ///< create a tdigest from a set of input values
-    MERGE_TDIGEST,      ///< create a tdigest by merging multiple tdigests together
-    HISTOGRAM,          ///< compute frequency of each element
-    MERGE_HISTOGRAM,    ///< merge partial values of HISTOGRAM aggregation
-    BITWISE_AGG,        ///< bitwise aggregation on numeric columns
-    TOP_K,              ///< top k elements in a group
-    INVALID             ///< invalid aggregation, used as a placeholder when default-constructed
+    SUM = 0,          ///< sum reduction
+    SUM_OVERFLOW,     ///< sum reduction with overflow detection
+    PRODUCT,          ///< product reduction
+    MIN,              ///< min reduction
+    MAX,              ///< max reduction
+    COUNT_VALID,      ///< count number of valid elements
+    COUNT_ALL,        ///< count number of elements
+    ANY,              ///< any reduction
+    ALL,              ///< all reduction
+    SUM_OF_SQUARES,   ///< sum of squares reduction
+    MEAN,             ///< arithmetic mean reduction
+    M2,               ///< sum of squares of differences from the mean
+    VARIANCE,         ///< variance
+    STD,              ///< standard deviation
+    MEDIAN,           ///< median reduction
+    QUANTILE,         ///< compute specified quantile(s)
+    ARGMAX,           ///< Index of max element
+    ARGMIN,           ///< Index of min element
+    NUNIQUE,          ///< count number of unique elements
+    NTH_ELEMENT,      ///< get the nth element
+    ROW_NUMBER,       ///< get row-number of current index (relative to rolling window)
+    EWMA,             ///< get exponential weighted moving average at current index
+    RANK,             ///< get rank of current index
+    COLLECT_LIST,     ///< collect values into a list
+    COLLECT_SET,      ///< collect values into a list without duplicate entries
+    LEAD,             ///< window function, accesses row at specified offset following current row
+    LAG,              ///< window function, accesses row at specified offset preceding current row
+    PTX,              ///< PTX  based UDF aggregation
+    CUDA,             ///< CUDA based UDF aggregation
+    HOST_UDF,         ///< host based UDF aggregation
+    MERGE_LISTS,      ///< merge multiple lists values into one list
+    MERGE_SETS,       ///< merge multiple lists values into one list then drop duplicate entries
+    MERGE_M2,         ///< merge partial values of M2 aggregation,
+    COVARIANCE,       ///< covariance between two sets of elements
+    CORRELATION,      ///< correlation between two sets of elements
+    TDIGEST,          ///< create a tdigest from a set of input values
+    MERGE_TDIGEST,    ///< create a tdigest by merging multiple tdigests together
+    HISTOGRAM,        ///< compute frequency of each element
+    MERGE_HISTOGRAM,  ///< merge partial values of HISTOGRAM aggregation
+    BITWISE_AGG,      ///< bitwise aggregation on numeric columns
+    TOP_K,            ///< top k elements in a group
+    INVALID           ///< invalid aggregation, used as a placeholder when default-constructed
   };
 
   /**
@@ -212,10 +211,10 @@ enum class ewm_history : int32_t { INFINITE, FINITE };
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_sum_aggregation();
 
-/// Factory to create a SUM_WITH_OVERFLOW aggregation
-/// @return A SUM_WITH_OVERFLOW aggregation object
+/// Factory to create a SUM_OVERFLOW aggregation
+/// @return A SUM_OVERFLOW aggregation object
 template <typename Base = aggregation>
-std::unique_ptr<Base> make_sum_with_overflow_aggregation();
+std::unique_ptr<Base> make_sum_overflow_aggregation();
 
 /// Factory to create a PRODUCT aggregation
 /// @return A PRODUCT aggregation object
@@ -667,7 +666,7 @@ std::unique_ptr<Base> make_correlation_aggregation(correlation_type type,
 /**
  * @brief Factory to create a TDIGEST aggregation
  *
- * Produces a tdigest (https://arxiv.org/pdf/1902.04023.pdf) column from input values.
+ * Produces a tdigest (https://arxiv.org/pdf/1902.04023) column from input values.
  * The input aggregation values are expected to be fixed-width numeric types.
  *
  * The tdigest column produced is of the following structure:
@@ -706,7 +705,7 @@ std::unique_ptr<Base> make_tdigest_aggregation(int max_centroids = 1000);
  *
  * Merges the results from a previous aggregation resulting from a `make_tdigest_aggregation`
  * or `make_merge_tdigest_aggregation` to produce a new a tdigest
- * (https://arxiv.org/pdf/1902.04023.pdf) column.
+ * (https://arxiv.org/pdf/1902.04023) column.
  *
  * The tdigest column produced is of the following structure:
  *

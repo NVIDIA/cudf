@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -127,51 +127,6 @@ struct reljunk {
     list2    = tmp;
   }
 };
-
-/**
- * @brief Check for supported new-line characters
- *
- * '\n, \r, \u0085, \u2028, or \u2029'
- */
-CUDF_HOST_DEVICE constexpr bool is_newline(char32_t const ch)
-{
-  return (ch == '\n' || ch == '\r' || ch == 0x00c285 || ch == 0x00e280a8 || ch == 0x00e280a9);
-}
-
-/**
- * @brief Utility to check a specific character against this class instance.
- *
- * @param ch A 4-byte UTF-8 character.
- * @param codepoint_flags Used for mapping a character to type for builtin classes.
- * @return true if the character matches
- */
-__device__ __forceinline__ bool reclass_device::is_match(char32_t const ch,
-                                                         uint8_t const* codepoint_flags) const
-{
-  for (int i = 0; i < count; ++i) {
-    auto const literal = literals[i];
-    if ((ch >= literal.first) && (ch <= literal.last)) { return true; }
-  }
-
-  if (!builtins) return false;
-  uint32_t codept = utf8_to_codepoint(ch);
-  if (codept > 0x00'FFFF) return false;
-  int8_t fl = codepoint_flags[codept];
-  if ((builtins & CCLASS_W) && ((ch == '_') || IS_ALPHANUM(fl)))  // \w
-    return true;
-  if ((builtins & CCLASS_S) && IS_SPACE(fl))  // \s
-    return true;
-  if ((builtins & CCLASS_D) && IS_DIGIT(fl))  // \d
-    return true;
-  if ((builtins & NCCLASS_W) && ((ch != '\n') && (ch != '_') && !IS_ALPHANUM(fl)))  // \W
-    return true;
-  if ((builtins & NCCLASS_S) && !IS_SPACE(fl))  // \S
-    return true;
-  if ((builtins & NCCLASS_D) && ((ch != '\n') && !IS_DIGIT(fl)))  // \D
-    return true;
-  //
-  return false;
-}
 
 __device__ __forceinline__ reinst reprog_device::get_inst(int32_t id) const { return _insts[id]; }
 
@@ -332,24 +287,51 @@ __device__ __forceinline__ match_result reprog_device::regexec(string_view const
           case BOL: {
             auto titr         = itr;
             auto const prev_c = pos > 0 ? *(--titr) : 0;
+            // For EXT_NEWLINE, \r\n is a single terminator: ^ matches AFTER the \n and
+            // never between the \r and \n.
             if ((pos == 0) || ((inst.u1.c == '^') && (prev_c == '\n')) ||
-                ((inst.u1.c == 'S') && (is_newline(prev_c)))) {
+                ((inst.u1.c == 'S') && is_newline(prev_c) && !((prev_c == '\r') && (c == '\n')))) {
               id_activate = inst.u2.next_id;
               expanded    = true;
             }
             break;
           }
           case EOL: {
-            // after the last character OR:
-            // - for MULTILINE, if current character is new-line
-            // - for non-MULTILINE, the very last character of the string can also be a new-line
-            bool const nl = (inst.u1.c == 'S' || inst.u1.c == 'N') ? is_newline(c) : (c == '\n');
-            if (last_character ||
-                (nl && (inst.u1.c != 'Z') &&
-                 ((inst.u1.c == '$' || inst.u1.c == 'S') ||
-                  (itr.byte_offset() + bytes_in_char_utf8(c) == dstr.size_bytes())))) {
+            // EOL matches at end-of-string, or before a line terminator (MULTILINE: any
+            // terminator; otherwise: only the final terminator). For EXT_NEWLINE the
+            // two-character CRLF (\r\n) is treated as a SINGLE terminator: '$' matches before
+            // the \r and never between \r and \n.
+            if (last_character) {
               id_activate = inst.u2.next_id;
               expanded    = true;
+              break;
+            }
+            bool const ext = (inst.u1.c == 'S' || inst.u1.c == 'N');
+            bool const nl  = ext ? is_newline(c) : (c == '\n');
+            if (nl && (inst.u1.c != 'Z')) {
+              // For EXT_NEWLINE, suppress a match wedged between the CR and LF of a CRLF.
+              auto titr     = itr;
+              bool mid_crlf = ext && (c == '\n') && (pos > 0) && (*(--titr) == '\r');
+              if (!mid_crlf) {
+                // MULTILINE matches before any terminator; otherwise only the final one.
+                bool matched = (inst.u1.c == '$' || inst.u1.c == 'S');
+                if (!matched) {
+                  matched = (itr.byte_offset() + bytes_in_char_utf8(c) == dstr.size_bytes());
+                  if (!matched && ext && (c == '\r')) {
+                    // a CR beginning a trailing CRLF also ends the string
+                    auto nitr = itr;
+                    ++nitr;
+                    matched =
+                      (nitr.byte_offset() < dstr.size_bytes()) && (*nitr == '\n') &&
+                      (nitr.byte_offset() + bytes_in_char_utf8(static_cast<char_utf8>('\n')) ==
+                       dstr.size_bytes());
+                  }
+                }
+                if (matched) {
+                  id_activate = inst.u2.next_id;
+                  expanded    = true;
+                }
+              }
             }
             break;
           }
@@ -441,8 +423,11 @@ __device__ __forceinline__ match_result reprog_device::extract(int32_t const thr
                                                                cudf::size_type end,
                                                                cudf::size_type const group_id) const
 {
-  end = begin.position() + 1;
-  return call_regexec(thread_idx, dstr, begin, end, group_id + 1);
+  end               = begin.position() + 1;
+  auto const result = call_regexec(thread_idx, dstr, begin, end, group_id + 1);
+  // a capture group that did not participate in the overall match
+  // (e.g. an unmatched optional group) has an invalid range
+  return (result && (result->first >= 0)) ? result : cuda::std::nullopt;
 }
 
 template <positional P>

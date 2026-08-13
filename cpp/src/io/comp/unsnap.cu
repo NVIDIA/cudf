@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -65,7 +65,7 @@ struct unsnap_state_s {
   uint32_t bytes_left{};           ///< remaining bytes to decompress
   int32_t error{};                 ///< current error status
   uint32_t tstart{};               ///< start time for perf logging
-  volatile unsnap_queue_s q{};     ///< queue for cross-warp communication
+  unsnap_queue_s volatile q{};     ///< queue for cross-warp communication
   device_span<uint8_t const> src;  ///< input for current block
   device_span<uint8_t> dst;        ///< output for current block
 };
@@ -133,7 +133,7 @@ __device__ void snappy_prefetch_bytestream(unsnap_state_s* s, int t)
  *       k_len3lut[k] = v | (n << 4);
  *   }
  */
-static const uint8_t __device__ __constant__ k_len3lut[1 << 10] = {
+static uint8_t const __device__ __constant__ k_len3lut[1 << 10] = {
   0x80, 0x91, 0x80, 0x91, 0x92, 0x91, 0x92, 0x91, 0x80, 0xa3, 0x80, 0xa3, 0x92, 0xa3, 0x92, 0xa3,
   0x94, 0x91, 0x94, 0x91, 0x92, 0x91, 0x92, 0x91, 0x94, 0xa3, 0x94, 0xa3, 0x92, 0xa3, 0x92, 0xa3,
   0x80, 0xa5, 0x80, 0xa5, 0xa6, 0xa5, 0xa6, 0xa5, 0x80, 0xa3, 0x80, 0xa3, 0xa6, 0xa3, 0xa6, 0xa3,
@@ -281,7 +281,7 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
 
   for (;;) {
     int32_t batch_len;
-    volatile unsnap_batch_s* b;
+    unsnap_batch_s volatile* b;
 
     // Wait for prefetcher
     if (t == 0) {
@@ -313,7 +313,7 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
       is_long_sym    = ((b0 & ~4) != 0) && (((b0 + 1) & 2) == 0);
       short_sym_mask = ballot(is_long_sym);
       batch_len      = 0;
-      b = reinterpret_cast<volatile unsnap_batch_s*>(shuffle(reinterpret_cast<uintptr_t>(b)));
+      b = reinterpret_cast<unsnap_batch_s volatile*>(shuffle(reinterpret_cast<uintptr_t>(b)));
       if (!(short_sym_mask & 1)) {
         batch_len = shuffle((t == 0) ? (short_sym_mask) ? __ffs(short_sym_mask) - 1 : 32 : 0);
         if (batch_len != 0) {
@@ -509,7 +509,7 @@ __device__ void snappy_process_symbols(unsnap_state_s* s, int t, Storage& temp_s
   int batch               = 0;
 
   do {
-    volatile unsnap_batch_s* b = &s->q.batch[batch * batch_size];
+    unsnap_batch_s volatile* b = &s->q.batch[batch * batch_size];
     int32_t batch_len, blen_t, dist_t;
 
     if (t == 0) {
@@ -713,14 +713,17 @@ void gpu_unsnap(device_span<device_span<uint8_t const> const> inputs,
                 device_span<codec_exec_result> results,
                 rmm::cuda_stream_view stream)
 {
+  if (inputs.empty()) { return; }
+
   dim3 dim_block(128, 1);           // 4 warps per stream, 1 stream per block
   dim3 dim_grid(inputs.size(), 1);  // TODO: Check max grid dimensions vs max expected count
 
   unsnap_kernel_no_racecheck<128>
     <<<dim_grid, dim_block, 0, stream.value()>>>(inputs, outputs, results);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-__global__ void get_snappy_uncompressed_size_kernel(
+CUDF_KERNEL void get_snappy_uncompressed_size_kernel(
   device_span<device_span<uint8_t const> const> inputs, device_span<size_t> uncompressed_sizes)
 {
   auto const idx = cudf::detail::grid_1d::global_thread_id();
@@ -750,12 +753,15 @@ void get_snappy_uncompressed_size(device_span<device_span<uint8_t const> const> 
                                   device_span<size_t> uncompressed_sizes,
                                   rmm::cuda_stream_view stream)
 {
+  if (inputs.empty()) { return; }
+
   int threads_per_block = 128;
   auto const num_blocks =
     cudf::util::div_rounding_up_safe<size_t>(inputs.size(), threads_per_block);
 
   get_snappy_uncompressed_size_kernel<<<num_blocks, threads_per_block, 0, stream.value()>>>(
     inputs, uncompressed_sizes);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::detail

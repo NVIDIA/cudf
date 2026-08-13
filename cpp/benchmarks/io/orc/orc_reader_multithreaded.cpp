@@ -45,6 +45,8 @@ std::tuple<std::vector<cuio_source_sink_pair>, size_t, size_t> write_file_data(
   auto const num_cols             = state.get_int64("num_cols");
   size_t const num_files          = get_num_read_threads(state);
   size_t const per_file_data_size = get_read_size(state);
+  auto const stripe_size_bytes    = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows     = state.get_int64("stripe_size_rows");
 
   std::vector<cuio_source_sink_pair> source_sink_vector;
 
@@ -59,9 +61,12 @@ std::tuple<std::vector<cuio_source_sink_pair>, size_t, size_t> write_file_data(
       data_profile_builder().cardinality(cardinality).avg_run_length(run_length));
     auto const view = tbl->view();
 
-    cudf::io::orc_writer_options const write_opts =
+    cudf::io::orc_writer_options write_opts =
       cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view)
         .compression(cudf::io::compression_type::SNAPPY);
+    // Sentinel 0 == use cuDF default.
+    if (stripe_size_bytes > 0) write_opts.set_stripe_size_bytes(stripe_size_bytes);
+    if (stripe_size_rows > 0) write_opts.set_stripe_size_rows(stripe_size_rows);
 
     cudf::io::write_orc(write_opts);
     total_file_size += source_sink.size();
@@ -247,7 +252,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_mixed)
   .add_int64_axis("total_data_size", total_data_size)
   .add_int64_axis("num_threads", thread_range)
   .add_int64_axis("num_cols", {4})
-  .add_int64_axis("run_length", {8});
+  .add_int64_axis("run_length", {8})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_multithreaded_read_fixed_width)
   .set_name("orc_multithreaded_read_decode_fixed_width")
@@ -256,7 +263,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_fixed_width)
   .add_int64_axis("total_data_size", total_data_size)
   .add_int64_axis("num_threads", thread_range)
   .add_int64_axis("num_cols", {4})
-  .add_int64_axis("run_length", {8});
+  .add_int64_axis("run_length", {8})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_multithreaded_read_string)
   .set_name("orc_multithreaded_read_decode_string")
@@ -265,7 +274,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_string)
   .add_int64_axis("total_data_size", total_data_size)
   .add_int64_axis("num_threads", thread_range)
   .add_int64_axis("num_cols", {4})
-  .add_int64_axis("run_length", {8});
+  .add_int64_axis("run_length", {8})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_multithreaded_read_list)
   .set_name("orc_multithreaded_read_decode_list")
@@ -274,7 +285,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_list)
   .add_int64_axis("total_data_size", total_data_size)
   .add_int64_axis("num_threads", thread_range)
   .add_int64_axis("num_cols", {4})
-  .add_int64_axis("run_length", {8});
+  .add_int64_axis("run_length", {8})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 // mixed data types: fixed width, strings
 NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_mixed)
@@ -286,7 +299,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_mixed)
   .add_int64_axis("num_cols", {4})
   .add_int64_axis("run_length", {8})
   .add_int64_axis("input_limit", {640 * 1024 * 1024})
-  .add_int64_axis("output_limit", {640 * 1024 * 1024});
+  .add_int64_axis("output_limit", {640 * 1024 * 1024})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_fixed_width)
   .set_name("orc_multithreaded_read_decode_chunked_fixed_width")
@@ -297,7 +312,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_fixed_width)
   .add_int64_axis("num_cols", {4})
   .add_int64_axis("run_length", {8})
   .add_int64_axis("input_limit", {640 * 1024 * 1024})
-  .add_int64_axis("output_limit", {640 * 1024 * 1024});
+  .add_int64_axis("output_limit", {640 * 1024 * 1024})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_string)
   .set_name("orc_multithreaded_read_decode_chunked_string")
@@ -308,7 +325,9 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_string)
   .add_int64_axis("num_cols", {4})
   .add_int64_axis("run_length", {8})
   .add_int64_axis("input_limit", {640 * 1024 * 1024})
-  .add_int64_axis("output_limit", {640 * 1024 * 1024});
+  .add_int64_axis("output_limit", {640 * 1024 * 1024})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_list)
   .set_name("orc_multithreaded_read_decode_chunked_list")
@@ -319,4 +338,6 @@ NVBENCH_BENCH(BM_orc_multithreaded_read_chunked_list)
   .add_int64_axis("num_cols", {4})
   .add_int64_axis("run_length", {8})
   .add_int64_axis("input_limit", {640 * 1024 * 1024})
-  .add_int64_axis("output_limit", {640 * 1024 * 1024});
+  .add_int64_axis("output_limit", {640 * 1024 * 1024})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});

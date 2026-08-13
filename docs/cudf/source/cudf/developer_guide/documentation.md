@@ -1,21 +1,20 @@
 # Writing documentation
 
-cuDF documentation is split into multiple pieces.
-All core functionality is documented using inline docstrings.
-Additional pages like user or developer guides are written independently.
-While docstrings are written using [reStructuredText](https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html) (reST),
-the latter are written using [MyST](https://myst-parser.readthedocs.io/en/latest/)
-The inline docstrings are organized using a small set of additional reST pages.
-The results are all then compiled together using [Sphinx](https://www.sphinx-doc.org/en/master/).
-This document discusses each of these components and how to contribute to them.
+cuDF documentation is comprised of:
+
+- Docstrings written using [reStructuredText (reST)](https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html) and inline with the code in `python/cudf/cudf`
+- Documents such as the API reference or user guides written using [MyST](https://myst-parser.readthedocs.io/en/latest/) in `docs/cudf/source/cudf`
+
+The documentation containing both components is built using [Sphinx](https://www.sphinx-doc.org/en/master/).
 
 ## Docstrings
 
-cuDF docstrings use the [numpy](https://numpydoc.readthedocs.io/en/latest/format.html) style.
-In lieu of a complete explanation,
-we include here an example of the format and the commonly used sections:
+cuDF public and private docstrings follow the [numpydoc](https://numpydoc.readthedocs.io/en/latest/format.html) style
+and should include all applicable [`numpydoc sections`](https://numpydoc.readthedocs.io/en/latest/format.html#sections).
 
-```
+For example:
+
+```python
 class A:
     """Brief description of A.
 
@@ -66,27 +65,25 @@ class A:
         return 0.0
 ```
 
-`numpydoc` supports a number of other sections of docstrings.
-Developers should familiarize themselves with them, since many are useful in different scenarios.
-Our guidelines include one addition to the standard the `numpydoc` guide.
-Class properties, which are not explicitly covered, should be documented in the getter function.
-That choice makes `help` more useful as well as enabling docstring inheritance in subclasses.
+Additionally, class properties, which are not explicitly covered, should be documented in the getter function.
 
-All of our docstrings are validated using [`ruff pydocstyle rules`](https://docs.astral.sh/ruff/rules/#pydocstyle-d).
-This ensures that docstring style is consistent and conformant across the codebase.
+Docstrings are validated using [`ruff pydocstyle rules`](https://docs.astral.sh/ruff/rules/#pydocstyle-d) to ensure consistent docstring formatting.
+
+```{note}
+Docstrings of private functions and classes are not linted or validated to follow the numpydoc style.
+
+These docstrings should still follow the numpydoc style, but a single line `#` comment is acceptable
+if a private function or class only has minimal use in 1 file.
+```
 
 ## Published documentation
 
-Documentation is compiled using Sphinx, which pulls docstrings from the code.
-Rather than simply listing all APIs, however, we aim to mimic the pandas documentation.
-To do so, we organize API docs into specific pages and sections.
-These pages are stored in `docs/cudf/source/cudf/api_docs`.
-For example, all `DataFrame` documentation is contained in `docs/cudf/source/cudf/api_docs/dataframe.rst`.
-That page contains sections like "Computations / descriptive stats" to make APIs more easily discoverable.
+To mirror the format of the [pandas API documentation](https://pandas.pydata.org/docs/reference/index.html),
+the API docs are organized into specific pages and sections in `docs/cudf/source/cudf/api_docs`.
+For example, all `DataFrame` documentation is contained in `docs/cudf/source/cudf/api_docs/dataframe.rst` which mirrors
+[pandas DataFrame API documentation page](https://pandas.pydata.org/docs/reference/frame.html)
 
-Within each section, documentation is created using [`autosummary`](https://www.sphinx-doc.org/en/master/usage/extensions/autosummary.html)
-This plugin makes it easy to generate pages for each documented API.
-To do so, each section of the docs looks like the following:
+Within each section, documentation is created using the Sphinx [`autosummary extension`](https://www.sphinx-doc.org/en/master/usage/extensions/autosummary.html) to generate pages for each documented API. Each section of the docs looks like the following:
 
 ```
 Section name
@@ -98,10 +95,10 @@ Section name
 ```
 
 Each listed will automatically have its docstring rendered into a separate page.
-This layout comes from the [Sphinx theme](https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html) that we use.
+This layout comes from [NVIDIA Sphinx Theme](https://pypi.org/project/nvidia-sphinx-theme/).
 
 ````{note}
-Under the hood, autosummary generates stub pages that look like this (using `cudf.concat` as an example):
+Autosummary generates stub pages that look like this (using `cudf.concat` as an example):
 
 ```
 cudf.concat
@@ -112,21 +109,20 @@ cudf.concat
 .. autofunction:: concat
 ```
 
-Commands like `autofunction` come from [`autodoc`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html).
+Commands like `autofunction` come from the Sphinx [`autodoc extension`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html).
 This directive will import cudf and pull the docstring from `cudf.concat`.
 This approach allows us to do the minimal amount of manual work in organizing our docs,
 while still matching the pandas layout as closely as possible.
 ````
 
-When adding a new API, developers simply have to add the API to the appropriate page.
-Adding the name of the function to the appropriate autosummary list is sufficient for it to be documented.
+When adding a new API, include the API name to the appropriate page.
 
 ### Documenting classes
 
 Python classes and the Sphinx plugins used in RAPIDS interact in nontrivial ways.
 `autosummary`'s default page generated for a class uses [`autodoc`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html) to automatically detect and document all methods of a class.
 That means that in addition to the manually created `autosummary` pages where class methods are grouped into sections of related features, there is another page for each class where all the methods of that class are automatically summarized in a table for quick access.
-However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/) extension, which offers the same feature.
+However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/en/latest/) extension, which offers the same feature.
 We use both in order to match the contents and style of the pandas documentation as closely as possible.
 
 pandas is also particular about what information is included in a class's documentation.
@@ -152,41 +148,35 @@ To accommodate these requirements, we take the following approach:
 
 ## Comparing to pandas
 
-cuDF aims to provide a pandas-like experience.
-However, for various reasons cuDF APIs may exhibit differences from pandas.
-Where such differences exist, they should be documented.
-We facilitate such documentation with the `pandas-compat` directive.
-The directive should be used inside docstrings like so:
+When an API intentionally deviates in signature or behavior from pandas, use the custom `pandas-compat` Sphinx directive
+inside the API docstring to describe the difference. For example:
 
-```
-"""Brief
+```python
+def foo(self):
+    """
+    Returns result from foo.
 
-Docstring body
+    .. pandas-compat::
+        :meth:`pandas.DataFrame.foo`
 
-.. pandas-compat::
-    :meth:`pandas.DataFrame.METHOD`
-
-    Explanation of differences
+        Explanation of differences
+    """
 ```
 
-All such API compatibility notes are collected and displayed in the rendered documentation.
+All API compatibility differences from pandas will be rendered in the [pandas comparison](../PandasCompat.md) page.
 
 ## Writing documentation pages
 
-In addition to docstrings, our docs also contain a number of more dedicated user guides.
-These pages are stored in `docs/cudf/source/cudf`.
-These pages are all written using MyST, a superset of Markdown.
-MyST allows developers to write using familiar Markdown syntax,
-while also providing the full power of reST where needed.
-These pages do not conform to any specific style or set of use cases.
-However, if you develop any sufficiently complex new features,
-consider whether users would benefit from a more complete demonstration of them.
+In addition to docstrings, our docs also contain a number of more dedicated user guides in `docs/cudf/source/cudf` written in [MyST markdown](https://myst-parser.readthedocs.io/en/latest/). Since the [pandas user guide](https://pandas.pydata.org/docs/user_guide/index.html) is largely applicable to cuDF as the APIs are similar, a dedicated user guide should be written to describe:
+
+- Concepts specific to cuDF that do not exist in pandas
+- Implementations that differ from pandas that impact the user.
+- Additional functionality or ecosystem support that is specific to cuDF and not pandas.
 
 ```{note}
-We encourage using links between pages.
-We enable [Myst auto-generated anchors](https://myst-parser.readthedocs.io/en/latest/syntax/optional.html#auto-generated-header-anchors),
-so links should make use of the appropriately namespaced anchors for links rather than adding manual links.
-
+Add links between documentation pages and specific section where applicable with
+[Myst auto-generated anchors](https://myst-parser.readthedocs.io/en/latest/syntax/optional.html#auto-generated-header-anchors),
+when possible.
 ```
 
 ## Building documentation
@@ -224,11 +214,3 @@ you can view the docs by replacing `localhost` with the IP address of the host m
 Alternatively, you may also forward the port using e.g.
 `ssh -N -f -L localhost:$LOCAL_PORT:localhost:$REMOTE_PORT $REMOTE_IP`.
 That will make `$REMOTE_IP:$REMOTE_PORT` visible at `localhost:$LOCAL_PORT`.
-
-## Documenting cuDF internals
-
-Unlike public APIs, the documentation of internal code (functions, classes, etc) is not linted.
-Documenting internals is strongly encouraged, but not enforced in any particular way.
-Regarding style, either full numpy-style docstrings or regular `#` comments are acceptable.
-The former can be useful for complex or widely used functionality,
-while the latter is fine for small one-off functions.

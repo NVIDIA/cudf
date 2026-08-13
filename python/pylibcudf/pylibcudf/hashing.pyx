@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint32_t, uint64_t
 from libcpp.memory cimport unique_ptr
@@ -18,6 +18,7 @@ from pylibcudf.libcudf.hash cimport (
     xxhash_64 as cpp_xxhash_64,
 )
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -70,9 +71,10 @@ cpdef Column murmurhash3_x86_32(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_murmurhash3_x86_32(
-            input.view(),
+            c_input,
             seed,
             _cs,
             mr.get_mr()
@@ -109,9 +111,10 @@ cpdef Table murmurhash3_x64_128(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_murmurhash3_x64_128(
-            input.view(),
+            c_input,
             seed,
             _cs,
             mr.get_mr()
@@ -149,9 +152,10 @@ cpdef Column xxhash_32(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_xxhash_32(
-            input.view(),
+            c_input,
             seed,
             _cs,
             mr.get_mr()
@@ -189,9 +193,10 @@ cpdef Column xxhash_64(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_xxhash_64(
-            input.view(),
+            c_input,
             seed,
             _cs,
             mr.get_mr()
@@ -229,8 +234,9 @@ cpdef Column md5(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_md5(input.view(), _cs, mr.get_mr())
+        c_result = cpp_md5(c_input, _cs, mr.get_mr())
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column sha1(
@@ -260,8 +266,9 @@ cpdef Column sha1(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha1(input.view(), _cs, mr.get_mr())
+        c_result = cpp_sha1(c_input, _cs, mr.get_mr())
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -292,8 +299,9 @@ cpdef Column sha224(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha224(input.view(), _cs, mr.get_mr())
+        c_result = cpp_sha224(c_input, _cs, mr.get_mr())
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -324,8 +332,9 @@ cpdef Column sha256(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha256(input.view(), _cs, mr.get_mr())
+        c_result = cpp_sha256(c_input, _cs, mr.get_mr())
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -356,8 +365,9 @@ cpdef Column sha384(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha384(input.view(), _cs, mr.get_mr())
+        c_result = cpp_sha384(c_input, _cs, mr.get_mr())
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -388,6 +398,7 @@ cpdef Column sha512(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha512(input.view(), _cs, mr.get_mr())
+        c_result = cpp_sha512(c_input, _cs, mr.get_mr())
     return Column.from_libcudf(move(c_result), _stream, mr)

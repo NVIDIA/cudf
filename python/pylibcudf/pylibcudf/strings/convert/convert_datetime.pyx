@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_datetime as cpp_convert_datetime,
 )
@@ -55,9 +55,10 @@ cpdef Column to_timestamps(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_datetime.to_timestamps(
-            input.view(),
+            c_input,
             timestamp_type.c_obj,
             c_format,
             _cs,
@@ -103,11 +104,13 @@ cpdef Column from_timestamps(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_timestamps = timestamps.view()
+    cdef column_view c_input_strings_names = input_strings_names.view()
     with nogil:
         c_result = cpp_convert_datetime.from_timestamps(
-            timestamps.view(),
+            c_timestamps,
             c_format,
-            input_strings_names.view(),
+            c_input_strings_names,
             _cs,
             mr.get_mr()
         )
@@ -147,9 +150,10 @@ cpdef Column is_timestamp(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_datetime.is_timestamp(
-            input.view(),
+            c_input,
             c_format,
             _cs,
             mr.get_mr()

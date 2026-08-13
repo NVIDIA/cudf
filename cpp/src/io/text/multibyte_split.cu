@@ -349,6 +349,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       tile_multistates,
       tile_offsets,
       cudf::io::text::detail::scan_tile_status::oob);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     auto multistate_seed = multistate();
     multistate_seed.enqueue(0, 0);  // this represents the first state in the pattern.
@@ -425,6 +426,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
           delimiter[0],
           *chunk,
           row_offsets);
+        CUDF_CUDA_TRY(cudaGetLastError());
       } else {
         multibyte_split_kernel<<<tiles_in_launch,
                                  THREADS_PER_TILE,
@@ -438,6 +440,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
           {device_delim.data(), static_cast<std::size_t>(device_delim.size())},
           *chunk,
           row_offsets);
+        CUDF_CUDA_TRY(cudaGetLastError());
       }
 
       // load the next chunk

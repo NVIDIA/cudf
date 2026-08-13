@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,7 +86,7 @@ std::vector<std::uint8_t> compress_zstd(host_span<uint8_t const> src)
   auto const compressed_size_actual =
     ZSTD_compress(reinterpret_cast<void*>(compressed_buffer.data()),
                   compressed_size_estimate,
-                  reinterpret_cast<const void*>(src.data()),
+                  reinterpret_cast<void const*>(src.data()),
                   src.size(),
                   1);
   check_error_code(ZSTD_isError(compressed_size_actual), __LINE__);

@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_durations as cpp_convert_durations,
 )
@@ -56,9 +56,10 @@ cpdef Column to_durations(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_durations.to_durations(
-            input.view(),
+            c_input,
             duration_type.c_obj,
             c_format,
             _cs,
@@ -105,9 +106,10 @@ cpdef Column from_durations(
         format = "%D days %H:%M:%S"
     cdef string c_format = format.encode()
 
+    cdef column_view c_durations = durations.view()
     with nogil:
         c_result = cpp_convert_durations.from_durations(
-            durations.view(),
+            c_durations,
             c_format,
             _cs,
             mr.get_mr()

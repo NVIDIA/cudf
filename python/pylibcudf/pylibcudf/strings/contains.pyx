@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
@@ -6,6 +6,7 @@ from libcpp.string cimport string
 
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport contains as cpp_contains
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
@@ -45,10 +46,10 @@ cpdef Column contains_re(
     if _stream is None:
         _stream = _get_stream(None)
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         result = cpp_contains.contains_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             _cs,
             mr.get_mr()
@@ -85,10 +86,10 @@ cpdef Column count_re(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         result = cpp_contains.count_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             _cs,
             mr.get_mr()
@@ -126,10 +127,10 @@ cpdef Column matches_re(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         result = cpp_contains.matches_re(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             _cs,
             mr.get_mr()
@@ -170,6 +171,7 @@ cpdef Column like(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
 
     if escape_character is None:
         escape_character = ""
@@ -177,9 +179,10 @@ cpdef Column like(
     cdef string c_escape_character = escape_character.encode()
     cdef string c_pattern = pattern.encode()
 
+    c_input = input.view()
     with nogil:
         result = cpp_contains.like(
-            input.view(),
+            c_input,
             c_pattern,
             c_escape_character,
             _cs,

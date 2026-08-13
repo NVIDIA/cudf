@@ -1,10 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uintptr_t
 from libcpp.memory cimport make_unique
 from libcpp.pair cimport pair
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport null_mask as cpp_null_mask
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport mask_state, size_type, bitmask_type
 
 from rmm.librmm.device_buffer cimport device_buffer
@@ -68,8 +70,9 @@ cpdef DeviceBuffer copy_bitmask(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_col = col.view()
     with nogil:
-        db = cpp_null_mask.copy_bitmask(col.view(), _cs, mr.get_mr())
+        db = cpp_null_mask.copy_bitmask(c_col, _cs, mr.get_mr())
 
     return buffer_to_python(move(db), _stream, mr)
 
@@ -189,15 +192,15 @@ cpdef DeviceBuffer create_null_mask(
     return buffer_to_python(move(db), _stream, mr)
 
 
-cpdef tuple bitmask_and(list columns, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple bitmask_and(columns, object stream=None, DeviceMemoryResource mr=None):
     """Performs bitwise AND of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_and`.
 
     Parameters
     ----------
-    columns : list
-        The list of columns
+    columns : Sequence[Column]
+        The columns
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -214,23 +217,24 @@ cpdef tuple bitmask_and(list columns, object stream=None, DeviceMemoryResource m
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = c_table.view()
     with nogil:
         c_result = cpp_null_mask.bitmask_and(
-            c_table.view(), _cs, mr.get_mr()
+            c_input, _cs, mr.get_mr()
         )
 
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
-cpdef tuple bitmask_or(list columns, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple bitmask_or(columns, object stream=None, DeviceMemoryResource mr=None):
     """Performs bitwise OR of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_or`.
 
     Parameters
     ----------
-    columns : list
-        The list of columns
+    columns : Sequence[Column]
+        The columns
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -247,8 +251,9 @@ cpdef tuple bitmask_or(list columns, object stream=None, DeviceMemoryResource mr
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = c_table.view()
     with nogil:
-        c_result = cpp_null_mask.bitmask_or(c_table.view(), _cs, mr.get_mr())
+        c_result = cpp_null_mask.bitmask_or(c_input, _cs, mr.get_mr())
 
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -6,6 +6,8 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport search as cpp_search
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport null_order, order
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -57,10 +59,12 @@ cpdef Column lower_bound(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_haystack = haystack.view()
+    cdef table_view c_needles = needles.view()
     with nogil:
         c_result = cpp_search.lower_bound(
-            haystack.view(),
-            needles.view(),
+            c_haystack,
+            c_needles,
             c_orders,
             c_null_precedence,
             _cs,
@@ -109,10 +113,12 @@ cpdef Column upper_bound(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_haystack = haystack.view()
+    cdef table_view c_needles = needles.view()
     with nogil:
         c_result = cpp_search.upper_bound(
-            haystack.view(),
-            needles.view(),
+            c_haystack,
+            c_needles,
             c_orders,
             c_null_precedence,
             _cs,
@@ -150,10 +156,12 @@ cpdef Column contains(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_haystack = haystack.view()
+    cdef column_view c_needles = needles.view()
     with nogil:
         c_result = cpp_search.contains(
-            haystack.view(),
-            needles.view(),
+            c_haystack,
+            c_needles,
             _cs,
             mr.get_mr()
         )

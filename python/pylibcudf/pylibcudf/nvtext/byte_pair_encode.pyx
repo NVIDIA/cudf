@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -83,10 +83,11 @@ cpdef Column byte_pair_encoding(
             cpp_make_string_scalar(" ".encode(), _stream.view().value(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = move(
             cpp_byte_pair_encoding(
-                input.view(),
+                c_input,
                 dereference(merge_pairs.c_obj.get()),
                 dereference(<const string_scalar*>separator.c_obj.get()),
                 _cs,

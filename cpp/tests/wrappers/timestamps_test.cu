@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ struct compare_chrono_elements_to_primitive_representation {
   }
 
   template <typename T = ChronoT, std::enable_if_t<cudf::is_timestamp<T>()>* = nullptr>
-  __host__ __device__ bool operator()(const int32_t element_index)
+  __host__ __device__ bool operator()(int32_t const element_index)
   {
     using Primitive = typename ChronoT::rep;
     auto primitive  = primitives.element<Primitive>(element_index);
@@ -54,7 +54,7 @@ struct compare_chrono_elements_to_primitive_representation {
   }
 
   template <typename T = ChronoT, std::enable_if_t<cudf::is_duration<T>()>* = nullptr>
-  __host__ __device__ bool operator()(const int32_t element_index)
+  __host__ __device__ bool operator()(int32_t const element_index)
   {
     using Primitive = typename ChronoT::rep;
     auto primitive  = primitives.element<Primitive>(element_index);
@@ -109,7 +109,7 @@ struct compare_chrono_elements {
   {
   }
 
-  __host__ __device__ bool operator()(const int32_t element_index)
+  __host__ __device__ bool operator()(int32_t const element_index)
   {
     auto lhs_elt = lhs.element<ChronoT>(element_index);
     auto rhs_elt = rhs.element<ChronoT>(element_index);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,6 +29,37 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& options,
                               rmm::cuda_stream_view stream,
                               rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Reads and returns the entire data set along with reader-specific diagnostics.
+ *
+ * @param sources Input `datasource` objects to read the dataset from
+ * @param options Settings for controlling reading behavior
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for device memory allocation
+ *
+ * @return Parsed table, metadata, and JSON reader diagnostics
+ */
+json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasource>> sources,
+                                              json_reader_options const& options,
+                                              rmm::cuda_stream_view stream,
+                                              rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Reads and returns the entire data set along with reader-specific row-level diagnostics.
+ *
+ * @param sources Input `datasource` objects to read the dataset from
+ * @param options Settings for controlling reading behavior
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for device memory allocation
+ *
+ * @return Parsed table, metadata, and JSON reader diagnostics with row-level details
+ */
+json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
+  host_span<std::unique_ptr<datasource>> sources,
+  json_reader_options const& options,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Write an entire dataset to JSON format.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -666,7 +666,9 @@ std::unique_ptr<table> gather(table_view const& source_table,
     }
   }
 
-  return std::make_unique<table>(std::move(destination_columns));
+  // Pass the explicit row count (the gather-map size) so a zero-column input preserves its rows.
+  auto const num_rows = static_cast<size_type>(cudf::distance(gather_map_begin, gather_map_end));
+  return std::make_unique<table>(std::move(destination_columns), num_rows);
 }
 
 }  // namespace detail

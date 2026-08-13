@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/errc.hpp>
 #include <cudf/utilities/export.hpp>
 
 #include <cuda.h>
@@ -14,11 +15,15 @@
 #include <string>
 #include <type_traits>
 
+/**
+ * @file
+ * @brief Exception types and error-checking macros used throughout libcudf.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup utility_error
  * @{
- * @file
  */
 
 /**
@@ -104,6 +109,38 @@ struct data_type_error : std::invalid_argument {
    */
   explicit data_type_error(std::string const& message) : std::invalid_argument(message) {}
 };
+
+/**
+ * @brief Exception type thrown when evaluating an operator function results in an error (e.g.
+ * overflow, division by zero, etc.)
+ *
+ */
+struct evaluation_error : public std::exception {
+  /**
+   * @brief Construct a new evaluation error object.
+   *
+   * @param error The error code that occurred during evaluation
+   * @param message An error message describing the evaluation error
+   */
+  evaluation_error(errc error, std::string message) : error_(error), message_(std::move(message)) {}
+
+  /**
+   * @brief Get the error message.
+   * @return A C-string describing the error
+   */
+  [[nodiscard]] char const* what() const noexcept override { return message_.c_str(); }
+
+  /**
+   * @brief Get the error code that occurred during evaluation.
+   * @return The error code
+   */
+  [[nodiscard]] errc error_code() const { return error_; }
+
+ private:
+  errc error_;           //< The error code that occurred during evaluation
+  std::string message_;  //< An error message describing the evaluation error
+};
+
 /** @} */
 
 }  // namespace CUDF_EXPORT cudf

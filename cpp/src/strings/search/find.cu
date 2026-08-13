@@ -176,6 +176,7 @@ void find_utility(strings_column_view const& input,
     finder_warp_parallel_fn<TargetIterator, forward>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         *d_strings, target_itr, start, stop, d_results);
+    CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     // string-per-thread function
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -396,6 +397,7 @@ std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
     cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
     contains_warp_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
       *d_strings, d_target, results_view.data<bool>());
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
   results->set_null_count(input.null_count());
   return results;

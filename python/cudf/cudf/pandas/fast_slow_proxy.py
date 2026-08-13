@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import operator
 import pickle
 import types
 import warnings
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from enum import IntEnum
 from typing import Any, Literal
 
@@ -362,6 +362,11 @@ def make_final_proxy_type(
         final_type_map[fast_type] = cls
     final_type_map[slow_type] = cls
 
+    # Proxy type fully constructed: snapshot its pristine state and, from
+    # here on, mirror class-level attribute writes (genuine runtime
+    # monkeypatches) onto the underlying "slow" (real) type.
+    _enable_fsproxy_mirroring(cls)
+
     return cls
 
 
@@ -421,6 +426,17 @@ def make_intermediate_proxy_type(
     def _fsproxy_slow_to_fast(self):
         if self._fsproxy_state is _State.SLOW:
             return super(type(self), self)._fsproxy_slow_to_fast()
+        # Already fast: re-derive from the originating call if a parent proxy
+        # was mutated/replaced since creation, so the intermediate reflects the
+        # live parent (e.g. a column added to a frame after its groupby).
+        if self._fsproxy_parents_changed():
+            result = super(type(self), self)._fsproxy_slow_to_fast()
+            # Refresh the cache (not just the parent-id snapshot) so later
+            # conversions return the re-derived object instead of falling back
+            # to the stale one once the snapshot matches the live parents again.
+            self._fsproxy_wrapped = result
+            self._fsproxy_record_parent_ids()
+            return result
         return self._fsproxy_wrapped
 
     @nvtx.annotate(
@@ -431,6 +447,15 @@ def make_intermediate_proxy_type(
     def _fsproxy_fast_to_slow(self):
         if self._fsproxy_state is _State.FAST:
             return super(type(self), self)._fsproxy_fast_to_slow()
+        # Already slow: re-derive from the originating call if a parent proxy
+        # was mutated/replaced since creation (see _fsproxy_slow_to_fast).
+        if self._fsproxy_parents_changed():
+            result = super(type(self), self)._fsproxy_fast_to_slow()
+            # See _fsproxy_slow_to_fast: refresh the cache so subsequent
+            # conversions don't revert to the stale wrapped object.
+            self._fsproxy_wrapped = result
+            self._fsproxy_record_parent_ids()
+            return result
         return self._fsproxy_wrapped
 
     slow_dir = dir(slow_type)
@@ -491,6 +516,11 @@ def make_intermediate_proxy_type(
         intermediate_type_map[fast_type] = cls
     intermediate_type_map[slow_type] = cls
 
+    # Proxy type fully constructed: snapshot its pristine state and, from
+    # here on, mirror class-level attribute writes (genuine runtime
+    # monkeypatches) onto the underlying "slow" (real) type.
+    _enable_fsproxy_mirroring(cls)
+
     return cls
 
 
@@ -540,13 +570,53 @@ def get_registered_functions():
     return dict()
 
 
-def _raise_attribute_error(obj, name):
+_SLOW_ABSENT = object()
+
+
+def _enable_fsproxy_mirroring(cls: type) -> None:
+    """Finalize a proxy type for class-level patch mirroring.
+
+    Snapshots the proxy type's pristine public class attributes together
+    with the slow type's pristine class-dict entries for the same names,
+    then enables mirroring of class-level attribute writes/deletions onto
+    the slow type (see ``_FastSlowProxyMeta.__setattr__``/``__delattr__``).
+
+    The snapshot is a fixed translation table, not runtime patch tracking:
+    re-assigning the proxy's pristine attribute for ``name`` (which is what
+    ``monkeypatch``/``mock.patch`` save and re-assign on undo) translates
+    to restoring the slow type's pristine attribute for ``name``.
     """
-    Raise an AttributeError with a message that is consistent with
-    the error raised by Python for a non-existent attribute on a
-    proxy object.
+    slow = cls._fsproxy_slow_type  # type: ignore[attr-defined]
+    pristine = {
+        name: (value, slow.__dict__.get(name, _SLOW_ABSENT))
+        for name, value in cls.__dict__.items()
+        if not name.startswith("_")
+    }
+    type.__setattr__(cls, "_fsproxy_pristine_attrs", pristine)
+    type.__setattr__(cls, "_fsproxy_mirror_slow_overrides", True)
+
+
+def _setattr_fsproxy_no_mirror(cls: type, name: str, value: Any) -> None:
+    """Install a cudf.pandas-internal attribute on a proxy type.
+
+    ``_FastSlowProxyMeta.__setattr__`` mirrors class-level attribute writes
+    onto the underlying "slow" (real) type so that runtime monkeypatches stay
+    visible to the pandas fallback path. cudf.pandas itself installs a handful
+    of custom methods (e.g. ``DataFrame.query``/``DataFrame.eval``) onto the
+    proxy classes that must *not* clobber pandas' genuine implementations; use
+    this helper for those (rare) assignments, after the proxy type has been
+    fully constructed by ``make_*_proxy_type``. The attribute is registered as
+    part of the proxy's pristine state so that a later save/patch/re-assign
+    cycle restores the slow type's own attribute rather than forwarding the
+    cudf-internal object to it.
     """
-    raise AttributeError(f"'{obj}' object has no attribute '{name}'")
+    type.__setattr__(cls, name, value)
+    if not name.startswith("_"):
+        slow = cls._fsproxy_slow_type  # type: ignore[attr-defined]
+        cls._fsproxy_pristine_attrs[name] = (  # type: ignore[attr-defined]
+            value,
+            slow.__dict__.get(name, _SLOW_ABSENT),
+        )
 
 
 class _FastSlowProxyMeta(type):
@@ -567,6 +637,136 @@ class _FastSlowProxyMeta(type):
     def _fsproxy_fast(self) -> type:
         return self._fsproxy_fast_type
 
+    def __new__(mcls, *args, **kwargs):
+        cls = super().__new__(mcls, *args, **kwargs)
+        # Per-proxy-type switch controlling whether class-level attribute
+        # writes are mirrored onto the underlying "slow" (real) type (see
+        # ``__setattr__``/``__delattr__``). It starts disabled so that the
+        # attributes installed while the proxy type is being built are not
+        # forwarded to the real type; ``make_*_proxy_type`` enables it once
+        # construction is complete. Initialized in ``__new__`` rather than
+        # ``__init__`` because cooperating metaclasses may perform
+        # class-level attribute writes from their own ``__new__`` — e.g.
+        # ``ABCMeta.__new__`` assigns ``__abstractmethods__``, dispatching
+        # to ``__setattr__`` below before ``__init__`` ever runs.
+        type.__setattr__(cls, "_fsproxy_mirror_slow_overrides", False)
+        return cls
+
+    def __setattr__(cls, name, value):
+        # Class-level attribute assignments on a proxy type (e.g.
+        # ``monkeypatch.setattr(pd.ExcelFile, "parse", fn)``) must also be
+        # mirrored onto the underlying "slow" (real) type. Code that runs
+        # under ``disable_module_accelerator()`` (e.g. the pandas fallback
+        # path of ``pd.read_excel``) resolves attributes from the real
+        # class, not the proxy, so a patch applied only to the proxy would
+        # otherwise be invisible to that code. The assigned value is first
+        # translated into its slow-space equivalent: re-assigning the
+        # proxy's pristine attribute translates to the slow type's pristine
+        # attribute, and proxy machinery is unwrapped to the slow object it
+        # delegates to, so save/patch/re-assign cycles round-trip on the
+        # real type as well.
+        type.__setattr__(cls, name, value)
+        if not cls._fsproxy_mirror_slow_overrides:
+            # The proxy type is still being constructed (or this is a
+            # non-pandas proxy): only mirror user/runtime monkeypatches,
+            # never the custom methods cudf.pandas installs on the proxy
+            # classes itself.
+            return
+        if name.startswith("_"):
+            return
+        slow = cls._fsproxy_slow_type
+        try:
+            # Mirroring is best-effort: translating a wrapped proxy instance
+            # can require a fast-to-slow conversion, which may itself fail;
+            # never let that escape an otherwise-successful assignment.
+            pristine = cls._fsproxy_pristine_attrs
+            entry = pristine.get(name)
+            if entry is not None and value is entry[0]:
+                # The proxy's pristine attribute for ``name`` is being
+                # re-assigned (e.g. ``monkeypatch``/``mock.patch`` undo
+                # re-setting the saved class-dict entry). Its slow-space
+                # equivalent is the slow type's pristine attribute.
+                if entry[1] is _SLOW_ABSENT:
+                    # The slow type never defined ``name`` itself: the proxy
+                    # mirrors the slow type's *dir*, so it has pristine
+                    # attributes for methods the slow type only inherits
+                    # (e.g. ``DataFrame.head`` lives on ``NDFrame``).
+                    # Mirroring a patch for such a name added a shadowing
+                    # entry to the slow type's dict; undoing the patch must
+                    # remove that entry again so the inherited
+                    # implementation becomes visible. It may legitimately be
+                    # missing (the mirror is best-effort), hence the guard.
+                    if name in slow.__dict__:
+                        delattr(slow, name)
+                else:
+                    setattr(slow, name, entry[1])
+                return
+            # Otherwise translate the assigned value into "slow" space
+            # before mirroring it: a value read off a proxy type (e.g. the
+            # original that a caller saves before patching and re-assigns
+            # to undo) is proxy machinery wrapping a slow-side object, and
+            # mirroring it verbatim would install that machinery on the
+            # real type. Unwrap it to the slow object it delegates to, so
+            # save/patch/re-assign cycles round-trip on the real type;
+            # values with no determinable slow-side equivalent are not
+            # mirrored at all.
+            if isinstance(value, _FastSlowAttribute):
+                # The proxy's own delegating descriptor (a *pristine* one is
+                # already handled by identity above; this covers a
+                # descriptor obtained some other way): its slow equivalent
+                # is the method it wraps, if it ever resolved one.
+                attr = value._attr
+                if not isinstance(attr, _MethodProxy):
+                    return
+                value = attr
+            if isinstance(value, _FunctionProxy):
+                unwrapped = value._fsproxy_slow
+                if entry is not None and entry[1] is not _SLOW_ABSENT:
+                    # Re-assigning a saved ``cls.method`` (a ``_MethodProxy``
+                    # over the *resolved* slow attribute): if it resolves
+                    # back to the slow type's pristine attribute, restore
+                    # the pristine class-dict entry itself so
+                    # ``classmethod``/``staticmethod`` descriptors are not
+                    # degraded to their bound/plain-function forms.
+                    descriptor = entry[1]
+                    try:
+                        resolved = (
+                            descriptor.__get__(None, slow)
+                            if hasattr(type(descriptor), "__get__")
+                            else descriptor
+                        )
+                        if unwrapped is resolved or unwrapped == resolved:
+                            setattr(slow, name, descriptor)
+                            return
+                    except Exception:
+                        pass
+                setattr(slow, name, unwrapped)
+            elif isinstance(value, _FastSlowProxy):
+                setattr(slow, name, value._fsproxy_slow)
+            elif isinstance(value, _FastSlowProxyMeta):
+                slow_type = getattr(value, "_fsproxy_slow_type", None)
+                if slow_type is not None:
+                    setattr(slow, name, slow_type)
+            else:
+                setattr(slow, name, value)
+        except Exception:
+            pass
+
+    def __delattr__(cls, name):
+        # Mirror class-level attribute *deletions* onto the underlying "slow"
+        # (real) type as well, for the same reason as ``__setattr__``: after
+        # ``del cls.name`` the attribute is gone from the proxy, so it must
+        # also be gone from the real type seen by fallback code.
+        type.__delattr__(cls, name)
+        if not cls._fsproxy_mirror_slow_overrides:
+            return
+        if name.startswith("_"):
+            return
+        try:
+            delattr(cls._fsproxy_slow_type, name)
+        except (AttributeError, TypeError):
+            pass
+
     def __dir__(self):
         # Try to return the cached dir of the slow object, but if it
         # doesn't exist, fall back to the default implementation.
@@ -575,18 +775,41 @@ class _FastSlowProxyMeta(type):
         except AttributeError:
             return type.__dir__(self)
 
+    @property
+    def _is_proxy_base_class(self) -> bool:
+        # True if this class is the base proxy class registered for its
+        # slow type, as opposed to e.g. a user-defined subclass of a
+        # proxy type (which shares ``_fsproxy_slow_type`` with its
+        # parent but must not match arbitrary instances of the slow
+        # type).
+        slow = getattr(self, "_fsproxy_slow_type", None)
+        return slow is not None and (
+            get_final_type_map().get(slow) is self
+            or get_intermediate_type_map().get(slow) is self
+        )
+
     def __subclasscheck__(self, __subclass: type) -> bool:
         if super().__subclasscheck__(__subclass):
             return True
         if hasattr(__subclass, "_fsproxy_slow"):
             return issubclass(__subclass._fsproxy_slow, self._fsproxy_slow)
+        if self._is_proxy_base_class:
+            # An unproxied class (e.g. a user-defined subclass of the
+            # slow type such as ``pandas._testing.SubclassedDataFrame``)
+            # is a subclass of the proxy standing in for its parent.
+            return issubclass(__subclass, self._fsproxy_slow)
         return False
 
     def __instancecheck__(self, __instance: Any) -> bool:
         if super().__instancecheck__(__instance):
             return True
-        elif hasattr(type(__instance), "_fsproxy_slow"):
+        if hasattr(type(__instance), "_fsproxy_slow"):
             return issubclass(type(__instance), self)
+        if self._is_proxy_base_class:
+            # A raw (unproxied) slow object, e.g. produced by operations
+            # on an unproxied pandas subclass, is an instance of the
+            # proxy type standing in for its class.
+            return isinstance(__instance, self._fsproxy_slow)
         return False
 
 
@@ -849,6 +1072,13 @@ class _IntermediateProxy(_FastSlowProxy):
     """
 
     _method_chain: tuple[Callable, tuple, dict]
+    # The proxy objects this intermediate was derived from and a snapshot of
+    # their wrapped objects' identities. Both are always (re)assigned together
+    # in ``_fsproxy_wrap`` / ``__setstate__`` / ``_fsproxy_record_parent_ids``;
+    # the empty class-level defaults just guarantee the attributes always exist
+    # (e.g. on a bare ``object.__new__`` instance before it is populated).
+    _fsproxy_parents: Sequence[_FastSlowProxy] = ()
+    _fsproxy_parent_ids: Sequence[int] = ()
 
     @classmethod
     def _fsproxy_wrap(
@@ -868,7 +1098,44 @@ class _IntermediateProxy(_FastSlowProxy):
         proxy = object.__new__(cls)
         proxy._fsproxy_wrapped = obj
         proxy._method_chain = method_chain
+        proxy._fsproxy_parents = _collect_parent_proxies(method_chain)
+        proxy._fsproxy_record_parent_ids()
         return proxy
+
+    def _fsproxy_record_parent_ids(self) -> None:
+        """Snapshot the identity of each parent proxy's wrapped object.
+
+        ``_fsproxy_parent_ids[i]`` is the recorded identity of
+        ``_fsproxy_parents[i]``: the two lists are built from the same source
+        in the same order, so they stay positionally aligned.
+        """
+        self._fsproxy_parent_ids = [
+            id(parent._fsproxy_wrapped) for parent in self._fsproxy_parents
+        ]
+
+    def _fsproxy_parents_changed(self) -> bool:
+        """
+        Return True if any parent proxy's wrapped object has been replaced
+        (e.g. mutated in place or transferred between fast and slow) since this
+        intermediate was last derived from it. When that happens the cached
+        wrapped object is stale and must be re-derived from the live parents.
+        """
+        parents = self._fsproxy_parents
+        if not parents:
+            return False
+        # ``_fsproxy_parent_ids`` was recorded from ``_fsproxy_parents`` in the
+        # same order (see ``_fsproxy_record_parent_ids``), so the ``zip`` pairs
+        # each parent with its own prior identity. The comparison is
+        # deliberately positional rather than set-based: we must detect whether
+        # a *given* parent's object was replaced, which a set of identities
+        # would lose (and it would not save any re-derivation, since parents are
+        # already de-duplicated when collected).
+        return any(
+            id(parent._fsproxy_wrapped) != old_id
+            for parent, old_id in zip(
+                parents, self._fsproxy_parent_ids, strict=True
+            )
+        )
 
     @nvtx.annotate(
         "COPY_SLOW_TO_FAST",
@@ -917,6 +1184,8 @@ class _IntermediateProxy(_FastSlowProxy):
         unpickled_method_chain = pickle.loads(state[1])
         self._fsproxy_wrapped = unpickled_wrapped_obj
         self._method_chain = unpickled_method_chain
+        self._fsproxy_parents = _collect_parent_proxies(unpickled_method_chain)
+        self._fsproxy_record_parent_ids()
 
 
 class _CallableProxyMixin:
@@ -1338,7 +1607,26 @@ def _transform_arg(
     elif isinstance(arg, types.ModuleType) and attribute_name in arg.__dict__:
         return arg.__dict__[attribute_name]
     elif isinstance(arg, list):
-        return type(arg)(_transform_arg(a, attribute_name, seen) for a in arg)
+        transformed_list = [
+            _transform_arg(a, attribute_name, seen) for a in arg
+        ]
+        if all(
+            new is old for new, old in zip(transformed_list, arg, strict=True)
+        ):
+            # No element needed transforming: return the original list (as
+            # the object-ndarray branch below already does) to preserve
+            # identity. A user function may close over a mutable container
+            # and mutate it for its side effects (e.g.
+            # ``names.append(group.name)`` inside groupby.apply); copying
+            # here would silently discard those side effects on both the
+            # fast attempt and the pandas fallback, and also defeats
+            # _replace_closurevars' unchanged-check so the original
+            # function object is never passed through.
+            return arg
+        # Pass an iterator rather than the materialized list so list
+        # subclasses see the same non-list iterable constructor argument
+        # they always received here.
+        return type(arg)(iter(transformed_list))
     elif isinstance(arg, tuple):
         # This attempts to handle arbitrary subclasses of tuple by
         # assuming that if you've subclassed tuple with some special
@@ -1375,9 +1663,19 @@ def _transform_arg(
                     )
                 )
             else:
-                return tuple(
+                transformed_tuple = [
                     _transform_arg(a, attribute_name, seen) for a in arg
-                )
+                ]
+                if all(
+                    new is old
+                    for new, old in zip(transformed_tuple, arg, strict=True)
+                ):
+                    # No element needed transforming: return the original
+                    # tuple (immutable, so this is safe) so containers
+                    # enclosing it also keep their identity (see the list
+                    # branch above).
+                    return arg
+                return tuple(transformed_tuple)
         elif hasattr(arg, "__getnewargs_ex__"):
             # Partial implementation of to reconstruct with
             # transformed pieces
@@ -1410,16 +1708,38 @@ def _transform_arg(
                 _transform_arg(a, attribute_name, seen) for a in args
             )
     elif isinstance(arg, dict):
-        return {
+        transformed_dict = {
             _transform_arg(k, attribute_name, seen): _transform_arg(
                 a, attribute_name, seen
             )
             for k, a in arg.items()
         }
+        if len(transformed_dict) == len(arg) and all(
+            new_k is old_k and new_v is old_v
+            for (new_k, new_v), (old_k, old_v) in zip(
+                transformed_dict.items(), arg.items(), strict=True
+            )
+        ):
+            # see the list branch above: preserve identity when unchanged
+            return arg
+        return transformed_dict
     elif isinstance(arg, np.ndarray) and arg.dtype == "O":
         transformed: list[Any] = [
             _transform_arg(a, attribute_name, seen) for a in arg.flat
         ]
+        if all(
+            new is old for new, old in zip(transformed, arg.flat, strict=True)
+        ):
+            # No element needed transforming: return the original array
+            # (as we already do for non-object ndarrays below) to
+            # preserve buffer identity. Rebuilding an equivalent copy
+            # breaks aliasing checks such as
+            # ``np.may_share_memory(np.asarray(x), x)`` that numpy uses
+            # (e.g. in ``Generator.permutation``) to decide whether to
+            # defensively copy before an in-place shuffle; the views
+            # pandas returns under copy-on-write are read-only, so
+            # skipping that copy raises "ValueError: array is read-only".
+            return arg
         # Keep the same memory layout as arg (the default is C_CONTIGUOUS)
         if arg.flags["F_CONTIGUOUS"] and not arg.flags["C_CONTIGUOUS"]:
             order = "F"
@@ -1430,11 +1750,26 @@ def _transform_arg(
         )
         result[...] = transformed
         return result.reshape(arg.shape)
+    elif isinstance(arg, (types.GeneratorType, map, filter, zip, enumerate)):
+        # "Pure" (resource-free) iterators. On the fast path we force a
+        # fallback because they are consumable (see below). On the slow path we
+        # transform the elements lazily into a new generator -- a bare iterator
+        # would otherwise hand wrapped proxies straight to the slow library,
+        # which can lose type information (e.g. ``MultiIndex.from_product`` of a
+        # ``map`` over categoricals dropping the ``category`` dtype). We yield a
+        # generator (rather than materializing a ``list``) so the slow library
+        # still sees a bare iterator: pandas treats iterators differently from
+        # lists in places (e.g. ``is_nested_list_like`` returns ``False`` for an
+        # iterator, and ``Index.get_loc`` reports the iterator in its error
+        # message), and materializing would silently change that behavior.
+        if attribute_name == "_fsproxy_fast":
+            raise Exception()
+        return (_transform_arg(a, attribute_name, seen) for a in arg)
     elif isinstance(arg, Iterator) and attribute_name == "_fsproxy_fast":
-        # this may include consumable objects like generators or
-        # IOBase objects, which we don't want unavailable to the slow
-        # path in case of fallback. So, we raise here and ensure the
-        # slow path is taken:
+        # Other consumable objects such as generators or IOBase objects, which
+        # we don't want unavailable to the slow path in case of fallback. So,
+        # we raise here and ensure the slow path is taken (and the object is
+        # left intact for it):
         raise Exception()
     elif isinstance(arg, types.FunctionType):
         if id(arg) in seen:
@@ -1445,6 +1780,59 @@ def _transform_arg(
         return _replace_closurevars(arg, attribute_name, seen)
     else:
         return arg
+
+
+def _collect_parent_proxies(
+    method_chain: tuple[Callable, tuple, dict],
+) -> list[_FastSlowProxy]:
+    """
+    Collect the ``_FastSlowProxy`` objects referenced by an intermediate
+    proxy's method chain.
+
+    An ``_IntermediateProxy`` (e.g. a groupby, rolling, or accessor object)
+    is created by calling ``func(*args, **kwargs)`` on one or more "parent"
+    proxies (the originating frame/series and any proxy arguments such as a
+    grouping key). We record those parents so that, if one of them is later
+    mutated or replaced in place (e.g. ``df["new"] = ...`` after
+    ``gp = df.groupby(...)``), the intermediate can re-derive itself from the
+    live parent instead of returning a stale snapshot. Method/function
+    proxies are intentionally skipped: they carry the operation, not the data,
+    and consumable intermediates (e.g. file readers) have no proxy parents at
+    all, so they are never re-derived.
+
+    The traversal is intentionally iterative (an explicit stack) rather than a
+    nested recursive helper. A recursive closure would hold a cell referencing
+    itself, forming a reference cycle that keeps the closure -- and everything
+    it captured, including the collected parent proxies -- alive until the
+    cyclic garbage collector runs. That delayed collection breaks code that
+    relies on prompt reference-counted teardown of a proxy (e.g. pandas'
+    ``Series.str``-accessor circular-reference test).
+    """
+    import numpy as np
+
+    _, args, kwargs = method_chain
+    parents: list[_FastSlowProxy] = []
+    seen: set[int] = set()
+    stack: list[Any] = [args, kwargs]
+
+    while stack:
+        obj = stack.pop()
+        oid = id(obj)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        if isinstance(obj, _FastSlowProxy):
+            parents.append(obj)
+        elif isinstance(obj, (tuple, list)):
+            stack.extend(obj)
+        elif isinstance(obj, dict):
+            for key, value in obj.items():
+                stack.append(key)
+                stack.append(value)
+        elif isinstance(obj, np.ndarray) and obj.dtype == "O":
+            stack.extend(obj.flat)
+
+    return parents
 
 
 def _fast_arg(arg: Any) -> Any:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,7 +42,7 @@ namespace {
  * @brief Functor to create the result columns for hash-based groupby aggregations
  *
  * This functor handles the creation of appropriately typed and sized columns for each
- * aggregation, including special handling for SUM_WITH_OVERFLOW which requires a struct column.
+ * aggregation, including special handling for SUM_OVERFLOW which requires a struct column.
  * For data types smaller than 4 bytes, the buffer size is adjusted to be a multiple of 4 to
  * ensure memory safety when atomic operations use 4-byte CAS loops to emulate smaller atomics.
  */
@@ -80,7 +80,7 @@ struct result_column_creator {
       }
       return make_fixed_width_column(d_type, size, state, stream, mr);
     };
-    if (agg != aggregation::SUM_WITH_OVERFLOW) {
+    if (agg != aggregation::SUM_OVERFLOW) {
       auto const target_type = cudf::detail::target_type(col_type, agg);
       auto const mask_flag   = nullable ? mask_state::ALL_NULL : mask_state::UNALLOCATED;
       return make_uninitialized_column(target_type, output_size, mask_flag);

@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -868,6 +868,106 @@ public class ColumnVectorTest extends CudfTestBase {
       assertEquals(bigInteger1, hostColumnVector.getBigDecimal(0).unscaledValue());
       assertEquals(bigInteger2, hostColumnVector.getBigDecimal(1).unscaledValue());
       assertEquals(bigInteger3, hostColumnVector.getBigDecimal(2).unscaledValue());
+    }
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorFixedWidth() {
+    int intSize = DType.INT32.getSizeInBytes();
+    HostMemoryBuffer data = HostMemoryBuffer.allocate(2L * intSize);
+    data.setInt(0, 42);
+    data.setInt(intSize, 7);
+    try (HostColumnVector hcv = new HostColumnVector(
+        DType.INT32, 2, Optional.of(0L), data, null)) {
+      assertEquals(2L, hcv.getRowCount());
+      assertEquals(0L, hcv.getNullCount());
+      assertEquals(DType.INT32, hcv.getType());
+      assertFalse(hcv.isNull(0));
+      assertFalse(hcv.isNull(1));
+      assertEquals(42, hcv.getInt(0));
+      assertEquals(7, hcv.getInt(1));
+    }
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorString() {
+    byte[] bytes = "helloworld".getBytes(StandardCharsets.UTF_8);
+    HostMemoryBuffer data = HostMemoryBuffer.allocate(bytes.length);
+    data.setBytes(0, bytes, 0, bytes.length);
+    int intSize = DType.INT32.getSizeInBytes();
+    HostMemoryBuffer offsets = HostMemoryBuffer.allocate(3L * intSize);
+    offsets.setInt(0, 0);
+    offsets.setInt(intSize, 5);
+    offsets.setInt(2L * intSize, 10);
+    try (HostColumnVector hcv = new HostColumnVector(
+        DType.STRING, 2, Optional.of(0L), data, null, offsets)) {
+      assertEquals(2L, hcv.getRowCount());
+      assertEquals(0L, hcv.getNullCount());
+      assertEquals(DType.STRING, hcv.getType());
+      assertFalse(hcv.isNull(0));
+      assertFalse(hcv.isNull(1));
+      assertEquals("hello", hcv.getJavaString(0));
+      assertEquals("world", hcv.getJavaString(1));
+    }
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorStringWithNull() {
+    byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
+    HostMemoryBuffer data = HostMemoryBuffer.allocate(bytes.length);
+    data.setBytes(0, bytes, 0, bytes.length);
+    int intSize = DType.INT32.getSizeInBytes();
+    HostMemoryBuffer offsets = HostMemoryBuffer.allocate(3L * intSize);
+    offsets.setInt(0, 0);
+    offsets.setInt(intSize, 5);
+    // Row 1 is null so its offset range is empty.
+    offsets.setInt(2L * intSize, 5);
+    // 64 bytes is a safe over-allocation for the Arrow-style validity bitmap.
+    HostMemoryBuffer validity = HostMemoryBuffer.allocate(64);
+    for (long i = 0; i < 64; i++) {
+      validity.setByte(i, (byte) 0);
+    }
+    // Row 0 valid (bit 0 set), row 1 null (bit 1 clear).
+    validity.setByte(0, (byte) 0x01);
+    try (HostColumnVector hcv = new HostColumnVector(
+        DType.STRING, 2, Optional.of(1L), data, validity, offsets)) {
+      assertEquals(2L, hcv.getRowCount());
+      assertEquals(1L, hcv.getNullCount());
+      assertEquals(DType.STRING, hcv.getType());
+      assertFalse(hcv.isNull(0));
+      assertTrue(hcv.isNull(1));
+      assertEquals("hello", hcv.getJavaString(0));
+    }
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorRejectsListType() {
+    assertThrows(IllegalArgumentException.class, () ->
+        new HostColumnVector(DType.LIST, 0, Optional.of(0L), null, null, null));
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorRequiresOffsetsForNonEmptyString() {
+    assertThrows(IllegalArgumentException.class, () ->
+        new HostColumnVector(DType.STRING, 1, Optional.of(0L), null, null, null));
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorAllowsEmptyStringWithoutOffsets() {
+    try (HostColumnVector hcv = new HostColumnVector(
+        DType.STRING, 0, Optional.of(0L), null, null, null)) {
+      assertEquals(0L, hcv.getRowCount());
+      assertEquals(0L, hcv.getNullCount());
+      assertEquals(DType.STRING, hcv.getType());
+    }
+  }
+
+  @Test
+  void testHostColumnVectorPublicCtorOffsetForNonStringMessage() {
+    try (HostMemoryBuffer offsets = HostMemoryBuffer.allocate(8)) {
+      IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+          new HostColumnVector(DType.INT32, 0, Optional.of(0L), null, null, offsets));
+      assertEquals("offsetBuffer is only supported for STRING", ex.getMessage());
     }
   }
 
@@ -3810,6 +3910,42 @@ public class ColumnVectorTest extends CudfTestBase {
   }
 
   @Test
+  void testCastTimestampAsStringCESU8() {
+    // U+1F642 ("🙂"): the surrogate-escape and character-literal forms are the same Java String.
+    final String format_surrogate = "\uD83D\uDE42"; // "🙂"
+    final String format_character = "🙂"; // U+1F642
+    assertEquals(format_surrogate, format_character);
+
+    try (ColumnVector s_string_times = ColumnVector.fromStrings(new String[]{format_character});
+         ColumnVector s_timestamps = ColumnVector.timestampSecondsFromLongs(new long[]{0});
+         ColumnVector timestampsAsStrings = s_timestamps.asStrings(format_character)) {
+      assertColumnsAreEqual(s_string_times, timestampsAsStrings);
+    }
+
+    final String format_surrogate_middle = "a\uD83D\uDE42b"; // "a🙂b"
+    try (ColumnVector s_string_times = ColumnVector.fromStrings(new String[]{format_surrogate_middle});
+         ColumnVector s_timestamps = ColumnVector.timestampSecondsFromLongs(new long[]{0});
+         ColumnVector timestampsAsStrings = s_timestamps.asStrings(format_surrogate_middle)) {
+      assertColumnsAreEqual(s_string_times, timestampsAsStrings);
+    }
+
+    // NUL (U+0000): JNI encodes it as 0xC0 0x80, so it must round-trip as a single 0x00 byte.
+    final String format_nul = "\u0000";
+    try (ColumnVector s_string_times = ColumnVector.fromStrings(new String[]{format_nul});
+         ColumnVector s_timestamps = ColumnVector.timestampSecondsFromLongs(new long[]{0});
+         ColumnVector timestampsAsStrings = s_timestamps.asStrings(format_nul)) {
+      assertColumnsAreEqual(s_string_times, timestampsAsStrings);
+    }
+
+    final String format_nul_middle = "a\u0000b";
+    try (ColumnVector s_string_times = ColumnVector.fromStrings(new String[]{format_nul_middle});
+         ColumnVector s_timestamps = ColumnVector.timestampSecondsFromLongs(new long[]{0});
+         ColumnVector timestampsAsStrings = s_timestamps.asStrings(format_nul_middle)) {
+      assertColumnsAreEqual(s_string_times, timestampsAsStrings);
+    }
+  }
+
+  @Test
   void testCastStringToByteList() {
     List<Byte> list1 = Arrays.asList((byte)0x54, (byte)0x68, (byte)0xc3, (byte)0xa9, (byte)0x73,
       (byte)0xc3, (byte)0xa9);
@@ -5064,6 +5200,68 @@ void testExtractReWithMultiLineDelimiters() {
   }
 
   @Test
+  void testStringSplitSupplementaryDelimiter() {
+    // U+1F642 ("🙂"): the surrogate-escape and character-literal forms are the same Java String.
+    final String delimiter_surrogate = "\uD83D\uDE42"; // "🙂"
+    final String delimiter_character = "🙂"; // U+1F642
+    assertEquals(delimiter_surrogate, delimiter_character);
+
+    try (ColumnVector v = ColumnVector.fromStrings("a🙂b", "x🙂y");
+         Table expected = new Table.TestBuilder()
+         .column("a", "x")
+         .column("b", "y")
+         .build();
+         Table result = v.stringSplit(delimiter_character)) {
+      // Regression test for native_jstring's modified-UTF-8 -> UTF-8 conversion: without it the
+      // delimiter would arrive from GetStringUTFChars as CESU-8 (ED A0 BD ED B9 82) and never
+      // match the standard-UTF-8 column data (F0 9F 99 82), leaving the rows unsplit.
+      assertTablesAreEqual(expected, result);
+    }
+
+    final String delimiter_surrogate_middle = "l\uD83D\uDE42r"; // "l🙂r"
+    try (ColumnVector v = ColumnVector.fromStrings("al🙂rb", "xl🙂ry");
+         Table expected = new Table.TestBuilder()
+         .column("a", "x")
+         .column("b", "y")
+         .build();
+         Table result = v.stringSplit(delimiter_surrogate_middle)) {
+      // Regression test for native_jstring's modified-UTF-8 -> UTF-8 conversion: without it the
+      // delimiter would arrive from GetStringUTFChars as CESU-8 (ED A0 BD ED B9 82) and never
+      // match the standard-UTF-8 column data (F0 9F 99 82), leaving the rows unsplit.
+      assertTablesAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testStringSplitNulDelimiter() {
+    final String delimiter = "\u0000";
+    try (ColumnVector v = ColumnVector.fromStrings("a\u0000b", "x\u0000y");
+         Table expected = new Table.TestBuilder()
+         .column("a", "x")
+         .column("b", "y")
+         .build();
+        Table result = v.stringSplit(delimiter)) {
+      // Regression test for native_jstring's modified-UTF-8 -> UTF-8 conversion: without it the
+      // delimiter would arrive from GetStringUTFChars as modified UTF-8 (C0 80) and never
+      // match the standard-UTF-8 column data (00), leaving the rows unsplit.
+      assertTablesAreEqual(expected, result);
+    }
+
+    final String delimiter_middle = "l\u0000r";
+    try (ColumnVector v = ColumnVector.fromStrings("al\u0000rb", "xl\u0000ry");
+         Table expected = new Table.TestBuilder()
+         .column("a", "x")
+         .column("b", "y")
+         .build();
+         Table result = v.stringSplit(delimiter_middle)) {
+      // Regression test for native_jstring's modified-UTF-8 -> UTF-8 conversion: without it the
+      // delimiter would arrive from GetStringUTFChars as modified UTF-8 (C0 80) and never
+      // match the standard-UTF-8 column data (00), leaving the rows unsplit.
+      assertTablesAreEqual(expected, result);
+    }
+  }
+
+  @Test
   void testStringSplitRecord() {
     String pattern = " ";
     try (ColumnVector v = ColumnVector.fromStrings("Héllo there all", "thésé", null, "",
@@ -5265,18 +5463,6 @@ void testExtractReWithMultiLineDelimiters() {
                ColumnVector.fromStrings("Repl and Title with title", "nothing", null, "Repl")) {
         assertColumnsAreEqual(expected, actual);
       }
-    }
-  }
-
-  @Test
-  void testReplaceMultiRegex() {
-    try (ColumnVector v =
-             ColumnVector.fromStrings("title and Title with title", "nothing", null, "Title");
-         ColumnVector repls = ColumnVector.fromStrings("Repl", "**");
-         ColumnVector actual = v.replaceMultiRegex(new String[] { "[tT]itle", "and|th" }, repls);
-         ColumnVector expected =
-             ColumnVector.fromStrings("Repl ** Repl wi** Repl", "no**ing", null, "Repl")) {
-      assertColumnsAreEqual(expected, actual);
     }
   }
 

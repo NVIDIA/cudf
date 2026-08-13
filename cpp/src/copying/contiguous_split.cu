@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1759,6 +1759,7 @@ void copy_data(int num_batches_to_copy,
     auto index_to_buffer = [user_buffer] __device__(unsigned int) { return user_buffer; };
     copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.value()>>>(
       index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch);
+    CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     auto index_to_buffer = [d_dst_bufs,
                             dst_buf_info = d_dst_buf_info.data(),
@@ -1768,6 +1769,7 @@ void copy_data(int num_batches_to_copy,
     };
     copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.value()>>>(
       index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 }
 
@@ -1783,21 +1785,21 @@ void copy_data(int num_batches_to_copy,
  */
 bool check_inputs(cudf::table_view const& input, std::vector<size_type> const& splits)
 {
-  if (input.num_columns() == 0) { return true; }
+  auto const num_rows = input.num_rows();
+  if (input.num_columns() == 0 && num_rows == 0) { return true; }
   if (splits.size() > 0) {
-    CUDF_EXPECTS(splits.back() <= input.column(0).size(),
-                 "splits can't exceed size of input columns",
-                 std::out_of_range);
+    CUDF_EXPECTS(
+      splits.back() <= num_rows, "splits can't exceed size of input columns", std::out_of_range);
   }
   size_type begin = 0;
   for (auto end : splits) {
     CUDF_EXPECTS(begin >= 0, "Starting index cannot be negative.", std::out_of_range);
     CUDF_EXPECTS(
       end >= begin, "End index cannot be smaller than the starting index.", std::invalid_argument);
-    CUDF_EXPECTS(end <= input.column(0).size(), "Slice range out of bounds.", std::out_of_range);
+    CUDF_EXPECTS(end <= num_rows, "Slice range out of bounds.", std::out_of_range);
     begin = end;
   }
-  return input.column(0).size() == 0;
+  return num_rows == 0 || input.num_columns() == 0;
 }
 
 };  // anonymous namespace
@@ -1924,7 +1926,12 @@ struct contiguous_split_state {
   {
     CUDF_EXPECTS(num_partitions == 1, "build_packed_column_metadata supported only without splits");
 
-    if (input.num_columns() == 0) { return std::unique_ptr<std::vector<uint8_t>>(); }
+    if (input.num_columns() == 0) {
+      // A truly empty (0, 0) table has no metadata.
+      if (input.num_rows() == 0) { return std::unique_ptr<std::vector<uint8_t>>(); }
+      // A zero-column, N-row has metadata-only output recording its row count.
+      return std::make_unique<std::vector<uint8_t>>(cudf::pack_metadata(input, nullptr, 0));
+    }
 
     if (is_empty) {
       // this is a bit ugly, but it was done to re-use make_empty_packed_table between the
@@ -1935,7 +1942,7 @@ struct contiguous_split_state {
 
     auto& h_dst_buf_info  = partition_buf_size_and_dst_buf_info->h_dst_buf_info;
     auto cur_dst_buf_info = h_dst_buf_info.data();
-    detail::metadata_builder mb{input.num_columns()};
+    detail::metadata_builder mb{input.num_columns(), std::nullopt};
 
     populate_metadata(input.begin(), input.end(), cur_dst_buf_info, mb);
 
@@ -1957,6 +1964,16 @@ struct contiguous_split_state {
       is_empty{check_inputs(input, splits)},
       num_partitions{splits.size() + 1}
   {
+    // Per-partition row counts from the split boundaries (0, splits..., num_rows).
+    // check_inputs has already validated that the splits are monotonic and in range.
+    partition_row_counts.reserve(num_partitions);
+    size_type begin = 0;
+    for (auto const end : splits) {
+      partition_row_counts.push_back(end - begin);
+      begin = end;
+    }
+    partition_row_counts.push_back(input.num_rows() - begin);
+
     // if the table we are about to contig split is empty, we have special
     // handling where metadata is produced and a 0-byte contiguous buffer
     // is the result.
@@ -1991,7 +2008,27 @@ struct contiguous_split_state {
 
   std::vector<packed_table> make_packed_tables()
   {
-    if (input.num_columns() == 0) { return std::vector<packed_table>(); }
+    if (input.num_columns() == 0) {
+      // A truly empty (0, 0) table produces no output.
+      if (input.num_rows() == 0) { return std::vector<packed_table>(); }
+
+      // A zero-column, N-row table contains no device data, so each partition is
+      // represented as a metadata-only packed table that records its row count.
+      std::vector<packed_table> result;
+      result.reserve(num_partitions);
+      std::transform(
+        partition_row_counts.begin(),
+        partition_row_counts.end(),
+        std::back_inserter(result),
+        [](size_type partition_rows) {
+          auto partition = cudf::table_view{std::vector<column_view>{}, partition_rows};
+          return packed_table{partition,
+                              packed_columns{std::make_unique<std::vector<uint8_t>>(
+                                               cudf::pack_metadata(partition, nullptr, 0)),
+                                             std::make_unique<rmm::device_buffer>()}};
+        });
+      return result;
+    }
     if (is_empty) { return make_empty_packed_table(); }
     std::vector<packed_table> result;
     result.reserve(num_partitions);
@@ -2002,7 +2039,7 @@ struct contiguous_split_state {
     auto& h_dst_bufs     = src_and_dst_pointers->h_dst_bufs;
 
     auto cur_dst_buf_info = h_dst_buf_info.data();
-    detail::metadata_builder mb(input.num_columns());
+    detail::metadata_builder mb(input.num_columns(), std::nullopt);
 
     for (std::size_t idx = 0; idx < num_partitions; idx++) {
       // traverse the buffers and build the columns.
@@ -2069,6 +2106,9 @@ struct contiguous_split_state {
 
   // This can be 1 if `contiguous_split` is just packing and not splitting
   std::size_t const num_partitions;  ///< The number of partitions to produce
+
+  // Per-partition row counts derived from `splits` and `input.num_rows()`.
+  std::vector<size_type> partition_row_counts;
 
   size_type num_src_bufs{};  ///< Number of source buffers including children
 

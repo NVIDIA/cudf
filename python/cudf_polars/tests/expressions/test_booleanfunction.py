@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ import polars as pl
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
+)
+from cudf_polars.utils.versions import (
+    POLARS_VERSION_LT_141,
+    POLARS_VERSION_LT_142,
 )
 
 if TYPE_CHECKING:
@@ -204,7 +208,6 @@ def test_boolean_horizontal(engine: pl.GPUEngine, expr, has_nulls, wide):
     [
         pytest.param(
             pl.col("a").is_in(pl.col("b").implode()),
-            marks=pytest.mark.xfail(reason="Need to support implode agg"),
             id="implode",
         ),
         pytest.param(pl.col("a").is_in([1, 2, 3]), id="list_small"),
@@ -281,6 +284,28 @@ def test_boolean_is_close(engine: pl.GPUEngine):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_141,
+    reason="has_nulls added to polars' BooleanFunction in 1.41",
+)
+@pytest.mark.parametrize("data", [[1, None, 3], [1, 2, 3], []])
+def test_boolean_has_nulls(engine: pl.GPUEngine, data):
+    ldf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int64)})
+    q = ldf.select(pl.col("a").has_nulls())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_141,
+    reason="is_empty added to polars' BooleanFunction in 1.41",
+)
+@pytest.mark.parametrize("data", [[1, 2, 3], [None, None], []])
+def test_boolean_is_empty(engine: pl.GPUEngine, data):
+    ldf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int64)})
+    q = ldf.select(pl.col("a").is_empty())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "dtype, col",
     [
@@ -292,3 +317,47 @@ def test_boolean_not_with_integers(engine: pl.GPUEngine, dtype, col):
     ldf = pl.LazyFrame({"a": pl.Series(col, dtype=dtype)})
     q = ldf.select(~pl.col("a"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_142, reason="IsSorted BooleanFunction was added in polars 1.42"
+)
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_boolean_is_sorted(
+    engine: pl.GPUEngine, *, descending: bool, nulls_last: bool, has_nulls: bool
+) -> None:
+    values: list[int | None] = [1, 2, 3, 4, 5]
+    if has_nulls:
+        values[2] = None
+
+    ldf = pl.LazyFrame(
+        {
+            "asc": pl.Series(values, dtype=pl.Int64()),
+            "desc": pl.Series(list(reversed(values)), dtype=pl.Int64()),
+            "unsorted": pl.Series([3, 1, None, 4, 2], dtype=pl.Int64()),
+        }
+    )
+
+    q = ldf.select(
+        pl.col("asc").is_sorted(descending=descending, nulls_last=nulls_last),
+        pl.col("desc").is_sorted(descending=descending, nulls_last=nulls_last),
+        pl.col("unsorted").is_sorted(descending=descending, nulls_last=nulls_last),
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.sum_horizontal("a", "b"),
+        pl.mean_horizontal("a", "b"),
+        pl.min_horizontal("a", "b"),
+    ],
+    ids=["sum_horizontal", "mean_horizontal", "min_horizontal"],
+)
+def test_numeric_horizontal_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
+    df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    q = df.select(expr)
+    assert_ir_translation_raises(q, engine, NotImplementedError)

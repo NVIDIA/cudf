@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -83,6 +84,8 @@ void BM_ast_polynomials(nvbench::state& state)
   state.add_global_memory_reads<key_type>(num_rows);
   state.add_global_memory_writes<key_type>(num_rows);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::benchmark::scoped_range range{"benchmark_iteration"};
 
@@ -98,6 +101,9 @@ void BM_ast_polynomials(nvbench::state& state)
       default: CUDF_FAIL("Invalid engine type");
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define AST_POLYNOMIAL_BENCHMARK_DEFINE(name, key_type)                          \

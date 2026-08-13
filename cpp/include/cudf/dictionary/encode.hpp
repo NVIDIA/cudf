@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,16 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Dictionary column encode and decode APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace dictionary {
 /**
  * @addtogroup dictionary_encode
  * @{
- * @file
- * @brief Dictionary column encode and decode APIs
  */
 
 /**

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -31,7 +31,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/count.h>
-#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
@@ -88,6 +87,7 @@ void scatter_scalar_bitmask_inplace(std::reference_wrapper<scalar const> const& 
                                           : marking_bitmask_kernel<false, decltype(scatter_map)>;
     bitmask_kernel<<<grid_size, block_size, 0, stream.value()>>>(
       *target_view, scatter_map, num_scatter_rows);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     target.set_null_count(
       cudf::detail::null_count(target.view().null_mask(), 0, target.size(), stream));
@@ -114,7 +114,7 @@ struct column_scalar_scatterer_impl {
     // Use permutation iterator with constant index to dereference scalar data
     auto scalar_impl = static_cast<scalar_type_t<Element> const*>(&source.get());
     auto scalar_iter =
-      thrust::make_permutation_iterator(scalar_impl->data(), cuda::make_constant_iterator(0));
+      cuda::make_permutation_iterator(scalar_impl->data(), cuda::make_constant_iterator(0));
 
     thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     scalar_iter,
@@ -189,7 +189,7 @@ struct column_scalar_scatterer_impl<dictionary32, MapIterator> {
     auto dict_view    = dictionary_column_view(dict_target->view());
     auto scalar_index = dictionary::detail::get_index(
       dict_view, source.get(), stream, cudf::get_current_device_resource_ref());
-    auto scalar_iter = thrust::make_permutation_iterator(
+    auto scalar_iter = cuda::make_permutation_iterator(
       indexalator_factory::make_input_iterator(*scalar_index), cuda::make_constant_iterator(0));
     auto new_indices = std::make_unique<column>(dict_view.get_indices_annotated(), stream, mr);
     auto target_iter = indexalator_factory::make_output_iterator(new_indices->mutable_view());
@@ -374,7 +374,7 @@ std::unique_ptr<table> scatter(std::vector<std::reference_wrapper<scalar const>>
                                                                  mr);
                  });
 
-  return std::make_unique<table>(std::move(result));
+  return std::make_unique<table>(std::move(result), target.num_rows());
 }
 
 std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
@@ -437,21 +437,25 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
                "Type mismatch in input column and target column",
                cudf::data_type_error);
 
-  if (target.num_rows() != 0) {
-    std::vector<std::unique_ptr<column>> out_columns(target.num_columns());
-    std::transform(
-      input.begin(),
-      input.end(),
-      target.begin(),
-      out_columns.begin(),
-      [&boolean_mask, mr, stream](auto const& input_column, auto const& target_column) {
-        return boolean_mask_scatter(input_column, target_column, boolean_mask, stream, mr);
-      });
+  // Build a scatter map of the target row indices selected by the boolean mask, then delegate to
+  // detail::scatter.
+  auto indices         = cudf::make_numeric_column(data_type{type_id::INT32},
+                                           target.num_rows(),
+                                           mask_state::UNALLOCATED,
+                                           stream,
+                                           cudf::get_current_device_resource_ref());
+  auto mutable_indices = indices->mutable_view();
+  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   mutable_indices.begin<size_type>(),
+                   mutable_indices.end<size_type>(),
+                   0);
 
-    return std::make_unique<table>(std::move(out_columns));
-  } else {
-    return empty_like(target);
-  }
+  auto scatter_map = detail::apply_mask(table_view{{indices->view()}},
+                                        boolean_mask,
+                                        mask_type::RETENTION,
+                                        stream,
+                                        cudf::get_current_device_resource_ref());
+  return detail::scatter(input, scatter_map->get_column(0).view(), target, stream, mr);
 }
 
 std::unique_ptr<table> boolean_mask_scatter(
@@ -491,7 +495,7 @@ std::unique_ptr<table> boolean_mask_scatter(
                        scalar.get(), target_column, boolean_mask, stream, mr);
                    });
 
-    return std::make_unique<table>(std::move(out_columns));
+    return std::make_unique<table>(std::move(out_columns), target.num_rows());
   } else {
     return empty_like(target);
   }

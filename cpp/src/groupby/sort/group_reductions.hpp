@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,6 +43,26 @@ std::unique_ptr<column> group_sum(column_view const& values,
                                   cudf::device_span<size_type const> group_labels,
                                   rmm::cuda_stream_view stream,
                                   rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to calculate groupwise sum with overflow detection.
+ *
+ * Returns a STRUCT column with two children: the (wrapping) sum and a BOOL8 overflow flag that is
+ * true when the true sum does not fit in the value type. On overflow the sum value is unspecified;
+ * the flag is the meaningful output. A group is null only when all of its values are null.
+ *
+ * @param values Grouped values to sum
+ * @param num_groups Number of groups
+ * @param group_labels ID of group that the corresponding value belongs to
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+[[nodiscard]] std::unique_ptr<column> group_sum_overflow(
+  column_view const& values,
+  size_type num_groups,
+  cudf::device_span<size_type const> group_labels,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Internal API to calculate groupwise product

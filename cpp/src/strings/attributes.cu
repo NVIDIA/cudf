@@ -146,6 +146,7 @@ std::unique_ptr<column> count_characters_parallel(strings_column_view const& inp
   cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
   count_characters_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
     *d_strings, d_lengths);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   // reset null count after call to mutable_view()
   results->set_null_count(input.null_count());

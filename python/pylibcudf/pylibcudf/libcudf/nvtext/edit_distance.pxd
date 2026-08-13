@@ -18,9 +18,3 @@ cdef extern from "nvtext/edit_distance.hpp" namespace "nvtext" nogil:
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
-
-    cdef unique_ptr[column] edit_distance_matrix(
-        const column_view & strings,
-        cudaStream_t stream,
-        device_async_resource_ref mr
-    ) except +libcudf_exception_handler

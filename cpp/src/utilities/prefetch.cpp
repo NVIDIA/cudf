@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,7 +51,7 @@ cudaError_t prefetch_noexcept(void const* ptr,
 #if defined(CUDART_VERSION) && CUDART_VERSION >= 13000
   cudaMemLocation location{
     (device_id.value() == cudaCpuDeviceId) ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice,
-    device_id.value()};
+    {device_id.value()}};
   constexpr int flags = 0;
   auto result         = cudaMemPrefetchAsync(ptr, size, location, flags, stream.value());
 #else

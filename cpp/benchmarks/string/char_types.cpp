@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/strings/char_types/char_types.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -35,6 +36,7 @@ static void bench_char_types(nvbench::state& state)
     state.add_global_memory_writes<nvbench::int8_t>(data_size);
   }
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     if (api_type == "all") {
       auto result = cudf::strings::all_characters_of_type(input, input_types);
@@ -42,6 +44,8 @@ static void bench_char_types(nvbench::state& state)
       auto result = cudf::strings::filter_characters_of_type(input, input_types);
     }
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_char_types)

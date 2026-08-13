@@ -749,7 +749,7 @@ with SPMDEngine(
     rapidsmpf_options=Options(num_streaming_threads=8),
     executor_options={"num_py_executors": 2},
     executor_options={"max_rows_per_partition": 500_000},
-    engine_options={"parquet_options": {"use_rapidsmpf_native": True}},
+    engine_options={"parquet_options": {}},
 ) as engine:
     ...
 ```
@@ -771,16 +771,14 @@ to `None` (uses RapidsMPF defaults).
 `executor_options` is forwarded directly to `pl.GPUEngine` as its `executor_options`
 argument; user-supplied keys are merged with reserved entries set by `SPMDEngine`.
 
-`engine_options` is forwarded as keyword arguments to `pl.GPUEngine`. For example,
-pass `engine_options={"parquet_options": {"use_rapidsmpf_native": True}}` to enable
-native Parquet reads.
+`engine_options` is forwarded as keyword arguments to `pl.GPUEngine`.
 
 <!-- Reference links -->
 [dask-cli]: https://docs.dask.org/en/latest/deploying-cli.html
-[dask-distributed]: https://distributed.dask.org/
+[dask-distributed]: https://distributed.dask.org/en/stable/
 [spmd-wiki]: https://en.wikipedia.org/wiki/Single_program,_multiple_data
-[ray-docs]: https://docs.ray.io/
+[ray-docs]: https://docs.ray.io/en/latest/
 [ray-actors]: https://docs.ray.io/en/latest/ray-core/actors.html
-[rapidsmpf-communicator]: https://docs.rapids.ai/api/rapidsmpf/stable/api/communicator/
-[rapidsmpf-context]: https://docs.rapids.ai/api/rapidsmpf/stable/api/streaming/context/
+[rapidsmpf-communicator]: https://docs.rapids.ai/api/rapidsmpf/stable/glossary/#term-Communicator
+[rapidsmpf-context]: https://docs.rapids.ai/api/rapidsmpf/stable/glossary/#term-Context
 [polars-gpuengine]: https://docs.pola.rs/api/python/stable/reference/api/polars.GPUEngine.html

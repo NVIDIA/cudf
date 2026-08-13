@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -6,7 +6,11 @@ import pytest
 
 import polars as pl
 
-from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.asserts import (
+    assert_gpu_result_equal,
+    assert_ir_translation_raises,
+)
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
 def test_gather(engine: pl.GPUEngine):
@@ -98,3 +102,42 @@ def test_gather_on_literal(
 
     q = df.select(lit.gather(idx))
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_repeat_by(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [1, 2, None, 3], "n": [2, None, 0, 1]})
+    q = df.select(pl.col("a").repeat_by("n"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_repeat_by_no_nulls(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": ["x", "y", "z"], "n": [0, 2, 1]})
+    q = df.select(pl.col("a").repeat_by("n"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_repeat_by_all_null_counts(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {"a": [1, 2, 3], "n": pl.Series([None, None, None], dtype=pl.Int32())}
+    )
+    q = df.select(pl.col("a").repeat_by("n"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_repeat_by_negative_raises(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [1, 2, 3], "n": [2, -1, 0]})
+    q = df.select(pl.col("a").repeat_by("n"))
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            pl.exceptions.InvalidOperationError, match="must not be negative"
+        ):
+            q.collect(engine=engine)
+
+
+def test_gather_non_integer_indices_unsupported(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [1, 2, 3]})
+    q = df.select(pl.col("a").gather(pl.lit("y")))
+    assert_ir_translation_raises(q, engine, NotImplementedError)

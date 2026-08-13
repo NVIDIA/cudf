@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -291,11 +291,11 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
       // Iterator over the character column of input strings to gather
       auto in_chars_itr = thrust::make_transform_iterator(
         begin,
-        cuda::proclaim_return_type<const char*>([d_strings = *d_strings] __device__(size_type idx) {
+        cuda::proclaim_return_type<char const*>([d_strings = *d_strings] __device__(size_type idx) {
           if (NullifyOutOfBounds && (idx < 0 || idx >= d_strings.size())) {
-            return static_cast<const char*>(nullptr);
+            return static_cast<char const*>(nullptr);
           }
-          if (not d_strings.is_valid(idx)) { return static_cast<const char*>(nullptr); }
+          if (not d_strings.is_valid(idx)) { return static_cast<char const*>(nullptr); }
           return d_strings.element<string_view>(idx).data();
         }));
 

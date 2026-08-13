@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,8 +13,16 @@
 #include <cudf/utilities/error.hpp>
 
 #include <cstdint>
+#include <functional>
+#include <initializer_list>
 #include <memory>
+#include <optional>
 #include <vector>
+
+/**
+ * @file
+ * @brief Class definitions for building and evaluating abstract syntax tree expressions.
+ */
 
 namespace CUDF_EXPORT cudf {
 
@@ -44,7 +52,6 @@ namespace ast {
 /**
  * @addtogroup expressions
  * @{
- * @file
  */
 
 // Forward declaration.
@@ -384,10 +391,7 @@ class column_reference : public expression {
    * @param table Table used to determine types
    * @return The data type of the column
    */
-  [[nodiscard]] cudf::data_type get_data_type(table_view const& table) const
-  {
-    return table.column(get_column_index()).type();
-  }
+  [[nodiscard]] cudf::data_type get_data_type(table_view const& table) const;
 
   /**
    * @brief Get the data type.
@@ -397,19 +401,7 @@ class column_reference : public expression {
    * @return The data type of the column
    */
   [[nodiscard]] cudf::data_type get_data_type(table_view const& left_table,
-                                              table_view const& right_table) const
-  {
-    auto const table = [&] {
-      if (get_table_source() == table_reference::LEFT) {
-        return left_table;
-      } else if (get_table_source() == table_reference::RIGHT) {
-        return right_table;
-      } else {
-        CUDF_FAIL("Column reference data type cannot be determined from unknown table.");
-      }
-    }();
-    return table.column(get_column_index()).type();
-  }
+                                              table_view const& right_table) const;
 
   /**
    * @copydoc expression::accept
@@ -697,6 +689,142 @@ class tree {
   // allocator with type-erased deleters.
   std::vector<std::unique_ptr<expression>> expressions;
 };
+
+namespace jit {
+
+/**
+ * @brief JIT operation kinds for `cudf::ast::jit::operation`.
+ */
+enum class op : uint8_t {
+  // Identity operators
+  IDENTITY,
+
+  // Null handling operators
+  IS_NULL,
+
+  COALESCE,
+  PREDICATE,
+
+  /// Arithmetic operators
+  ADD,
+  SUB,
+  MUL,
+  DIV,
+  NEG,
+  ABS,
+  MOD,
+  PYMOD,
+  TRUE_DIV,
+  FLOOR_DIV,
+
+  /// Overflow-checking Arithmetic functions. raise errors on overflow, division by zero, etc.
+  ADD_OVERFLOW,
+  SUB_OVERFLOW,
+  MUL_OVERFLOW,
+  DIV_OVERFLOW,
+  NEG_OVERFLOW,
+  ABS_OVERFLOW,
+  MOD_OVERFLOW,
+  CHECK_PRECISION,
+
+  /// Bitwise operators
+  BITWISE_AND,
+  BITWISE_INVERT,
+  BITWISE_OR,
+  BITWISE_XOR,
+  BITWISE_SHIFT_LEFT,
+  BITWISE_SHIFT_RIGHT,
+
+  /// Type conversion/scaling operators
+  CAST_TO_BOOL8,
+  CAST_TO_INT8,
+  CAST_TO_INT16,
+  CAST_TO_INT32,
+  CAST_TO_INT64,
+  CAST_TO_UINT8,
+  CAST_TO_UINT16,
+  CAST_TO_UINT32,
+  CAST_TO_UINT64,
+  CAST_TO_FLOAT32,
+  CAST_TO_FLOAT64,
+  CAST_TO_DECIMAL32,
+  CAST_TO_DECIMAL64,
+  CAST_TO_DECIMAL128,
+  RESCALE,
+
+  /// Comparison & Logic operators
+  EQUAL,
+  NOT_EQUAL,
+  GREATER,
+  GREATER_EQUAL,
+  LESS,
+  LESS_EQUAL,
+  NULL_EQUAL,
+  NULL_LOGICAL_AND,
+  NULL_LOGICAL_OR,
+  LOGICAL_AND,
+  LOGICAL_OR,
+  LOGICAL_NOT,
+  IF_ELSE,
+
+  /// Mathematical operators
+  CBRT,
+  CEIL,
+  FLOOR,
+  RINT,
+  SQRT,
+  POW,
+  EXP,
+  LOG,
+
+  /// Trigonometric operators
+  ARCCOS,
+  ARCCOSH,
+  ARCSIN,
+  ARCSINH,
+  ARCTAN,
+  ARCTANH,
+  COS,
+  COSH,
+  SIN,
+  SINH,
+  TAN,
+  TANH,
+};
+
+/**
+ * @brief Creates a JIT expression operation from an opcode and argument list.
+ *
+ * @param tree The expression tree to which this expression will be added.
+ * @param operator_id The JIT operation kind.
+ * @param args Operation arguments.
+ * @param error_policy Specifies how fallible operations handle errors.
+ * @param target_scale Required only for `op::RESCALE`.
+ * @return A reference to the created operation expression.
+ */
+expression const& operation(ast::tree& tree,
+                            op operator_id,
+                            std::vector<std::reference_wrapper<expression const>> const& args,
+                            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
+                            std::optional<int32_t> target_scale = std::nullopt);
+
+/**
+ * @brief Creates a JIT expression operation from an opcode and argument list.
+ *
+ * @param tree The expression tree to which this expression will be added.
+ * @param operator_id The JIT operation kind.
+ * @param args Operation arguments.
+ * @param error_policy Specifies how fallible operations handle errors.
+ * @param target_scale Required only for `op::RESCALE`.
+ * @return A reference to the created operation expression.
+ */
+expression const& operation(ast::tree& tree,
+                            op operator_id,
+                            std::initializer_list<std::reference_wrapper<expression const>> args,
+                            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
+                            std::optional<int32_t> target_scale = std::nullopt);
+
+}  // namespace jit
 
 /** @} */  // end of group
 }  // namespace ast

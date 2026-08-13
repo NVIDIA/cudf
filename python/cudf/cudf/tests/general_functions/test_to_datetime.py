@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -12,6 +12,7 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import (
     assert_exceptions_equal,
 )
+from cudf.utils.temporal import infer_format
 
 
 @pytest.mark.parametrize(
@@ -407,3 +408,70 @@ def test_to_datetime_dataframe_with_ns_field_widens_to_ns():
     actual = cudf.to_datetime(cudf.from_pandas(df))
     assert actual.dtype == expected.dtype
     assert_eq(actual, expected)
+
+
+def test_to_datetime_nanosecond_precision_strings():
+    # pandas infers nanosecond precision from strings with more than 6
+    # fractional-second digits.
+    data = ["2015-01-03T00:00:00.000000000", "2015-01-01T00:00:00.000000000"]
+    assert_eq(pd.to_datetime(data), cudf.to_datetime(data))
+    data_us = ["2015-01-03T00:00:00.000000", "2015-01-01T00:00:00.000000"]
+    assert_eq(pd.to_datetime(data_us), cudf.to_datetime(data_us))
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["2016-01-01 00:00:00"],
+        [1451606400, 1451610000],
+    ],
+)
+def test_datetime_index_tz_dtype_wall_time(data):
+    # Timezone-naive string data with a tz-aware dtype is interpreted as
+    # wall time in the target timezone, while integers are interpreted as
+    # epoch time (UTC), matching pandas.
+    result = cudf.DatetimeIndex(
+        data, dtype=pd.DatetimeTZDtype("s", "US/Eastern")
+    )
+    expected = pd.DatetimeIndex(data, dtype="datetime64[s, US/Eastern]")
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize(
+    "bad_input",
+    ["1.2", "9.9", "2078~1.15"],
+)
+def test_infer_format_rejects_non_datetime_dotted_strings(bad_input):
+    with pytest.raises(
+        ValueError, match="Unable to infer the timestamp format"
+    ):
+        infer_format(bad_input)
+
+
+def test_to_datetime_rejects_non_datetime_dotted_string():
+    with pytest.raises(
+        ValueError, match="Unable to infer the timestamp format"
+    ):
+        cudf.to_datetime(cudf.Series(["1.2"]))
+
+
+def test_to_datetime_out_of_bounds_nanosecond_precision_string():
+    # More than 6 fractional-second digits imply nanosecond precision,
+    # and year 2263 exceeds the nanosecond Timestamp range.
+    data = np.array(["2263-01-01 00:00:00.123456789"], dtype=object)
+    assert_exceptions_equal(
+        lfunc=pd.to_datetime,
+        rfunc=cudf.to_datetime,
+        lfunc_args_and_kwargs=([data],),
+        rfunc_args_and_kwargs=([data],),
+    )
+
+
+def test_to_datetime_format_f_out_of_ns_bounds_keeps_us():
+    # With an explicit %f format, values beyond the nanosecond range
+    # keep microsecond precision like pandas' unit inference.
+    data = ["2263-01-01 00:00:00.123456"]
+    fmt = "%Y-%m-%d %H:%M:%S.%f"
+    expected = pd.to_datetime(data, format=fmt)
+    result = cudf.to_datetime(data, format=fmt)
+    assert_eq(result, expected)

@@ -33,7 +33,6 @@ def pdf(request):
 
 
 @pytest.mark.filterwarnings("ignore:Using CPU")
-@pytest.mark.filterwarnings("ignore:Strings are not yet supported")
 @pytest.mark.parametrize(
     "columns",
     [["col_int8"], ["col_category"], ["col_int32", "col_float32"], None],

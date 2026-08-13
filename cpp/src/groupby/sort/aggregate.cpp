@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -137,6 +137,18 @@ void aggregate_result_functor::operator()<aggregation::SUM>(aggregation const& a
     values,
     agg,
     detail::group_sum(
+      get_grouped_values(), helper.num_groups(stream), helper.group_labels(stream), stream, mr));
+}
+
+template <>
+void aggregate_result_functor::operator()<aggregation::SUM_OVERFLOW>(aggregation const& agg)
+{
+  if (cache.has_result(values, agg)) return;
+
+  cache.add_result(
+    values,
+    agg,
+    detail::group_sum_overflow(
       get_grouped_values(), helper.num_groups(stream), helper.group_labels(stream), stream, mr));
 }
 
@@ -865,7 +877,7 @@ void aggregate_result_functor::operator()<aggregation::HOST_UDF>(aggregation con
 
 // Sort-based groupby
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::sort_aggregate(
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {
@@ -878,11 +890,6 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::sort
     auto store_functor =
       detail::aggregate_result_functor(request.values, helper(), cache, stream, mr);
     for (auto const& agg : request.aggregations) {
-      // SUM_WITH_OVERFLOW is only supported with hash-based groupby, not sort-based
-      CUDF_EXPECTS(agg->kind != aggregation::SUM_WITH_OVERFLOW,
-                   "SUM_WITH_OVERFLOW aggregation is only supported with hash-based groupby, not "
-                   "sort-based groupby");
-
       // TODO (dm): single pass compute all supported reductions
       cudf::detail::aggregation_dispatcher(agg->kind, store_functor, *agg);
     }

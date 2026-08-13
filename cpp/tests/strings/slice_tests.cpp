@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,6 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/column/column_view.hpp>
-#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/slice.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
@@ -35,7 +34,8 @@ TEST_F(StringsSliceTest, Substring)
     thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
   auto strings_column = static_cast<cudf::strings_column_view>(strings);
-  auto results        = cudf::strings::slice_strings(strings_column, 2, 5);
+  auto results        = cudf::strings::slice_strings(
+    strings_column, std::optional<cudf::size_type>(2), std::optional<cudf::size_type>(5));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -44,7 +44,7 @@ class Parameters : public StringsSliceTest, public testing::WithParamInterface<c
 TEST_P(Parameters, Substring)
 {
   std::vector<std::string> h_strings{"basic strings", "that can", "be used", "with STL"};
-  cudf::size_type start = GetParam();
+  auto start = std::optional<cudf::size_type>(GetParam());
 
   cudf::test::strings_column_wrapper strings(h_strings.begin(), h_strings.end());
   auto strings_column = cudf::strings_column_view(strings);
@@ -52,7 +52,7 @@ TEST_P(Parameters, Substring)
 
   std::vector<std::string> h_expected;
   for (auto& h_string : h_strings)
-    h_expected.push_back(h_string.substr(start));
+    h_expected.push_back(h_string.substr(start.value()));
 
   cudf::test::strings_column_wrapper expected(h_expected.begin(), h_expected.end());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -84,11 +84,12 @@ TEST_P(Parameters, Substring_From)
 
 TEST_P(Parameters, SubstringStopZero)
 {
-  cudf::size_type start = GetParam();
+  auto start = GetParam();
   cudf::test::strings_column_wrapper input({"abc", "défgh", "", "XYZ"});
   auto view = cudf::strings_column_view(input);
 
-  auto results = cudf::strings::slice_strings(view, start, 0);
+  auto results = cudf::strings::slice_strings(
+    view, std::optional<cudf::size_type>(start), std::optional<cudf::size_type>(0));
   cudf::test::strings_column_wrapper expected({"", "", "", ""});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
@@ -103,7 +104,7 @@ TEST_P(Parameters, SubstringStopZero)
 TEST_P(Parameters, AllEmpty)
 {
   std::vector<std::string> h_strings{"", "", "", ""};
-  cudf::size_type start = GetParam();
+  auto start = std::optional<cudf::size_type>(GetParam());
 
   cudf::test::strings_column_wrapper strings(h_strings.begin(), h_strings.end());
   auto strings_column = cudf::strings_column_view(strings);
@@ -129,7 +130,7 @@ TEST_P(Parameters, AllNulls)
     h_strings.begin(),
     h_strings.end(),
     thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
-  cudf::size_type start = GetParam();
+  auto start = std::optional<cudf::size_type>(GetParam());
 
   auto strings_column = cudf::strings_column_view(strings);
   auto results        = cudf::strings::slice_strings(strings_column, start);
@@ -160,28 +161,36 @@ TEST_F(StringsSliceTest, NegativePositions)
     "a", "bc", "def", "ghij", "klmno", "pqrstu", "vwxyz", ""};
   auto strings_column = cudf::strings_column_view(strings);
   {
-    auto results = cudf::strings::slice_strings(strings_column, -1);
+    auto results = cudf::strings::slice_strings(strings_column, std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{"a", "c", "f", "j", "o", "u", "z", ""};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(strings_column, 0, -1);
+    auto results = cudf::strings::slice_strings(
+      strings_column, std::optional<cudf::size_type>(0), std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{"", "b", "de", "ghi", "klmn", "pqrst", "vwxy", ""};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(strings_column, 7, -2, -1);
+    auto results = cudf::strings::slice_strings(strings_column,
+                                                std::optional<cudf::size_type>(7),
+                                                std::optional<cudf::size_type>(-2),
+                                                std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{"a", "c", "f", "j", "o", "u", "z", ""};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(strings_column, 7, -7, -1);
+    auto results = cudf::strings::slice_strings(strings_column,
+                                                std::optional<cudf::size_type>(7),
+                                                std::optional<cudf::size_type>(-7),
+                                                std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{
       "a", "cb", "fed", "jihg", "onmlk", "utsrqp", "zyxwv", ""};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(strings_column, -3, -1);
+    auto results = cudf::strings::slice_strings(
+      strings_column, std::optional<cudf::size_type>(-3), std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{"", "b", "de", "hi", "mn", "st", "xy", ""};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -192,37 +201,39 @@ TEST_F(StringsSliceTest, NullPositions)
   cudf::test::strings_column_wrapper strings{"a", "bc", "def", "ghij", "klmno", "pqrstu", "vwxyz"};
   auto strings_column = cudf::strings_column_view(strings);
   {
-    auto results = cudf::strings::slice_strings(strings_column,
-                                                cudf::numeric_scalar<cudf::size_type>(0, false),
-                                                cudf::numeric_scalar<cudf::size_type>(0, false),
-                                                -1);
+    auto results = cudf::strings::slice_strings(
+      strings_column, std::nullopt, std::nullopt, std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{
       "a", "cb", "fed", "jihg", "onmlk", "utsrqp", "zyxwv"};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(strings_column,
-                                                cudf::numeric_scalar<cudf::size_type>(0, false),
-                                                cudf::numeric_scalar<cudf::size_type>(0, false),
-                                                2);
+    auto results = cudf::strings::slice_strings(
+      strings_column, std::nullopt, std::nullopt, std::optional<cudf::size_type>(2));
     cudf::test::strings_column_wrapper expected{"a", "b", "df", "gi", "kmo", "prt", "vxz"};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(
-      strings_column, 0, cudf::numeric_scalar<cudf::size_type>(0, false), -1);
+    auto results = cudf::strings::slice_strings(strings_column,
+                                                std::optional<cudf::size_type>(0),
+                                                std::nullopt,
+                                                std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{"a", "b", "d", "g", "k", "p", "v"};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(
-      strings_column, cudf::numeric_scalar<cudf::size_type>(0, false), -2, -1);
+    auto results = cudf::strings::slice_strings(strings_column,
+                                                std::nullopt,
+                                                std::optional<cudf::size_type>(-2),
+                                                std::optional<cudf::size_type>(-1));
     cudf::test::strings_column_wrapper expected{"a", "c", "f", "j", "o", "u", "z"};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::slice_strings(
-      strings_column, cudf::numeric_scalar<cudf::size_type>(0, false), -1, 2);
+    auto results = cudf::strings::slice_strings(strings_column,
+                                                std::nullopt,
+                                                std::optional<cudf::size_type>(-1),
+                                                std::optional<cudf::size_type>(2));
     cudf::test::strings_column_wrapper expected{"", "b", "d", "gi", "km", "prt", "vx"};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -234,26 +245,35 @@ TEST_F(StringsSliceTest, MaxPositions)
   auto strings_column = cudf::strings_column_view(strings);
   cudf::test::strings_column_wrapper expected{"", "", "", "", "", "", ""};
 
-  auto results = cudf::strings::slice_strings(strings_column, 10);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
-
-  results = cudf::strings::slice_strings(strings_column, 0, -10);
+  auto results = cudf::strings::slice_strings(strings_column, std::optional<cudf::size_type>(10));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results = cudf::strings::slice_strings(
-    strings_column, cudf::numeric_scalar<cudf::size_type>(0, false), -10);
+    strings_column, std::optional<cudf::size_type>(0), std::optional<cudf::size_type>(-10));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  results = cudf::strings::slice_strings(strings_column, 10, 19);
+  results =
+    cudf::strings::slice_strings(strings_column, std::nullopt, std::optional<cudf::size_type>(-10));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  results = cudf::strings::slice_strings(strings_column, 10, 19, 9);
+  results = cudf::strings::slice_strings(
+    strings_column, std::optional<cudf::size_type>(10), std::optional<cudf::size_type>(19));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  results = cudf::strings::slice_strings(strings_column, -10, -19);
+  results = cudf::strings::slice_strings(strings_column,
+                                         std::optional<cudf::size_type>(10),
+                                         std::optional<cudf::size_type>(19),
+                                         std::optional<cudf::size_type>(9));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  results = cudf::strings::slice_strings(strings_column, -10, -19, -1);
+  results = cudf::strings::slice_strings(
+    strings_column, std::optional<cudf::size_type>(-10), std::optional<cudf::size_type>(-19));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  results = cudf::strings::slice_strings(strings_column,
+                                         std::optional<cudf::size_type>(-10),
+                                         std::optional<cudf::size_type>(-19),
+                                         std::optional<cudf::size_type>(-1));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -284,7 +304,8 @@ TEST_F(StringsSliceTest, MultiByteChars)
     // clang-format on
   });
 
-  auto results = cudf::strings::slice_strings(cudf::strings_column_view(input), 0);
+  auto results = cudf::strings::slice_strings(cudf::strings_column_view(input),
+                                              std::optional<cudf::size_type>(0));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, input);
 }
 
@@ -292,7 +313,8 @@ TEST_F(StringsSliceTest, Error)
 {
   cudf::test::strings_column_wrapper strings{"this string intentionally left blank"};
   auto strings_view = cudf::strings_column_view(strings);
-  EXPECT_THROW(cudf::strings::slice_strings(strings_view, 0, 0, 0), cudf::logic_error);
+  auto zero         = std::optional<cudf::size_type>(0);
+  EXPECT_THROW(cudf::strings::slice_strings(strings_view, zero, zero, zero), cudf::logic_error);
 
   auto indexes = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2});
   EXPECT_THROW(cudf::strings::slice_strings(strings_view, indexes, indexes), cudf::logic_error);
@@ -311,7 +333,8 @@ TEST_F(StringsSliceTest, ZeroSizeStringsColumn)
   auto const zero_size_strings_column = cudf::make_empty_column(cudf::type_id::STRING)->view();
   auto strings_view                   = cudf::strings_column_view(zero_size_strings_column);
 
-  auto results = cudf::strings::slice_strings(strings_view, 1, 2);
+  auto results = cudf::strings::slice_strings(
+    strings_view, std::optional<cudf::size_type>(1), std::optional<cudf::size_type>(2));
   cudf::test::expect_column_empty(results->view());
 
   auto const starts_column = cudf::make_empty_column(cudf::type_id::INT32)->view();
@@ -327,8 +350,10 @@ TEST_F(StringsSliceTest, AllEmpty)
   auto strings_view = cudf::strings_column_view(strings_col);
   auto exp_results  = cudf::column_view(strings_col);
 
-  auto results = cudf::strings::slice_strings(strings_view, 0, -1);
+  auto results = cudf::strings::slice_strings(
+    strings_view, std::optional<cudf::size_type>(0), std::optional<cudf::size_type>(-1));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, exp_results);
-  results = cudf::strings::slice_strings(strings_view, 0, -1);
+  results = cudf::strings::slice_strings(
+    strings_view, std::optional<cudf::size_type>(0), std::optional<cudf::size_type>(-1));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, exp_results);
 }

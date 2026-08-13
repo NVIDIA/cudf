@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -210,7 +210,6 @@ std::unique_ptr<table_with_names> apply_inner_join(
   std::copy(right_input->column_names().begin(),
             right_input->column_names().end(),
             std::back_inserter(merged_column_names));
-  return std::make_unique<table_with_names>(std::move(table), merged_column_names);
   return std::make_unique<table_with_names>(std::move(table), merged_column_names);
 }
 

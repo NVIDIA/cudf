@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,15 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for computing quantiles and percentiles of columns and tables.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_quantiles
  * @{
- * @file
  */
 
 /**
@@ -96,7 +100,7 @@ std::unique_ptr<table> quantiles(
 /**
  * @brief Calculate approximate percentiles on an input tdigest column.
  *
- * tdigest (https://arxiv.org/pdf/1902.04023.pdf) columns are produced specifically
+ * tdigest (https://arxiv.org/pdf/1902.04023) columns are produced specifically
  * by the TDIGEST and MERGE_TDIGEST aggregations.  These columns represent
  * compressed representations of a very large input data set that can be
  * queried for quantile information.

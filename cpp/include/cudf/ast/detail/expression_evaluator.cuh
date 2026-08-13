@@ -719,7 +719,7 @@ struct expression_evaluator {
               typename ResultSubclass,
               typename T,
               bool result_has_nulls,
-              CUDF_ENABLE_IF(detail::is_valid_unary_op<detail::operator_functor<op, has_nulls>,
+              CUDF_ENABLE_IF(detail::is_valid_unary_op<detail::operator_functor<op>,
                                                        possibly_null_value_t<Input, has_nulls>>)>
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
@@ -730,19 +730,19 @@ struct expression_evaluator {
     {
       // The output data type is the same whether or not nulls are present, so
       // pull from the non-nullable operator.
-      using Out = cuda::std::invoke_result_t<detail::operator_functor<op, false>, Input>;
+      using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
       this->template resolve_output<Out>(output_object,
                                          output,
                                          output_row_index,
                                          thread_intermediate_storage,
-                                         detail::operator_functor<op, has_nulls>{}(input));
+                                         detail::operator_functor<op>{}(input));
     }
 
     template <ast_operator op,
               typename ResultSubclass,
               typename T,
               bool result_has_nulls,
-              CUDF_ENABLE_IF(!detail::is_valid_unary_op<detail::operator_functor<op, has_nulls>,
+              CUDF_ENABLE_IF(!detail::is_valid_unary_op<detail::operator_functor<op>,
                                                         possibly_null_value_t<Input, has_nulls>>)>
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
@@ -781,7 +781,7 @@ struct expression_evaluator {
               typename ResultSubclass,
               typename T,
               bool result_has_nulls,
-              CUDF_ENABLE_IF(detail::is_valid_binary_op<detail::operator_functor<op, has_nulls>,
+              CUDF_ENABLE_IF(detail::is_valid_binary_op<detail::operator_functor<op>,
                                                         possibly_null_value_t<LHS, has_nulls>,
                                                         possibly_null_value_t<RHS, has_nulls>>)>
     __device__ inline void operator()(
@@ -794,19 +794,19 @@ struct expression_evaluator {
     {
       // The output data type is the same whether or not nulls are present, so
       // pull from the non-nullable operator.
-      using Out = cuda::std::invoke_result_t<detail::operator_functor<op, false>, LHS, RHS>;
+      using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, LHS, RHS>;
       this->template resolve_output<Out>(output_object,
                                          output,
                                          output_row_index,
                                          thread_intermediate_storage,
-                                         detail::operator_functor<op, has_nulls>{}(lhs, rhs));
+                                         detail::operator_functor<op>{}(lhs, rhs));
     }
 
     template <ast_operator op,
               typename ResultSubclass,
               typename T,
               bool result_has_nulls,
-              CUDF_ENABLE_IF(!detail::is_valid_binary_op<detail::operator_functor<op, has_nulls>,
+              CUDF_ENABLE_IF(!detail::is_valid_binary_op<detail::operator_functor<op>,
                                                          possibly_null_value_t<LHS, has_nulls>,
                                                          possibly_null_value_t<RHS, has_nulls>>)>
     __device__ inline void operator()(

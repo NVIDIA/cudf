@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -83,9 +83,11 @@ std::vector<aggregation_request> build_aggregation_requests(
 streaming_groupby::impl::impl(host_span<size_type const> key_indices,
                               host_span<streaming_aggregation_request const> requests,
                               size_type max_distinct_keys,
-                              null_policy null_handling)
+                              null_policy null_handling,
+                              cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _max_distinct_keys{max_distinct_keys},
     _null_handling{null_handling},
+    _mr{std::move(mr)},
     _d_agg_kinds{0, rmm::cuda_stream_default, cudf::get_current_device_resource_ref()},
     _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
 {
@@ -149,8 +151,8 @@ void streaming_groupby::impl::initialize(table_view const& data, rmm::cuda_strea
                  "Streaming groupby does not support MIN/MAX on variable-width types "
                  "(internally decomposed to ARGMIN/ARGMAX).",
                  std::invalid_argument);
-    CUDF_EXPECTS(k != aggregation::SUM_WITH_OVERFLOW,
-                 "Streaming groupby does not support SUM_WITH_OVERFLOW "
+    CUDF_EXPECTS(k != aggregation::SUM_OVERFLOW,
+                 "Streaming groupby does not support SUM_OVERFLOW "
                  "(struct intermediate cannot be merged across batches).",
                  std::invalid_argument);
   }
@@ -219,7 +221,7 @@ void streaming_groupby::impl::create_key_set(rmm::cuda_stream_view stream)
     streaming_probing_scheme_t{cudf::hashing::detail::default_hash<size_type>{}},
     cuco::thread_scope_device,
     cuco::storage<detail::hash::GROUPBY_BUCKET_SIZE>{},
-    rmm::mr::polymorphic_allocator<char>{},
+    rmm::mr::polymorphic_allocator<char>{_mr},
     stream.value());
 }
 
@@ -327,7 +329,7 @@ streaming_groupby::impl::do_finalize(rmm::cuda_stream_view stream,
 
   return {std::move(keys),
           detail::extract_results(
-            host_span<aggregation_request const>{user_requests}, cache, stream, mr)};
+            std::span<aggregation_request const>{user_requests}, cache, stream, mr)};
 }
 
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert(
@@ -344,8 +346,10 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
 streaming_groupby::streaming_groupby(host_span<size_type const> key_indices,
                                      host_span<streaming_aggregation_request const> requests,
                                      size_type max_distinct_keys,
-                                     null_policy null_handling)
-  : _impl{std::make_unique<impl>(key_indices, requests, max_distinct_keys, null_handling)}
+                                     null_policy null_handling,
+                                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _impl{std::make_unique<impl>(
+      key_indices, requests, max_distinct_keys, null_handling, std::move(mr))}
 {
 }
 

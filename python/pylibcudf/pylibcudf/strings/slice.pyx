@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport numeric_scalar
 from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_fixed_width_scalar as cpp_make_fixed_width_scalar,
@@ -64,6 +65,9 @@ cpdef Column slice_strings(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
+    cdef column_view c_start
+    cdef column_view c_stop
 
     if input is None:
         raise ValueError("input cannot be None")
@@ -77,11 +81,14 @@ cpdef Column slice_strings(
                 "start and stop must be provided for Column-wise slice"
             )
 
+        c_input = input.view()
+        c_start = start.view()
+        c_stop = stop.view()
         with nogil:
             c_result = cpp_slice.slice_strings(
-                input.view(),
-                start.view(),
-                stop.view(),
+                c_input,
+                c_start,
+                c_stop,
                 _cs,
                 mr.get_mr()
             )
@@ -104,9 +111,10 @@ cpdef Column slice_strings(
         cpp_stop = <numeric_scalar[size_type]*>stop.c_obj.get()
         cpp_step = <numeric_scalar[size_type]*>step.c_obj.get()
 
+        c_input = input.view()
         with nogil:
             c_result = cpp_slice.slice_strings(
-                input.view(),
+                c_input,
                 dereference(cpp_start),
                 dereference(cpp_stop),
                 dereference(cpp_step),

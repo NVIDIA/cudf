@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import collections
@@ -38,6 +38,7 @@ from cudf.pandas.fast_slow_proxy import (
     NotImplementedFallbackError,
     OOMFallbackError,
     TypeFallbackError,
+    _State,
     _Unusable,
     as_proxy_object,
     is_proxy_object,
@@ -155,6 +156,50 @@ def test_groupby(dataframe):
     gb = df.groupby("a", sort=True)
     got = gb.max()
     tm.assert_frame_equal(expected, got)
+
+
+def test_groupby_reflects_parent_frame_mutation():
+    # A groupby keyed by a string-column-derived array (df["a"].values) falls
+    # back to the slow path, so the proxy groupby is created in the "slow"
+    # state. A column added to the parent frame *after* the groupby is created
+    # must still be visible through it, matching pandas' live-reference
+    # semantics (the groupby holds a reference to the frame, not a snapshot).
+    data = {"a": ["x", "y", "x", "y"], "b": [1, 2, 3, 4]}
+
+    pdf = pd.DataFrame(data)
+    pgb = pdf.groupby(pdf["a"].values)
+    pdf["c"] = pdf["b"] * 10
+    expected = pgb["c"].sum()
+
+    df = xpd.DataFrame(data)
+    gb = df.groupby(df["a"].values)
+    df["c"] = df["b"] * 10
+    got = gb["c"].sum()
+
+    tm.assert_series_equal(expected, got)
+
+
+def test_intermediate_proxy_rederivation_refreshes_cache():
+    # When a parent proxy changes, an intermediate re-derives its wrapped object
+    # on the next conversion. The re-derivation must refresh the cache
+    # (``_fsproxy_wrapped``), not only the parent-id snapshot: otherwise the
+    # snapshot matches the live parents again while the cache still points at the
+    # stale object, so a later conversion returns stale data.
+    data = {"a": ["x", "y", "x", "y"], "b": [1, 2, 3, 4]}
+
+    df = xpd.DataFrame(data)
+    # Grouping by a string-column-derived array falls back to the slow path, so
+    # the groupby proxy is created (and stays) in the "slow" state.
+    gb = df.groupby(df["a"].values)
+    assert gb._fsproxy_state is _State.SLOW
+    df["c"] = df["b"] * 10  # mutate the parent frame after the groupby exists
+
+    # First conversion re-derives from the live parent and must see column "c".
+    assert "c" in gb._fsproxy_fast_to_slow().sum().columns
+    # The cache is now refreshed, so the parent-id snapshot matches again and a
+    # subsequent conversion returns the cached object -- which must also see "c".
+    assert "c" in gb._fsproxy_wrapped.sum().columns
+    assert "c" in gb._fsproxy_fast_to_slow().sum().columns
 
 
 def test_repr(dataframe):
@@ -344,7 +389,7 @@ def test_copy_deepcopy_recursion(dataframe):
     # https://nedbatchelder.com/blog/201010/surprising_getattr_recursion.html
     import copy
 
-    pdf, df = dataframe
+    _pdf, df = dataframe
     copy.copy(df)
     copy.deepcopy(df)
 
@@ -2139,3 +2184,69 @@ def test_module_proxy_write_through_config(monkeypatch):
     cf.register_option("foo", 1)
     monkeypatch.setattr(cf, "_registered_options", {})
     cf.register_option("foo", 1)
+
+
+def test_class_monkeypatch_roundtrip_restores_real_pandas(monkeypatch):
+    # Class-level patches on proxy types are mirrored onto the real pandas
+    # type (so they stay visible to fallback code running under
+    # ``disable_module_accelerator``); undoing them must restore the real
+    # type's own attributes — including for attributes that cudf.pandas
+    # replaces on the proxy, like ``columns``/``eval``/``str``.
+    real_df = xpd.DataFrame._fsproxy_slow
+    real_series = xpd.Series._fsproxy_slow
+    orig_columns = real_df.__dict__["columns"]
+    orig_eval = real_df.__dict__["eval"]
+    orig_str = real_series.__dict__["str"]
+
+    def fake_eval(self, *args, **kwargs):
+        return "patched"
+
+    monkeypatch.setattr(xpd.DataFrame, "eval", fake_eval)
+    assert real_df.__dict__["eval"] is fake_eval
+    monkeypatch.setattr(
+        xpd.DataFrame, "columns", property(lambda self: "patched")
+    )
+    monkeypatch.setattr(xpd.Series, "str", property(lambda self: "patched"))
+    monkeypatch.undo()
+
+    assert real_df.__dict__["columns"] is orig_columns
+    assert real_df.__dict__["eval"] is orig_eval
+    assert real_series.__dict__["str"] is orig_str
+    # The real type must remain fully functional on the fallback path.
+    df = real_df({"a": [1, 2]})
+    assert list(df.columns) == ["a"]
+    assert list(df.eval("b = a + 1").columns) == ["a", "b"]
+
+
+@pytest.mark.parametrize("box", ["Series", "array"])
+@pytest.mark.parametrize("na_value", [pd.NA, np.nan], ids=["NA", "NaN"])
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+def test_numpy_random_permutation_string(storage, na_value, box):
+    # https://github.com/pandas-dev/pandas/issues/63935
+    # Under copy-on-write, ``np.asarray`` on a python-storage string
+    # Series returns a read-only view; ``Generator.permutation`` relies
+    # on ``np.may_share_memory(np.asarray(x), x)`` to decide whether to
+    # copy before shuffling in place, which requires ``_transform_arg``
+    # to preserve the identity of object-dtype ndarrays that need no
+    # transformation (otherwise this raises "ValueError: array is
+    # read-only").
+    data = ["a", "bb", "ccc"]
+    obj = getattr(xpd, box)(
+        data, dtype=xpd.StringDtype(storage=storage, na_value=na_value)
+    )
+    pandas_obj = getattr(pd, box)(
+        data, dtype=pd.StringDtype(storage=storage, na_value=na_value)
+    )
+
+    result = np.random.default_rng(seed=2).permutation(obj)
+    expected = np.random.default_rng(seed=2).permutation(pandas_obj)
+    assert isinstance(result, np.ndarray)
+    assert result.tolist() == expected.tolist()
+
+    # The original object is left untouched by the shuffle.
+    tm.assert_equal(
+        obj,
+        getattr(xpd, box)(
+            data, dtype=xpd.StringDtype(storage=storage, na_value=na_value)
+        ),
+    )

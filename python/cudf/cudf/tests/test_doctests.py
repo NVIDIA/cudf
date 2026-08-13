@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import contextlib
 import doctest
@@ -7,18 +7,8 @@ import io
 
 import numpy as np
 import pytest
-from packaging import version
 
 import cudf
-
-pytestmark = pytest.mark.filterwarnings("ignore::FutureWarning")
-_SKIP_DOCTESTS = frozenset(
-    {
-        "register_dataframe_accessor",
-        "register_index_accessor",
-        "register_series_accessor",
-    }
-)
 
 # modules that will be searched for doctests
 tests = [
@@ -88,6 +78,19 @@ def _find_doctests_in_obj(obj, finder=None, criteria=None):
                     yield docstring
 
 
+marks_for_doctests = {
+    "register_dataframe_accessor": pytest.mark.filterwarnings(
+        "ignore:Attribute .* will be overridden:UserWarning"
+    ),
+    "register_index_accessor": pytest.mark.filterwarnings(
+        "ignore:Attribute .* will be overridden:UserWarning"
+    ),
+    "register_series_accessor": pytest.mark.filterwarnings(
+        "ignore:Attribute .* will be overridden:UserWarning"
+    ),
+}
+
+
 def _collect_doctests():
     """Eagerly collect all unique doctests into a list.
 
@@ -98,7 +101,11 @@ def _collect_doctests():
     results = []
     for mod in tests:
         for docstring in _find_doctests_in_obj(mod):
-            results.append(docstring)
+            if (mark := marks_for_doctests.get(docstring.name)) is not None:
+                doc = pytest.param(docstring, marks=mark)
+            else:
+                doc = docstring
+            results.append(doc)
     return results
 
 
@@ -106,24 +113,12 @@ _all_doctests = _collect_doctests()
 
 
 class TestDoctests:
-    @pytest.fixture(autouse=True)
-    def printoptions(cls):
-        # TODO: NumPy now prints scalars as `np.int8(1)`, etc. this should
-        #       be adapted evantually.
-        if version.parse(np.__version__) >= version.parse("2.0"):
-            with np.printoptions(legacy="1.25"):
-                yield
-        else:
-            yield
-
     @pytest.mark.parametrize(
         "docstring",
         _all_doctests,
         ids=lambda docstring: docstring.name,
     )
     def test_docstring(self, docstring, monkeypatch, tmp_path):
-        if docstring.name in _SKIP_DOCTESTS:
-            pytest.skip(f"{docstring.name} doctest is not runnable")
         # We ignore differences in whitespace in the doctest output, and enable
         # the use of an ellipsis "..." to match any string in the doctest
         # output. An ellipsis is useful for, e.g., memory addresses or

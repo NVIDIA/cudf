@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,7 +24,6 @@ namespace io::parquet {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 /**
@@ -498,11 +497,40 @@ struct SchemaElement {
   /**
    * @brief Check if the schema element is a stub
    *
+   * A LIST- or MAP-annotated REPEATED group is NOT a stub: in the legacy 2-level Parquet
+   * encoding the REPEATED group is the list/map itself (its single child is the element type),
+   * not a wrapper that should be collapsed. Treating it as a stub would change
+   * `list<list<primitive>>` into `list<primitive>` (and analogously for maps), diverging from
+   * parquet-mr / Spark CPU.
+   *
+   * No file-version or writer gate is needed because the annotation pattern is itself the
+   * encoding signal:
+   *  - 3-level encoding: only the outer (non-REPEATED) group carries LIST/MAP; the inner
+   *    REPEATED group is unannotated, so this test correctly returns true and the wrapper is
+   *    collapsed.
+   *  - 2-level encoding (Thrift, parquet-avro 1.7, and other legacy writers): the REPEATED
+   *    group itself carries LIST/MAP, so this test correctly returns false and the group is
+   *    preserved as a nesting level.
+   *
+   * The check covers both annotation sources -- the deprecated `converted_type` and the newer
+   * `logical_type` -- since a Parquet file may carry only one.
+   *
+   * References:
+   *  - Parquet backward-compatibility rules:
+   *    https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#backward-compatibility-rules
+   *  - cuDF context: https://github.com/NVIDIA/spark-rapids/issues/11589
+   *  - parquet-avro variant: https://github.com/NVIDIA/spark-rapids/issues/11592
+   *
    * @return True if the schema element is a stub, false otherwise
    */
   [[nodiscard]] bool is_stub() const
   {
-    return repetition_type == FieldRepetitionType::REPEATED && num_children == 1;
+    auto const is_list_or_map_logical_type =
+      logical_type.has_value() &&
+      (logical_type->type == LogicalType::LIST || logical_type->type == LogicalType::MAP);
+    return repetition_type == FieldRepetitionType::REPEATED && num_children == 1 &&
+           converted_type != ConvertedType::LIST && converted_type != ConvertedType::MAP &&
+           !is_list_or_map_logical_type;
   }
 
   /**

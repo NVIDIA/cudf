@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -33,6 +34,7 @@ namespace {
  * @brief Resolves the k indices per segment
  *
  * Marks values outside the k range to -1 to be removed in a separate step.
+ * Rows not covered by any segment are also marked to be removed.
  * Also computes the total number of valid indices for each segment.
  * All elements are used in a segment if it has less than k total elements.
  *
@@ -50,6 +52,11 @@ CUDF_KERNEL void resolve_segment_indices(device_span<size_type const> d_offsets,
   if (tid >= d_indices.size()) { return; }
 
   auto const sitr = thrust::upper_bound(thrust::seq, d_offsets.begin(), d_offsets.end(), tid);
+  // Mark rows outside all segments for removal (offsets need not cover all rows).
+  if (sitr == d_offsets.begin() || sitr == d_offsets.end()) {
+    d_indices[tid] = -1;
+    return;
+  }
   auto const segment_start = *(sitr - 1);
   auto const segment_end   = *sitr;
   auto const index         = tid - segment_start;
@@ -93,11 +100,15 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
     cudf::table_view({col}), segment_offsets, {topk_order}, {nulls}, stream, temp_mr);
   auto const d_indices = indices->mutable_view().begin<size_type>();
 
-  auto segment_sizes = rmm::device_uvector<size_type>(segment_offsets.size() - 1, stream);
-  auto span_indices  = device_span<size_type>{d_indices, static_cast<std::size_t>(indices->size())};
-  auto const grid    = cudf::detail::grid_1d(indices->size(), 256);
+  // Zero-initialized because resolve_segment_indices writes a segment's size only from its
+  // first element; an empty segment has none, so its slot must remain 0, not uninitialized.
+  auto segment_sizes = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+    segment_offsets.size() - 1, stream, temp_mr);
+  auto span_indices = device_span<size_type>{d_indices, static_cast<std::size_t>(indices->size())};
+  auto const grid   = cudf::detail::grid_1d(indices->size(), 256);
   resolve_segment_indices<<<grid.num_blocks, grid.num_threads_per_block, 0, stream>>>(
     segment_offsets, k, span_indices, segment_sizes.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   auto [offsets, total_elements] =
     cudf::detail::make_offsets_child_column(segment_sizes.begin(), segment_sizes.end(), stream, mr);
 

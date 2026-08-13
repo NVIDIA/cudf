@@ -112,6 +112,7 @@ rmm::device_uvector<cudf::size_type> compute_unique_counts(uint32_t const* value
     static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
   sorted_unique_fn<<<num_blocks, block_size, 0, stream.value()>>>(
     values, offsets, rows, d_results.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   return d_results;
 }
 
@@ -186,6 +187,7 @@ rmm::device_uvector<cudf::size_type> compute_intersect_counts(uint32_t const* va
     static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
   sorted_intersect_fn<<<num_blocks, block_size, 0, stream.value()>>>(
     values1, offsets1, values2, offsets2, rows, d_results.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   return d_results;
 }
 
@@ -336,6 +338,7 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
     static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size, block_size);
   count_substrings_kernel<<<num_blocks, block_size, 0, stream.value()>>>(
     *d_strings, width, offsets.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   auto const total_hashes =
     cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream);
 
@@ -343,6 +346,7 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
   rmm::device_uvector<uint32_t> hashes(total_hashes, stream);
   substring_hash_kernel<<<num_blocks, block_size, 0, stream.value()>>>(
     *d_strings, width, offsets.data(), hashes.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   // sort hashes
   rmm::device_uvector<uint32_t> sorted(total_hashes, stream);

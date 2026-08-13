@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -202,6 +202,12 @@ struct merge_group_statistics_functor {
 
     chunk = block_reduce(chunk, storage);
 
+    // PARQUET-1246: if a float/double column contains any NaN, min/max must be omitted,
+    // else a reader doing NaN predicate pushdown skips the row group. spark-rapids#15004.
+    if constexpr (IO == detail::io_file_format::PARQUET) {
+      if (chunk.has_nan) { chunk.has_minmax = false; }
+    }
+
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }
   }
 
@@ -338,6 +344,7 @@ void calculate_group_statistics(statistics_chunk* chunks,
   constexpr int block_size = 256;
   gpu_calculate_group_statistics<block_size, IO>
     <<<num_chunks, block_size, 0, stream.value()>>>(chunks, groups, int96_timestamps);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -392,6 +399,7 @@ void merge_group_statistics(statistics_chunk* chunks_out,
   constexpr int block_size = 256;
   gpu_merge_group_statistics<block_size, IO>
     <<<num_chunks, block_size, 0, stream.value()>>>(chunks_out, chunks_in, groups);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace detail

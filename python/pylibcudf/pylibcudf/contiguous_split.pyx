@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cpython.buffer cimport PyBuffer_FillInfo
@@ -351,10 +351,12 @@ cpdef PackedColumns pack(Table input, object stream=None, DeviceMemoryResource m
     cdef unique_ptr[packed_columns] pack
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
+
     mr = _get_memory_resource(mr)
+    cdef table_view c_input = input.view()
     with nogil:
         pack = move(make_unique[packed_columns](
-            cpp_pack(input.view(), _cs, mr.get_mr())
+            cpp_pack(c_input, _cs, mr.get_mr())
         ))
     return PackedColumns.from_libcudf(move(pack), _stream, mr)
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@ package ai.rapids.cudf.ast;
 
 import ai.rapids.cudf.DType;
 
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -121,6 +122,39 @@ public final class Literal extends AstExpression {
       return ofNull(DType.FLOAT64);
     }
     return ofDouble(value.doubleValue());
+  }
+
+  /**
+   * Construct a decimal literal with the specified type and unscaled value.
+   * A null {@code unscaledValue} produces a null literal of the requested type.
+   * Root literals of type {@code DECIMAL32} or {@code DECIMAL64} can be evaluated with either
+   * {@link CompiledExpression#computeColumn} or {@link CompiledExpression#computeColumnJit}.
+   * A {@code DECIMAL128} root literal must use {@code computeColumnJit}; the legacy executor
+   * cannot materialize it correctly.
+   *
+   * @param type decimal storage type and scale
+   * @param unscaledValue unscaled decimal value, or null
+   * @return decimal literal
+   * @throws IllegalArgumentException if {@code type} is not a decimal type
+   * @throws ArithmeticException if {@code unscaledValue} does not fit in {@code type}
+   */
+  public static Literal ofDecimal(DType type, BigInteger unscaledValue) {
+    if (!type.isDecimalType()) {
+      throw new IllegalArgumentException("type is not a decimal: " + type);
+    }
+    if (unscaledValue == null) {
+      return ofNull(type);
+    }
+    if (type.getTypeId() == DType.DTypeEnum.DECIMAL32) {
+      return ofIntBasedType(type, unscaledValue.intValueExact());
+    } else if (type.getTypeId() == DType.DTypeEnum.DECIMAL64) {
+      return ofLongBasedType(type, unscaledValue.longValueExact());
+    } else {
+      if (unscaledValue.bitLength() > type.getSizeInBytes() * Byte.SIZE - 1) {
+        throw new ArithmeticException("BigInteger out of DECIMAL128 range");
+      }
+      return new Literal(type, convertDecimal128FromJavaToCudf(unscaledValue.toByteArray(), type));
+    }
   }
 
   /** Construct a timestamp days literal with the specified value. */
@@ -242,23 +276,18 @@ public final class Literal extends AstExpression {
   }
 
   private int getDataTypeSerializedSize() {
-    int nativeTypeId = type.getTypeId().getNativeId();
-    assert nativeTypeId == (byte) nativeTypeId : "Type ID does not fit in a byte";
+    AstUtils.checkByte(type.getTypeId().getNativeId());
     if (type.isDecimalType()) {
-      assert type.getScale() == (byte) type.getScale() : "Decimal scale does not fit in a byte";
-      return 2;
+      return Byte.BYTES + Integer.BYTES;
     }
-    return 1;
+    return Byte.BYTES;
   }
 
   private void serializeDataType(ByteBuffer bb) {
-    byte nativeTypeId = (byte) type.getTypeId().getNativeId();
-    assert nativeTypeId == type.getTypeId().getNativeId() : "DType ID does not fit in a byte";
+    byte nativeTypeId = AstUtils.checkByte(type.getTypeId().getNativeId());
     bb.put(nativeTypeId);
     if (type.isDecimalType()) {
-      byte scale = (byte) type.getScale();
-      assert scale == (byte) type.getScale() : "Decimal scale does not fit in a byte";
-      bb.put(scale);
+      bb.putInt(type.getScale());
     }
   }
 
@@ -274,5 +303,32 @@ public final class Literal extends AstExpression {
     byte[] serializedValue = new byte[Long.BYTES];
     ByteBuffer.wrap(serializedValue).order(ByteOrder.nativeOrder()).putLong(value);
     return new Literal(type, serializedValue);
+  }
+
+  private static byte[] convertDecimal128FromJavaToCudf(byte[] bytes, DType type) {
+    return convertDecimal128FromJavaToCudf(bytes, type, ByteOrder.nativeOrder());
+  }
+
+  // Visible for testing so both possible native byte orders can be exercised.
+  static byte[] convertDecimal128FromJavaToCudf(
+      byte[] bytes, DType type, ByteOrder byteOrder) {
+    // BigInteger uses big-endian bytes, while JNI reads the decimal128 value in native order.
+    byte[] finalBytes = new byte[type.getSizeInBytes()];
+    byte signByte = (bytes[0] & 0x80) > 0 ? (byte) 0xff : (byte) 0x00;
+    if (byteOrder == ByteOrder.BIG_ENDIAN) {
+      int offset = finalBytes.length - bytes.length;
+      for (int i = 0; i < offset; i++) {
+        finalBytes[i] = signByte;
+      }
+      System.arraycopy(bytes, 0, finalBytes, offset, bytes.length);
+    } else {
+      for (int i = bytes.length; i < finalBytes.length; i++) {
+        finalBytes[i] = signByte;
+      }
+      for (int i = 0; i < bytes.length; i++) {
+        finalBytes[i] = bytes[bytes.length - i - 1];
+      }
+    }
+    return finalBytes;
   }
 }

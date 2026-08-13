@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -69,7 +69,7 @@ BUILD_ARG=(
   "-DCUDF_USE_PER_THREAD_DEFAULT_STREAM=$ENABLE_PTDS"
   "-DCUDF_JNI_LIBCUDF_STATIC=ON"
   "-DUSE_GDS=$ENABLE_GDS"
-  "-Dtest=*,!CuFileTest,!CudaFatalTest,!ColumnViewNonEmptyNullsTest"
+  "-Dtest=*,!CuFileTest,!CudaFatalTest,!ColumnViewNonEmptyNullsTest,!NativeDepsLoaderTest"
 )
 
 if [ "$SIGN_FILE" == true ]; then

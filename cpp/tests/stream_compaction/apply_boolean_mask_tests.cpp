@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,6 +23,15 @@
 #include <cuda/std/functional>
 
 struct ApplyBooleanMask : public cudf::test::BaseFixture {};
+
+TEST_F(ApplyBooleanMask, ZeroColumnsPreservesRowCount)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 4};
+  cudf::test::fixed_width_column_wrapper<bool> boolean_mask{{true, false, true, true}};
+  auto got = cudf::apply_boolean_mask(input, boolean_mask);
+  EXPECT_EQ(got->num_columns(), 0);
+  EXPECT_EQ(got->num_rows(), 3);
+}
 
 TEST_F(ApplyBooleanMask, NonNullBooleanMask)
 {

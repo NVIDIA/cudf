@@ -276,7 +276,7 @@ def test_join_maintain_order_with_slice(
     assert_gpu_result_equal(
         q,
         engine=engine,
-        polars_collect_kwargs={"optimizations": pl.QueryOptFlags(slice_pushdown=False)},
+        collect_kwargs={"optimizations": pl.QueryOptFlags(slice_pushdown=False)},
     )
 
 

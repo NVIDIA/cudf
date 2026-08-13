@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,18 +11,24 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/resource_ref.hpp>
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <variant>
+
+/**
+ * @file
+ * @brief APIs for computing rolling window aggregations over columns.
+ */
 
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup aggregation_rolling
  * @{
- * @file
  */
 
 /**
@@ -133,7 +139,7 @@ struct rolling_request {
  * @param preceding Type of the preceding window.
  * @param following Type of the following window.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Device memory resource used to allocate the returned columns' device memory
  * @return pair of preceding and following columns that define the window bounds for each row,
  * suitable for passing to `rolling_window`.
  */
@@ -586,6 +592,39 @@ std::unique_ptr<table> grouped_range_rolling_window(
   column_view const& orderby,
   order order,
   null_order null_order,
+  range_window_type preceding,
+  range_window_type following,
+  std::span<rolling_request const> requests,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Apply a grouping-aware range-based rolling window function to a sequence of columns,
+ * using one or more sorted order-by columns to identify peer rows.
+ *
+ * This overload is equivalent to the single-column `grouped_range_rolling_window` overload when
+ * `orderby` contains one column. When `orderby` contains multiple columns, bounded scalar RANGE
+ * endpoints are not supported because a scalar distance is only well-defined for one order-by
+ * column. Multi-column order-by windows support peer-frame endpoints: `unbounded` and
+ * `current_row`.
+ *
+ * @param group_keys Possibly empty table of sorted keys defining groups.
+ * @param orderby Table defining sorted order-by keys. If `group_keys` is non-empty, must be sorted
+ * groupwise.
+ * @param orders Sort order for each order-by column.
+ * @param null_orders Null sort order for each order-by column.
+ * @param preceding Type of the preceding window.
+ * @param following Type of the following window.
+ * @param requests Columns to aggregate and the aggregation for each column.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned table's device memory.
+ * @return A table of results, one column per input request.
+ */
+std::unique_ptr<table> grouped_range_rolling_window(
+  table_view const& group_keys,
+  table_view const& orderby,
+  host_span<order const> orders,
+  host_span<null_order const> null_orders,
   range_window_type preceding,
   range_window_type following,
   host_span<rolling_request const> requests,

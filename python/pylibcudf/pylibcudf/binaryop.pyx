@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator import dereference
@@ -9,6 +9,7 @@ from libcpp.utility cimport move
 from pylibcudf.libcudf cimport binaryop as cpp_binaryop
 from pylibcudf.libcudf.binaryop cimport binary_operator
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 
 from pylibcudf.libcudf.binaryop import \
     binary_operator as BinaryOperator  # no-cython-lint
@@ -64,22 +65,28 @@ cpdef Column binary_operation(
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
+    cdef column_view c_lhs_column
+    cdef column_view c_rhs_column
+
     mr = _get_memory_resource(mr)
 
     if LeftBinaryOperand is Column and RightBinaryOperand is Column:
+        c_lhs_column = lhs.view()
+        c_rhs_column = rhs.view()
         with nogil:
             result = cpp_binaryop.binary_operation(
-                lhs.view(),
-                rhs.view(),
+                c_lhs_column,
+                c_rhs_column,
                 op,
                 output_type.c_obj,
                 _cs,
                 mr.get_mr()
             )
     elif LeftBinaryOperand is Column and RightBinaryOperand is Scalar:
+        c_lhs_column = lhs.view()
         with nogil:
             result = cpp_binaryop.binary_operation(
-                lhs.view(),
+                c_lhs_column,
                 dereference(rhs.c_obj),
                 op,
                 output_type.c_obj,
@@ -87,10 +94,11 @@ cpdef Column binary_operation(
                 mr.get_mr()
             )
     elif LeftBinaryOperand is Scalar and RightBinaryOperand is Column:
+        c_rhs_column = rhs.view()
         with nogil:
             result = cpp_binaryop.binary_operation(
                 dereference(lhs.c_obj),
-                rhs.view(),
+                c_rhs_column,
                 op,
                 output_type.c_obj,
                 _cs,

@@ -335,6 +335,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
     auto const grid = cudf::detail::grid_1d(input.size() * warp_size, block_size);
     like_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream>>>(
       *d_strings, patterns_itr, d_escape, results->mutable_view().data<bool>());
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   results->set_null_count(input.null_count());
@@ -405,16 +406,6 @@ std::unique_ptr<column> like(strings_column_view const& input,
 }  // namespace detail
 
 // external API
-
-std::unique_ptr<column> like(strings_column_view const& input,
-                             string_scalar const& pattern,
-                             string_scalar const& escape_character,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::like(input, pattern, escape_character, stream, mr);
-}
 
 std::unique_ptr<column> like(strings_column_view const& input,
                              std::string_view const& pattern,

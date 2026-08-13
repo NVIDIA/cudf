@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 
@@ -18,12 +19,16 @@
 #include <cstdint>
 #include <memory>
 
+/**
+ * @file
+ * @brief Class for computing approximate distinct counts using a HyperLogLog sketch
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_reduction
  * @{
- * @file
  */
 
 // Forward declarations
@@ -42,6 +47,10 @@ class approx_distinct_count;
  *
  * This class provides an object-oriented interface to HyperLogLog sketches, allowing
  * incremental addition of data and cardinality estimation.
+ *
+ * In the HLL literature, "sketch" refers to the register array that summarizes the input.
+ * In this implementation, the sketch is stored as an `int32_t` device vector to enable
+ * efficient device-side atomic operations.
  *
  * The implementation uses XXHash64 to hash table rows into 64-bit values, which are
  * then added to the HyperLogLog sketch without additional hashing (identity function).
@@ -115,12 +124,15 @@ class approx_distinct_count {
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls (default: `EXCLUDE`)
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL` (default: `NAN_IS_NULL`)
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the sketch storage
    */
   approx_distinct_count(table_view const& input,
                         std::int32_t precision       = 12,
                         null_policy null_handling    = null_policy::EXCLUDE,
                         nan_policy nan_handling      = nan_policy::NAN_IS_NULL,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream());
+                        rmm::cuda_stream_view stream = cudf::get_default_stream(),
+                        cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                          cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructs an approximate distinct count sketch from a table with specified standard
@@ -139,6 +151,7 @@ class approx_distinct_count {
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls (default: `EXCLUDE`)
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL` (default: `NAN_IS_NULL`)
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the sketch storage
    *
    * @throws std::invalid_argument if standard_error value is not positive
    */
@@ -146,7 +159,9 @@ class approx_distinct_count {
                         desired_standard_error error,
                         null_policy null_handling    = null_policy::EXCLUDE,
                         nan_policy nan_handling      = nan_policy::NAN_IS_NULL,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream());
+                        rmm::cuda_stream_view stream = cudf::get_default_stream(),
+                        cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                          cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructs a non-owning sketch that operates on user-allocated storage

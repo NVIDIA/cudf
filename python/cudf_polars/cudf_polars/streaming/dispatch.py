@@ -31,10 +31,17 @@ class State(TypedDict):
         GPUEngine configuration options.
     stats
         Statistics collector.
+    rank
+        Rank of the current worker for IO sharding. Always
+        0 for non-streaming engines.
+    nranks
+        Number of workers for IO sharding. Always 1 for non-streaming engines.
     """
 
     config_options: ConfigOptions[StreamingExecutor]
     stats: StatsCollector
+    rank: int
+    nranks: int
 
 
 LowerIRTransformer: TypeAlias = GenericTransformer[

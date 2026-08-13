@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,11 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief Interface classes for writing output data to files, host memory, or device memory.
+ */
+
 namespace CUDF_EXPORT cudf {
 //! IO interfaces
 namespace io {
@@ -23,7 +28,6 @@ namespace io {
 /**
  * @addtogroup io_datasinks
  * @{
- * @file
  */
 
 /**

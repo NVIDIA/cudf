@@ -100,6 +100,10 @@ def warns_on_spmd(  # pragma: no cover; rapidsmpf-only path
     return contextlib.nullcontext()
 
 
+SMALL_MAX_ROWS_PER_PARTITION = 4
+SMALL_TARGET_PARTITION_SIZE = 10
+
+
 def create_streaming_options(
     blocksize_mode: Literal["medium", "small"],
 ) -> StreamingOptions:
@@ -134,9 +138,9 @@ def create_streaming_options(
             )
         case "small":
             return StreamingOptions(
-                max_rows_per_partition=4,
+                max_rows_per_partition=SMALL_MAX_ROWS_PER_PARTITION,
                 dynamic_planning={},
-                target_partition_size=10,
+                target_partition_size=SMALL_TARGET_PARTITION_SIZE,
                 raise_on_fail=True,
                 fallback_mode=StreamingFallbackMode.SILENT,
                 allow_gpu_sharing=True,

@@ -19,6 +19,5 @@ contributing_guide
 documentation
 testing
 benchmarking
-options
 udf_memory_management
 ```

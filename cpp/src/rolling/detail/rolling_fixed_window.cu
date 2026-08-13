@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,10 +40,8 @@ std::unique_ptr<column> rolling_window(column_view const& input,
   if (agg.kind == aggregation::CUDA || agg.kind == aggregation::PTX) {
     // TODO: In future, might need to clamp preceding/following to column boundaries.
     return cudf::detail::rolling_window_udf(input,
-                                            preceding_window,
-                                            "cudf::size_type",
-                                            following_window,
-                                            "cudf::size_type",
+                                            cudf::detail::fixed_window_wrapper(preceding_window),
+                                            cudf::detail::fixed_window_wrapper(following_window),
                                             min_periods,
                                             agg,
                                             stream,

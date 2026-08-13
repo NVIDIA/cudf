@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -180,7 +180,7 @@ CUDF_KERNEL void minhash_seed_kernel(cudf::column_device_view const d_strings,
  * @param d_results Final results vector (used for the proactive initialize)
  */
 template <typename HashFunction, typename hash_value_type = typename HashFunction::result_type>
-CUDF_KERNEL void minhash_ngrams_kernel(cudf::detail::lists_column_device_view const d_input,
+CUDF_KERNEL void minhash_ngrams_kernel(cudf::lists_column_device_view const d_input,
                                        hash_value_type seed,
                                        cudf::size_type ngrams,
                                        hash_value_type* d_hashes,
@@ -476,6 +476,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
                                                                          d_threshold_count.data(),
                                                                          parameter_a.size(),
                                                                          d_results);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   auto transform_fn = [d_strings = *d_strings] __device__(auto idx) -> cudf::size_type {
     if (d_strings.is_null(idx)) { return 0; }
@@ -496,6 +497,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
     minhash_kernel<offsets_type, hash_value_type, 1>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, width, d_hashes.data(), d_results);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   // handle the strings above the threshold width
@@ -507,6 +509,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
     minhash_kernel<offsets_type, hash_value_type, blocks_per_row>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, width, d_hashes.data(), d_results);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   return results;
@@ -555,7 +558,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   auto d_threshold_count = cudf::detail::device_scalar<cudf::size_type>(
     0, stream, cudf::get_current_device_resource_ref());
 
-  auto d_list = cudf::detail::lists_column_device_view(*d_input);
+  auto d_list = cudf::lists_column_device_view(*d_input);
   minhash_ngrams_kernel<HashFunction>
     <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(d_list,
                                                                          seed,
@@ -564,6 +567,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
                                                                          d_threshold_count.data(),
                                                                          parameter_a.size(),
                                                                          d_results);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   auto sizes_fn = [d_list] __device__(auto idx) -> cudf::size_type {
     if (d_list.is_null(idx)) { return 0; }
@@ -583,6 +587,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
     minhash_kernel<offset_type, hash_value_type, 1>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, ngrams, d_hashes.data(), d_results);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   // handle the strings above the threshold width
@@ -594,6 +599,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
     minhash_kernel<offset_type, hash_value_type, blocks_per_row>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, ngrams, d_hashes.data(), d_results);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   return results;

@@ -36,6 +36,15 @@ The engine classes share a common base class:
    :members:
 ```
 
+## Persisted results
+
+Returned by `engine.execute()` to keep query results GPU-resident (see {doc}`execute`).
+
+```{eval-rst}
+.. autoclass:: cudf_polars.engine.persisted_result.PersistedQueryResult
+   :members: lazy, release
+```
+
 ## Configuration
 
 ```{eval-rst}
@@ -67,8 +76,28 @@ Most users interact with them through `StreamingOptions` fields rather than dire
 .. automodule:: cudf_polars.utils.config
    :members:
       DynamicPlanningOptions,
+      JoinFilterPushdownOptions,
       MemoryResourceConfig,
       ParquetOptions,
       StreamingExecutor,
       StreamingFallbackMode,
+```
+
+## Quent Integration
+
+cudf-polars can emit [Quent events](https://github.com/rapidsai/quent), which can be
+used to profile your queries.
+
+```{eval-rst}
+.. automodule:: cudf_polars.quent
+   :members:
+      Attribute,
+      Engine,
+      HomogeneousListValue,
+      Implementation,
+      QuentContext,
+      Query,
+      QueryGroup,
+      ScalarValue,
+      Value,
 ```

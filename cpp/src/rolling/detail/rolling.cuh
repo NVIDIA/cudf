@@ -464,6 +464,7 @@ struct rolling_window_launcher {
                                                              device_op,
                                                              preceding_window_begin,
                                                              following_window_begin);
+      CUDF_CUDA_TRY(cudaGetLastError());
 
       auto const valid_count = d_valid_count.value(stream);
       output->set_null_count(output->size() - valid_count);

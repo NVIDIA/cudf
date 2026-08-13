@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2013 Google Inc. All Rights Reserved.
  * SPDX-FileCopyrightText: Copyright(c) 2009, 2010, 2013 - 2016 by the Brotli Authors.
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 AND MIT
  */
 
@@ -10,7 +10,7 @@
  * CUDA-based brotli decompression
  *
  * Brotli Compressed Data Format
- * https://tools.ietf.org/html/rfc7932
+ * https://datatracker.ietf.org/doc/html/rfc7932
  *
  * Portions of this file are derived from Google's Brotli project at
  * https://github.com/google/brotli, original license text below.
@@ -19,7 +19,7 @@
 /* Copyright 2013 Google Inc. All Rights Reserved.
 
 Distributed under MIT license.
-See file LICENSE for detail or copy at https://opensource.org/licenses/MIT
+See file LICENSE for detail or copy at https://opensource.org/license/MIT
 */
 
 /*
@@ -355,7 +355,7 @@ static __device__ uint8_t* ext_heap_alloc(uint32_t bytes,
                                           uint32_t ext_heap_size)
 {
   uint32_t len              = (bytes + 0xf) & ~0xf;
-  volatile auto* heap_ptr   = reinterpret_cast<volatile uint32_t*>(ext_heap_base);
+  auto volatile* heap_ptr   = reinterpret_cast<uint32_t volatile*>(ext_heap_base);
   uint32_t first_free_block = ~0;
   for (;;) {
     uint32_t blk_next, blk_prev;
@@ -425,7 +425,7 @@ static __device__ void ext_heap_free(void* ptr,
                                      uint32_t ext_heap_size)
 {
   uint32_t len              = (bytes + 0xf) & ~0xf;
-  volatile auto* heap_ptr   = (volatile uint32_t*)ext_heap_base;
+  auto volatile* heap_ptr   = (uint32_t volatile*)ext_heap_base;
   uint32_t first_free_block = ~0;
   auto cur_blk              = static_cast<uint32_t>(static_cast<uint8_t*>(ptr) - ext_heap_base);
   for (;;) {
@@ -1903,7 +1903,7 @@ static __device__ void ProcessCommands(debrotli_state_s* s, brotli_dictionary_s 
 
 /**
  * @brief Brotli decoding kernel
- * See https://tools.ietf.org/html/rfc7932
+ * See https://datatracker.ietf.org/doc/html/rfc7932
  *
  * blockDim = {block_size,1,1}
  *
@@ -2102,6 +2102,7 @@ void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
     scratch.data() + fb_heap_size, get_brotli_dictionary(), sizeof(brotli_dictionary_s), stream));
   gpu_debrotli_kernel<<<dim_grid, dim_block, 0, stream.value()>>>(
     inputs, outputs, results, scratch.data(), fb_heap_size);
+  CUDF_CUDA_TRY(cudaGetLastError());
 #if DUMP_FB_HEAP
   uint32_t dump[2];
   uint32_t cur = 0;

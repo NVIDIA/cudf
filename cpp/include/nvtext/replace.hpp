@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -16,6 +16,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_replace
  * @{
  * @file
+ * @brief APIs for replacing tokens within strings columns.
  */
 
 /**

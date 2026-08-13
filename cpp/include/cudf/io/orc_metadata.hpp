@@ -1,11 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file orc_metadata.hpp
- * @brief cuDF-IO freeform API
+ * @brief Freeform APIs for ORC metadata
  */
 
 #pragma once
@@ -23,7 +23,6 @@ namespace io {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 //! ORC data type

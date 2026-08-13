@@ -6,7 +6,7 @@ You will need:
    devcontainer](https://github.com/rapidsai/devcontainers/), add
    `"./features/src/rust": {"version": "latest", "profile": "default"},` to your
    preferred configuration. Or else, use
-   [rustup](https://www.rust-lang.org/tools/install)
+   [rustup](https://rust-lang.org/tools/install/)
 2. A [cudf development
    environment](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
    The combined devcontainer works, or whatever your favourite approach is.

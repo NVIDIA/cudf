@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 import itertools
@@ -57,18 +57,16 @@ from cudf.testing import assert_eq
         ),
         lambda: pd.Index([True, False] * 5),
         lambda: pd.CategoricalIndex(["a", "b", "a", "b"], ["a", "b", "c"]),
-        lambda: (
-            cudf.DataFrame(
-                {
-                    "a": [1, 2, 3],
-                    "b": ["c", "e", "g"],
-                    "d": [True, False, True],
-                },
-                index=cudf.MultiIndex.from_tuples(
-                    [("i1", "i2"), ("i3", "i4"), ("i5", "i6")],
-                    names=["foo", "bar"],
-                ),
-            )
+        lambda: cudf.DataFrame(
+            {
+                "a": [1, 2, 3],
+                "b": ["c", "e", "g"],
+                "d": [True, False, True],
+            },
+            index=cudf.MultiIndex.from_tuples(
+                [("i1", "i2"), ("i3", "i4"), ("i5", "i6")],
+                names=["foo", "bar"],
+            ),
         ),
         lambda: cudf.Index(
             cudf.date_range(start="2011-01-01", end="2012-01-01", periods=13)

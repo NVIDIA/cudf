@@ -2,7 +2,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Cristhian Alberto Gonzales Castillo <cristhian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 // clang-format on
@@ -501,8 +501,8 @@ TYPED_TEST(ReplaceTest, NullsInBoth)
 // Test with much larger data sets
 TYPED_TEST(ReplaceTest, LargeScaleReplaceTest)
 {
-  const size_t DATA_SIZE    = 1000000;
-  const size_t REPLACE_SIZE = 10000;
+  size_t const DATA_SIZE    = 1000000;
+  size_t const REPLACE_SIZE = 10000;
 
   thrust::host_vector<TypeParam> input_column(DATA_SIZE);
   std::generate(std::begin(input_column), std::end(input_column), []() {

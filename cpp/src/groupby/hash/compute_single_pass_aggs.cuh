@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,7 +32,7 @@ template <typename SetType>
 std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   SetType& global_set,
   bitmask_type const* row_bitmask,
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
@@ -47,7 +47,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
 
   // Performs naive global memory aggregations when the workload is not compatible with shared
   // memory, such as when aggregating dictionary columns, when there is insufficient dynamic
-  // shared memory for shared memory aggregations, or when SUM_WITH_OVERFLOW aggregations are
+  // shared memory for shared memory aggregations, or when SUM_OVERFLOW aggregations are
   // present.
   auto const run_aggs_by_global_mem_kernel = [&] {
     auto [agg_results, unique_key_indices] = compute_global_memory_aggs(

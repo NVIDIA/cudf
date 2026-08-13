@@ -148,6 +148,47 @@ To profile a script being run from the command line, pass the
 python -m cudf.pandas --profile script.py
 ```
 
+To perform line-by-line profiling from the command line, pass the
+`--line-profile` argument:
+
+```bash
+python -m cudf.pandas --line-profile script.py
+```
+
+### Using the Profiler in Python Scripts
+
+Profiling can also be performed programmatically in Python scripts using the
+`Profiler` class. This is useful when running scripts outside of Jupyter or
+when more control over profiling is needed.
+
+```python
+import cudf.pandas
+cudf.pandas.install()
+
+from cudf.pandas.profiler import Profiler
+import pandas as pd
+
+with Profiler() as profiler:
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    df.sum()
+
+profiler.print_per_function_stats()
+```
+
+Example output:
+
+```text
+          Total time elapsed: 0.052 seconds
+          1 GPU function calls in 0.050 seconds
+          0 CPU function calls in 0.000 seconds
+
+┌────────────────┬────────────┬─────────────┬─────────────┬────────────┬─────────────┬─────────────┐
+│ Function       │ GPU ncalls │ GPU cumtime │ GPU percall │ CPU ncalls │ CPU cumtime │ CPU percall │
+├────────────────┼────────────┼─────────────┼─────────────┼────────────┼─────────────┼─────────────┤
+│ DataFrame.sum  │ 1          │ 0.050       │ 0.050       │ 0          │ 0.000       │ 0.000       │
+└────────────────┴────────────┴─────────────┴─────────────┴────────────┴─────────────┴─────────────┘
+```
+
 ### cudf.pandas CLI Features
 
 Several of the ways to provide input to the `python` interpreter also work with `python -m cudf.pandas`, such as the REPL, the `-c` flag, and reading from stdin.

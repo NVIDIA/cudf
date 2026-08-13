@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -117,7 +117,7 @@ CUDF_KERNEL void materialize_merged_bitmask_kernel(
   column_device_view right_dcol,
   bitmask_type* out_validity,
   size_type const num_destination_rows,
-  index_type const* const __restrict__ merged_indices)
+  index_type const* __restrict__ const merged_indices)
 {
   auto const stride = detail::grid_1d::grid_stride();
 
@@ -169,16 +169,19 @@ void materialize_bitmask(column_view const& left_col,
       materialize_merged_bitmask_kernel<true, true>
         <<<grid_config.num_blocks, grid_config.num_threads_per_block, 0, stream.value()>>>(
           left_valid, right_valid, out_validity, num_elements, merged_indices);
+      CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       materialize_merged_bitmask_kernel<true, false>
         <<<grid_config.num_blocks, grid_config.num_threads_per_block, 0, stream.value()>>>(
           left_valid, right_valid, out_validity, num_elements, merged_indices);
+      CUDF_CUDA_TRY(cudaGetLastError());
     }
   } else {
     if (right_col.has_nulls()) {
       materialize_merged_bitmask_kernel<false, true>
         <<<grid_config.num_blocks, grid_config.num_threads_per_block, 0, stream.value()>>>(
           left_valid, right_valid, out_validity, num_elements, merged_indices);
+      CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       CUDF_FAIL("materialize_merged_bitmask_kernel<false, false>() should never be called.");
     }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,7 +42,7 @@ struct identity_initializer {
   static constexpr bool is_supported()
   {
     return is_identity_supported<T, k>() or
-           (k == aggregation::SUM_WITH_OVERFLOW and std::is_same_v<T, cudf::struct_view>);
+           (k == aggregation::SUM_OVERFLOW and std::is_same_v<T, cudf::struct_view>);
   }
 
  public:
@@ -50,8 +50,8 @@ struct identity_initializer {
   void operator()(mutable_column_view const& col, rmm::cuda_stream_view stream)
     requires(is_supported<T, k>())
   {
-    if constexpr (k == aggregation::SUM_WITH_OVERFLOW) {
-      // SUM_WITH_OVERFLOW uses a struct with sum and overflow children
+    if constexpr (k == aggregation::SUM_OVERFLOW) {
+      // SUM_OVERFLOW uses a struct with sum and overflow children
       auto sum_col      = col.child(0);
       auto overflow_col = col.child(1);
 
@@ -64,8 +64,8 @@ struct identity_initializer {
         col.size(),
         false);
     } else if constexpr (std::is_same_v<T, cudf::struct_view>) {
-      // This should only happen for SUM_WITH_OVERFLOW, but handle it just in case
-      CUDF_FAIL("Struct columns are only supported for SUM_WITH_OVERFLOW aggregation");
+      // This should only happen for SUM_OVERFLOW, but handle it just in case
+      CUDF_FAIL("Struct columns are only supported for SUM_OVERFLOW aggregation");
     } else {
       using DeviceType = device_storage_type_t<T>;
       thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

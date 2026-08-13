@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/detail/utilities/cuda.cuh>
@@ -33,7 +33,7 @@ void copy_pinned(void* dst, void const* src, std::size_t size, rmm::cuda_stream_
   if (size == 0) return;
 
   if (size < get_kernel_pinned_copy_threshold()) {
-    const int block_size = 256;
+    int const block_size = 256;
     auto const grid_size = cudf::util::div_rounding_up_safe<size_t>(size, block_size);
     // We are explicitly launching the kernel here instead of calling a thrust function because the
     // thrust function can potentially call cudaMemcpyAsync instead of using a kernel

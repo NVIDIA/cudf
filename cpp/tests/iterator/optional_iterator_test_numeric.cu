@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <tests/iterator/optional_iterator_test.cuh>
@@ -59,7 +59,7 @@ TYPED_TEST(NumericOptionalIteratorTest, mean_var_output)
   transformer_optional_meanvar<T> transformer{};
 
   int const column_size{50};
-  const T init{0};
+  T const init{0};
 
   // data and valid arrays
   std::vector<T> host_values(column_size);

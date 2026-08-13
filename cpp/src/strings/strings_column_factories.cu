@@ -106,6 +106,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
         string_count,
         [] __device__(string_index_pair const pair) -> bool { return pair.first != nullptr; },
         d_valid_counts.data() + idx);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   auto const chars_sizes  = cudf::detail::make_std_vector_async(d_chars_sizes, stream);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,15 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for merging a set of sorted tables into a single sorted table.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_merge
  * @{
- * @file
  */
 
 /**

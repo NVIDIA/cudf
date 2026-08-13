@@ -241,6 +241,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
     tdv.max_begin(),
     cumulative_weights->view().begin<double>(),
     result->mutable_view().begin<double>());
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   return result;
 }

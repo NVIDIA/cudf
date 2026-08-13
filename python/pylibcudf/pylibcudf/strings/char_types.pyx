@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.strings cimport char_types as cpp_char_types
 from pylibcudf.libcudf.strings.char_types cimport string_character_types
@@ -54,10 +55,10 @@ cpdef Column all_characters_of_type(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_char_types.all_characters_of_type(
-            source_strings.view(),
+            c_source_strings,
             types,
             verify_types,
             _cs,
@@ -104,10 +105,10 @@ cpdef Column filter_characters_of_type(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_char_types.filter_characters_of_type(
-            source_strings.view(),
+            c_source_strings,
             types_to_remove,
             dereference(c_replacement),
             types_to_keep,

@@ -89,6 +89,7 @@ void launch_partitioned_count(probe_key_type const* keys,
 
   partitioned_count_kernel<IsOuter>
     <<<config.num_blocks, config.num_threads_per_block, 0, stream.value()>>>(keys, n, output, ref);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::detail

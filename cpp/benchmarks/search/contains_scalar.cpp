@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/search.hpp>
@@ -34,10 +35,13 @@ static void nvbench_contains_scalar(nvbench::state& state)
   auto const haystack = create_column_data<Type>(size, has_nulls);
   auto const needle   = cudf::make_fixed_width_scalar<Type>(size / 2);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const stream_view             = rmm::cuda_stream_view{launch.get_stream()};
     [[maybe_unused]] auto const result = cudf::contains(*haystack, *needle, stream_view);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(nvbench_contains_scalar)

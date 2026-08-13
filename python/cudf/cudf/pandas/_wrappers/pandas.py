@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import abc
+import contextlib
 import copyreg
 import datetime
 import functools
@@ -8,7 +9,6 @@ import inspect
 import os
 import pickle
 
-import numpy as np
 import pandas as pd
 
 # cuGraph third party integration test, test_cugraph_from_pandas_adjacency,
@@ -19,6 +19,8 @@ import pyarrow.dataset as ds  # noqa: F401
 from pandas._libs.tslibs import offsets as liboffsets
 from pandas._testing import at, getitem, iat, iloc, loc, setitem
 from pandas.compat._optional import import_optional_dependency
+from pandas.io.excel._openpyxl import OpenpyxlWriter as pd_OpenpyxlWriter
+from pandas.io.excel._xlsxwriter import XlsxWriter as pd_XlsxWriter
 from pandas.tseries.holiday import (
     AbstractHolidayCalendar as pd_AbstractHolidayCalendar,
     EasterMonday as pd_EasterMonday,
@@ -45,6 +47,7 @@ from ..fast_slow_proxy import (
     _FastSlowAttribute,
     _FunctionProxy,
     _maybe_wrap_result,
+    _setattr_fsproxy_no_mirror,
     _State,
     _Unusable,
     is_proxy_object,
@@ -280,6 +283,26 @@ def _to_xarray(self):
         return xr.Dataset.from_dataframe(self)
 
 
+# pandas.ExcelWriter uses __new__ to dispatch to the engine-specific subclass
+# (OpenpyxlWriter, XlsxWriter, etc.) based on the `engine` kwarg.  The proxy
+# must replicate this: construct the real writer with the accelerator disabled
+# (so we get the actual pandas writer, not a recursive proxy) then wrap the
+# result.  __init__ is a no-op because construction is fully handled in __new__.
+def _ExcelWriter__new__(cls, *args, **kwargs):
+    if cls is not ExcelWriter:
+        return object.__new__(cls)
+
+    from ..module_accelerator import disable_module_accelerator
+
+    with disable_module_accelerator():
+        writer = pd.ExcelWriter(*args, **kwargs)
+    return _maybe_wrap_result(writer, pd.ExcelWriter, *args, **kwargs)
+
+
+def _ExcelWriter__init__(self, *args, **kwargs):
+    pass
+
+
 DataFrame = make_final_proxy_type(
     "DataFrame",
     cudf.DataFrame,
@@ -334,9 +357,19 @@ if ipython_shell:
 
 
 def _Series_dtype(self):
-    # Fast-path to extract dtype from the current
-    # object without round-tripping through the slow<->fast
-    return _maybe_wrap_result(self._fsproxy_wrapped.dtype, None)
+    dtype = self._fsproxy_wrapped.dtype
+    if isinstance(
+        dtype,
+        (
+            cudf.ListDtype,
+            cudf.StructDtype,
+            cudf.Decimal32Dtype,
+            cudf.Decimal64Dtype,
+            cudf.Decimal128Dtype,
+        ),
+    ):
+        dtype = self._fsproxy_slow.dtype
+    return _maybe_wrap_result(dtype, None)
 
 
 _SeriesAtIndexer = make_intermediate_proxy_type(
@@ -351,12 +384,6 @@ _SeriesiAtIndexer = make_intermediate_proxy_type(
     cudf.core.series._SeriesiAtIndexer,
     pd.core.indexing._iAtIndexer,
 )
-
-
-def _argsort(self, *args, **kwargs):
-    return _maybe_wrap_result(
-        self._fsproxy_wrapped.argsort(*args, **kwargs).astype(np.intp), self
-    )
 
 
 Series = make_final_proxy_type(
@@ -385,7 +412,6 @@ Series = make_final_proxy_type(
         "_constructor_expanddim": _FastSlowAttribute("_constructor_expanddim"),
         "_accessors": set(),
         "dtype": property(_Series_dtype),
-        "argsort": _argsort,
         "to_xarray": _to_xarray,
         "attrs": _FastSlowAttribute("attrs"),
         "_mgr": _FastSlowAttribute("_mgr", private=True),
@@ -459,6 +485,9 @@ Index = make_final_proxy_type(
         "__array_function__": array_function_method,
         "__arrow_array__": arrow_array_method,
         "__cuda_array_interface__": cuda_array_interface,
+        # matches pd.Index (1000) so wrapped-ndarray proxies defer
+        # binops/ufuncs to the Index's reflected op
+        "__array_priority__": pd.Index.__array_priority__,
         "dt": _AccessorAttr(CombinedDatetimelikeProperties),
         "str": _AccessorAttr(StringMethods),
         "cat": _AccessorAttr(_CategoricalAccessor),
@@ -478,9 +507,6 @@ Index = make_final_proxy_type(
         "name": _FastSlowAttribute("name"),
         "nbytes": _FastSlowAttribute("nbytes", private=True),
         "array": _FastSlowAttribute("array", private=True),
-        # TODO: Handle special cases like mergesort being unsupported
-        # and raising for certain types like Categorical and RangeIndex
-        "argsort": _argsort,
         "values": property(_Index_values),
     },
 )
@@ -510,6 +536,7 @@ SparseDtype = make_final_proxy_type(
     pd.SparseDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -569,6 +596,7 @@ Categorical = make_final_proxy_type(
     slow_to_fast=_Unusable(),
     bases=(pd.api.extensions.ExtensionArray,),
     additional_attributes={
+        "__array__": array_method,
         "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
     },
 )
@@ -579,6 +607,7 @@ CategoricalDtype = make_final_proxy_type(
     pd.CategoricalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -626,8 +655,10 @@ DatetimeTZDtype = make_final_proxy_type(
     pd.DatetimeTZDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
     },
 )
 
@@ -661,6 +692,7 @@ try:
         fast_to_slow=_Unusable(),
         slow_to_fast=_Unusable(),
         additional_attributes={
+            "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
             "_ndarray": _FastSlowAttribute("_ndarray"),
             "_dtype": _FastSlowAttribute("_dtype"),
             "_readonly": _FastSlowAttribute("_readonly", private=True),
@@ -677,6 +709,7 @@ except ImportError:
         fast_to_slow=_Unusable(),
         slow_to_fast=_Unusable(),
         additional_attributes={
+            "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
             "_ndarray": _FastSlowAttribute("_ndarray"),
             "_dtype": _FastSlowAttribute("_dtype"),
             "_readonly": _FastSlowAttribute("_readonly", private=True),
@@ -739,6 +772,7 @@ PeriodDtype = make_final_proxy_type(
     pd.PeriodDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -865,6 +899,7 @@ StringDtype = make_final_proxy_type(
     pd.StringDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "storage": _FastSlowAttribute("storage"),
@@ -896,6 +931,12 @@ BooleanDtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        # Expose the slow type as ``__class__`` so that
+        # ``real_dtype == proxy_dtype`` is True: pandas' ExtensionDtype.__eq__
+        # checks ``isinstance(other, type(self))``, which otherwise fails for a
+        # proxy that only subclasses the abstract ExtensionDtype. These masked
+        # dtypes have empty ``_metadata`` so equality reduces to this check.
+        "__class__": pd.BooleanDtype,
     },
 )
 
@@ -924,6 +965,7 @@ Int8Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.Int8Dtype,
     },
 )
 
@@ -938,6 +980,7 @@ Int16Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.Int16Dtype,
     },
 )
 
@@ -951,6 +994,7 @@ Int32Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.Int32Dtype,
     },
 )
 
@@ -964,6 +1008,7 @@ Int64Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.Int64Dtype,
     },
 )
 
@@ -977,6 +1022,7 @@ UInt8Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.UInt8Dtype,
     },
 )
 
@@ -990,6 +1036,7 @@ UInt16Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.UInt16Dtype,
     },
 )
 
@@ -1003,6 +1050,7 @@ UInt32Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.UInt32Dtype,
     },
 )
 
@@ -1016,6 +1064,7 @@ UInt64Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.UInt64Dtype,
     },
 )
 
@@ -1060,8 +1109,12 @@ IntervalDtype = make_final_proxy_type(
     pd.IntervalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
+        # ``_closed`` is a pandas-private attribute; source it from the slow
+        # (pandas) object so cudf's IntervalDtype need not define it.
+        "_closed": _FastSlowAttribute("_closed", private=True),
     },
 )
 
@@ -1102,6 +1155,7 @@ Float32Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.Float32Dtype,
     },
 )
 
@@ -1115,9 +1169,21 @@ Float64Dtype = make_final_proxy_type(
     additional_attributes={
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
         "__hash__": _FastSlowAttribute("__hash__"),
+        "__class__": pd.Float64Dtype,
     },
 )
 
+
+# ``GroupBy.nth`` is a property returning a selector object on both
+# sides; registering the selector pair as an intermediate proxy gives
+# ``gb.nth`` a proxied result whose ``__call__``/``__getitem__`` get the
+# usual call-time fast/slow dispatch (with the slow side re-derived from
+# the recorded ``getattr`` provenance on fallback).
+GroupByNthSelector = make_intermediate_proxy_type(
+    "GroupByNthSelector",
+    cudf.core.groupby.groupby.GroupByNthSelector,
+    pd.core.groupby.indexing.GroupByNthSelector,
+)
 
 SeriesGroupBy = make_intermediate_proxy_type(
     "SeriesGroupBy",
@@ -1232,6 +1298,12 @@ ExponentialMovingWindowGroupby = make_intermediate_proxy_type(
     pd.core.window.ewm.ExponentialMovingWindowGroupby,
 )
 
+OnlineExponentialMovingWindow = make_intermediate_proxy_type(
+    "OnlineExponentialMovingWindow",
+    _Unusable,
+    pd.core.window.ewm.OnlineExponentialMovingWindow,
+)
+
 EWMMeanState = make_intermediate_proxy_type(
     "EWMMeanState",
     _Unusable,
@@ -1270,6 +1342,36 @@ DatetimeIndexResampler = make_intermediate_proxy_type(
     "DatetimeIndexResampler",
     _Unusable,
     pd.core.resample.DatetimeIndexResampler,
+)
+
+PeriodIndexResampler = make_intermediate_proxy_type(
+    "PeriodIndexResampler",
+    _Unusable,
+    pd.core.resample.PeriodIndexResampler,
+)
+
+TimedeltaIndexResampler = make_intermediate_proxy_type(
+    "TimedeltaIndexResampler",
+    _Unusable,
+    pd.core.resample.TimedeltaIndexResampler,
+)
+
+DatetimeIndexResamplerGroupby = make_intermediate_proxy_type(
+    "DatetimeIndexResamplerGroupby",
+    _Unusable,
+    pd.core.resample.DatetimeIndexResamplerGroupby,
+)
+
+PeriodIndexResamplerGroupby = make_intermediate_proxy_type(
+    "PeriodIndexResamplerGroupby",
+    _Unusable,
+    pd.core.resample.PeriodIndexResamplerGroupby,
+)
+
+TimedeltaIndexResamplerGroupby = make_intermediate_proxy_type(
+    "TimedeltaIndexResamplerGroupby",
+    _Unusable,
+    pd.core.resample.TimedeltaIndexResamplerGroupby,
 )
 
 StataReader = make_final_proxy_type(
@@ -1319,9 +1421,35 @@ ExcelWriter = make_final_proxy_type(
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "__fspath__": _FastSlowAttribute("__fspath__"),
+        "__init__": _ExcelWriter__init__,
+        "__new__": _ExcelWriter__new__,
     },
     bases=(os.PathLike,),
     metaclasses=(abc.ABCMeta,),
+)
+
+OpenpyxlWriter = make_final_proxy_type(
+    "OpenpyxlWriter",
+    _Unusable,
+    pd_OpenpyxlWriter,
+    fast_to_slow=_Unusable(),
+    slow_to_fast=_Unusable(),
+    additional_attributes={
+        "__fspath__": _FastSlowAttribute("__fspath__"),
+    },
+    bases=(ExcelWriter,),
+)
+
+XlsxWriter = make_final_proxy_type(
+    "XlsxWriter",
+    _Unusable,
+    pd_XlsxWriter,
+    fast_to_slow=_Unusable(),
+    slow_to_fast=_Unusable(),
+    additional_attributes={
+        "__fspath__": _FastSlowAttribute("__fspath__"),
+    },
+    bases=(ExcelWriter,),
 )
 
 try:
@@ -1508,6 +1636,33 @@ def _register_index_accessor(name):
     return pd.core.accessor._register_accessor(name, Index)
 
 
+@contextlib.contextmanager
+def null_assert_produces_warning(*args, **kwargs):
+    # We do not want pandas unit tests to fail because
+    # assert_produces_warning doesn't see a warning.
+    # No an explicit public API
+    try:
+        yield []
+    finally:
+        pass
+
+
+@register_proxy_func(pd._testing.assert_produces_warning)
+def _register_assert_produces_warning(*args, **kwargs):
+    return null_assert_produces_warning(*args, **kwargs)
+
+
+def null_raises_chained_assignment_error(*args, **kwargs):
+    # This assertion function also uses assert_produces_warning
+    # we want to ignore in pandas unit tests.
+    return null_assert_produces_warning(*args, **kwargs)
+
+
+@register_proxy_func(pd._testing.raises_chained_assignment_error)
+def _register_raises_chained_assignment_error(*args, **kwargs):
+    return null_raises_chained_assignment_error(*args, **kwargs)
+
+
 @nvtx.annotate(
     "CUDF_PANDAS_DATAFRAME_EVAL",
     color=_CUDF_PANDAS_NVTX_COLORS["EXECUTE_SLOW"],
@@ -1543,8 +1698,10 @@ def _df_query_method(self, *args, local_dict=None, global_dict=None, **kwargs):
     )
 
 
-DataFrame.eval = _df_eval_method
-DataFrame.query = _df_query_method
+# These custom implementations are installed by cudf.pandas itself and must
+# not be mirrored onto (and clobber) the real ``pandas.DataFrame``.
+_setattr_fsproxy_no_mirror(DataFrame, "eval", _df_eval_method)
+_setattr_fsproxy_no_mirror(DataFrame, "query", _df_query_method)
 
 _JsonReader = make_intermediate_proxy_type(
     "_JsonReader",
@@ -2685,6 +2842,10 @@ copyreg.dispatch_table[pd.Timestamp] = _reduce_obj
 # same reducer/unpickler can be used for Timedelta:
 copyreg.dispatch_table[Timedelta] = _reduce_proxied_td_obj
 copyreg.dispatch_table[pd.Timedelta] = _reduce_obj
+# Period has no fast (cudf) representation; pickle the wrapped/real pandas
+# object directly (e.g. matplotlib figures store pandas.Period x-data).
+copyreg.dispatch_table[Period] = _reduce_proxied_td_obj
+copyreg.dispatch_table[pd.Period] = _reduce_obj
 
 # TODO: Need to find a way to unpickle cross-version(old) pickled objects.
 # Register custom reducer/unpickler functions for pandas objects
@@ -2716,6 +2877,18 @@ copyreg.dispatch_table[pd.MultiIndex] = lambda obj: _generic_reduce_obj(
 )
 
 copyreg.dispatch_table[pd.DateOffset] = _reduce_offset_obj
+# Concrete pandas offsets (Day, Week, Minute, ...) are stored e.g. as the
+# ``freq`` of matplotlib's date converters. The module accelerator makes the
+# offset module attributes resolve to proxies, so pickle's class-identity
+# check fails; reduce each via its real ``__reduce__`` (with the accelerator
+# disabled). ``DateOffset`` keeps its dedicated reducer above.
+for _offset_cls in vars(pd.tseries.offsets).values():
+    if (
+        isinstance(_offset_cls, type)
+        and issubclass(_offset_cls, pd.tseries.offsets.BaseOffset)
+        and _offset_cls is not pd.DateOffset
+    ):
+        copyreg.dispatch_table.setdefault(_offset_cls, _reduce_obj)
 
 
 def _unpickle_NaT():

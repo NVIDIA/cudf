@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -151,7 +151,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
 
   auto const intersect_table = cudf::detail::copy_if(
     rhs_table,
-    [contained = contained.begin()] __device__(auto const idx) { return contained[idx]; },
+    [contained = contained.begin()] __device__(auto const idx) -> bool { return contained[idx]; },
     stream,
     cudf::get_current_device_resource_ref());
 
@@ -236,7 +236,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
 
   auto const difference_table = cudf::detail::copy_if(
     lhs_table,
-    [contained = contained.begin()] __device__(auto const idx) { return !contained[idx]; },
+    [contained = contained.begin()] __device__(auto const idx) -> bool { return !contained[idx]; },
     stream,
     cudf::get_current_device_resource_ref());
 

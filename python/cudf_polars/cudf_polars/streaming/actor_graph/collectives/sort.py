@@ -1,25 +1,26 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Sort logic for the RapidsMPF streaming runtime."""
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
-
-from rapidsmpf.shuffler import PartitionAssignment
-from rapidsmpf.streaming.core.actor import define_actor
-from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.cudf.channel_metadata import (
-    ChannelMetadata,
-    OrderKey,
-    OrderScheme,
-    Partitioning,
-)
-from rapidsmpf.streaming.cudf.table_chunk import TableChunk
 
 import polars as pl
 
 import pylibcudf as plc
+from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
+    OrderKey,
+    OrderScheme,
+    Ordering,
+    Partitioning,
+)
+from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.shuffler import PartitionAssignment
+from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl.expr import Col, NamedExpr
@@ -32,10 +33,12 @@ from cudf_polars.streaming.actor_graph.nodes import (
     default_node_single,
     shutdown_on_error,
 )
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
     NormalizedPartitioning,
+    _sample_chunks,
     allgather_reduce,
     chunk_to_frame,
     chunkwise_evaluate,
@@ -64,7 +67,6 @@ if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
-
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IR, IRExecutionContext
@@ -242,13 +244,12 @@ async def extract_orderscheme_partitioning(
     # Extract boundaries and construct the Partitioning
     boundaries, strict = _extract_boundaries(min_max_table, num_partitions, stream)
     del min_max_table
+    boundaries_chunk = TableChunk.from_pylibcudf_table(
+        boundaries, stream, exclusive_view=True, br=context.br()
+    )
     return Partitioning(
         inter_rank=OrderScheme(
-            order_keys,
-            TableChunk.from_pylibcudf_table(
-                boundaries, stream, exclusive_view=True, br=context.br()
-            ),
-            strict_boundaries=strict,
+            [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict)]
         ),
         local="inherit",
     )
@@ -313,9 +314,7 @@ async def _simple_top_or_bottom_k(
             ir_context=ir_context,
         )
 
-    if tracer is not None:
-        tracer.add_chunk(table=chunk.table_view())
-    await ch_out.send(context, Message(comm.rank, chunk))
+    await send_chunk(context, ch_out, chunk, comm.rank, tracer=tracer)
 
     await ch_out.drain(context)
 
@@ -406,50 +405,38 @@ async def _sample_chunks_for_size_estimate(
     metadata_in: ChannelMetadata,
     executor: StreamingExecutor,
     collective_ids: list[int],
-) -> tuple[dict[int, TableChunk], int]:
+) -> tuple[ChunkStore, int]:
     """
     Sample chunks and estimate total data size to derive num_partitions dynamically.
 
-    The sampled chunks are returned keyed by sequence number. The caller is
+    The sampled chunks are returned in replay order. The caller is
     responsible for replaying them into a channel via replay_buffered_channel.
     """
     if executor.dynamic_planning is None:
-        return {}, num_partitions
+        return ChunkStore(context), num_partitions
 
     size_estimate_id = collective_ids.pop()
     target_partition_size = executor.target_partition_size
     sample_chunk_count = executor.dynamic_planning.sample_chunk_count
 
-    sampled_chunks: dict[int, TableChunk] = {}
-    sampled_bytes = 0
-    for _ in range(sample_chunk_count):
-        msg = await ch_in.recv(context)
-        if msg is None:
-            break
-        chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
-            context.br(), allow_overbooking=True
-        )
-        sampled_bytes += chunk.data_alloc_size()
-        sampled_chunks[msg.sequence_number] = chunk
-        if sampled_bytes >= target_partition_size:
-            break
-
-    # Extrapolate local size estimate from samples
-    local_count = metadata_in.local_count
-    local_size = (
-        int(sampled_bytes / len(sampled_chunks) * local_count) if sampled_chunks else 0
+    sample = await _sample_chunks(
+        context,
+        ch_in,
+        sample_chunk_count,
+        target_partition_size,
+        metadata_in.local_count,
     )
 
     # Allgather to get global size estimate across all ranks
     if comm.nranks > 1 and not metadata_in.duplicated:
         (global_size,) = await allgather_reduce(
-            context, comm, size_estimate_id, local_size
+            context, comm, size_estimate_id, sample.total_size
         )
     else:
-        global_size = local_size
+        global_size = sample.total_size
 
-    num_partitions = max(1, global_size // target_partition_size)
-    return sampled_chunks, num_partitions
+    num_partitions = max(1, math.ceil(global_size / target_partition_size))
+    return sample.chunks, num_partitions
 
 
 async def _receive_and_buffer_chunks(
@@ -631,19 +618,32 @@ async def _extract_partitions_and_send(
             ).table
             if table.num_columns() > ncols_out:
                 table = plc.Table(table.columns()[:ncols_out])
-            if tracer is not None:
-                tracer.add_chunk(table=table)
-            await ch_out.send(
-                context,
-                Message(
-                    partition_id,
-                    TableChunk.from_pylibcudf_table(
-                        table, stream, exclusive_view=True, br=context.br()
-                    ),
-                ),
+            chunk = TableChunk.from_pylibcudf_table(
+                table, stream, exclusive_view=True, br=context.br()
             )
+            await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)
+
+
+def _sort_by_column_names(ir: Sort) -> list[str]:
+    """
+    Resolve the underlying column names for a ``Sort`` node's keys.
+
+    A sort key's ``NamedExpr.name`` reflects its output alias, which may differ from
+    the referenced column after upstream renames. E.g., a join dedup may leave
+    ``ORDER BY df2.text`` represented as ``Col('text:df2').alias('text')``. Resolve
+    through the underlying ``Col`` so schema lookups use the actual column name.
+
+    Raises
+    ------
+    NotImplementedError
+        If any sort key is not a bare column reference.
+    """
+    by = [ne.value.name for ne in ir.by if isinstance(ne.value, Col)]
+    if len(by) != len(ir.by):
+        raise NotImplementedError("Sorting columns must be column names.")
+    return by
 
 
 def _sort_to_order_keys(ir: Sort) -> list[OrderKey]:
@@ -651,37 +651,12 @@ def _sort_to_order_keys(ir: Sort) -> list[OrderKey]:
     return [
         OrderKey(index, order, null_order)
         for index, order, null_order in zip(
-            names_to_indices(ir.by, ir.schema),
+            names_to_indices(tuple(_sort_by_column_names(ir)), ir.schema),
             ir.order,
             ir.null_order,
             strict=False,
         )
     ]
-
-
-def _is_already_sorted(
-    metadata_in: ChannelMetadata,
-    order_keys: list[OrderKey],
-    nranks: int,
-) -> bool:
-    """Check if the input data is already sorted according to the order keys."""
-    np = NormalizedPartitioning.from_keys(
-        metadata_in.partitioning, nranks, keys=order_keys
-    )
-    if not np:
-        # np is falsy if `order_keys` does not match
-        # any prefix of keys in `metadata_in.partitioning`.
-        # If `order_keys` is Sequence[OrderKey], the order
-        # and null_order attributes must also match.
-        return False
-    scheme = np.inter_rank_scheme
-    if not isinstance(scheme, OrderScheme):
-        return False
-    elif len(scheme.keys) < len(order_keys):
-        # If we are only sorted on a subset of the keys,
-        # we need to check if the boundaries are strict.
-        return scheme.strict_boundaries
-    return True
 
 
 def _build_order_scheme(
@@ -714,7 +689,7 @@ def _build_order_scheme(
         by_table, stream, exclusive_view=False, br=context.br()
     )
     return OrderScheme(
-        order_keys, boundaries_chunk, strict_boundaries=strict_boundaries
+        [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict_boundaries)]
     )
 
 
@@ -811,7 +786,11 @@ async def sort_actor(
             )
             return
 
-        if _is_already_sorted(metadata_in, _sort_to_order_keys(ir), comm.nranks):
+        order_keys = _sort_to_order_keys(ir)
+        partitioning = NormalizedPartitioning.from_keys(
+            metadata_in.partitioning, comm.nranks, keys=order_keys
+        )
+        if partitioning.is_strictly_sorted(order_keys):
             if tracer is not None:
                 tracer.decision = "already_sorted"
             await chunkwise_evaluate(
@@ -907,9 +886,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
 
     (child,) = ir.children
     nodes, channels = rec(child)
-    by = [ne.value.name for ne in ir.by if isinstance(ne.value, Col)]
-    if len(by) != len(ir.by):
-        raise NotImplementedError("Sorting columns must be column names.")
+    by = _sort_by_column_names(ir)
 
     collective_ids = list(rec.state["collective_id_map"][ir])
     expected_id_count = 3 if dynamic else 2

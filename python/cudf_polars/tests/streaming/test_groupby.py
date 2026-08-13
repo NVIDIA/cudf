@@ -1,17 +1,23 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for dynamic GroupBy operations using the rapidsmpf runtime."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 import polars as pl
 
+from cudf_streaming.table_chunk import TableChunk
+
+from cudf_polars.containers import DataFrame
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph import groupby as groupby_actor_graph
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
@@ -31,6 +37,50 @@ def df() -> pl.LazyFrame:
             "z": [1.0, 2.0, 3.0, 4.0, 5.0] * 30,
         }
     )
+
+
+@pytest.fixture
+def strategy_chunk(spmd_engine) -> TableChunk:
+    context = spmd_engine.context
+    stream = context.br().stream_pool.get_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"key": range(8)}), stream)
+    return TableChunk.from_pylibcudf_table(
+        df.table, stream, exclusive_view=True, br=context.br()
+    )
+
+
+def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
+    monkeypatch, strategy_chunk
+):
+    """Avoid tree allgather when partial aggregate rows exceed cuDF's row limit."""
+
+    async def fake_allgather_reduce(_context, _comm, _op_id, *local_values):
+        estimated_size = strategy_chunk.data_alloc_size() * 4
+        assert local_values == (estimated_size, 8, 4, 0)
+        return (estimated_size, 8, 4, 0)
+
+    monkeypatch.setattr(groupby_actor_graph, "allgather_reduce", fake_allgather_reduce)
+    monkeypatch.setattr(groupby_actor_graph, "MAX_ROWS_PER_PARTITION", 2)
+    tracer = SimpleNamespace(decision=None)
+
+    output_count = asyncio.run(
+        groupby_actor_graph._choose_strategy(
+            None,
+            None,
+            4,
+            strategy_chunk,
+            1,
+            True,  # noqa: FBT003
+            [0],
+            1_000_000_000,
+            False,  # noqa: FBT003
+            False,  # noqa: FBT003
+            tracer,
+        )
+    )
+
+    assert output_count == 4
+    assert tracer.decision == "shuffle"
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])

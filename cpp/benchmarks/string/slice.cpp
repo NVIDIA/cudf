@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
@@ -44,15 +45,22 @@ static void bench_slice(nvbench::state& state)
   auto output_size = (row_width / 3 - row_width / 4) * num_rows;
   state.add_global_memory_writes<nvbench::int8_t>(output_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (stype == "multi") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::strings::slice_strings(input, starts, stops, stream);
     });
   } else {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::strings::slice_strings(input, row_width / 4, row_width / 3, 1, stream);
+      cudf::strings::slice_strings(input,
+                                   std::optional<cudf::size_type>(row_width / 4),
+                                   std::optional<cudf::size_type>(row_width / 3),
+                                   std::optional<cudf::size_type>(1),
+                                   stream);
     });
   }
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   set_throughputs(state);
 }

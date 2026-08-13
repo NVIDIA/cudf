@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -20,13 +20,13 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["concatenate"]
 
-cpdef concatenate(list objects, object stream=None, DeviceMemoryResource mr=None):
+cpdef concatenate(objects, object stream=None, DeviceMemoryResource mr=None):
     """Concatenate columns or tables.
 
     Parameters
     ----------
-    objects : Union[List[Column], List[Table]]
-        The list of Columns or Tables to concatenate.
+    objects : Sequence[Column] | Sequence[Table]
+        The Columns or Tables to concatenate.
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None

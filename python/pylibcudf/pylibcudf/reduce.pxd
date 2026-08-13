@@ -3,12 +3,13 @@
 
 from libcpp cimport bool
 from pylibcudf.libcudf.reduce cimport scan_type
-from pylibcudf.libcudf.types cimport nan_policy, null_policy, size_type
+from pylibcudf.libcudf.types cimport nan_policy, null_equality, null_policy, size_type
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .aggregation cimport Aggregation
 from .column cimport Column
 from .scalar cimport Scalar
+from .table cimport Table
 from .types cimport DataType
 
 
@@ -44,5 +45,17 @@ cpdef size_type distinct_count(
     Column source,
     null_policy null_handling,
     nan_policy nan_handling,
+    object stream = *
+)
+
+cpdef size_type unique_count_table(
+    Table source,
+    null_equality nulls_equal,
+    object stream = *
+)
+
+cpdef size_type distinct_count_table(
+    Table source,
+    null_equality nulls_equal,
     object stream = *
 )

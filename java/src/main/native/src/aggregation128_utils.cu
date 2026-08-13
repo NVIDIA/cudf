@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <cstddef>
@@ -88,7 +87,7 @@ std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
   thrust::transform_iterator transform_iter{
     cuda::counting_iterator{cudf::size_type{0}},
     cuda::proclaim_return_type<cudf::size_type>([] __device__(auto i) { return i * 4; })};
-  thrust::permutation_iterator stride_iter{in_begin + chunk_idx, transform_iter};
+  cuda::permutation_iterator stride_iter{in_begin + chunk_idx, transform_iter};
 
   thrust::copy(
     rmm::exec_policy_nosync(stream), stride_iter, stride_iter + num_rows, out_view.data<int32_t>());

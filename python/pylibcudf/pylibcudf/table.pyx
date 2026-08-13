@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -28,6 +28,8 @@ from pylibcudf.libcudf.interop cimport (
     to_arrow_schema_raw,
 )
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
+from pylibcudf.libcudf.types cimport size_type
 
 from .column cimport Column
 from .types cimport DataType
@@ -61,17 +63,36 @@ cdef class _ArrowTableHolder:
 cdef class Table:
     """A list of columns of the same size.
 
+    If the list of columns is empty, the table's row count may still be non-zero.
+
     Parameters
     ----------
-    columns : list
+    columns : Sequence[Column]
         The columns in this table.
+    num_rows : int | None
+        Optional explicit row count. Only used to preserve the row count of a
+        table with zero columns. When `columns` is non-empty, `num_rows` must
+        equal the size of every column.
     """
     __hash__ = None
 
-    def __init__(self, list columns):
+    def __init__(self, columns, num_rows=None):
+        columns = tuple(columns)
         if not all(isinstance(c, Column) for c in columns):
             raise ValueError("All columns must be pylibcudf Column objects")
         self._columns = columns
+        if num_rows is None:
+            self._num_rows = columns[0].size() if len(columns) else 0
+        else:
+            if not isinstance(num_rows, int):
+                raise TypeError("num_rows must be an int or None")
+            if num_rows < 0:
+                raise ValueError("num_rows cannot be negative")
+            if any(c.size() != num_rows for c in columns):
+                raise ValueError(
+                    "num_rows does not match the size of the provided columns"
+                )
+            self._num_rows = num_rows
 
     def to_arrow(
         self,
@@ -215,7 +236,7 @@ cdef class Table:
         else:
             raise ValueError("Invalid Arrow-like object")
 
-    cdef table_view view(self) nogil:
+    cdef table_view view(self):
         """Generate a libcudf table_view to pass to libcudf algorithms.
 
         This method is for pylibcudf's functions to use to generate inputs when
@@ -226,11 +247,10 @@ cdef class Table:
         # self._columns whenever new columns are added or columns are removed.
         cdef vector[column_view] c_columns
 
-        with gil:
-            for col in self._columns:
-                c_columns.push_back((<Column> col).view())
+        for col in self._columns:
+            c_columns.push_back((<Column> col).view())
 
-        return table_view(c_columns)
+        return table_view(c_columns, self.num_rows())
 
     @staticmethod
     cdef Table from_libcudf(
@@ -246,13 +266,17 @@ cdef class Table:
         """
         assert stream is not None, "stream cannot be None"
         assert mr is not None, "mr cannot be None"
+        # Capture the row count before release() (which zeroes it) so a
+        # zero-column table preserves its rows.
+        cdef size_type nrows = dereference(libcudf_tbl).num_rows()
         cdef vector[unique_ptr[column]] c_columns = dereference(libcudf_tbl).release()
 
         cdef vector[unique_ptr[column]].size_type i
-        return Table([
+        cols = [
             Column.from_libcudf(move(c_columns[i]), stream, mr)
             for i in range(c_columns.size())
-        ])
+        ]
+        return Table(cols, num_rows=nrows)
 
     @staticmethod
     cdef Table from_table_view(const table_view& tv, Table owner):
@@ -265,10 +289,13 @@ cdef class Table:
         (even direct pylibcudf Cython users).
         """
         cdef int i
-        return Table([
-            Column.from_column_view(tv.column(i), owner.columns()[i])
-            for i in range(tv.num_columns())
-        ])
+        return Table(
+            [
+                Column.from_column_view(tv.column(i), owner.columns()[i])
+                for i in range(tv.num_columns())
+            ],
+            num_rows=tv.num_rows(),
+        )
 
     # Ideally this function would simply be handled via a fused type in
     # from_table_view, but this does not work due to
@@ -295,10 +322,13 @@ cdef class Table:
         assert not isinstance(owner, Table)
         cdef int i
         cdef Stream _stream = <Stream>stream
-        return Table([
-            Column.from_column_view_of_arbitrary(tv.column(i), owner, _stream)
-            for i in range(tv.num_columns())
-        ])
+        return Table(
+            [
+                Column.from_column_view_of_arbitrary(tv.column(i), owner, _stream)
+                for i in range(tv.num_columns())
+            ],
+            num_rows=tv.num_rows(),
+        )
 
     cpdef int num_columns(self):
         """The number of columns in this table."""
@@ -306,13 +336,24 @@ cdef class Table:
 
     cpdef int num_rows(self):
         """The number of rows in this table."""
-        if self.num_columns() == 0:
-            return 0
-        return self._columns[0].size()
+        return self._num_rows
 
-    cpdef list columns(self):
+    cpdef tuple columns(self):
         """The columns in this table."""
         return self._columns
+
+    cpdef list release(self):
+        """Release ownership of this table's columns and leave it empty.
+
+        Returns
+        -------
+        list
+            The columns that were in this table.
+        """
+        cdef list columns = list(self._columns)
+        self._columns = ()
+        self._num_rows = 0
+        return columns
 
     cpdef tuple shape(self):
         """The shape of this table"""
@@ -335,7 +376,10 @@ cdef class Table:
         """
         cdef Stream _stream = _get_stream(stream)
         mr = _get_memory_resource(mr)
-        return Table([col.copy(_stream, mr) for col in self._columns])
+        return Table(
+            [col.copy(_stream, mr) for col in self._columns],
+            num_rows=self.num_rows(),
+        )
 
     def _to_schema(self, metadata=None):
         """Create an Arrow schema from this table."""
@@ -354,8 +398,9 @@ cdef class Table:
             c_metadata.push_back(_metadata_to_libcudf(meta))
 
         cdef ArrowSchema* raw_schema_ptr
+        cdef table_view c_self = self.view()
         with nogil:
-            raw_schema_ptr = to_arrow_schema_raw(self.view(), c_metadata)
+            raw_schema_ptr = to_arrow_schema_raw(c_self, c_metadata)
 
         return PyCapsule_New(<void*>raw_schema_ptr, "arrow_schema", _release_schema)
 
@@ -363,16 +408,18 @@ cdef class Table:
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
+        cdef table_view c_self = self.view()
 
         with nogil:
-            raw_host_array_ptr = to_arrow_host_raw(self.view(), _cs)
+            raw_host_array_ptr = to_arrow_host_raw(c_self, _cs)
 
         return PyCapsule_New(<void*>raw_host_array_ptr, "arrow_array", _release_array)
 
     def _to_device_array(self):
         cdef ArrowDeviceArray* raw_device_array_ptr
+        cdef table_view c_self = self.view()
         with nogil:
-            raw_device_array_ptr = to_arrow_device_raw(self.view(), self)
+            raw_device_array_ptr = to_arrow_device_raw(c_self, self)
 
         return PyCapsule_New(
             <void*>raw_device_array_ptr,

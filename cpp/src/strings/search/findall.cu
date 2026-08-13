@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,8 @@ struct findall_fn {
   size_type const* d_offsets;
   string_index_pair* d_indices;
 
-  __device__ void operator()(size_type const idx, reprog_device const prog, int32_t const prog_idx)
+  template <typename ProgDevice>
+  __device__ void operator()(size_type const idx, ProgDevice const prog, int32_t const prog_idx)
   {
     if (d_strings.is_null(idx)) { return; }
     auto const d_str  = d_strings.element<string_view>(idx);
@@ -48,32 +49,56 @@ struct findall_fn {
     size_type output_idx = 0;
 
     auto itr = d_str.begin();
-    while (itr.position() < nchars) {
-      auto const match = prog.find(prog_idx, d_str, itr);
+    while (itr.position() <= nchars) {
+      auto const match = prog.template find(prog_idx, d_str, itr);
       if (!match) { break; }
 
       auto const d_result    = string_from_match(*match, d_str, itr);
       d_output[output_idx++] = string_index_pair{d_result.data(), d_result.size_bytes()};
 
-      itr += (match->second - itr.position());
+      itr += (match->second - itr.position()) + (match->first == match->second);
     }
   }
 };
 
-std::unique_ptr<column> findall_util(column_device_view const& d_strings,
-                                     reprog_device& d_prog,
-                                     int64_t total_matches,
-                                     size_type const* d_offsets,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
-{
-  rmm::device_uvector<string_index_pair> indices(total_matches, stream);
+/**
+ * @brief Extracts the first capture group instead of the whole match
+ */
+struct one_capture_fn {
+  column_device_view const d_strings;
+  size_type const* d_offsets;
+  string_index_pair* d_indices;
 
-  launch_for_each_kernel(
-    findall_fn{d_strings, d_offsets, indices.data()}, d_prog, d_strings.size(), stream);
+  __device__ void operator()(size_type const idx,
+                             reprog_device const d_prog,
+                             int32_t const prog_idx)
+  {
+    if (d_strings.is_null(idx)) { return; }
 
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
-}
+    auto const d_str = d_strings.element<string_view>(idx);
+    auto const bytes = d_str.size_bytes();
+
+    auto d_output   = d_indices + d_offsets[idx];
+    auto output_idx = size_type{0};
+
+    auto itr = d_str.begin();
+    while (itr.byte_offset() <= bytes) {
+      auto const match = d_prog.find(prog_idx, d_str, itr);
+      if (!match) { break; }
+      itr += (match->first - itr.position());  // position to beginning of the match
+      auto const result = d_prog.extract(prog_idx, d_str, itr, match->second, 0);
+      if (result) {
+        auto const ext_str   = string_from_match(*result, d_str, itr);
+        d_output[output_idx] = string_index_pair{ext_str.data(), ext_str.size_bytes()};
+      } else {
+        d_output[output_idx] = string_index_pair{"", 0};  // empty string
+      }
+      if (itr.byte_offset() >= bytes) { break; }
+      itr += (match->second - itr.position()) + (match->first == match->second);
+      ++output_idx;
+    }
+  }
+};
 
 }  // namespace
 
@@ -83,23 +108,51 @@ std::unique_ptr<column> findall(strings_column_view const& input,
                                 rmm::cuda_stream_view stream,
                                 rmm::device_async_resource_ref mr)
 {
+  auto const groups = prog.groups_count();
+  CUDF_EXPECTS(groups <= 1, "findall does not support more than 1 capture group");
+
   if (input.is_empty()) {
     return cudf::lists::detail::make_empty_lists_column(input.parent().type());
   }
 
   auto const d_strings = column_device_view::create(input.parent(), stream);
 
-  // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  // Builds the lists offsets column and the matches from a single, already-built
+  // device regex program (avoids a redundant device program build for the count pass).
+  auto const build_matches = [&](auto& d_prog, auto make_functor) {
+    auto const sizes = count_matches(*d_strings, d_prog, input.size(), stream, mr);
+    auto [offsets, total_matches] =
+      cudf::detail::make_offsets_child_column(sizes->view().template begin<size_type>(),
+                                              sizes->view().template end<size_type>(),
+                                              stream,
+                                              mr);
+    auto const d_offsets = offsets->view().template data<size_type>();
 
-  // Create lists offsets column
-  auto const sizes              = count_matches(*d_strings, *d_prog, stream, mr);
-  auto [offsets, total_matches] = cudf::detail::make_offsets_child_column(
-    sizes->view().begin<size_type>(), sizes->view().end<size_type>(), stream, mr);
-  auto const d_offsets = offsets->view().data<size_type>();
+    rmm::device_uvector<string_index_pair> indices(total_matches, stream);
+    launch_for_each_kernel(make_functor(d_offsets, indices.data()), d_prog, input.size(), stream);
+    return std::pair(std::move(offsets), std::move(indices));
+  };
 
-  // Build strings column of the matches
-  auto strings_output = findall_util(*d_strings, *d_prog, total_matches, d_offsets, stream, mr);
+  auto [offsets, indices] = [&]() {
+    if (groups == 1) {
+      auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+      return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+        return one_capture_fn{*d_strings, d_offsets, d_indices};
+      });
+    }
+    if (regex_device_builder::glushkov_fast_path_supported(prog)) {
+      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+      return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+        return findall_fn{*d_strings, d_offsets, d_indices};
+      });
+    }
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+      return findall_fn{*d_strings, d_offsets, d_indices};
+    });
+  }();
+
+  auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
 
   // Build the lists column from the offsets and the strings
   return make_lists_column(input.size(),
@@ -113,14 +166,15 @@ namespace {
 struct find_re_fn {
   column_device_view d_strings;
 
+  template <typename ProgDevice>
   __device__ size_type operator()(size_type const idx,
-                                  reprog_device const prog,
+                                  ProgDevice const prog,
                                   int32_t const thread_idx) const
   {
     if (d_strings.is_null(idx)) { return 0; }
     auto const d_str = d_strings.element<string_view>(idx);
 
-    auto const result = prog.find(thread_idx, d_str, d_str.begin());
+    auto const result = prog.template find(thread_idx, d_str, d_str.begin());
     return result.has_value() ? result.value().first : -1;
   }
 };
@@ -140,9 +194,15 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<size_type>();
-  auto d_prog          = regex_device_builder::create_prog_device(prog, stream);
   auto const d_strings = column_device_view::create(input.parent(), stream);
-  launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+
+  if (regex_device_builder::glushkov_fast_path_supported(prog)) {
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+  } else {
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+  }
 
   return results;
 }

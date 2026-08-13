@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import textwrap
@@ -432,7 +432,7 @@ def test_groupby_apply_jit_no_df_ops(groupby_jit_data_small):
 
     with pytest.raises(
         UDFError,
-        match="JIT GroupBy.apply\\(\\) does not support DataFrame.sum\\(\\)",
+        match=r"JIT GroupBy.apply\(\) does not support DataFrame.sum\(\)",
     ):
         run_groupby_apply_jit_test(groupby_jit_data_small, func, ["key1"])
 
@@ -580,9 +580,6 @@ def test_groupby_apply_return_col_from_df():
 
     got = df.groupby("id").apply(func, include_groups=False)
     expect = pdf.groupby("id").apply(func, include_groups=False)
-    # pandas seems to erroneously add an extra MI level of ids
-    # TODO: Figure out how pandas groupby.apply determines the columns
-    expect = pd.DataFrame(expect.droplevel(1), columns=got.columns)
     assert_groupby_results_equal(expect, got)
 
 
@@ -748,6 +745,55 @@ def test_groupby_apply_return_series_dataframe(func, args):
     assert_groupby_results_equal(expected, actual)
 
 
+def test_groupby_apply_series_results_misaligned_lengths():
+    # Series results whose per-group lengths differ from their input are
+    # concatenated with the group keys as the outer index level, each key
+    # repeated by its chunk's actual length, keeping the UDF-returned
+    # index as the inner level (pandas GH8467) -- even when the total
+    # output length coincides with len(df) (2 + 3 == 3 + 2 here).
+    pdf = pd.DataFrame({"k": [1, 1, 2, 2, 2], "v": [10, 20, 30, 40, 50]})
+    gdf = cudf.from_pandas(pdf)
+
+    def make_swap_sizes(series_type):
+        # group 1 has 2 rows -> 3 outputs; group 2 has 3 rows -> 2 outputs
+        def swap_sizes(g):
+            if len(g) == 2:
+                return series_type([1, 2, 3])
+            return series_type([4, 5])
+
+        return swap_sizes
+
+    expected = pdf.groupby("k").apply(
+        make_swap_sizes(pd.Series), include_groups=False
+    )
+    actual = gdf.groupby("k").apply(
+        make_swap_sizes(cudf.Series), include_groups=False
+    )
+    assert_eq(expected, actual)
+
+
+def test_groupby_apply_series_results_fresh_index():
+    # Per-group result lengths match the input, but the UDF rewrote the
+    # index: the UDF-returned index is kept as the inner level rather
+    # than the input rows' original labels.
+    pdf = pd.DataFrame({"k": [1, 1, 2, 2, 2], "v": [10, 20, 30, 40, 50]})
+    gdf = cudf.from_pandas(pdf)
+
+    def make_fresh_index(series_type):
+        def fresh_index(g):
+            return series_type(range(len(g)))
+
+        return fresh_index
+
+    expected = pdf.groupby("k").apply(
+        make_fresh_index(pd.Series), include_groups=False
+    )
+    actual = gdf.groupby("k").apply(
+        make_fresh_index(cudf.Series), include_groups=False
+    )
+    assert_eq(expected, actual)
+
+
 @pytest.mark.parametrize(
     "pdf",
     [pd.DataFrame(), pd.DataFrame({"a": []}), pd.Series([], dtype="float64")],
@@ -854,6 +900,24 @@ def test_groupby_apply_series_args(func, args):
     assert_groupby_results_equal(expect, got)
 
 
+def test_groupby_apply_series_preserves_multiindex_names():
+    pdf = pd.DataFrame(
+        {"value": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.MultiIndex.from_product([range(2), range(2)]),
+    )
+    gdf = cudf.from_pandas(pdf)
+    by = np.array([0, 0, 1, 1])
+
+    expect = pdf.groupby(by=by, group_keys=False)["value"].apply(
+        lambda x: x.cumprod()
+    )
+    got = gdf.groupby(by=by, group_keys=False)["value"].apply(
+        lambda x: x.cumprod()
+    )
+
+    assert_eq(expect, got)
+
+
 @pytest.mark.parametrize("group_keys", [None, True, False])
 @pytest.mark.parametrize("by", ["A", ["A", "B"]])
 def test_groupby_group_keys(group_keys, by):
@@ -939,3 +1003,24 @@ def test_group_by_empty_apply(request, dtype, apply_op):
         check_dtype=True,
         check_index_type=True,
     )
+
+
+def test_groupby_apply_preserves_inner_index_name():
+    # The concatenated apply result keeps the UDF result's index name as
+    # the inner MultiIndex level name, matching pandas.
+    pdf = pd.DataFrame(
+        {
+            "name": ["a", "a", "b"],
+            "amount": [100.0, 200.0, 300.0],
+        },
+        index=pd.Index([1, 2, 3], name="stamp"),
+    )
+    gdf = cudf.from_pandas(pdf)
+    expect = pdf.groupby("name").apply(
+        lambda x: x["amount"].cumsum(), include_groups=False
+    )
+    got = gdf.groupby("name").apply(
+        lambda x: x["amount"].cumsum(), include_groups=False
+    )
+    assert expect.index.names == got.index.names
+    assert_eq(expect, got)

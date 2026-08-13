@@ -1,4 +1,4 @@
-# Regex Features
+# Regex Features {#md_regex}
 
 This page specifies which regular expression (regex) features are currently supported by libcudf strings column APIs that accept regex patterns:
 
@@ -23,6 +23,8 @@ By default, only the `\n` character is recognized as a line break. The [cudf::st
 - Line separator (Unicode: `2028`, UTF-8: `E280A8`)
 - Next line (Unicode: `0085`, UTF-8: `C285`)
 - Carriage return (Unicode: `000D`, UTF-8: `0D`)
+
+With `EXT_NEWLINE`, a carriage-return/line-feed pair (`\r\n`) is treated as a single line terminator: the `^` and `$` anchors match before the `\r` and after the `\n`, and never between them.
 
 **Invalid regex patterns will result in undefined behavior**. This includes but is not limited to the following:
 - Unescaped special characters (listed in the third row of the Characters table below) when they are intended to match as literals.
@@ -132,9 +134,9 @@ By default, only the `\n` character is recognized as a line break. The [cudf::st
 ### Ignore case
 
 The [cudf::strings::regex_flags::IGNORECASE](@ref cudf::strings::regex_flags) can be used to match literal characters and characters within a character class
-to a limited extent. Only those characters supported by the C++ STL [`std::tolower`](https://en.cppreference.com/w/cpp/locale/tolower.html)
-and [`std::toupper`](https://en.cppreference.com/w/cpp/locale/toupper.html)
-when used with [`std::locale`](https://en.cppreference.com/w/cpp/locale/locale.html) with locale name`C.UTF-8` are supported.
+to a limited extent. Only those characters supported by the C++ STL [`std::tolower`](https://en.cppreference.com/cpp/locale/tolower)
+and [`std::toupper`](https://en.cppreference.com/cpp/locale/toupper)
+when used with [`std::locale`](https://en.cppreference.com/cpp/locale/locale) with locale name`C.UTF-8` are supported.
 For example, this feature does not include matching characters which have multiple character counterparts.
 
 Character classes (defined by `[]`) have the further restriction that any range of characters are expected to map appropriately between

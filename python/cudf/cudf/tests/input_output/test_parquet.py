@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -548,7 +548,7 @@ def test_parquet_read_row_groups(tmp_path, pdf, row_group_size):
     fname = tmp_path / "row_group.parquet"
     pdf.to_parquet(fname, compression="gzip", row_group_size=row_group_size)
 
-    num_rows, row_groups, col_names, _, _ = cudf.io.read_parquet_metadata(
+    _num_rows, row_groups, _col_names, _, _ = cudf.io.read_parquet_metadata(
         fname
     )
 
@@ -572,7 +572,7 @@ def test_parquet_read_row_groups_non_contiguous(tmp_path, pdf, row_group_size):
     fname = tmp_path / "row_group.parquet"
     pdf.to_parquet(fname, compression="gzip", row_group_size=row_group_size)
 
-    num_rows, row_groups, col_names, _, _ = cudf.io.read_parquet_metadata(
+    _num_rows, row_groups, _col_names, _, _ = cudf.io.read_parquet_metadata(
         fname
     )
 
@@ -671,7 +671,7 @@ def test_parquet_reader_select_nonexistent_columns(ignore_missing_columns):
     else:
         with pytest.raises(
             ValueError,
-            match="Encountered non-existent column in selected path",
+            match=r"Encountered non-existent column '[^']+' in the selected path",
         ):
             cudf.read_parquet(
                 buf,
@@ -1306,7 +1306,8 @@ def test_parquet_reader_struct_select_columns_nonexistent_error(data, columns):
     pa.parquet.write_table(table, buff)
 
     with pytest.raises(
-        ValueError, match="Encountered non-existent column in selected path"
+        ValueError,
+        match=r"Encountered non-existent column '[^']+' in the selected path",
     ):
         cudf.read_parquet(buff, columns=columns, ignore_missing_columns=False)
 
@@ -2187,6 +2188,29 @@ def test_parquet_writer_chunked_max_file_size_error():
         match="file_name_prefix cannot be None if max_file_size is passed",
     ):
         ParquetDatasetWriter("sample", partition_cols=["a"], max_file_size=100)
+
+
+@pytest.mark.parametrize(
+    "path_names,partition_offsets,match",
+    [
+        (
+            ["a.parquet", "b.parquet"],
+            None,
+            "partition info is required",
+        ),
+        (
+            ["a.parquet", "b.parquet"],
+            [0, 1],
+            "same size",
+        ),
+    ],
+)
+def test_write_parquet_partitions_info_validation(
+    simple_gdf, tmp_path, path_names, partition_offsets, match
+):
+    paths = [str(tmp_path / path_name) for path_name in path_names]
+    with pytest.raises(ValueError, match=match):
+        simple_gdf.to_parquet(paths, partition_offsets=partition_offsets)
 
 
 def test_parquet_writer_chunked_partitioned_context(tmpdir_factory):
@@ -3245,7 +3269,7 @@ def test_to_parquet_row_group_size(
         fname, row_group_size_bytes=size_bytes, row_group_size_rows=size_rows
     )
 
-    num_rows, row_groups, col_names, _, _ = cudf.io.read_parquet_metadata(
+    num_rows, row_groups, _col_names, _, _ = cudf.io.read_parquet_metadata(
         fname
     )
     # 8 bytes per row, as the column is int64
@@ -4386,7 +4410,10 @@ def test_parquet_reader_with_mismatched_schemas_error():
 
     with pytest.raises(
         ValueError,
-        match="Encountered mismatching SchemaElement properties for a column in the selected path",
+        match=(
+            r"Encountered mismatching data type or schema across the "
+            r"Parquet sources for column '[^']+'"
+        ),
     ):
         cudf.read_parquet(
             [buf1, buf2], columns=["millis"], allow_mismatched_pq_schemas=True
@@ -4414,8 +4441,11 @@ def test_parquet_reader_with_mismatched_schemas_error():
     df2.to_parquet(buf2)
 
     with pytest.raises(
-        IndexError,
-        match="Encountered mismatching number of children for a column in the selected path",
+        ValueError,
+        match=(
+            r"Encountered mismatching number of children across Parquet "
+            r"sources for column '[^']+'"
+        ),
     ):
         cudf.read_parquet(
             [buf1, buf2],
@@ -4424,8 +4454,11 @@ def test_parquet_reader_with_mismatched_schemas_error():
         )
 
     with pytest.raises(
-        IndexError,
-        match="Encountered mismatching schema tree depths across data sources",
+        ValueError,
+        match=(
+            r"Encountered missing nested column '[^']+' across Parquet "
+            r"sources for column '[^']+'"
+        ),
     ):
         cudf.read_parquet(
             [buf1, buf2],
@@ -5027,3 +5060,11 @@ def test_read_parquet_snappy_malformed_copy_elem(
     )
     with pytest.raises(RuntimeError, match=match_string):
         cudf.read_parquet(fname)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["one_null_row_dict.parquet", "one_null_row_nodict.parquet"],
+)
+def test_parquet_reader_one_null_row(datadir, filename):
+    cudf.read_parquet(datadir / filename)

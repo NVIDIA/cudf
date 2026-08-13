@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,13 +14,16 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for sort and rank
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_sort
  * @{
- * @file
- * @brief Column APIs for sort and rank
  */
 
 /**
@@ -254,6 +257,9 @@ std::unique_ptr<column> rank(
  * result is { 0,1,2, 6,5,4,3, 7,8,9 }
  * @endcode
  *
+ * A zero-column `keys` table is treated as empty, producing an empty column even when `keys` has a
+ * non-zero row count.
+ *
  * @param keys The table that determines the ordering of elements in each segment
  * @param segment_offsets The column of `size_type` type containing start offset index for each
  * contiguous segment.
@@ -266,6 +272,7 @@ std::unique_ptr<column> rank(
  * `null_order::BEFORE`.
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource to allocate any returned objects
+ *
  * @return sorted order of the segment sorted table
  *
  */
@@ -421,6 +428,17 @@ std::unique_ptr<column> top_k_order(
  * result is [[5,4,3], [4,3,2], [10,8,9]] // each segment may not be sorted
  * @endcode
  *
+ * The segment_offsets are not required to include all indices. Any indices outside the specified
+ * segments are excluded from the result.
+ *
+ * @code{.pseudo}
+ * Example: (offsets do not cover all indices)
+ * col = [ 3, 4, 5, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10 ]
+ * offsets = [3, 10]
+ * result = cudf::segmented_top_k(col, offsets, 3);
+ * result is [[7,6,5]] // rows 0-2 and 10-12 are excluded
+ * @endcode
+ *
  * @throw std::invalid_argument if k less than or equal to zero
  * @throw cudf::data_type_error if segment_offsets is not size_type
  * @throw std::invalid_argument segments_offsets is empty or contains nulls
@@ -455,6 +473,17 @@ std::unique_ptr<column> segmented_top_k(
  * offsets = [0, 3, 7, 13]
  * result = cudf::segmented_top_k_order(col, offsets, 3);
  * result is [[2,1,0], [3,6,5], [12,10,11]] // each segment may not be sorted
+ * @endcode
+ *
+ * The segment_offsets are not required to include all indices. Any indices outside the specified
+ * segments are excluded from the result.
+ *
+ * @code{.pseudo}
+ * Example: (offsets do not cover all indices)
+ * col = [ 3, 4, 5, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10 ]
+ * offsets = [3, 10]
+ * result = cudf::segmented_top_k_order(col, offsets, 3);
+ * result is [[9,8,7]] // rows 0-2 and 10-12 are excluded
  * @endcode
  *
  * @throw std::invalid_argument if k less than or equal to zero

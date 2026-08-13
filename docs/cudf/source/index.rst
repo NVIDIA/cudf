@@ -1,11 +1,7 @@
-Welcome to the cuDF documentation!
-==================================
+NVIDIA cuDF Documentation
+=========================
 
-.. figure:: _static/RAPIDS-logo-purple.png
-    :width: 300px
-    :align: center
-
-**cuDF** (pronounced "KOO-dee-eff") is a GPU-accelerated library for tabular
+**NVIDIA cuDF** (pronounced "KOO-dee-eff") is a GPU-accelerated library for tabular
 data processing. It is part of the `RAPIDS <https://rapids.ai/>`_ suite of
 libraries and is composed of multiple sub-projects:
 

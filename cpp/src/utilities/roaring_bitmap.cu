@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,7 +44,7 @@ decltype(auto) dispatch_roaring_bitmap_type(roaring_bitmap_type type, Func&& fun
 
 class roaring_bitmap::impl {
  public:
-  explicit impl(cudf::host_span<cuda::std::byte const> serialized_bitmap_data)
+  explicit impl(std::span<cuda::std::byte const> serialized_bitmap_data)
     : _serialized_bitmap_data{serialized_bitmap_data}
   {
   }
@@ -119,13 +119,13 @@ class roaring_bitmap::impl {
     }
   }
 
-  cudf::host_span<cuda::std::byte const> _serialized_bitmap_data;
+  std::span<cuda::std::byte const> _serialized_bitmap_data;
   std::unique_ptr<roaring_bitmap_32_type> _bitmap32;
   std::unique_ptr<roaring_bitmap_64_type> _bitmap64;
 };
 
 roaring_bitmap::roaring_bitmap(roaring_bitmap_type type,
-                               cudf::host_span<cuda::std::byte const> serialized_bitmap_data)
+                               std::span<cuda::std::byte const> serialized_bitmap_data)
   : _type{type}
 {
   CUDF_EXPECTS(not serialized_bitmap_data.empty(),

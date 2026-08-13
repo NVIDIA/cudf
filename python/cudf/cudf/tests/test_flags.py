@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import operator
@@ -172,17 +172,16 @@ def test_set_flags_no_change_when_none(frame_or_series):
     _assert_flags_eq(cu_new, pd_new)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The copy keyword is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_set_flags_copy_true_makes_deep_copy():
     # Match pandas' observable behaviour: mutating the copy does not
     # alter the original. ``copy=True`` is deprecated in pandas 3; we
     # still accept it for API parity.
-    import warnings
-
     pdf = pd.DataFrame({"a": [1, 2, 3]})
     gdf = cudf.DataFrame({"a": [1, 2, 3]})
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        p_new = pdf.set_flags(copy=True, allows_duplicate_labels=False)
+    p_new = pdf.set_flags(copy=True, allows_duplicate_labels=False)
     g_new = gdf.set_flags(copy=True, allows_duplicate_labels=False)
     p_new.loc[0, "a"] = 99
     g_new.loc[0, "a"] = 99
@@ -509,7 +508,7 @@ def test_iloc_raises_duplicate_label_error():
 @pytest.mark.parametrize("left_flag", [True, False])
 @pytest.mark.parametrize("right_flag", [True, False])
 def test_concat_flags_anded(frame_or_series, left_flag, right_flag):
-    cu_cls, pd_cls = frame_or_series
+    cu_cls, _pd_cls = frame_or_series
     if cu_cls is cudf.Series:
         cu_a = cudf.Series([1], index=["a"]).set_flags(
             allows_duplicate_labels=left_flag

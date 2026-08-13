@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ``gather_statistics`` / ``global_statistics`` on streaming engines."""
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+
 from rapidsmpf.statistics import Statistics
 
 from cudf_polars.engine.options import StreamingOptions
@@ -53,4 +54,7 @@ def test_statistics(engine: StreamingEngine) -> None:
     assert len(stats) == engine.nranks
     for s in stats:
         assert s.enabled
-        assert s.list_stat_names() == []
+        # The allgather of the statistics can return locally on a single
+        # rank and clear the stats before the allgather event loop is
+        # removed. So we might see an event loop stat, but no other.
+        assert s.list_stat_names() == [] or s.list_stat_names() == ["event-loop-total"]

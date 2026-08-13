@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 import re
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -101,3 +102,29 @@ def test_series_mask_inplace_int_into_temporal_pandas_compat(dtype):
             lfunc_args_and_kwargs=([], {}),
             rfunc_args_and_kwargs=([], {}),
         )
+
+
+@pytest.mark.parametrize("dtype", ["UInt8", "Int64", "Float64"])
+@pytest.mark.parametrize(
+    "nat",
+    [
+        pd.NaT,
+        np.datetime64("NaT"),
+        np.timedelta64("NaT"),
+    ],
+)
+def test_series_where_nat_invalid_for_masked_dtypes(dtype, nat):
+    # NaT is only a valid missing value for datetime/timedelta dtypes;
+    # pandas raises TypeError for masked (nullable extension) dtypes.
+    gsr = cudf.Series(pd.array([1, 2, 3], dtype=dtype))
+    with pytest.raises(
+        TypeError, match=rf"Invalid value '.*' for dtype '{dtype}'"
+    ):
+        gsr.where(cudf.Series([True, True, False]), nat)
+
+
+@pytest.mark.parametrize("nat", [pd.NaT, np.datetime64("NaT")])
+def test_series_where_nat_valid_for_datetime(nat):
+    gsr = cudf.Series(pd.to_datetime(["2020-01-01", "2020-01-02"]))
+    result = gsr.where(cudf.Series([True, False]), nat)
+    assert result.isnull().sum() == 1

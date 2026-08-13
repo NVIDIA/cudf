@@ -1,18 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.cudf.channel_metadata import OrderKey, OrderScheme
-from rapidsmpf.streaming.cudf.table_chunk import TableChunk
 
 import polars as pl
 
 import pylibcudf as plc
+from cudf_streaming.channel_metadata import OrderKey, OrderScheme
+from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl.ir import Empty, IRExecutionContext
@@ -133,7 +134,7 @@ def test_sort_slice(df, engine, offset):
     q = df.sort(by=["y", "z"]).slice(offset, 2)
     with pytest.raises(
         NotImplementedError,
-        match="This slice not supported for multiple partitions.",
+        match=r"This slice not supported for multiple partitions.",
     ):
         assert_gpu_result_equal(q, engine=engine)
 
@@ -156,7 +157,7 @@ async def _send_sorted_chunks(
     n_chunks: int,
     n_rows: int,
 ) -> None:
-    stream = context.get_stream_from_pool()
+    stream = context.br().stream_pool.get_stream()
     for i in range(n_chunks):
         start = key_start + i * n_rows
         tbl = DataFrame.from_polars(
@@ -187,11 +188,16 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
     key_start = comm.rank * n_chunks * n_rows
     order_keys = [OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)]
     schema_ir = Empty({"key": DataType(pl.Int32())})
-    ir_context = IRExecutionContext(get_cuda_stream=context.get_stream_from_pool)
 
     async def _run():
         ch = context.create_channel()
-        with reserve_op_id() as op_id:
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            reserve_op_id() as op_id,
+        ):
+            ir_context = IRExecutionContext(
+                executor, get_cuda_stream=context.br().stream_pool.get_stream
+            )
             _, scheme = await gather_in_task_group(
                 _send_sorted_chunks(
                     context, ch, key_start=key_start, n_chunks=n_chunks, n_rows=n_rows
@@ -208,13 +214,14 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
     assert partitioning.local == "inherit"
     inter_rank = partitioning.inter_rank
     assert isinstance(inter_rank, OrderScheme)
-    assert inter_rank.keys == tuple(order_keys)
-    assert inter_rank.strict_boundaries  # all keys are distinct integers
-    assert inter_rank.num_boundaries == comm.nranks * n_chunks - 1
+    (ordering,) = inter_rank.orderings
+    assert ordering.keys == tuple(order_keys)
+    assert ordering.strict_boundaries  # all keys are distinct integers
+    assert ordering.num_boundaries == comm.nranks * n_chunks - 1
 
     # Verify actual boundary values: start of each partition except the first
     expected_keys = [i * n_rows for i in range(1, comm.nranks * n_chunks)]
-    chunk = inter_rank.get_boundaries(context.br())
+    chunk = ordering.get_boundaries(context.br())
     actual_keys = (
         DataFrame.from_table(
             chunk.table_view(), ["key"], [DataType(pl.Int32())], stream=chunk.stream
@@ -232,11 +239,10 @@ def test_extract_orderscheme_partitioning_unsorted(spmd_engine) -> None:
 
     order_keys = [OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)]
     schema_ir = Empty({"key": DataType(pl.Int32())})
-    ir_context = IRExecutionContext(get_cuda_stream=context.get_stream_from_pool)
 
     async def _run():
         ch = context.create_channel()
-        stream = context.get_stream_from_pool()
+        stream = context.br().stream_pool.get_stream()
 
         async def _send() -> None:
             # Two locally-sorted chunks that are globally out of order
@@ -255,7 +261,13 @@ def test_extract_orderscheme_partitioning_unsorted(spmd_engine) -> None:
                 )
             await ch.drain(context)
 
-        with reserve_op_id() as op_id:
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            reserve_op_id() as op_id,
+        ):
+            ir_context = IRExecutionContext(
+                executor, get_cuda_stream=context.br().stream_pool.get_stream
+            )
             _, scheme = await gather_in_task_group(
                 _send(),
                 extract_orderscheme_partitioning(
@@ -278,11 +290,16 @@ def test_extract_orderscheme_partitioning_single_chunk(spmd_engine) -> None:
 
     order_keys = [OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)]
     schema_ir = Empty({"key": DataType(pl.Int32())})
-    ir_context = IRExecutionContext(get_cuda_stream=context.get_stream_from_pool)
 
     async def _run():
         ch = context.create_channel()
-        with reserve_op_id() as op_id:
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            reserve_op_id() as op_id,
+        ):
+            ir_context = IRExecutionContext(
+                executor, get_cuda_stream=context.br().stream_pool.get_stream
+            )
             _, scheme = await gather_in_task_group(
                 _send_sorted_chunks(context, ch, key_start=0, n_chunks=1, n_rows=4),
                 extract_orderscheme_partitioning(
@@ -307,11 +324,10 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
     # Expected: 1 boundary at 3 (max of chunk 1), strict (no overlap)
     order_keys = [OrderKey(0, plc.types.Order.DESCENDING, plc.types.NullOrder.AFTER)]
     schema_ir = Empty({"key": DataType(pl.Int32())})
-    ir_context = IRExecutionContext(get_cuda_stream=context.get_stream_from_pool)
 
     async def _run():
         ch = context.create_channel()
-        stream = context.get_stream_from_pool()
+        stream = context.br().stream_pool.get_stream()
 
         async def _send() -> None:
             for i, keys in enumerate([[7, 6, 5, 4], [3, 2, 1, 0]]):
@@ -329,7 +345,13 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
                 )
             await ch.drain(context)
 
-        with reserve_op_id() as op_id:
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            reserve_op_id() as op_id,
+        ):
+            ir_context = IRExecutionContext(
+                executor, get_cuda_stream=context.br().stream_pool.get_stream
+            )
             _, scheme = await gather_in_task_group(
                 _send(),
                 extract_orderscheme_partitioning(
@@ -344,11 +366,12 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
     assert partitioning.local == "inherit"
     inter_rank = partitioning.inter_rank
     assert isinstance(inter_rank, OrderScheme)
-    assert inter_rank.keys == tuple(order_keys)
-    assert inter_rank.strict_boundaries
-    assert inter_rank.num_boundaries == 1
+    (ordering,) = inter_rank.orderings
+    assert ordering.keys == tuple(order_keys)
+    assert ordering.strict_boundaries
+    assert ordering.num_boundaries == 1
 
-    chunk = inter_rank.get_boundaries(context.br())
+    chunk = ordering.get_boundaries(context.br())
     actual_keys = (
         DataFrame.from_table(
             chunk.table_view(), ["key"], [DataType(pl.Int32())], stream=chunk.stream
@@ -358,3 +381,20 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
     )
     # Boundary = first row of chunk 1 in descending order = max(chunk 1) = 3
     assert actual_keys == [3]
+
+
+def test_sort_by_renamed_join_column(streaming_engine_factory):
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, raise_on_fail=True),
+    )
+    df1 = pl.LazyFrame({"k1": [1, 2], "text": ["A", "B"]})
+    df2 = pl.LazyFrame({"k2": [1, 2], "text": ["y", "x"]})
+    ctx = pl.SQLContext()
+    ctx.register("df1", df1)
+    ctx.register("df2", df2)
+    q = ctx.execute(
+        "SELECT df1.text AS t1, df2.text AS t2 "
+        "FROM df1 INNER JOIN df2 ON df1.k1 = df2.k2 "
+        "ORDER BY df2.text"
+    )
+    assert_gpu_result_equal(q, engine=engine)

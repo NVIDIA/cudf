@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,64 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <optional>
+
+/**
+ * @file
+ * @brief Strings column APIs for extracting substrings by character position.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_slice
  * @{
- * @file
  */
+
+/**
+ * @brief Returns a new strings column that contains substrings of the
+ * strings in the provided column.
+ *
+ * @deprecated in 26.08. To be removed in a future version. Use the overload that take std::optional
+ * parameters instead.
+ *
+ * The character positions to retrieve in each string are `[start,stop)`.
+ * If the start position is outside a string's length, an empty
+ * string is returned for that entry. If the stop position is past the
+ * end of a string's length, the end of the string is used for
+ * stop position for that string.
+ *
+ * Null string entries will return null output string entries.
+ *
+ * The scalar parameters are expected to be created using the same stream as the one passed to this
+ * function. Otherwise, that stream must be synchronized before calling this function to ensure that
+ * the scalar values are available on the device.
+ *
+ * @code{.pseudo}
+ * Example:
+ * s = ["hello", "goodbye"]
+ * r = slice_strings(s,2,6)
+ * r is now ["llo","odby"]
+ * r2 = slice_strings(s,2,5,2)
+ * r2 is now ["lo","ob"]
+ * @endcode
+ *
+ * @param input Strings column for this operation
+ * @param start First character position to begin the substring
+ * @param stop Last character position (exclusive) to end the substring
+ * @param step Distance between input characters retrieved
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return New strings column with sorted elements of this instance
+ */
+[[deprecated(
+  "Use the overload that takes std::optional parameters instead")]] std::unique_ptr<column>
+slice_strings(strings_column_view const& input,
+              numeric_scalar<size_type> const& start = numeric_scalar<size_type>(0, false),
+              numeric_scalar<size_type> const& stop  = numeric_scalar<size_type>(0, false),
+              numeric_scalar<size_type> const& step  = numeric_scalar<size_type>(1),
+              rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+              rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column that contains substrings of the
@@ -48,11 +99,11 @@ namespace strings {
  */
 std::unique_ptr<column> slice_strings(
   strings_column_view const& input,
-  numeric_scalar<size_type> const& start = numeric_scalar<size_type>(0, false),
-  numeric_scalar<size_type> const& stop  = numeric_scalar<size_type>(0, false),
-  numeric_scalar<size_type> const& step  = numeric_scalar<size_type>(1),
-  rmm::cuda_stream_view stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+  std::optional<size_type> start,
+  std::optional<size_type> stop     = std::nullopt,
+  std::optional<size_type> step     = std::nullopt,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column that contains substrings of the

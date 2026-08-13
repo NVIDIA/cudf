@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
@@ -6,6 +6,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.stemmer cimport (
     is_letter as cpp_is_letter,
     letter_type,
@@ -60,11 +61,15 @@ cpdef Column is_letter(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_indices
+    if ColumnOrSize is Column:
+        c_indices = indices.view()
     with nogil:
         c_result = cpp_is_letter(
-            input.view(),
+            c_input,
             letter_type.VOWEL if check_vowels else letter_type.CONSONANT,
-            indices if ColumnOrSize is size_type else indices.view(),
+            indices if ColumnOrSize is size_type else c_indices,
             _cs
         )
 
@@ -98,8 +103,9 @@ cpdef Column porter_stemmer_measure(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_porter_stemmer_measure(input.view(), _cs, mr.get_mr())
+        c_result = cpp_porter_stemmer_measure(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 

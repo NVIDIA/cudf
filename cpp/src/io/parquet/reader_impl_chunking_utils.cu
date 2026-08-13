@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -355,7 +356,7 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
   size_t size_limit,
   size_t num_columns,
   bool is_first_subpass,
-  bool has_page_index,
+  bool has_offset_index,
   rmm::cuda_stream_view stream)
 {
   auto [aggregated_info, page_keys_by_split] = adjust_cumulative_sizes(c_info, pages, stream);
@@ -386,13 +387,17 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
   auto iter = cuda::counting_iterator{size_t{0}};
   auto page_row_index =
     cudf::detail::make_counting_transform_iterator(0, get_page_end_row_index{c_info});
-  thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    iter,
-    iter + num_columns,
-    page_bounds.begin(),
-    get_page_span{
-      page_offsets, chunks, page_row_index, start_row, end_row, is_first_subpass, has_page_index});
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    iter,
+                    iter + num_columns,
+                    page_bounds.begin(),
+                    get_page_span{page_offsets,
+                                  chunks,
+                                  page_row_index,
+                                  start_row,
+                                  end_row,
+                                  is_first_subpass,
+                                  has_offset_index});
 
   // total page count over all columns
   auto page_count_iter   = cuda::make_transform_iterator(page_bounds.begin(), get_span_size{});
@@ -616,13 +621,27 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
     start_pos += codec.num_pages;
   }
   // now copy the uncompressed V2 def and rep level data
-  if (not copy_in.empty()) {
+  if (curr_copy_page > 0) {
     auto const d_copy_in = cudf::detail::make_device_uvector_async(
       copy_in, stream, cudf::get_current_device_resource_ref());
     auto const d_copy_out = cudf::detail::make_device_uvector_async(
       copy_out, stream, cudf::get_current_device_resource_ref());
 
-    cudf::io::detail::gpu_copy_uncompressed_blocks(d_copy_in, d_copy_out, stream);
+    auto const src_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<uint8_t const*>(
+        [inputs = d_copy_in.data()] __device__(size_type i) { return inputs[i].data(); }));
+    auto const dst_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<uint8_t*>(
+        [outputs = d_copy_out.data()] __device__(size_type i) { return outputs[i].data(); }));
+    auto const size_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<size_t>(
+        [inputs = d_copy_in.data(), outputs = d_copy_out.data()] __device__(size_type i) {
+          return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
+        }));
+    cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, curr_copy_page, stream);
   }
 
   CUDF_EXPECTS(
@@ -934,7 +953,7 @@ rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
   return level_decode_sizes;
 }
 
-row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info const> row_groups_info,
+row_group_pass_data compute_row_group_passes(std::span<row_group_size_info const> row_group_sizes,
                                              std::size_t comp_read_limit,
                                              int64_t skip_rows)
 {
@@ -951,14 +970,18 @@ row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info cons
   std::size_t cur_rg_start             = 0;
   std::size_t cur_row_count            = 0;
 
-  for (std::size_t cur_rg_index = 0; cur_rg_index < row_groups_info.size(); cur_rg_index++) {
-    auto const& rgi = row_groups_info[cur_rg_index];
+  for (std::size_t cur_rg_index = 0; cur_rg_index < row_group_sizes.size(); cur_rg_index++) {
+    auto const& rgi = row_group_sizes[cur_rg_index];
 
     // We must use the effective size of the first row group we are reading to accurately calculate
     // the first non-zero `input_pass_start_row_count` unless we are reading only one row group
-    auto const row_group_rows = (skip_rows and row_groups_info.size() > 1)
-                                  ? (rgi.start_row + rgi.unadjusted_num_rows - skip_rows)
-                                  : rgi.unadjusted_num_rows;
+    auto row_group_rows = rgi.unadjusted_num_rows;
+    if (row_group_sizes.size() > 1) {
+      CUDF_EXPECTS(std::cmp_greater_equal(rgi.unadjusted_num_rows, skip_rows),
+                   "Row groups must contribute non-negative effective rows",
+                   std::invalid_argument);
+      row_group_rows -= skip_rows;
+    }
 
     auto const compressed_rg_size    = rgi.compressed_size;
     auto const row_group_leaf_values = rgi.max_leaf_values;
@@ -1007,8 +1030,8 @@ row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info cons
   }
 
   // Add the last pass if necessary
-  if (result.pass_row_group_offsets.back() != row_groups_info.size()) {
-    result.pass_row_group_offsets.push_back(row_groups_info.size());
+  if (result.pass_row_group_offsets.back() != row_group_sizes.size()) {
+    result.pass_row_group_offsets.push_back(row_group_sizes.size());
     result.pass_start_row_counts.push_back(cur_row_count);
   }
 

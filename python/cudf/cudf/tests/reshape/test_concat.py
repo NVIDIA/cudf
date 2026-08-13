@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from decimal import Decimal
@@ -118,7 +118,7 @@ def test_concat_all_nulls(values):
 
 
 def test_concat_errors():
-    df, df2, gdf, gdf2 = make_frames()
+    df, _df2, gdf, gdf2 = make_frames()
 
     # No objs
     assert_exceptions_equal(
@@ -2076,14 +2076,14 @@ def test_series_concat_error_mixed_types():
 
     with pytest.raises(
         TypeError,
-        match="cudf does not support mixed types, please type-cast "
+        match=r"cudf does not support mixed types, please type-cast "
         "both series to same dtypes.",
     ):
         cudf.concat([gsr, other])
 
     with pytest.raises(
         TypeError,
-        match="cudf does not support mixed types, please type-cast "
+        match=r"cudf does not support mixed types, please type-cast "
         "both series to same dtypes.",
     ):
         cudf.concat([gsr, gsr, other, gsr, other])

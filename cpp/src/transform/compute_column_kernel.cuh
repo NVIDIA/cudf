@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -72,5 +72,6 @@ void launch_compute_column_kernel(table_device_view const& table_device,
   compute_column_kernel<MAX_BLOCK_SIZE, HasNull, HasComplexType>
     <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.value()>>>(
       table_device, device_expression_data, mutable_output_device);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 }  // namespace cudf::detail

@@ -1,8 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
@@ -40,6 +41,7 @@ static void nvbench_groupby_rank(nvbench::state& state,
   requests[0].values = order_by;
   requests[0].aggregations.push_back(std::move(agg));
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     rmm::cuda_stream_view stream_view{launch.get_stream()};
     cudf::groupby::groupby gb_obj(
@@ -47,6 +49,8 @@ static void nvbench_groupby_rank(nvbench::state& state,
     // groupby scan uses sort implementation
     auto result = gb_obj.scan(requests);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 enum class rank_method : int32_t {};

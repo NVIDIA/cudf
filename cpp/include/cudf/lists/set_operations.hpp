@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,12 +10,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for set operations (overlap, intersection, union, difference) on list columns
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup set_operations
  * @{
- * @file
  */
 
 /**

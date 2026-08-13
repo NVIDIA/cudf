@@ -1,11 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
-from libcpp.memory cimport unique_ptr
+from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport unary as cpp_unary
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport bit_cast as cpp_bit_cast
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.unary cimport unary_operator
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -20,6 +22,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
     "UnaryOperator",
+    "bit_cast",
     "cast",
     "is_nan",
     "is_not_nan",
@@ -58,9 +61,10 @@ cpdef Column unary_operation(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         result = cpp_unary.unary_operation(
-            input.view(), op, _cs, mr.get_mr()
+            c_input, op, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -91,8 +95,9 @@ cpdef Column is_null(Column input, object stream=None, DeviceMemoryResource mr=N
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_null(input.view(), _cs, mr.get_mr())
+        result = cpp_unary.is_null(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -122,8 +127,9 @@ cpdef Column is_valid(Column input, object stream=None, DeviceMemoryResource mr=
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_valid(input.view(), _cs, mr.get_mr())
+        result = cpp_unary.is_valid(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -157,10 +163,49 @@ cpdef Column cast(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         result = cpp_unary.cast(
-            input.view(), data_type.c_obj, _cs, mr.get_mr()
+            c_input, data_type.c_obj, _cs, mr.get_mr()
         )
+
+    return Column.from_libcudf(move(result), _stream, mr)
+
+
+cpdef Column bit_cast(
+    Column input, DataType data_type, object stream=None, DeviceMemoryResource mr=None
+):
+    """Bit-cast a column to a different data type.
+
+    For details, see :cpp:func:`bit_cast`.
+
+    Parameters
+    ----------
+    input : Column
+        The column to bit-cast.
+    data_type : DataType
+        The data type to bit-cast to.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
+
+    Returns
+    -------
+    pylibcudf.Column
+        A column with the same bit representation reinterpreted as ``data_type``.
+    """
+    cdef unique_ptr[column] result
+
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().value()
+    mr = _get_memory_resource(mr)
+
+    cdef column_view c_input = input.view()
+    cdef column_view c_result
+    with nogil:
+        c_result = cpp_bit_cast(c_input, data_type.c_obj)
+        result = make_unique[column](c_result, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -190,8 +235,9 @@ cpdef Column is_nan(Column input, object stream=None, DeviceMemoryResource mr=No
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_nan(input.view(), _cs, mr.get_mr())
+        result = cpp_unary.is_nan(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -221,8 +267,9 @@ cpdef Column is_not_nan(Column input, object stream=None, DeviceMemoryResource m
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_not_nan(input.view(), _cs, mr.get_mr())
+        result = cpp_unary.is_not_nan(c_input, _cs, mr.get_mr())
 
     return Column.from_libcudf(move(result), _stream, mr)
 

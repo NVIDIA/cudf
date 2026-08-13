@@ -86,6 +86,7 @@ void launch_mixed_join_semi(bool has_nulls,
         set_ref,
         left_table_keep_mask,
         device_expression_data);
+    CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, false>
       <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.value()>>>(
@@ -97,6 +98,7 @@ void launch_mixed_join_semi(bool has_nulls,
         set_ref,
         left_table_keep_mask,
         device_expression_data);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 }
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: Document StringFunction to remove noqa
 # ruff: noqa: D101
@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import IntEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from polars import Struct as pl_Struct
+from polars import Struct as pl_Struct  # noqa: TC002 (used in runtime cast())
 from polars.exceptions import InvalidOperationError
 
 import pylibcudf as plc
@@ -46,7 +46,7 @@ def _dtypes_for_json_decode(dtype: DataType) -> JsonDecodeType:
         return [
             (field.name, child.plc_type, _dtypes_for_json_decode(child))
             for field, child in zip(
-                cast(pl_Struct, dtype.polars_type).fields,
+                cast("pl_Struct", dtype.polars_type).fields,
                 dtype.children,
                 strict=True,
             )
@@ -124,6 +124,7 @@ class StringFunction(Expr):
         Name.Contains,
         Name.CountMatches,
         Name.EndsWith,
+        Name.EscapeRegex,
         Name.Extract,
         Name.ExtractGroups,
         Name.Find,
@@ -148,12 +149,18 @@ class StringFunction(Expr):
         Name.StripCharsEnd,
         Name.StripPrefix,
         Name.StripSuffix,
+        Name.ToInteger,
         Name.Uppercase,
         Name.Reverse,
         Name.Tail,
         Name.Titlecase,
         Name.ZFill,
     }
+    # Regex meta characters escaped by ``str.escape_regex`` (matching polars'
+    # ``regex_syntax::escape``). Each matched character is prefixed with a
+    # backslash via a back-reference replacement template.
+    _ESCAPE_REGEX_PATTERN: ClassVar[str] = r"([#$&()*+\-.?\[\\\]\^{|}~])"
+    _ESCAPE_REGEX_REPLACEMENT: ClassVar[str] = r"\\1"
     __slots__ = ("_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
@@ -197,6 +204,8 @@ class StringFunction(Expr):
                     )
                 pattern = self.children[1].value
                 self._regex_program = self._create_regex_program(pattern)
+        elif self.name is StringFunction.Name.EscapeRegex:
+            self._regex_program = self._create_regex_program(self._ESCAPE_REGEX_PATTERN)
         elif self.name is StringFunction.Name.Extract:
             (group_index,) = self.options
             if group_index == 0:
@@ -292,6 +301,12 @@ class StringFunction(Expr):
             if not isinstance(self.children[1], Literal):
                 raise NotImplementedError(
                     "strip operations only support scalar patterns"
+                )
+        elif self.name is StringFunction.Name.ToInteger:
+            base = self.children[1]
+            if not isinstance(base, Literal) or base.value != 10:
+                raise NotImplementedError(
+                    "str.to_integer only supports base 10 on the GPU engine"
                 )
 
     @staticmethod
@@ -423,9 +438,10 @@ class StringFunction(Expr):
             else:
                 col_width = self.children[1].evaluate(df, context=context)
                 assert isinstance(col_width, Column)
+                widths = col_width.obj
                 return Column(
                     plc.strings.padding.zfill_by_widths(
-                        column.obj, col_width.obj, stream=df.stream
+                        column.obj, widths, stream=df.stream
                     ),
                     self.dtype,
                 )
@@ -581,6 +597,50 @@ class StringFunction(Expr):
                 plc.json.get_json_object(plc_column, json_path, stream=df.stream),
                 dtype=self.dtype,
             )
+        elif self.name is StringFunction.Name.ToInteger:
+            (strict,) = self.options
+            plc_column = self.children[0].evaluate(df, context=context).obj
+            parse_ok = plc.strings.convert.convert_integers.is_integer(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            if parse_ok.null_count() > 0:
+                # is_integer marks null inputs as null; treat them as
+                # non-parseable so they map to null in the output.
+                parse_ok = plc.replace.replace_nulls(
+                    parse_ok,
+                    plc.Scalar.from_py(
+                        False,  # noqa: FBT003
+                        plc.DataType(plc.TypeId.BOOL8),
+                        stream=df.stream,
+                    ),
+                    stream=df.stream,
+                )
+            if strict:
+                is_null = plc.unary.is_null(plc_column, stream=df.stream)
+                ok_or_null = plc.binaryop.binary_operation(
+                    parse_ok,
+                    is_null,
+                    plc.binaryop.BinaryOperator.LOGICAL_OR,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                if not plc.reduce.reduce(
+                    ok_or_null,
+                    plc.aggregation.all(),
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                ).to_py(stream=df.stream):
+                    raise InvalidOperationError("conversion from `str` failed.")
+            result = plc.strings.convert.convert_integers.to_integers(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            new_mask, null_count = plc.transform.bools_to_mask(
+                parse_ok, stream=df.stream
+            )
+            return Column(
+                result.with_mask(new_mask, null_count),
+                dtype=self.dtype,
+            )
         elif self.name is StringFunction.Name.LenBytes:
             plc_column = self.children[0].evaluate(df, context=context).obj
             return Column(
@@ -671,7 +731,7 @@ class StringFunction(Expr):
                     max_splits - 1,
                     stream=df.stream,
                 )
-                children = plc_table.columns()
+                children = plc_table.release()
                 ref_column = children[0]
                 if (remainder := n + int(not is_split_n) - len(children)) > 0:
                     # Reach expected number of splits by padding with nulls
@@ -997,6 +1057,17 @@ class StringFunction(Expr):
             (column,) = columns
             return Column(
                 plc.strings.capitalize.title(column.obj, stream=df.stream),
+                dtype=self.dtype,
+            )
+        elif self.name is StringFunction.Name.EscapeRegex:
+            (column,) = columns
+            return Column(
+                plc.strings.replace_re.replace_with_backrefs(
+                    column.obj,
+                    self._regex_program,
+                    self._ESCAPE_REGEX_REPLACEMENT,
+                    stream=df.stream,
+                ),
                 dtype=self.dtype,
             )
         raise NotImplementedError(

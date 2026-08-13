@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,7 +37,7 @@ namespace detail {
 template <typename IndexIterator>
 rmm::device_uvector<unbound_list_view> list_vector_from_column(
   unbound_list_view::label_type label,
-  cudf::detail::lists_column_device_view const& lists_column,
+  cudf::lists_column_device_view const& lists_column,
   IndexIterator index_begin,
   IndexIterator index_end,
   rmm::cuda_stream_view stream,
@@ -174,20 +174,19 @@ std::unique_ptr<column> scatter(column_view const& source,
   auto const scatter_map_size   = cuda::std::distance(scatter_map_begin, scatter_map_end);
   auto const source_vector =
     list_vector_from_column(unbound_list_view::label_type::SOURCE,
-                            cudf::detail::lists_column_device_view(*source_device_view),
+                            cudf::lists_column_device_view(*source_device_view),
                             cuda::counting_iterator<size_type>{0},
                             cuda::counting_iterator{static_cast<size_type>(scatter_map_size)},
                             stream,
                             mr);
 
   auto const target_device_view = column_device_view::create(target, stream);
-  auto target_vector =
-    list_vector_from_column(unbound_list_view::label_type::TARGET,
-                            cudf::detail::lists_column_device_view(*target_device_view),
-                            cuda::counting_iterator<size_type>{0},
-                            cuda::counting_iterator<size_type>{num_rows},
-                            stream,
-                            mr);
+  auto target_vector            = list_vector_from_column(unbound_list_view::label_type::TARGET,
+                                               cudf::lists_column_device_view(*target_device_view),
+                                               cuda::counting_iterator<size_type>{0},
+                                               cuda::counting_iterator<size_type>{num_rows},
+                                               stream,
+                                               mr);
 
   return scatter_impl(
     source_vector, target_vector, scatter_map_begin, scatter_map_end, source, target, stream, mr);
@@ -250,20 +249,19 @@ std::unique_ptr<column> scatter(scalar const& slr,
   auto const scatter_map_size   = cuda::std::distance(scatter_map_begin, scatter_map_end);
   auto const source_vector =
     list_vector_from_column(unbound_list_view::label_type::SOURCE,
-                            cudf::detail::lists_column_device_view(*source_device_view),
+                            cudf::lists_column_device_view(*source_device_view),
                             cuda::make_constant_iterator<size_type>(0),
                             cuda::make_constant_iterator<size_type>(0) + scatter_map_size,
                             stream,
                             mr);
 
   auto const target_device_view = column_device_view::create(target, stream);
-  auto target_vector =
-    list_vector_from_column(unbound_list_view::label_type::TARGET,
-                            cudf::detail::lists_column_device_view(*target_device_view),
-                            cuda::counting_iterator<size_type>{0},
-                            cuda::counting_iterator<size_type>{num_rows},
-                            stream,
-                            mr);
+  auto target_vector            = list_vector_from_column(unbound_list_view::label_type::TARGET,
+                                               cudf::lists_column_device_view(*target_device_view),
+                                               cuda::counting_iterator<size_type>{0},
+                                               cuda::counting_iterator<size_type>{num_rows},
+                                               stream,
+                                               mr);
 
   return scatter_impl(
     source_vector, target_vector, scatter_map_begin, scatter_map_end, wrapped, target, stream, mr);

@@ -1,9 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from cython.operator cimport dereference
 import warnings
 
-from libc.stdint cimport int64_t, uint8_t
+from libc.stdint cimport int32_t, int64_t, uint8_t
 
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr, make_unique
@@ -46,6 +46,7 @@ from pylibcudf.libcudf.io.types cimport (
     statistics_freq,
     table_with_metadata,
 )
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type, type_id
 from pylibcudf.table cimport Table
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
@@ -81,7 +82,9 @@ cdef vector[cpp_FileMetaData] _build_parquet_metadatas(
     size_t num_sources,
 ) except *:
     cdef vector[cpp_FileMetaData] c_metadatas
+    cdef vector[cpp_FileMetaData*] metadata_ptrs
     cdef object metadata
+    cdef size_t i
     if parquet_metadatas is None:
         return c_metadatas
 
@@ -90,14 +93,21 @@ cdef vector[cpp_FileMetaData] _build_parquet_metadatas(
             raise TypeError(
                 "parquet_metadatas must contain only FileMetaData objects"
             )
-        c_metadatas.push_back((<FileMetaData>metadata).c_obj)
+        metadata_ptrs.push_back(&(<FileMetaData>metadata).c_obj)
 
-    if c_metadatas.size() != num_sources:
+    if metadata_ptrs.size() != num_sources:
         raise ValueError(
-            f"Length of 'parquet_metadatas' ({c_metadatas.size()}) "
+            f"Length of 'parquet_metadatas' ({metadata_ptrs.size()}) "
             f"must match the number of input sources "
             f"({num_sources})"
         )
+
+    c_metadatas.reserve(metadata_ptrs.size())
+    with nogil:
+        # This copies the (potentially large) metadata object. We don't
+        # want to hold the GIL for that.
+        for i in range(metadata_ptrs.size()):
+            c_metadatas.push_back(dereference(metadata_ptrs[i]))
 
     return c_metadatas
 
@@ -136,8 +146,19 @@ cdef class ParquetReaderOptions:
 
         Parameters
         ----------
-        row_groups : list
-            List of row groups to read
+        row_groups : list[list[int]]
+            Row groups to read, one inner list per input source.
+
+        Notes
+        -----
+        Rows are emitted in input-source order; all rows selected from
+        source 0 are emitted before rows selected from source 1, and so on.
+        Within each source, row groups are read in the order provided;
+        indices are not sorted or deduplicated, and repeated indices are
+        emitted multiple times. Empty inner lists contribute no rows.
+        When unset, all row groups are read in source order, then in
+        on-disk order within each source. Predicate pushdown drops row
+        groups in place; remaining row groups keep their relative order.
 
         Returns
         -------
@@ -230,7 +251,7 @@ cdef class ParquetReaderOptions:
 
         Parameters
         ----------
-        col_names : list
+        col_indices : list
             List of top-level column indices
 
         Returns
@@ -241,6 +262,24 @@ cdef class ParquetReaderOptions:
         for idx in col_indices:
             vec.push_back(idx)
         self.c_obj.set_column_indices(vec)
+
+    cpdef void set_column_field_ids(self, list column_field_ids):
+        """
+        Sets Parquet field IDs of the columns/fields to be read.
+
+        Parameters
+        ----------
+        column_field_ids : list
+            List of Parquet field IDs
+
+        Returns
+        -------
+        None
+        """
+        cdef vector[int32_t] vec
+        for field_id in column_field_ids:
+            vec.push_back(field_id)
+        self.c_obj.set_column_field_ids(vec)
 
     cpdef void set_filter(self, Expression filter):
         """
@@ -444,7 +483,7 @@ cdef class ParquetReaderOptionsBuilder:
 
         Parameters
         ----------
-        col_names : list[int]
+        col_indices : list[int]
             List of top-level column indices
 
         Returns
@@ -455,6 +494,25 @@ cdef class ParquetReaderOptionsBuilder:
         for idx in col_indices:
             vec.push_back(idx)
         self.c_obj.column_indices(vec)
+        return self
+
+    cpdef ParquetReaderOptionsBuilder column_field_ids(self, list column_field_ids):
+        """
+        Sets Parquet field IDs of the columns/fields to be read.
+
+        Parameters
+        ----------
+        column_field_ids : list[int]
+            List of Parquet field IDs
+
+        Returns
+        -------
+        ParquetReaderOptionsBuilder
+        """
+        cdef vector[int32_t] vec
+        for field_id in column_field_ids:
+            vec.push_back(field_id)
+        self.c_obj.column_field_ids(vec)
         return self
 
     cpdef ParquetReaderOptionsBuilder use_jit_filter(self, bool use_jit_filter):
@@ -567,7 +625,8 @@ cdef class ChunkedParquetReader:
                     )
                 )
         else:
-            sources = make_datasources(options.c_obj.get_source())
+            with nogil:
+                sources = make_datasources(options.c_obj.get_source())
             c_metadatas = _build_parquet_metadatas(
                 parquet_metadatas, sources.size()
             )
@@ -658,7 +717,8 @@ cpdef read_parquet(
         with nogil:
             c_result = move(cpp_read_parquet(options.c_obj, _cs, mr.get_mr()))
     else:
-        sources = make_datasources(options.c_obj.get_source())
+        with nogil:
+            sources = make_datasources(options.c_obj.get_source())
         c_metadatas = _build_parquet_metadatas(parquet_metadatas, sources.size())
         with nogil:
             c_result = move(
@@ -719,8 +779,9 @@ cdef class ChunkedParquetWriter:
                 partitions.push_back(
                     partition_info(part[0], part[1])
                 )
+        cdef table_view c_table = table.view()
         with nogil:
-            self.c_obj.get()[0].write(table.view(), partitions)
+            self.c_obj.get()[0].write(c_table, partitions)
 
     @staticmethod
     def from_options(ChunkedParquetWriterOptions options, object stream = None):

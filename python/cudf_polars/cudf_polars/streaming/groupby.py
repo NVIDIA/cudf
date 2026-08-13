@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Parallel GroupBy Logic."""
 
@@ -48,7 +48,28 @@ if TYPE_CHECKING:
 
 
 # Supported multi-partition aggregations
-_GB_AGG_SUPPORTED = ("sum", "count", "mean", "min", "max", "n_unique", "std", "var")
+_GB_AGG_SUPPORTED = (
+    "sum",
+    "count",
+    "mean",
+    "min",
+    "max",
+    "n_unique",
+    "std",
+    "var",
+    "item",
+    "first_non_null",
+)
+
+_GB_AGG_REDUCTIONS = {
+    "sum": "sum",
+    "count": "sum",
+    "min": "min",
+    "max": "max",
+    "n_unique": "sum",
+    "item": "item",
+    "first_non_null": "first_non_null",
+}
 
 
 class _StructCreate(Expr):
@@ -269,8 +290,7 @@ def decompose(
         ]
         return selection, aggregation, reduction, False
     if isinstance(expr, Agg):
-        if expr.name in ("sum", "count", "min", "max", "n_unique"):
-            aggfunc = expr.name if expr.name in {"min", "max"} else "sum"
+        if (aggfunc := _GB_AGG_REDUCTIONS.get(expr.name)) is not None:
             if expr.name == "count":
                 intermediate_dtype = DataType(pl.Int64())
                 agg_expr = Agg(

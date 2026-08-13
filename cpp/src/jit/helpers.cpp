@@ -1,13 +1,19 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "helpers.hpp"
 
+#include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <jit/cache.hpp>
+#include <rtcx.hpp>
+#include <runtime/context.hpp>
+
+#include <format>
 
 namespace cudf {
 namespace jit {
@@ -61,7 +67,7 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 
   if (has_user_data) {
     params.emplace(index++, "void *");
-    params.emplace(index++, jitify2::reflection::reflect<cudf::size_type>());
+    params.emplace(index++, "cudf::size_type");
   }
 
   for (auto& name : output_typenames) {
@@ -75,44 +81,38 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
   return params;
 }
 
-std::vector<std::string> input_type_names(
-  std::span<std::variant<column_view, scalar_column_view> const> views)
-{
-  std::vector<std::string> names;
-
-  std::transform(views.begin(), views.end(), std::back_inserter(names), [&](auto const& view) {
-    return std::visit([](auto& a) { return type_to_name(a.type()); }, view);
-  });
-
-  return names;
-}
-
-jitify2::Kernel get_udf_kernel(jitify2::PreprocessedProgramData const& preprocessed_program_data,
-                               std::string const& kernel_name,
-                               std::string const& cuda_source,
-                               std::vector<std::string> const& extra_options)
+kernel get_udf_kernel(std::string const& source_file,
+                      std::string const& kernel_name,
+                      std::string const& cuda_source)
 {
   CUDF_FUNC_RANGE();
 
-  int runtime_version;
-  CUDF_CUDA_TRY(cudaRuntimeGetVersion(&runtime_version));
+  auto kernel_instance_source = std::format(R"***(
+ #define CUDF_KERNEL_INSTANCE {}
+ )***",
+                                            kernel_name);
+  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
+    {"cudf/detail/operation_udf.cuh", "cudf/detail/kernel_instance.cuh"};
+  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
+    {cuda_source.c_str(), kernel_instance_source.c_str()};
 
-  constexpr int min_pch_cuda_version     = 12800;  // CUDA 12.8
-  constexpr int min_minimal_cuda_version = 12800;  // CUDA 12.8
+  return get_kernel(source_file, source_file, include_names, include_headers, kernel_name);
+}
 
-  std::vector<std::string> options;
-  options.emplace_back("-arch=sm_.");
+rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
+                                   std::string const& kernel_name,
+                                   std::string const& udf_type)
+{
+  auto kernel_instance_source = std::format(R"***(#define CUDF_KERNEL_INSTANCE {}
+ #define CUDF_LTO_MODE)***",
+                                            kernel_name);
+  auto kernel_udf_source      = std::format(R"***(#define CUDF_UDF_TYPE {})***", udf_type);
+  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
+    {"cudf/detail/kernel_instance.cuh", "cudf/detail/operation_udf.cuh"};
+  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
+    {kernel_instance_source.c_str(), kernel_udf_source.c_str()};
 
-  if (runtime_version >= min_minimal_cuda_version) { options.emplace_back("-minimal"); }
-
-  if (runtime_version >= min_pch_cuda_version) { options.emplace_back("-pch"); }
-
-  for (auto& opt : extra_options) {
-    options.push_back(opt);
-  }
-
-  return cudf::jit::get_program_cache(preprocessed_program_data)
-    .get_kernel(kernel_name, {}, {{"cudf/detail/operation-udf.hpp", cuda_source}}, options);
+  return get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
 }
 
 }  // namespace jit

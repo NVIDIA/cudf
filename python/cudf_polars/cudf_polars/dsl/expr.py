@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 DSL nodes for the polars expression language.
@@ -13,7 +13,7 @@ In particular, the interpretation of the expression language in a
 
 from __future__ import annotations
 
-from cudf_polars.dsl.expressions.aggregation import Agg
+from cudf_polars.dsl.expressions.aggregation import Agg, Item
 from cudf_polars.dsl.expressions.base import (
     Col,
     ColRef,
@@ -25,7 +25,11 @@ from cudf_polars.dsl.expressions.binaryop import BinOp
 from cudf_polars.dsl.expressions.boolean import BooleanFunction
 from cudf_polars.dsl.expressions.datetime import TemporalFunction
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
-from cudf_polars.dsl.expressions.rolling import GroupedWindow, RollingWindow
+from cudf_polars.dsl.expressions.rolling import (
+    FixedSizeRollingWindow,
+    GroupedWindow,
+    RollingWindow,
+)
 from cudf_polars.dsl.expressions.selection import Filter, Gather
 from cudf_polars.dsl.expressions.slicing import Slice
 from cudf_polars.dsl.expressions.sorting import Sort, SortBy
@@ -44,8 +48,10 @@ __all__ = [
     "ErrorExpr",
     "Expr",
     "Filter",
+    "FixedSizeRollingWindow",
     "Gather",
     "GroupedWindow",
+    "Item",
     "Len",
     "Literal",
     "LiteralColumn",

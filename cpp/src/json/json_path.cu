@@ -1015,6 +1015,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
       cuda::std::nullopt,
       cuda::std::nullopt,
       options);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   // convert sizes to offsets
   auto [offsets, output_size] =
@@ -1043,6 +1044,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
       static_cast<bitmask_type*>(validity.data()),
       d_valid_count.data(),
       options);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   auto result = make_strings_column(col.size(),
                                     std::move(offsets),

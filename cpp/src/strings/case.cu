@@ -429,6 +429,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
   mismatch_multibytes_kernel<bytes_per_thread>
     <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
       input_chars, first_offset, last_offset, mb_count.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   if (mb_count.value(stream) == 0) {
     // optimization for the non-special case;
     // copying the input column automatically handles normalizing sliced inputs
@@ -438,6 +439,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
     multibyte_converter_kernel<bytes_per_thread>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         ccfn, input_chars + first_offset, chars_size, d_chars);
+    CUDF_CUDA_TRY(cudaGetLastError());
     result->set_null_count(input.null_count());
     return result;
   }
@@ -451,6 +453,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
     count_bytes_kernel<bytes_per_thread>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
         ccfn, *d_strings, sizes.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
     // convert sizes to offsets
     return cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
   }();

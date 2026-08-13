@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/strings/detail/find.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
@@ -49,6 +50,7 @@ struct counter_fn {
     return count;
   }
 };
+}  // namespace
 
 std::unique_ptr<column> count(strings_column_view const& input,
                               string_scalar const& target,
@@ -78,8 +80,6 @@ std::unique_ptr<column> count(strings_column_view const& input,
 
   return results;
 }
-}  // namespace
-
 }  // namespace detail
 
 // external APIs

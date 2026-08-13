@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,13 +15,16 @@
 #include <span>
 #include <vector>
 
+/**
+ * @file
+ * @brief Table APIs for contiguous_split, pack, unpack, and metadata
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup copy_split
  * @{
- * @file
- * @brief Table APIs for contiguous_split, pack, unpack, and metadata
  */
 
 /**
@@ -407,9 +410,6 @@ class packed_metadata_view {
   /**
    * @brief The number of rows in the table.
    *
-   * This is the row count of the first top-level column.
-   * Returns 0 if the table has no columns.
-   *
    * @return The row count
    */
   [[nodiscard]] size_type num_rows() const;
@@ -427,6 +427,8 @@ class packed_metadata_view {
   // Span from the first top-level column entry to the end of the metadata buffer.
   std::span<std::uint8_t const> _entries;
   size_type _num_columns{};
+  // Table row count, read directly from the serialized table header.
+  size_type _num_rows{};
 };
 
 /** @} */

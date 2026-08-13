@@ -3039,7 +3039,6 @@ def test_binop_index_series(arithmetic_op):
     assert_eq(expected, actual)
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 @pytest.mark.parametrize("name1", [None, "name1"])
 @pytest.mark.parametrize("name2", [None, "name2"])
 def test_binop_index_dt_td_series_with_names(name1, name2):
@@ -3244,3 +3243,30 @@ def test_decimal_arrow_backed_comparisons_pandas_compat(comparison_op):
         expect = comparison_op(s, s)
         got = comparison_op(gs, gs)
         assert_eq(expect, got)
+
+
+def test_arrow_backed_unsigned_subtract_python_int():
+    # An unsigned ArrowDtype minus a Python int is promoted to signed
+    # int64[pyarrow] by pandas, so it must not raise a spurious unsigned
+    # overflow even when elements are smaller than the subtrahend.
+    s = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([0, 1, 2, 5], type=pa.uint8()))
+    )
+    gs = cudf.from_pandas(s)
+    assert_eq(s - 3, gs - 3)
+    assert_eq(3 - s, 3 - gs)
+
+
+def test_arrow_backed_unsigned_subtract_overflow():
+    # Subtraction of two unsigned ArrowDtype operands that underflows raises,
+    # mirroring pyarrow.compute.subtract_checked.
+    s = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([0, 1], type=pa.uint8()))
+    )
+    other = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([1, 0], type=pa.uint8()))
+    )
+    gs = cudf.from_pandas(s)
+    gother = cudf.from_pandas(other)
+    with pytest.raises(pa.ArrowInvalid):
+        gs - gother

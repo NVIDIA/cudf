@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for padding each string to a minimum width.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_modify
  * @{
- * @file
  */
 
 /**
@@ -90,7 +94,7 @@ std::unique_ptr<column> zfill(
  * If the string is already width or more characters, no padding is performed.
  * No strings are truncated.
  *
- * Null rows in the input result in corresponding null rows in the output column.
+ * Null rows in the input or widths column result in corresponding null rows in the output column.
  *
  * @code{.pseudo}
  * Example:
@@ -100,8 +104,7 @@ std::unique_ptr<column> zfill(
  * r is now ['01234','-09876','+00.34','-342567', '002+2']
  * @endcode
  *
- * @throw std::invalid_argument if the widths column contains nulls
- *                              or if it is not the same size as the input column
+ * @throw std::invalid_argument if widths is not the same size as the input column
  *
  * @param input Strings instance for this operation
  * @param widths The minimum number of characters for each string

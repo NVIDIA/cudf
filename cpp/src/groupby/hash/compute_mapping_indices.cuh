@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -179,5 +179,6 @@ void compute_mapping_indices(size_type grid_size,
     global_mapping_indices,
     block_cardinality,
     needs_global_memory_fallback);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 }  // namespace cudf::groupby::detail::hash

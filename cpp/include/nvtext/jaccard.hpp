@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -14,6 +14,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_jaccard
  * @{
  * @file
+ * @brief APIs for computing the Jaccard similarity between strings in two columns.
  */
 
 /**

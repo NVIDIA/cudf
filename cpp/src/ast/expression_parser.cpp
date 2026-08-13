@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/ast/detail/expression_parser.hpp>
@@ -236,6 +236,16 @@ cudf::size_type expression_parser::visit(operation const& expr)
     CUDF_FAIL("An AST expression was provided non-matching operand types.");
   }
 
+  // For decimal128, only comparison operators are supported. All other binary operators
+  // (e.g. ADD/SUB/MUL/DIV/MOD/PYMOD) return a decimal128 result whose 16-byte rep exceeds
+  // the IntermediateDataType limit and has no GPU kernel support.
+  auto const op = expr.get_operator();
+  if (operand_types.size() == 2 && operand_types[0].id() == cudf::type_id::DECIMAL128 &&
+      !cudf::ast::detail::is_comparison_operator(op)) {
+    CUDF_FAIL("decimal128 is not supported for non-comparison binary AST operations.",
+              cudf::data_type_error);
+  }
+
   // Give back intermediate storage locations that are consumed by this operation
   std::for_each(
     operand_data_ref_indices.cbegin(),
@@ -248,7 +258,6 @@ cudf::size_type expression_parser::visit(operation const& expr)
       }
     });
   // Resolve expression type
-  auto const op        = expr.get_operator();
   auto const data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
   _operators.push_back(op);
   _operator_arities.push_back(cudf::ast::detail::ast_operator_arity(op));
@@ -256,6 +265,9 @@ cudf::size_type expression_parser::visit(operation const& expr)
   auto const output = [&]() {
     if (expression_index == 0) {
       // This expression is the root. Output should be directed to the output column.
+      CUDF_EXPECTS(data_type.id() != cudf::type_id::DECIMAL128,
+                   "decimal128 is not supported as an AST expression output.",
+                   cudf::data_type_error);
       return detail::device_data_reference(
         detail::device_data_reference_type::COLUMN, data_type, 0, table_reference::OUTPUT);
     } else {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,7 +49,7 @@ int count_nested_columns(column_view const& input)
 
 template <typename Equal, typename Hash>
 std::unique_ptr<table> compute_groupby(table_view const& keys,
-                                       host_span<aggregation_request const> requests,
+                                       std::span<aggregation_request const> requests,
                                        bool skip_rows_with_nulls,
                                        Equal const& d_row_equal,
                                        Hash const& d_row_hash,
@@ -156,7 +156,7 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
 
 template std::unique_ptr<table> compute_groupby<row_comparator_t, row_hash_t>(
   table_view const& keys,
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   bool skip_rows_with_nulls,
   row_comparator_t const& d_row_equal,
   row_hash_t const& d_row_hash,
@@ -166,7 +166,7 @@ template std::unique_ptr<table> compute_groupby<row_comparator_t, row_hash_t>(
 
 template std::unique_ptr<table> compute_groupby<nullable_row_comparator_t, row_hash_t>(
   table_view const& keys,
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   bool skip_rows_with_nulls,
   nullable_row_comparator_t const& d_row_equal,
   row_hash_t const& d_row_hash,

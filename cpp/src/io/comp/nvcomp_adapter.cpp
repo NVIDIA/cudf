@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,6 +26,10 @@ namespace {
 
 [[nodiscard]] std::string nvcomp_status_to_string(nvcompStatus_t status)
 {
+#if NVCOMP_VER_MAJOR > 5 || (NVCOMP_VER_MAJOR == 5 && NVCOMP_VER_MINOR >= 2)
+  if (auto const* str = nvcompGetStatusString(status); str != nullptr) { return str; }
+  return "nvcompStatus_t(" + std::to_string(static_cast<int>(status)) + ")";
+#else
   switch (status) {
     case nvcompStatus_t::nvcompSuccess: return "nvcompSuccess";
     case nvcompStatus_t::nvcompErrorInvalidValue: return "nvcompErrorInvalidValue";
@@ -47,6 +51,7 @@ namespace {
 #endif
   }
   return "nvcompStatus_t(" + std::to_string(static_cast<int>(status)) + ")";
+#endif
 }
 
 [[nodiscard]] std::string compression_type_name(compression_type compression)

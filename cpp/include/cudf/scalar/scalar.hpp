@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -16,6 +16,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_scalar.hpp>
 
+#include <span>
 #include <string_view>
 
 /**
@@ -808,7 +809,7 @@ class struct_scalar : public scalar {
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
-   * @brief Construct a new struct scalar object from a host_span of column_views.
+   * @brief Construct a new struct scalar object from a span of column_views.
    *
    * The input column_views are deep-copied.
    *
@@ -817,7 +818,7 @@ class struct_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @param mr Device memory resource to use for device memory allocation.
    */
-  struct_scalar(host_span<column_view const> data,
+  struct_scalar(std::span<column_view const> data,
                 bool is_valid                     = true,
                 rmm::cuda_stream_view stream      = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

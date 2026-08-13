@@ -1,12 +1,15 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
+#include "ast/jit/expressions.hpp"
+
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -181,6 +184,18 @@ struct [[nodiscard]] instance_context {
    * @return A span of output variable information
    */
   [[nodiscard]] std::span<untyped_var_info const> get_output_vars() const;
+
+  /**
+   * @brief Get the CUDA stream for device operations during IR generation
+   * @return The CUDA stream for device operations during IR generation
+   */
+  [[nodiscard]] rmm::cuda_stream_view get_stream() const { return stream_; }
+
+  /**
+   * @brief Get the device memory resource for device memory allocation during IR generation
+   * @return The device memory resource for device memory allocation during IR generation
+   */
+  [[nodiscard]] rmm::device_async_resource_ref get_mr() const { return mr_; }
 };
 
 struct [[nodiscard]] code_sink {
@@ -201,73 +216,16 @@ struct [[nodiscard]] output_reference {
   int32_t index = 0;  ///< The index of the output variable
 };
 
-/**
- * @brief The operation code used in the IR nodes.
- */
-enum class opcode : int32_t {
-  GET_INPUT,
-  SET_OUTPUT,
-  PREDICATE,
-  RESCALE,
-  ADD,
-  SUB,
-  MUL,
-  DIV,
-  TRUE_DIV,
-  FLOOR_DIV,
-  MOD,
-  PYMOD,
-  POW,
-  EQUAL,
-  NULL_EQUAL,
-  NOT_EQUAL,
-  LESS,
-  GREATER,
-  LESS_EQUAL,
-  GREATER_EQUAL,
-  BITWISE_AND,
-  BITWISE_OR,
-  BITWISE_XOR,
-  LOGICAL_AND,
-  NULL_LOGICAL_AND,
-  LOGICAL_OR,
-  NULL_LOGICAL_OR,
-  IDENTITY,
-  IS_NULL,
-  SIN,
-  COS,
-  TAN,
-  ARCSIN,
-  ARCCOS,
-  ARCTAN,
-  SINH,
-  COSH,
-  TANH,
-  ARCSINH,
-  ARCCOSH,
-  ARCTANH,
-  EXP,
-  LOG,
-  SQRT,
-  CBRT,
-  CEIL,
-  FLOOR,
-  ABS,
-  RINT,
-  BIT_INVERT,
-  NOT,
-  CAST_TO_INT64,
-  CAST_TO_UINT64,
-  CAST_TO_FLOAT64
-};
-
 struct [[nodiscard]] node {
  private:
   std::variant<std::monostate, input_reference, output_reference> reference_ =
     std::monostate{};  ///< The index of the input/output variable
-  opcode op_                               = opcode::GET_INPUT;  ///< The operation code
-  std::optional<int32_t> target_scale_     = std::nullopt;       ///< The target scale for decimal
-  std::vector<std::unique_ptr<node>> args_ = {};                 ///< The arguments of the operation
+  opcode op_                           = opcode::GET_INPUT;  ///< The operation code
+  std::optional<int32_t> target_scale_ = std::nullopt;       ///< The target scale for decimal
+  input_reference scale_reference_     = {};  ///< The index of the target scale as an IR input
+  error_policy error_policy_ =
+    cudf::error_policy::PROPAGATE;                ///< The error policy for the operation
+  std::vector<std::unique_ptr<node>> args_ = {};  ///< The arguments of the operation
 
   data_type type_ = {};  ///< The resolved type information of the IR node
 
@@ -301,31 +259,43 @@ struct [[nodiscard]] node {
   /**
    * @brief Construct a new operation IR node
    * @param op The operation code
+   * @param target_scale The target scale for decimal rescaling if applicable
+   * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
    */
-  node(opcode op, std::optional<int32_t> target_scale, std::vector<std::unique_ptr<node>> args);
+  node(opcode op,
+       std::optional<int32_t> target_scale,
+       error_policy error_policy,
+       std::vector<std::unique_ptr<node>> args);
 
   /**
    * @brief Construct a new operation IR node
    * @param op The operation code
+   * @param target_scale The target scale for decimal rescaling if applicable
+   * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
    */
   template <typename... T>
     requires(std::is_same_v<node, T> && ...)
-  node(opcode op, std::optional<int32_t> target_scale, T... args)
-    : node(op, target_scale, arguments(std::move(args)...))
+  node(opcode op, std::optional<int32_t> target_scale, error_policy error_policy, T... args)
+    : node(op, target_scale, error_policy, arguments(std::move(args)...))
   {
   }
 
   /**
    * @brief Construct a new operation IR node
    * @param op The operation code
+   * @param target_scale The target scale for decimal rescaling if applicable
+   * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
    */
   template <typename... T>
     requires(std::is_same_v<node, T> && ...)
-  node(opcode op, std::optional<int32_t> target_scale, std::unique_ptr<T>... args)
-    : node(op, target_scale, arguments(std::move(args)...))
+  node(opcode op,
+       std::optional<int32_t> target_scale,
+       error_policy error_policy,
+       std::unique_ptr<T>... args)
+    : node(op, target_scale, error_policy, arguments(std::move(args)...))
   {
   }
 
@@ -466,6 +436,8 @@ struct [[nodiscard]] ast_converter {
   [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::operation const& expr);
 
   [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::detail::predicate const& expr);
+
+  [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::jit::detail::operation const& expr);
 
   [[nodiscard]] std::tuple<std::string, null_aware, output_nullability> generate_code(
     target target, ast::expression const& expr, std::string_view function_name);

@@ -854,6 +854,7 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
 
   data_type_detection<<<grid_size, block_size, 0, stream.value()>>>(
     options, data, column_flags, row_starts, d_stats);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   return cudf::detail::make_host_vector(d_stats, stream);
 }
@@ -883,6 +884,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
                                                                     valids,
                                                                     valid_counts,
                                                                     is_quoted_flags);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 uint32_t __host__ gather_row_offsets(parse_options_view const& options,
@@ -918,6 +920,7 @@ uint32_t __host__ gather_row_offsets(parse_options_view const& options,
     (options.quotechar) ? options.quotechar : 0x100,
     /*(options.escapechar) ? options.escapechar :*/ 0x100,
     (options.comment) ? options.comment : 0x100);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   return dim_grid;
 }

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Dependency list for https://github.com/rapidsai/dependency-file-generator
 files:
@@ -173,6 +173,10 @@ dependencies:
               cuda: "13.2"
             packages:
               - cuda-version=13.2
+          - matrix:
+              cuda: "13.3"
+            packages:
+              - cuda-version=13.3
       - output_types: requirements
         matrices:
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
@@ -223,6 +227,11 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit==13.2.*
+          - matrix:
+              cuda: "13.3"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.3.*
   py_version:
     specific:
       - output_types: conda
@@ -250,7 +259,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cudf==26.8.*,>=0.0.0a0
+          - cudf==26.10.*,>=0.0.0a0
           - pandas
           - pytest
           - pytest-xdist
@@ -326,13 +335,13 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cuml==26.8.*,>=0.0.0a0
+          - cuml==26.10.*,>=0.0.0a0
           - scikit-learn
   test_cugraph:
     common:
       - output_types: conda
         packages:
-          - cugraph==26.8.*,>=0.0.0a0
+          - cugraph==26.10.*,>=0.0.0a0
           - networkx
   test_ibis:
     common:

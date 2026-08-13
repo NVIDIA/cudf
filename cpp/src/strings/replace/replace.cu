@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -288,6 +288,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
   count_targets_kernel<block_size, bytes_per_thread>
     <<<num_blocks, block_size, 0, stream.value()>>>(fn, chars_bytes, d_target_count.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   auto target_count = d_target_count.value(stream);
 
   // Create a vector of every target position in the chars column.
@@ -298,7 +299,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     copy_itr,
     copy_itr + chars_bytes + chars_offset,
     targets_positions.begin(),
-    [fn] __device__(int64_t idx) { return fn.is_target_within_row(idx); },
+    [fn] __device__(int64_t idx) -> bool { return fn.is_target_within_row(idx); },
     stream);
 
   // adjust target count since the copy-if may have eliminated some invalid targets

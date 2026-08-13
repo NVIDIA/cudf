@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
@@ -44,9 +44,10 @@ cpdef Table transpose(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input_table = input_table.view()
     with nogil:
         c_result = cpp_transpose.transpose(
-            input_table.view(), _cs, mr.get_mr()
+            c_input_table, _cs, mr.get_mr()
         )
 
     owner_table = Table(

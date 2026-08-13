@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -615,11 +615,13 @@ class RollingtVarStdTestUntyped : public cudf::test::BaseFixture {};
 
 class RollingErrorTest : public cudf::test::BaseFixture {};
 
+class RollingSumEdgeCaseTest : public cudf::test::BaseFixture {};
+
 // negative sizes
 TEST_F(RollingErrorTest, NegativeMinPeriods)
 {
-  const std::vector<cudf::size_type> col_data = {0, 1, 2, 0, 4};
-  const std::vector<bool> col_valid           = {1, 1, 1, 0, 1};
+  std::vector<cudf::size_type> const col_data = {0, 1, 2, 0, 4};
+  std::vector<bool> const col_valid           = {1, 1, 1, 0, 1};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> input(
     col_data.begin(), col_data.end(), col_valid.begin());
 
@@ -631,8 +633,8 @@ TEST_F(RollingErrorTest, NegativeMinPeriods)
 // window array size mismatch
 TEST_F(RollingErrorTest, WindowArraySizeMismatch)
 {
-  const std::vector<cudf::size_type> col_data = {0, 1, 2, 0, 4};
-  const std::vector<bool> col_valid           = {1, 1, 1, 0, 1};
+  std::vector<cudf::size_type> const col_data = {0, 1, 2, 0, 4};
+  std::vector<bool> const col_valid           = {1, 1, 1, 0, 1};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> input(
     col_data.begin(), col_data.end(), col_valid.begin());
 
@@ -813,7 +815,7 @@ TYPED_TEST(RollingTest, SimpleStatic)
 {
   // https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.rolling.html
   auto const col_data              = cudf::test::make_type_param_vector<TypeParam>({0, 1, 2, 0, 4});
-  const std::vector<bool> col_mask = {1, 1, 1, 0, 1};
+  std::vector<bool> const col_mask = {1, 1, 1, 0, 1};
 
   cudf::test::fixed_width_column_wrapper<TypeParam> input(
     col_data.begin(), col_data.end(), col_mask.begin());
@@ -821,6 +823,48 @@ TYPED_TEST(RollingTest, SimpleStatic)
 
   // static sizes
   this->run_test_col_agg(input, window, window, 1);
+}
+
+TEST_F(RollingSumEdgeCaseTest, SumFloatNonFinite)
+{
+  auto const nan = std::numeric_limits<double>::quiet_NaN();
+  auto const inf = std::numeric_limits<double>::infinity();
+
+  auto const input =
+    cudf::test::fixed_width_column_wrapper<double>{{nan, 1.0, 2.0, inf, -inf, 4.0, 5.0}};
+  auto const expected =
+    cudf::test::fixed_width_column_wrapper<double>{{nan, nan, 3.0, inf, nan, -inf, 9.0}};
+
+  auto const result =
+    cudf::rolling_window(input, 2, 0, 1, *cudf::make_sum_aggregation<cudf::rolling_aggregation>());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+}
+
+TEST_F(RollingSumEdgeCaseTest, SumFloatFiniteCancellation)
+{
+  auto const input    = cudf::test::fixed_width_column_wrapper<double>{{1e20, 1.0, 2.0, 3.0}};
+  auto const expected = cudf::test::fixed_width_column_wrapper<double>{{1e20, 1e20, 3.0, 5.0}};
+
+  auto const result =
+    cudf::rolling_window(input, 2, 0, 1, *cudf::make_sum_aggregation<cudf::rolling_aggregation>());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+}
+
+TEST_F(RollingSumEdgeCaseTest, SumInt64PrefixOverflow)
+{
+  auto constexpr max = std::numeric_limits<int64_t>::max();
+
+  auto const input =
+    cudf::test::fixed_width_column_wrapper<int64_t>{{max, int64_t{-1}, int64_t{2}}};
+  auto const expected =
+    cudf::test::fixed_width_column_wrapper<int64_t>{{max, max - int64_t{1}, int64_t{1}}};
+
+  auto const result =
+    cudf::rolling_window(input, 2, 0, 1, *cudf::make_sum_aggregation<cudf::rolling_aggregation>());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
 }
 
 TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)
@@ -835,7 +879,7 @@ TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)
 
   auto const col_data =
     cudf::test::make_type_param_vector<TypeParam>({XXX, XXX, 9, 5, XXX, XXX, XXX, 0, 8, 5, 8});
-  const std::vector<bool> col_mask = {0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1};
+  std::vector<bool> const col_mask = {0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1};
 
   auto const expected_var =
     cudf::is_boolean<TypeParam>()
@@ -846,7 +890,7 @@ TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)
     return std::sqrt(x);
   });
 
-  const std::vector<bool> expected_mask = {0, /* all null window */
+  std::vector<bool> const expected_mask = {0, /* all null window */
                                            1, /* 0 div 0, nan */
                                            1,
                                            1,
@@ -898,7 +942,7 @@ TEST_F(RollingtVarStdTestUntyped, SimpleStaticVarianceStdInfNaN)
 
   auto const col_data =
     cudf::test::make_type_param_vector<double>({5., 4., XXX, inf, 4., 8., 0., nan, XXX, 5.});
-  const std::vector<bool> col_mask = {1, 1, 0, 1, 1, 1, 1, 1, 0, 1};
+  std::vector<bool> const col_mask = {1, 1, 0, 1, 1, 1, 1, 1, 0, 1};
 
   auto const expected_var =
     std::vector<ResultType>{nan, 0.5, 0.5, nan, nan, nan, 16, nan, nan, nan};
@@ -907,7 +951,7 @@ TEST_F(RollingtVarStdTestUntyped, SimpleStaticVarianceStdInfNaN)
     return std::sqrt(x);
   });
 
-  const std::vector<bool> expected_mask = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  std::vector<bool> const expected_mask = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
   cudf::test::fixed_width_column_wrapper<double> input(
     col_data.begin(), col_data.end(), col_mask.begin());
@@ -960,7 +1004,7 @@ TYPED_TEST(RollingTest, SimpleDynamic)
 {
   // https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.rolling.html
   auto const col_data              = cudf::test::make_type_param_vector<TypeParam>({0, 1, 2, 0, 4});
-  const std::vector<bool> col_mask = {1, 1, 1, 0, 1};
+  std::vector<bool> const col_mask = {1, 1, 1, 0, 1};
 
   cudf::test::fixed_width_column_wrapper<TypeParam> input(
     col_data.begin(), col_data.end(), col_mask.begin());
@@ -1192,7 +1236,7 @@ TEST_F(RollingTestStrings, StringsUnsupportedOperators)
 }*/
 
 struct RollingTestUdf : public cudf::test::BaseFixture {
-  const std::string cuda_func{
+  std::string const cuda_func{
     R"***(
       template <typename OutType, typename InType>
       __device__ void CUDA_GENERIC_AGGREGATOR(OutType *ret, InType *in_col, cudf::size_type start,
@@ -1205,7 +1249,7 @@ struct RollingTestUdf : public cudf::test::BaseFixture {
       }
     )***"};
 
-  const std::string ptx_func{
+  std::string const ptx_func{
     R"***(
     //
     // Generated by NVIDIA NVVM Compiler

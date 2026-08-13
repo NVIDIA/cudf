@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -88,6 +88,10 @@ def test_to_py(py_scalar):
         (1, TypeId.DURATION_SECONDS),
         (1.0, TypeId.FLOAT32),
         (1.5, TypeId.FLOAT64),
+        (float("inf"), TypeId.FLOAT32),
+        (float("-inf"), TypeId.FLOAT32),
+        (float("inf"), TypeId.FLOAT64),
+        (float("-inf"), TypeId.FLOAT64),
         ("str", TypeId.STRING),
         (True, TypeId.BOOL8),
         (0, TypeId.BOOL8),

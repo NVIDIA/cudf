@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Parallel Join Logic."""
 
@@ -9,6 +9,7 @@ from functools import reduce
 from typing import TYPE_CHECKING
 
 from cudf_polars.dsl.ir import ConditionalJoin, Join, Slice
+from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.repartition import Repartition
@@ -74,7 +75,7 @@ def _make_hash_join(
         partition_info,
         output_count,
     )
-    # Always reconstruct in case children contain Cache nodes
+    # Reconstruct with the lowered and possibly shuffled children.
     ir = ir.reconstruct([left, right])
 
     # Record new partitioning info
@@ -141,6 +142,11 @@ def _make_bcast_join(
     new_node = ir.reconstruct([left, right])
     partition_info[new_node] = PartitionInfo(count=output_count)
     return new_node, partition_info
+
+
+def _has_non_pointwise_keys(ir: Join) -> bool:
+    keys = [ne.value for keys in (ir.left_on, ir.right_on) for ne in keys]
+    return not all(expr.is_pointwise for expr in traversal(keys))
 
 
 @lower_ir_node.register(ConditionalJoin)
@@ -218,6 +224,7 @@ def _(
 
     left, right = children
     output_count = max(partition_info[left].count, partition_info[right].count)
+    has_non_pointwise_keys = _has_non_pointwise_keys(ir)
     if output_count == 1 and not dynamic_planning:
         new_node = ir.reconstruct(children)
         partition_info[new_node] = PartitionInfo(count=1)
@@ -237,6 +244,12 @@ def _(
 
     # Check for dynamic planning - defer broadcast vs shuffle decision to runtime
     if dynamic_planning:  # pragma: no cover; Requires rapidsmpf runtime
+        if has_non_pointwise_keys:
+            return _lower_ir_fallback(
+                ir,
+                rec,
+                msg="Multi-partition Join not supported for non-pointwise key expressions.",
+            )
         new_node = ir.reconstruct(children)
         partition_info[new_node] = PartitionInfo(count=output_count)
         return new_node, partition_info
@@ -257,6 +270,12 @@ def _(
             partition_info,
             left,
             right,
+        )
+    elif has_non_pointwise_keys:
+        return _lower_ir_fallback(
+            ir,
+            rec,
+            msg="Multi-partition Join not supported for non-pointwise key expressions.",
         )
     else:
         # Create a hash join

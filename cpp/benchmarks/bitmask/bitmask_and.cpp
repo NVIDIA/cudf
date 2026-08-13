@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf/null_mask.hpp>
@@ -72,9 +73,14 @@ void BM_segmented_bitmask_and(nvbench::state& state)
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.add_element_count(data_bytes, "input size");
   state.template add_global_memory_reads<nvbench::int8_t>(data_bytes);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = cudf::segmented_bitmask_and(mask_pointers, segments, mask_size_bits);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   set_throughputs(state);
 }
 
@@ -88,6 +94,8 @@ void BM_multi_segment_bitmask_and(nvbench::state& state)
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.add_element_count(data_bytes, "input size");
   state.template add_global_memory_reads<nvbench::int8_t>(data_bytes);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     for (size_t i = 0; i < num_segments; i++) {
       auto segment_size = segments[i + 1] - segments[i];
@@ -99,6 +107,9 @@ void BM_multi_segment_bitmask_and(nvbench::state& state)
       }
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   set_throughputs(state);
 }
 

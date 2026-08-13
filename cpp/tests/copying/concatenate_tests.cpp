@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -227,6 +227,15 @@ TEST_F(TableTest, ConcatenateTables)
   auto concat_table = cudf::concatenate(std::vector<TView>({t1, t2}));
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(*concat_table, gold_table);
+}
+
+TEST_F(TableTest, ConcatenateZeroColumnTables)
+{
+  TView t1{std::vector<column_view>{}, 7};
+  TView t2{std::vector<column_view>{}, 5};
+  auto concat_table = cudf::concatenate(std::vector<TView>({t1, t2}));
+  EXPECT_EQ(concat_table->num_columns(), 0);
+  EXPECT_EQ(concat_table->num_rows(), 12);
 }
 
 TEST_F(TableTest, ConcatenateTablesWithOffsets)

@@ -265,7 +265,7 @@ over :func:`dask.dataframe.from_delayed`:
 * It allows proper lazy execution of your custom logic
 * It enables column projection (as long as the mapped function supports a ``columns`` key-word argument)
 
-See the `from_map API documentation <https://docs.dask.org/en/stable/generated/dask_expr.from_map.html#dask_expr.from_map>`__
+See the `from_map API documentation <https://docs.dask.org/en/latest/generated/dask.dataframe.from_map.html>`__
 for more details.
 
 .. note::

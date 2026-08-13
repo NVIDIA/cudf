@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from string import ascii_letters, digits
 
@@ -235,4 +235,16 @@ def test_value_counts_all_null_pandas_nullable(dtype, normalize, dropna):
         got.sort_index(),
         check_dtype=True,
         check_index_type=True,
+    )
+
+
+def test_value_counts_first_appearance_order(sort):
+    # pandas returns groups in order of first appearance with sort=False
+    # and keeps that order for equal counts with sort=True (GH 63155).
+    arr = np.random.default_rng(2).integers(0, 32, 64)
+    psr = pd.Series(arr)
+    gsr = cudf.Series(arr)
+    assert_eq(
+        psr.value_counts(sort=sort),
+        gsr.value_counts(sort=sort),
     )

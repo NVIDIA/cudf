@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -9,6 +9,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport replace as cpp_replace
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view, mutable_column_view
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -70,11 +71,13 @@ cpdef Column replace_nulls(
     """
     cdef unique_ptr[column] c_result
     cdef replace_policy policy
+    cdef column_view c_replacement
 
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source_column = source_column.view()
     # Due to https://github.com/cython/cython/issues/5984, if this function is
     # called as a Python function (i.e. without typed inputs, which is always
     # true in pure Python files), the type of `replacement` will be `object`
@@ -84,7 +87,7 @@ cpdef Column replace_nulls(
             policy = replacement
             with nogil:
                 c_result = cpp_replace.replace_nulls(
-                    source_column.view(),
+                    c_source_column,
                     policy,
                     _cs,
                     mr.get_mr()
@@ -93,24 +96,27 @@ cpdef Column replace_nulls(
         else:
             raise TypeError("replacement must be a Column, Scalar, or replace_policy")
 
+    if ReplacementType is Column:
+        c_replacement = replacement.view()
+
     with nogil:
         if ReplacementType is Column:
             c_result = cpp_replace.replace_nulls(
-                source_column.view(),
-                replacement.view(),
+                c_source_column,
+                c_replacement,
                 _cs,
                 mr.get_mr()
             )
         elif ReplacementType is Scalar:
             c_result = cpp_replace.replace_nulls(
-                source_column.view(),
+                c_source_column,
                 dereference(replacement.c_obj),
                 _cs,
                 mr.get_mr()
             )
         elif ReplacementType is replace_policy:
             c_result = cpp_replace.replace_nulls(
-                source_column.view(),
+                c_source_column,
                 replacement,
                 _cs,
                 mr.get_mr()
@@ -156,11 +162,14 @@ cpdef Column find_and_replace_all(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source_column = source_column.view()
+    cdef column_view c_values_to_replace = values_to_replace.view()
+    cdef column_view c_replacement_values = replacement_values.view()
     with nogil:
         c_result = cpp_replace.find_and_replace_all(
-            source_column.view(),
-            values_to_replace.view(),
-            replacement_values.view(),
+            c_source_column,
+            c_values_to_replace,
+            c_replacement_values,
             _cs,
             mr.get_mr()
         )
@@ -213,10 +222,11 @@ cpdef Column clamp(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source_column = source_column.view()
     with nogil:
         if lo_replace is None:
             c_result = cpp_replace.clamp(
-                source_column.view(),
+                c_source_column,
                 dereference(lo.c_obj),
                 dereference(hi.c_obj),
                 _cs,
@@ -224,7 +234,7 @@ cpdef Column clamp(
             )
         else:
             c_result = cpp_replace.clamp(
-                source_column.view(),
+                c_source_column,
                 dereference(lo.c_obj),
                 dereference(lo_replace.c_obj),
                 dereference(hi.c_obj),
@@ -268,16 +278,20 @@ cpdef Column normalize_nans_and_zeros(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source_column = source_column.view()
+    cdef mutable_column_view c_mutable_source_column
+    if inplace:
+        c_mutable_source_column = source_column.mutable_view()
     with nogil:
         if inplace:
             cpp_replace.normalize_nans_and_zeros(
-                source_column.mutable_view(),
+                c_mutable_source_column,
                 _cs,
                 mr.get_mr()
             )
         else:
             c_result = cpp_replace.normalize_nans_and_zeros(
-                source_column.view(),
+                c_source_column,
                 _cs,
                 mr.get_mr()
             )

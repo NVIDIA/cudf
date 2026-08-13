@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,6 +15,7 @@
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/functional>
 #include <thrust/tabulate.h>
@@ -133,7 +134,7 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
   rmm::device_uvector<bool> validity(size, stream);
 
   auto const out_it =
-    thrust::make_zip_iterator(output->mutable_view().begin<TargetType>(), validity.begin());
+    cuda::make_zip_iterator(output->mutable_view().begin<TargetType>(), validity.begin());
   thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    out_it,
                    out_it + size,

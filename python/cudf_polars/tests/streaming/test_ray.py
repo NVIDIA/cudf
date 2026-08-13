@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from rapidsmpf.bootstrap import is_running_with_rrun
 
 import polars as pl
+
+from rapidsmpf.bootstrap import is_running_with_rrun
 
 from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.utils.config import RayContext
@@ -21,22 +22,6 @@ from cudf_polars.engine.ray import RayEngine  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-NUM_RANKS = 2
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[RayEngine]:
-    """Create one Ray cluster + GPU actors shared across the test session."""
-    with RayEngine(
-        # Use a small partition size so tests exercise the multi-partition
-        # code path deterministically, regardless of input size.
-        executor_options={"max_rows_per_partition": 10},
-        engine_options={"allow_gpu_sharing": True},
-        num_ranks=NUM_RANKS,
-        ray_init_options={"include_dashboard": False},
-    ) as engine:
-        yield engine
 
 
 pytestmark = [
@@ -78,12 +63,12 @@ def test_raises_inside_rrun() -> None:
         RayEngine()
 
 
-def test_num_ranks_requires_allow_gpu_sharing() -> None:
+def test_num_ranks_requires_allow_gpu_sharing(ray_num_ranks: int) -> None:
     """num_ranks requires engine_options['allow_gpu_sharing']=True."""
     with pytest.raises(ValueError, match="allow_gpu_sharing"):
-        RayEngine(num_ranks=NUM_RANKS)
+        RayEngine(num_ranks=ray_num_ranks)
     with pytest.raises(ValueError, match="allow_gpu_sharing"):
-        RayEngine(num_ranks=NUM_RANKS, engine_options={"allow_gpu_sharing": False})
+        RayEngine(num_ranks=ray_num_ranks, engine_options={"allow_gpu_sharing": False})
 
 
 def test_num_ranks_must_be_positive() -> None:
@@ -93,138 +78,65 @@ def test_num_ranks_must_be_positive() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GPU tests — share a single Ray cluster + actor set for the whole session
+# GPU tests — reuse the session-scoped Ray cluster from conftest
 # ---------------------------------------------------------------------------
 
 
-def test_yields_engine(
-    engine: RayEngine,
-) -> None:
+def test_yields_engine(ray_engine: RayEngine) -> None:
     """RayEngine is a GPUEngine with at least one rank."""
-    assert isinstance(engine, pl.GPUEngine)
-    assert engine.nranks >= 1
+    assert isinstance(ray_engine, pl.GPUEngine)
+    assert ray_engine.nranks >= 1
 
 
-def test_executor_options_forwarded(
-    engine: RayEngine,
-) -> None:
+def test_executor_options_forwarded(ray_engine: RayEngine) -> None:
     """Reserved executor_options keys are injected into the engine config."""
-    opts = engine.config["executor_options"]
+    opts = ray_engine.config["executor_options"]
     assert opts["cluster"] == "ray"
     assert isinstance(opts["ray_context"], RayContext)
-    assert engine.rank_actors == opts["ray_context"].rank_actors
-    assert len(engine.rank_actors) == engine.nranks
+    assert ray_engine.rank_actors == opts["ray_context"].rank_actors
+    assert len(ray_engine.rank_actors) == ray_engine.nranks
 
 
-def test_gather_cluster_info(engine: RayEngine) -> None:
+def test_gather_cluster_info(ray_engine: RayEngine) -> None:
     """gather_cluster_info returns one ClusterInfo per rank with expected fields."""
-    infos = engine.gather_cluster_info()
-    assert len(infos) == engine.nranks
+    infos = ray_engine.gather_cluster_info()
+    assert len(infos) == ray_engine.nranks
     for info in infos:
         assert isinstance(info.hostname, str)
         assert isinstance(info.pid, int)
     # Each actor runs in its own process.
-    assert len({info.pid for info in infos}) == engine.nranks
+    assert len({info.pid for info in infos}) == ray_engine.nranks
 
 
-def test_scan(engine: RayEngine) -> None:
-    """Input rows are partitioned across actors; total output equals input."""
-    lf = pl.LazyFrame({"a": [1, 2, 3]})
-    result = lf.collect(engine=engine)
-    assert result.shape == (3, 1)
-    assert sorted(result["a"].to_list()) == [1, 2, 3]
+def test_run(ray_engine: RayEngine) -> None:
+    result = ray_engine._run(os.getpid)
+    assert len(set(result)) == ray_engine.nranks
 
 
-def test_filter(engine: RayEngine) -> None:
-    """Filter is applied correctly across all actors."""
-    lf = pl.LazyFrame({"a": [1, 2, 3, 4, 5]})
-    result = lf.filter(pl.col("a") > 3).collect(engine=engine)
-    assert result.shape == (2, 1)
-    assert sorted(result["a"].to_list()) == [4, 5]
-
-
-def test_group_by(engine: RayEngine) -> None:
-    """Group-by produces the correct aggregation across all ranks."""
-    # max_rows_per_partition=10 (set on the session fixture) gives each rank
-    # exactly 5 partitions, so the multi-partition path is always exercised.
-    n, n_keys = engine.nranks * 50, 5
-    keys = [str(i % n_keys) for i in range(n)]
-    vals = list(range(n))
-    lf = pl.LazyFrame({"key": keys, "val": vals})
-    result = (
-        lf.group_by("key").agg(pl.col("val").sum()).collect(engine=engine).sort("key")
-    )
-    expected = (
-        pl.LazyFrame({"key": keys, "val": vals})
-        .group_by("key")
-        .agg(pl.col("val").sum())
-        .collect()
-        .sort("key")
-    )
-    assert result.shape == expected.shape
-    assert result["key"].to_list() == expected["key"].to_list()
-    assert result["val"].to_list() == expected["val"].to_list()
-
-
-def test_join(engine: RayEngine) -> None:
-    """Hash join between two tables produces the correct result across all ranks."""
-    # max_rows_per_partition=10 (set on the session fixture) gives each rank
-    # exactly 5 partitions, so the multi-partition path is always exercised.
-    n = engine.nranks * 50
-    lf_left = pl.LazyFrame({"key": list(range(n)), "val_left": list(range(n))})
-    lf_right = pl.LazyFrame(
-        {"key": list(range(n)), "val_right": [x * 2 for x in range(n)]}
-    )
-    result = lf_left.join(lf_right, on="key").collect(engine=engine).sort("key")
-    assert result.shape == (n, 3)
-    assert result["val_left"].to_list() == list(range(n))
-    assert result["val_right"].to_list() == [x * 2 for x in range(n)]
-
-
-def test_empty_dataframe(engine: RayEngine) -> None:
-    """An empty LazyFrame produces an empty result with the correct schema."""
-    lf = pl.LazyFrame(
-        {"a": pl.Series([], dtype=pl.Int32), "b": pl.Series([], dtype=pl.Float64)}
-    )
-    result = lf.collect(engine=engine)
-    assert result.shape == (0, 2)
-    assert result.columns == ["a", "b"]
-    assert result.dtypes == [pl.Int32, pl.Float64]
-
-
-def test_run(engine: RayEngine) -> None:
-    result = engine._run(os.getpid)
-    assert len(set(result)) == engine.nranks
-
-
-def test_num_ranks_oversubscribes() -> None:
+def test_num_ranks_oversubscribes(ray_engine: RayEngine, ray_num_ranks: int) -> None:
     """num_ranks creates the requested number of actors sharing GPU 0."""
-    n = 2
-    with RayEngine(
-        executor_options={"max_rows_per_partition": 10},
-        engine_options={"allow_gpu_sharing": True},
-        num_ranks=n,
-        ray_init_options={"include_dashboard": False},
-    ) as engine:
-        assert engine.nranks == n
-        assert len(engine.rank_actors) == n
-        result = pl.LazyFrame({"a": [1, 2, 3, 4]}).collect(engine=engine)
-        assert sorted(result["a"].to_list()) == [1, 2, 3, 4]
+    assert ray_engine.nranks == ray_num_ranks
+    assert len(ray_engine.rank_actors) == ray_num_ranks
+    result = pl.LazyFrame({"a": [1, 2, 3, 4]}).collect(engine=ray_engine)
+    assert sorted(result["a"].to_list()) == [1, 2, 3, 4]
 
 
 @pytest.fixture(scope="module")
-def reset_engine() -> Iterator[RayEngine]:
-    """Module-scoped engine for reset tests — independent of ``engine``.
+def reset_engine(
+    ray_num_ranks: int,
+    ray_init_options: dict[str, Any],
+) -> Iterator[RayEngine]:
+    """Module-scoped engine for reset tests — independent of ``ray_engine``.
 
     These tests exercise :meth:`RayEngine._reset` (which mutates the
-    engine in-place) and the shutdown guard. A dedicated fixture keeps
-    those mutations from leaking into the other tests.
+    engine in-place). A dedicated fixture keeps those mutations from
+    leaking into the conftest-shared ``ray_engine``.
     """
     with RayEngine(
         executor_options={"max_rows_per_partition": 10},
         engine_options={"allow_gpu_sharing": True},
-        num_ranks=NUM_RANKS,
-        ray_init_options={"include_dashboard": False},
+        num_ranks=ray_num_ranks,
+        ray_init_options=ray_init_options,
     ) as e:
         yield e
 
@@ -273,13 +185,16 @@ def test_reset_collects_after_options_change(reset_engine: RayEngine) -> None:
     assert sorted(result["a"].to_list()) == [1, 2, 3, 4, 5]
 
 
-def test_reset_after_shutdown_raises() -> None:
+def test_reset_after_shutdown_raises(
+    ray_num_ranks: int,
+    ray_init_options: dict[str, Any],
+) -> None:
     """``shutdown`` is idempotent; ``_reset`` after shutdown raises every time."""
     engine = RayEngine(
         executor_options={"max_rows_per_partition": 10},
         engine_options={"allow_gpu_sharing": True},
-        num_ranks=NUM_RANKS,
-        ray_init_options={"include_dashboard": False},
+        num_ranks=ray_num_ranks,
+        ray_init_options=ray_init_options,
     )
     engine.shutdown()
     engine.shutdown()  # idempotent
@@ -321,13 +236,16 @@ def test_reset_rejects_construction_time_engine_options(
         )
 
 
-def test_shutdown_skips_when_ray_not_initialized() -> None:
+def test_shutdown_skips_when_ray_not_initialized(
+    ray_num_ranks: int,
+    ray_init_options: dict[str, Any],
+) -> None:
     """``shutdown`` short-circuits if ``ray.is_initialized()`` is ``False``."""
     engine = RayEngine(
         executor_options={"max_rows_per_partition": 10},
         engine_options={"allow_gpu_sharing": True},
-        num_ranks=NUM_RANKS,
-        ray_init_options={"include_dashboard": False},
+        num_ranks=ray_num_ranks,
+        ray_init_options=ray_init_options,
     )
     try:
         with patch("ray.is_initialized", return_value=False):

@@ -129,6 +129,7 @@ struct replace_nulls_column_kernel_forwarder {
 
     replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.value()>>>(
       *device_in, *device_replacement, *device_out, valid_count);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     if (output_view.nullable()) {
       output->set_null_count(output->size() - valid_counter.value(stream));

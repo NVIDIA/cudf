@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stdint cimport uint32_t, uint64_t
@@ -6,6 +6,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.minhash cimport (
     minhash as cpp_minhash,
     minhash64 as cpp_minhash64,
@@ -63,12 +64,15 @@ cpdef Column minhash(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_a = a.view()
+    cdef column_view c_b = b.view()
     with nogil:
         c_result = cpp_minhash(
-            input.view(),
+            c_input,
             seed,
-            a.view(),
-            b.view(),
+            c_a,
+            c_b,
             width,
             _cs,
             mr.get_mr()
@@ -116,12 +120,15 @@ cpdef Column minhash64(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_a = a.view()
+    cdef column_view c_b = b.view()
     with nogil:
         c_result = cpp_minhash64(
-            input.view(),
+            c_input,
             seed,
-            a.view(),
-            b.view(),
+            c_a,
+            c_b,
             width,
             _cs,
             mr.get_mr()
@@ -170,13 +177,16 @@ cpdef Column minhash_ngrams(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_a = a.view()
+    cdef column_view c_b = b.view()
     with nogil:
         c_result = cpp_minhash_ngrams(
-            input.view(),
+            c_input,
             ngrams,
             seed,
-            a.view(),
-            b.view(),
+            c_a,
+            c_b,
             _cs,
             mr.get_mr()
         )
@@ -224,13 +234,16 @@ cpdef Column minhash64_ngrams(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef column_view c_a = a.view()
+    cdef column_view c_b = b.view()
     with nogil:
         c_result = cpp_minhash64_ngrams(
-            input.view(),
+            c_input,
             ngrams,
             seed,
-            a.view(),
-            b.view(),
+            c_a,
+            c_b,
             _cs,
             mr.get_mr()
         )

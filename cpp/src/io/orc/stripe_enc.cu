@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,6 @@
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <thrust/for_each.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf::io::orc::detail {
@@ -275,7 +274,7 @@ static __device__ uint32_t byte_rle(
 /**
  * @brief Maps the symbol size in bytes to RLEv2 5-bit length code
  */
-static const __device__ __constant__ uint8_t kByteLengthToRLEv2_W[9] = {
+static __device__ const __constant__ uint8_t kByteLengthToRLEv2_W[9] = {
   0, 7, 15, 23, 27, 28, 29, 30, 31};
 
 /**
@@ -1304,6 +1303,7 @@ void encode_orc_column_data(device_2dspan<encoder_chunk const> chunks,
   auto const num_blocks = chunks.size().first * chunks.size().second;
   encode_column_data_kernel<encode_block_size>
     <<<num_blocks, encode_block_size, 0, stream.value()>>>(chunks, streams);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void encode_stripe_dictionaries(stripe_dictionary const* stripes,
@@ -1318,6 +1318,7 @@ void encode_stripe_dictionaries(stripe_dictionary const* stripes,
   dim3 dim_grid(num_string_columns * num_stripes, 2);
   encode_string_dictionaries_kernel<block_size>
     <<<dim_grid, block_size, 0, stream.value()>>>(stripes, columns, chunks, enc_streams);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
@@ -1340,6 +1341,7 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
     strm_desc.size().second;
   init_batched_memcpy_kernel<<<num_blocks, compact_streams_block_size, 0, stream.value()>>>(
     strm_desc, enc_streams, srcs, dsts, lengths);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   // Copy streams in a batched manner.
   cudf::detail::batched_memcpy_async(
@@ -1372,11 +1374,13 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
                                                                          comp_blk_size,
                                                                          max_comp_blk_size,
                                                                          comp_block_align);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   cudf::io::detail::compress(compression, comp_in, comp_out, comp_res, stream);
 
   compact_compressed_blocks_kernel<<<num_blocks, 1024, 0, stream.value()>>>(
     strm_desc, comp_in, comp_out, comp_res, compressed_data, comp_blk_size, max_comp_blk_size);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   if (collect_statistics) {
     return cudf::io::detail::collect_compression_statistics(comp_in, comp_res, stream);
@@ -1407,6 +1411,7 @@ void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
   auto const num_blocks = elem_sizes.size() * rg_bounds.size().first;
   decimal_sizes_to_offsets_kernel<block_size>
     <<<num_blocks, block_size, 0, stream.value()>>>(rg_bounds, d_sizes);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::orc::detail

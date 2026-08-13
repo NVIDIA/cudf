@@ -11,7 +11,7 @@ source ./ci/test_cpp_common.sh
 
 rapids-logger "Memcheck gtests with rmm_mode=cuda"
 
-timeout 3.5h ./ci/run_cudf_memcheck_ctests.sh && EXITCODE=$? || EXITCODE=$?;
+timeout 4h ./ci/run_cudf_memcheck_ctests.sh && EXITCODE=$? || EXITCODE=$?;
 
 rapids-logger "Test script exiting with value: $EXITCODE"
 # shellcheck disable=SC2086

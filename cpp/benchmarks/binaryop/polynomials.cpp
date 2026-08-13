@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/binaryop.hpp>
@@ -52,6 +53,7 @@ static void BM_binaryop_polynomials(nvbench::state& state)
   // Use the number of bytes read from global memory
   state.add_global_memory_reads<key_type>(num_rows);
   state.add_global_memory_writes<key_type>(num_rows);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // computes polynomials: (((ax + b)x + c)x + d)x + e... = ax**4 + bx**3 + cx**2 + dx + e....
@@ -77,6 +79,9 @@ static void BM_binaryop_polynomials(nvbench::state& state)
       result = std::move(sum);
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define BINARYOP_POLYNOMIALS_BENCHMARK_DEFINE(name, key_type)                         \

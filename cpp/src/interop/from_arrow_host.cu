@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -217,7 +217,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::string_v
 {
   CUDF_EXPECTS(
     input->length + 1 <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "number of rows in Arrow column exceeds the column size limit",
+    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
     std::overflow_error);
 
   if (input->length == 0) { return make_empty_column(type_id::STRING); }
@@ -290,7 +290,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
 {
   CUDF_EXPECTS(
     input->length + 1 <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "number of rows in Arrow column exceeds the column size limit",
+    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
     std::overflow_error);
 
   auto [offsets_column, offset, length] = get_offsets_column(schema, input, stream, mr);
@@ -341,17 +341,25 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
 {
   CUDF_EXPECTS(
     input->length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "number of rows in Arrow column exceeds the column size limit",
+    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
     std::overflow_error);
 
-  return type.id() != type_id::EMPTY
-           ? std::move(type_dispatcher(
-               type, dispatch_copy_from_arrow_host{stream, mr}, schema, input, type, skip_mask))
-           : std::make_unique<column>(data_type(type_id::EMPTY),
-                                      input->length,
-                                      rmm::device_buffer{},
-                                      rmm::device_buffer{},
-                                      input->length);
+  if (type.id() == type_id::EMPTY) {
+    return std::make_unique<column>(data_type(type_id::EMPTY),
+                                    input->length,
+                                    rmm::device_buffer{},
+                                    rmm::device_buffer{},
+                                    input->length);
+  }
+
+  auto result = type_dispatcher(
+    type, dispatch_copy_from_arrow_host{stream, mr}, schema, input, type, skip_mask);
+  if (!result->has_nulls() && !result->nullable() &&           // no nulls, not nullable
+      ((schema->schema->flags & ARROW_FLAG_NULLABLE) != 0)) {  // but arrow wants nullable
+    result->set_null_mask(
+      cudf::detail::create_null_mask(result->size(), cudf::mask_state::ALL_VALID, stream, mr), 0);
+  }
+  return result;
 }
 
 /**
@@ -473,6 +481,14 @@ std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
                    return get_column_copy(&view, child, type, false, stream, mr);
                  });
 
+  // A zero-column struct still has a length, preserve it as the table row count.
+  if (columns.empty()) {
+    CUDF_EXPECTS(
+      input->array.length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
+      "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
+      std::overflow_error);
+    return std::make_unique<table>(std::move(columns), static_cast<size_type>(input->array.length));
+  }
   return std::make_unique<table>(std::move(columns));
 }
 

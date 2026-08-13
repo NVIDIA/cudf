@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,13 +7,14 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
 
-#include <rolling/detail/rolling_jit.hpp>
+#include <rolling/detail/rolling_jit.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before
-                    // it. Each UDF will have a different operation-udf.hpp generated for it, so we
+                    // it. Each UDF will have a different operation_udf.cuh generated for it, so we
                     // need to put this pragma before including it to avoid PCH mismatch.
 
-#include <cudf/detail/operation-udf.hpp>
+#include <cudf/detail/kernel_instance.cuh>
+#include <cudf/detail/operation_udf.cuh>
 
 struct rolling_udf_ptx {
   template <typename OutType, typename InType>
@@ -39,42 +40,34 @@ namespace cudf {
 namespace rolling {
 namespace jit {
 
-template <typename WindowType>
-cudf::size_type __device__ get_window(WindowType window, cudf::thread_index_type index)
-{
-  return window[index];
-}
-
-template <>
-cudf::size_type __device__ get_window(cudf::size_type window, cudf::thread_index_type index)
-{
-  return window;
-}
-
 template <typename InType,
           typename OutType,
           class agg_op,
           typename PrecedingWindowType,
           typename FollowingWindowType>
-CUDF_KERNEL void gpu_rolling_new(cudf::size_type nrows,
-                                 InType const* const __restrict__ in_col,
-                                 cudf::bitmask_type const* const __restrict__ in_col_valid,
-                                 OutType* __restrict__ out_col,
-                                 cudf::bitmask_type* __restrict__ out_col_valid,
-                                 cudf::size_type* __restrict__ output_valid_count,
-                                 PrecedingWindowType preceding_window_begin,
-                                 FollowingWindowType following_window_begin,
-                                 cudf::size_type min_periods)
+__device__ void rolling_window_kernel(cudf::size_type nrows,
+                                      void const* __restrict__ p_in_col,
+                                      cudf::bitmask_type const* __restrict__ const in_col_valid,
+                                      void* __restrict__ p_out_col,
+                                      cudf::bitmask_type* __restrict__ out_col_valid,
+                                      cudf::size_type* __restrict__ output_valid_count,
+                                      detail::window_wrapper_base b_preceding_window_begin,
+                                      detail::window_wrapper_base b_following_window_begin,
+                                      cudf::size_type min_periods)
 {
-  auto i            = cudf::detail::grid_1d::global_thread_id();
-  auto const stride = cudf::detail::grid_1d::grid_stride();
+  auto i                                           = cudf::detail::grid_1d::global_thread_id();
+  auto const stride                                = cudf::detail::grid_1d::grid_stride();
+  PrecedingWindowType const preceding_window_begin = b_preceding_window_begin;
+  FollowingWindowType const following_window_begin = b_following_window_begin;
+  auto const* const in_col                         = static_cast<InType const*>(p_in_col);
+  auto* const out_col                              = static_cast<OutType*>(p_out_col);
 
   cudf::size_type warp_valid_count{0};
 
   auto active_threads = __ballot_sync(0xffff'ffffu, i < nrows);
   while (i < nrows) {
-    int64_t const preceding_window = get_window(preceding_window_begin, i);
-    int64_t const following_window = get_window(following_window_begin, i);
+    int64_t const preceding_window = preceding_window_begin[i];
+    int64_t const following_window = following_window_begin[i];
 
     // compute bounds
     auto const start = static_cast<cudf::size_type>(
@@ -112,10 +105,32 @@ CUDF_KERNEL void gpu_rolling_new(cudf::size_type nrows,
   }
 
   // TODO: likely faster to do a single_lane_block_reduce and a single
-  // atomic per block but that requires jitifying single_lane_block_reduce...
+  // atomic per block but that requires jit-compiling single_lane_block_reduce...
   if (0 == cudf::intra_word_index(threadIdx.x)) { atomicAdd(output_valid_count, warp_valid_count); }
 }
 
 }  // namespace jit
 }  // namespace rolling
 }  // namespace cudf
+
+extern "C" __global__ void cudf_kernel_entry(
+  cudf::size_type nrows,
+  void const* __restrict__ in_col,
+  cudf::bitmask_type const* __restrict__ in_col_valid,
+  void* __restrict__ out_col,
+  cudf::bitmask_type* __restrict__ out_col_valid,
+  cudf::size_type* __restrict__ output_valid_count,
+  cudf::detail::window_wrapper_base preceding_window_begin,
+  cudf::detail::window_wrapper_base following_window_begin,
+  cudf::size_type min_periods)
+{
+  CUDF_KERNEL_INSTANCE(nrows,
+                       in_col,
+                       in_col_valid,
+                       out_col,
+                       out_col_valid,
+                       output_valid_count,
+                       preceding_window_begin,
+                       following_window_begin,
+                       min_periods);
+}

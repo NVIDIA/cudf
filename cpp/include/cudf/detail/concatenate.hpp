@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,24 +13,25 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
+#include <span>
 #include <vector>
 
 namespace cudf {
 //! Inner interfaces and implementations
 namespace detail {
 /**
- * @copydoc cudf::concatenate(host_span<column_view
+ * @copydoc cudf::concatenate(std::span<column_view
  * const>,rmm::cuda_stream_view,rmm::device_async_resource_ref)
  */
-std::unique_ptr<column> concatenate(host_span<column_view const> columns_to_concat,
+std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
                                     rmm::cuda_stream_view stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
- * @copydoc cudf::concatenate(host_span<table_view
+ * @copydoc cudf::concatenate(std::span<table_view
  * const>,rmm::cuda_stream_view,rmm::device_async_resource_ref)
  */
-std::unique_ptr<table> concatenate(host_span<table_view const> tables_to_concat,
+std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
                                    rmm::cuda_stream_view stream,
                                    rmm::device_async_resource_ref mr);
 

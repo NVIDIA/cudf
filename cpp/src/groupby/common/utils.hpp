@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,13 +17,14 @@
 #include <rmm/device_buffer.hpp>
 
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
 namespace cudf::groupby::detail {
 
 template <typename RequestType>
-inline std::vector<aggregation_result> extract_results(host_span<RequestType const> requests,
+inline std::vector<aggregation_result> extract_results(std::span<RequestType const> requests,
                                                        cudf::detail::result_cache& cache,
                                                        rmm::cuda_stream_view stream,
                                                        rmm::device_async_resource_ref mr)
@@ -65,7 +66,7 @@ constexpr bool is_hash_aggregation(aggregation::Kind k)
 {
   switch (k) {
     case aggregation::SUM:
-    case aggregation::SUM_WITH_OVERFLOW:
+    case aggregation::SUM_OVERFLOW:
     case aggregation::SUM_OF_SQUARES:
     case aggregation::PRODUCT:
     case aggregation::MIN:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -143,7 +143,7 @@ TEST_F(FstTest, GroundTruth)
   size_t string_size                 = input.size() * (1 << 10);
   auto d_input_scalar                = cudf::make_string_scalar(input);
   auto& d_string_scalar              = static_cast<cudf::string_scalar&>(*d_input_scalar);
-  const cudf::size_type repeat_times = string_size / input.size();
+  cudf::size_type const repeat_times = string_size / input.size();
   auto d_input_string                = cudf::strings::repeat_string(d_string_scalar, repeat_times);
   auto& d_input = static_cast<cudf::scalar_type_t<std::string>&>(*d_input_string);
   input         = d_input.to_string(stream);

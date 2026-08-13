@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # This module is for generating "synthetic" datasets. It was originally
@@ -619,8 +619,8 @@ def float_generator(dtype, size, rng, min_bound=None, max_bound=None):
         )
     else:
         finfo = np.finfo(dtype)
-        return (
-            lambda: rng.uniform(
+        return lambda: (
+            rng.uniform(
                 low=finfo.min / 2,
                 high=finfo.max / 2,
                 size=size,
@@ -673,12 +673,10 @@ def boolean_generator(size, rng):
 def decimal_generator(dtype, size, rng):
     max_integral = 10 ** (dtype.precision - dtype.scale) - 1
     max_float = (10**dtype.scale - 1) if dtype.scale != 0 else 0
-    return lambda: (
-        rng.uniform(
-            low=-max_integral,
-            high=max_integral + (max_float / 10**dtype.scale),
-            size=size,
-        )
+    return lambda: rng.uniform(
+        low=-max_integral,
+        high=max_integral + (max_float / 10**dtype.scale),
+        size=size,
     )
 
 

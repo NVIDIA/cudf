@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,6 +41,19 @@ table::table(std::vector<std::unique_ptr<column>>&& columns) : _columns{std::mov
   }
 }
 
+table::table(std::vector<std::unique_ptr<column>>&& columns, size_type num_rows)
+  : _columns{std::move(columns)}, _num_rows{num_rows}
+{
+  CUDF_EXPECTS(num_rows >= 0, "Number of rows cannot be negative.", std::invalid_argument);
+  for (auto const& c : _columns) {
+    CUDF_EXPECTS(c, "Unexpected null column");
+    CUDF_EXPECTS(
+      c->size() == num_rows,
+      "Column size mismatch: " + std::to_string(c->size()) + " != " + std::to_string(num_rows),
+      std::invalid_argument);
+  }
+}
+
 // Copy the contents of a `table_view`
 table::table(table_view view, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
   : _num_rows{view.num_rows()}
@@ -68,7 +81,7 @@ table_view table::view() const
   for (auto const& c : _columns) {
     views.push_back(c->view());
   }
-  return table_view{views};
+  return table_view{views, _num_rows};
 }
 
 // Create mutable view
@@ -79,7 +92,7 @@ mutable_table_view table::mutable_view()
   for (auto const& c : _columns) {
     views.push_back(c->mutable_view());
   }
-  return mutable_table_view{views};
+  return mutable_table_view{views, _num_rows};
 }
 
 // Release ownership of columns

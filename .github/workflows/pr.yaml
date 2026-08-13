@@ -543,7 +543,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { ARCH: "amd64", CUDA_VER: "12.9", LINUX_VER: "rockylinux8", PY_VER: "3.11" }
+          - { ARCH: "amd64", CUDA_VER: "12.9.2", LINUX_VER: "rockylinux8", PY_VER: "3.11" }
     with:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -564,7 +564,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { ARCH: "amd64", CUDA_VER: "12.9", LINUX_VER: "rockylinux8", PY_VER: "3.11" }
+          - { ARCH: "amd64", CUDA_VER: "12.9.2", LINUX_VER: "rockylinux8", PY_VER: "3.11" }
     runs-on: linux-${{ matrix.ARCH }}-gpu-l4-latest-1
     container:
       image: rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }} # zizmor: ignore[unpinned-images]

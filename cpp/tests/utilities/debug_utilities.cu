@@ -212,6 +212,26 @@ struct column_view_printer {
   template <typename Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
+                  std::string const&,
+                  rmm::cuda_stream_view stream,
+                  cudf::memory_resources mr)
+    requires(std::is_same_v<Element, cudf::binary_view>)
+  {
+    auto const host_mask = cudf::test::bitmask_to_host(col, stream, mr);
+    out.resize(col.size());
+    std::transform(cuda::counting_iterator<size_type>{0},
+                   cuda::counting_iterator{col.size()},
+                   out.begin(),
+                   [&](auto idx) {
+                     return host_mask.empty() || bit_is_set(host_mask.data(), idx)
+                              ? std::string{"<binary>"}
+                              : std::string{"NULL"};
+                   });
+  }
+
+  template <typename Element>
+  void operator()(cudf::column_view const& col,
+                  std::vector<std::string>& out,
                   std::string const& indent,
                   rmm::cuda_stream_view stream,
                   cudf::memory_resources mr)

@@ -556,7 +556,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   // Scatter input rows into partitioned output
   auto output = detail::scatter(input, scatter_map, input, stream, mr);
 
-  stream.wait();  // Pinned async D2H copy must finish before returning host vec
+  stream.sync();  // Pinned async D2H copy must finish before returning host vec
 
   // Convert pinned host_vector to std::vector for the return type
   auto partition_offsets = std::vector<size_type>(pinned_offsets.begin(), pinned_offsets.end());
@@ -724,7 +724,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
         input, gather_map.begin(), output_cols, detail::gather_bitmask_op::DONT_CHECK, stream, mr);
     }
 
-    stream.wait();  // Async D2H copy must finish before returning host vec
+    stream.sync();  // Async D2H copy must finish before returning host vec
     return std::pair{std::make_unique<table>(std::move(output_cols), num_rows),
                      std::move(partition_offsets)};
   } else {
@@ -742,7 +742,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
     // Use the resulting scatter map to materialize the output
     auto output = detail::scatter(input, row_partition_numbers, input, stream, mr);
 
-    stream.wait();  // Async D2H copy must finish before returning host vec
+    stream.sync();  // Async D2H copy must finish before returning host vec
     return std::pair{std::move(output), std::move(partition_offsets)};
   }
 }

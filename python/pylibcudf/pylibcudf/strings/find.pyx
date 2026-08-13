@@ -9,6 +9,10 @@ from pylibcudf.libcudf.strings cimport find as cpp_find
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -24,7 +28,7 @@ cpdef Column find(
     ColumnOrScalar target,
     size_type start=0,
     size_type stop=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Returns a column of character position values where the target string is
@@ -98,7 +102,7 @@ cpdef Column rfind(
     Scalar target,
     size_type start=0,
     size_type stop=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -146,7 +150,7 @@ cpdef Column rfind(
 cpdef Column contains(
     Column input,
     ColumnOrScalar target,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -212,7 +216,7 @@ cpdef Column contains(
 cpdef Column starts_with(
     Column input,
     ColumnOrScalar target,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -278,7 +282,7 @@ cpdef Column starts_with(
 cpdef Column ends_with(
     Column input,
     ColumnOrScalar target,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

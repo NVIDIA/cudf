@@ -23,6 +23,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from ._interop_helpers import ColumnMetadata
 from cuda.bindings.cyruntime cimport cudaStream_t
 
@@ -35,7 +39,7 @@ __all__ = [
 
 
 cpdef Table from_dlpack(
-    object managed_tensor, object stream=None, DeviceMemoryResource mr=None
+    object managed_tensor, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Convert a DLPack DLTensor into a cudf table.
@@ -82,7 +86,7 @@ cpdef Table from_dlpack(
     return result
 
 
-cpdef object to_dlpack(Table input, object stream=None, DeviceMemoryResource mr=None):
+cpdef object to_dlpack(Table input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """
     Convert a cudf table into a DLPack DLTensor.
 

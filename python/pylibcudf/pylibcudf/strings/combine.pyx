@@ -14,6 +14,10 @@ from pylibcudf.scalar cimport Scalar
 from pylibcudf.table cimport Table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -38,7 +42,7 @@ cpdef Column concatenate(
     Scalar narep=None,
     Scalar col_narep=None,
     separator_on_nulls separate_nulls=separator_on_nulls.YES,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -134,7 +138,7 @@ cpdef Column join_strings(
     Column input,
     Scalar separator,
     Scalar narep,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -190,7 +194,7 @@ cpdef Column join_list_elements(
     Scalar string_narep,
     separator_on_nulls separate_nulls,
     output_if_empty_list empty_list_policy,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

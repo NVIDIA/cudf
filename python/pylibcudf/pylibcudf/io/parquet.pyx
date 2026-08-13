@@ -28,8 +28,6 @@ from pylibcudf.libcudf.expressions cimport expression
 from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
 from pylibcudf.libcudf.io.parquet cimport (
     chunked_parquet_reader as cpp_chunked_parquet_reader,
-    copy_parquet_metadatas,
-    const_FileMetaData_ptr,
     parquet_reader_options,
     read_parquet as cpp_read_parquet,
     write_parquet as cpp_write_parquet,
@@ -40,7 +38,6 @@ from pylibcudf.libcudf.io.parquet cimport (
     chunked_parquet_writer_options,
     merge_row_group_metadata as cpp_merge_row_group_metadata,
 )
-from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData as cpp_FileMetaData
 from pylibcudf.libcudf.io.types cimport (
     compression_type,
@@ -614,6 +611,7 @@ cdef class ChunkedParquetReader:
         cdef vector[cpp_FileMetaData] c_metadatas
         cdef vector[cpp_FileMetaData*] metadata_ptrs
         cdef cudaStream_t stream_view = self._stream.view().value()
+        cdef size_t i
         if parquet_metadatas is None:
             with nogil:
                 self.reader.reset(
@@ -635,12 +633,9 @@ cdef class ChunkedParquetReader:
                 metadata_holders, sources.size()
             )
             with nogil:
-                c_metadatas = copy_parquet_metadatas(
-                    host_span[const_FileMetaData_ptr](
-                        <const_FileMetaData_ptr*>metadata_ptrs.data(),
-                        metadata_ptrs.size(),
-                    )
-                )
+                c_metadatas.reserve(metadata_ptrs.size())
+                for i in range(metadata_ptrs.size()):
+                    c_metadatas.push_back(dereference(metadata_ptrs[i]))
                 self.reader.reset(
                     new cpp_chunked_parquet_reader(
                         chunk_read_limit,
@@ -723,6 +718,7 @@ cpdef read_parquet(
     cdef vector[cpp_FileMetaData] c_metadatas
     cdef vector[cpp_FileMetaData*] metadata_ptrs
     cdef table_with_metadata c_result
+    cdef size_t i
     mr = _get_memory_resource(mr)
     if parquet_metadatas is None:
         with nogil:
@@ -737,12 +733,9 @@ cpdef read_parquet(
         metadata_holders = tuple(parquet_metadatas)
         metadata_ptrs = _parquet_metadata_ptrs(metadata_holders, sources.size())
         with nogil:
-            c_metadatas = copy_parquet_metadatas(
-                host_span[const_FileMetaData_ptr](
-                    <const_FileMetaData_ptr*>metadata_ptrs.data(),
-                    metadata_ptrs.size(),
-                )
-            )
+            c_metadatas.reserve(metadata_ptrs.size())
+            for i in range(metadata_ptrs.size()):
+                c_metadatas.push_back(dereference(metadata_ptrs[i]))
             c_result = move(
                 cpp_read_parquet(
                     move(sources),

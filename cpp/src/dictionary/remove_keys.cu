@@ -22,10 +22,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
@@ -53,7 +53,7 @@ namespace {
 template <typename KeysKeeper>
 std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_column,
                                        KeysKeeper keys_to_keep_fn,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto const keys_view    = dictionary_column.keys();
@@ -152,7 +152,7 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
 
 std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_column,
                                     column_view const& keys_to_remove,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!keys_to_remove.has_nulls(), "keys_to_remove must not have nulls");
@@ -170,7 +170,7 @@ std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_col
 }
 
 std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& dictionary_column,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   // locate the keys to remove
@@ -219,7 +219,7 @@ std::unique_ptr<column> remove_duplicate_keys(dictionary_column_view const& inpu
 
 std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_column,
                                     column_view const& keys_to_remove,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -227,7 +227,7 @@ std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_col
 }
 
 std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& dictionary_column,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

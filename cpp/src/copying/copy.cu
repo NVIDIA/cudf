@@ -19,11 +19,11 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream_ref>
 
 #include <stdexcept>
 
@@ -45,14 +45,14 @@ struct copy_if_else_functor_impl {
  */
 struct get_iterable_device_view {
   template <typename T>
-  auto operator()(T const& input, rmm::cuda_stream_view stream)
+  auto operator()(T const& input, cuda::stream_ref stream)
     requires(std::is_same_v<T, cudf::column_view>)
   {
     return cudf::column_device_view::create(input, stream);
   }
 
   template <typename T>
-  auto operator()(T const& input, rmm::cuda_stream_view)
+  auto operator()(T const& input, cuda::stream_ref)
     requires(std::is_same_v<T, cudf::scalar>)
   {
     return &input;
@@ -68,7 +68,7 @@ struct copy_if_else_functor_impl<T, std::enable_if_t<is_rep_layout_compatible<T>
                                      bool left_nullable,
                                      bool right_nullable,
                                      Filter filter,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto p_lhs      = get_iterable_device_view{}(lhs_h, stream);
@@ -101,7 +101,7 @@ struct copy_if_else_functor_impl<string_view> {
                                      bool left_nullable,
                                      bool right_nullable,
                                      Filter filter,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     using T = string_view;
@@ -153,7 +153,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                      cudf::column_view const& rhs,
                                                      size_type size,
                                                      Filter is_left,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   auto gather_map = rmm::device_uvector<size_type>{static_cast<std::size_t>(size), stream};
@@ -187,7 +187,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
                                                      cudf::column_view const& rhs,
                                                      size_type size,
                                                      Filter is_left,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   auto scatter_map = rmm::device_uvector<size_type>{static_cast<std::size_t>(size), stream};
@@ -216,7 +216,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                      cudf::scalar const& rhs,
                                                      size_type size,
                                                      Filter is_left,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   return scatter_gather_based_if_else(rhs, lhs, size, logical_not{is_left}, stream, mr);
@@ -227,7 +227,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
                                                      cudf::scalar const& rhs,
                                                      size_type size,
                                                      Filter is_left,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   auto rhs_col = cudf::make_column_from_scalar(rhs, size, stream, mr);
@@ -243,7 +243,7 @@ struct copy_if_else_functor_impl<struct_view> {
                                      bool,
                                      bool,
                                      Filter filter,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
@@ -259,7 +259,7 @@ struct copy_if_else_functor_impl<list_view> {
                                      bool,
                                      bool,
                                      Filter filter,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
@@ -275,7 +275,7 @@ struct copy_if_else_functor_impl<dictionary32> {
                                      bool,
                                      bool,
                                      Filter filter,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
@@ -294,7 +294,7 @@ struct copy_if_else_functor {
                                      bool left_nullable,
                                      bool right_nullable,
                                      Filter filter,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     copy_if_else_functor_impl<T> copier{};
@@ -309,7 +309,7 @@ std::unique_ptr<column> copy_if_else(Left const& lhs,
                                      bool left_nullable,
                                      bool right_nullable,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(boolean_mask.type() == data_type(type_id::BOOL8),
@@ -347,7 +347,7 @@ std::unique_ptr<column> copy_if_else(Left const& lhs,
 std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(boolean_mask.size() == lhs.size(),
@@ -364,7 +364,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
 std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(boolean_mask.size() == rhs.size(),
@@ -379,7 +379,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
 std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(boolean_mask.size() == lhs.size(),
@@ -394,7 +394,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
 std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -408,7 +408,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
 std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -418,7 +418,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
 std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -428,7 +428,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
 std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -438,7 +438,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
 std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

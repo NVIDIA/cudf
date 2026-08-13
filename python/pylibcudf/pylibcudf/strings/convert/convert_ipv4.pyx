@@ -7,6 +7,10 @@ from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport convert_ipv4 as cpp_convert_ipv4
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -14,7 +18,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["integers_to_ipv4", "ipv4_to_integers", "is_ipv4"]
 
 cpdef Column ipv4_to_integers(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Converts IPv4 addresses into integers.
@@ -49,7 +53,7 @@ cpdef Column ipv4_to_integers(
 
 
 cpdef Column integers_to_ipv4(
-    Column integers, object stream=None, DeviceMemoryResource mr=None
+    Column integers, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Converts integers into IPv4 addresses as strings.
@@ -83,7 +87,7 @@ cpdef Column integers_to_ipv4(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Column is_ipv4(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_ipv4(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """
     Returns a boolean column identifying strings in which all
     characters are valid for conversion to integers from IPv4 format.

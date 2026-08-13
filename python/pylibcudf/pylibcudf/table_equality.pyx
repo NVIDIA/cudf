@@ -10,6 +10,10 @@ from rmm.pylibrmm.stream cimport Stream
 
 from .table cimport Table
 from .utils cimport _get_stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["tables_equal"]
@@ -19,7 +23,7 @@ cpdef bool tables_equal(
     Table left,
     Table right,
     null_equality nulls_equal=null_equality.EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
 ):
     """Check if two tables are equal.
 

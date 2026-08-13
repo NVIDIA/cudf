@@ -22,11 +22,11 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream_ref>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -75,7 +75,7 @@ struct remap_indices_dispatch_fn {
   template <typename T>
   remap_result operator()(cudf::dictionary_column_view const& input,
                           cudf::column_view const& new_keys,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr)
     requires(cudf::is_dictionary_key<T>())
   {
@@ -154,7 +154,7 @@ struct set_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
   {
@@ -181,7 +181,7 @@ std::unique_ptr<column> remap_indices(dictionary_column_view const& input,
 
 std::unique_ptr<column> set_keys(dictionary_column_view const& input,
                                  column_view const& new_keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);
@@ -199,7 +199,7 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& input,
 
 std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

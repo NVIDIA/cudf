@@ -21,7 +21,7 @@ std::unique_ptr<column> cudf::io::detail::inline_column_buffer::make_string_colu
       CUDF_FAIL("String column exceeds the column size limit", std::overflow_error);
     }
     // create new offsets
-    auto const offsets_ptr = static_cast<size_type*>(_data.data());
+    auto const offsets_ptr = static_cast<int32_t*>(_data.data());
     auto offsets_col       = make_numeric_column(
       data_type{type_id::INT64}, size + 1, mask_state::UNALLOCATED, stream, _mr);
     auto d_offsets64 = offsets_col->mutable_view().template data<int64_t>();

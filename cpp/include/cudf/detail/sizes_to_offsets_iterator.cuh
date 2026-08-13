@@ -305,8 +305,6 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {
-  // Offsets children of compound (LIST/STRING) columns are 32-bit and so are
-  // deliberately not tied to `cudf::size_type`.
   auto count = static_cast<size_type>(std::distance(begin, end));
   auto offsets_column =
     make_numeric_column(data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr);

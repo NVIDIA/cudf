@@ -358,7 +358,7 @@ struct cluster_info {
   // cluster weight limits
   rmm::device_uvector<double> cluster_wl{0, cudf::get_default_stream()};
   // start index of weight limits, per group
-  rmm::device_uvector<size_type> cluster_start{0, cudf::get_default_stream()};
+  rmm::device_uvector<int32_t> cluster_start{0, cudf::get_default_stream()};
   // number of weight limits, per group
   rmm::device_uvector<size_type> num_clusters{0, cudf::get_default_stream()};
   bool requires_rescan =
@@ -858,7 +858,7 @@ std::unique_ptr<column> build_output_column(size_type num_rows,
   // Whether or not this particular tdigest is a stub.
   // This should not be wrapped in `proclaim_return_type` as it will be used inside another
   // device lambda.
-  auto is_stub_digest = [offsets = offsets->view().begin<size_type>(), is_stub_weight] __device__(
+  auto is_stub_digest = [offsets = offsets->view().begin<int32_t>(), is_stub_weight] __device__(
                           size_type i) { return is_stub_weight(offsets[i]) ? 1 : 0; };
 
   size_type const num_stubs = [&]() {

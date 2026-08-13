@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -16,6 +17,9 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/hashing.hpp>
+#include <cudf/sorting.hpp>
+#include <cudf/stream_compaction.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -285,6 +289,52 @@ TEST_F(BinaryTest, ScatterMovesBinaryRows)
 
   EXPECT_EQ(host_sizes, (std::vector<cudf::size_type>{2, 3, 3}));
   EXPECT_EQ(cudf::binary_column_view{output->view()}.bytes_size(stream), 8);
+}
+
+TEST_F(BinaryTest, HashesBinaryPayloadBytes)
+{
+  auto const stream = cudf::get_default_stream();
+  auto offsets      = cudf::test::fixed_width_column_wrapper<int32_t>({0, 2, 4, 4}).release();
+  auto payload      = make_payload({0x00, 0xFF, 0x00, 0xFF}, stream);
+  auto input        = cudf::make_binary_column(
+    3, std::move(offsets), std::move(payload), 0, rmm::device_buffer{});
+
+  auto hashes = cudf::hashing::murmurhash3_x86_32(cudf::table_view{{input->view()}}, 0, stream);
+  auto const [host_hashes, validity] = cudf::test::to_host<uint32_t>(hashes->view(), stream);
+
+  EXPECT_EQ(host_hashes[0], host_hashes[1]);
+  EXPECT_NE(host_hashes[0], host_hashes[2]);
+}
+
+TEST_F(BinaryTest, SortsByUnsignedByteOrder)
+{
+  auto const stream = cudf::get_default_stream();
+  auto input        = make_test_column<int32_t>(stream);
+
+  auto order = cudf::sorted_order(cudf::table_view{{input->view()}}, {}, {}, stream);
+  auto const [host_order, validity] =
+    cudf::test::to_host<cudf::size_type>(order->view(), stream);
+
+  EXPECT_EQ(host_order, (std::vector<cudf::size_type>{1, 0, 2}));
+}
+
+TEST_F(BinaryTest, DistinctUsesBinaryEquality)
+{
+  auto const stream = cudf::get_default_stream();
+  auto offsets      = cudf::test::fixed_width_column_wrapper<int32_t>({0, 2, 4, 4}).release();
+  auto payload      = make_payload({0x00, 0xFF, 0x00, 0xFF}, stream);
+  auto input        = cudf::make_binary_column(
+    3, std::move(offsets), std::move(payload), 0, rmm::device_buffer{});
+
+  auto result = cudf::distinct(cudf::table_view{{input->view()}},
+                               {0},
+                               cudf::duplicate_keep_option::KEEP_FIRST,
+                               cudf::null_equality::EQUAL,
+                               cudf::nan_equality::ALL_EQUAL,
+                               stream);
+
+  EXPECT_EQ(result->num_rows(), 2);
+  EXPECT_EQ(result->get_column(0).type().id(), cudf::type_id::BINARY);
 }
 
 }  // namespace

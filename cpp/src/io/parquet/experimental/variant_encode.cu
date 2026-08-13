@@ -131,18 +131,18 @@ __device__ double parse_float64(cudf::string_view s)
   }
 
   if (i < n && (data[i] == 'e' || data[i] == 'E')) {
-    +i;
+    ++i;
     bool exp_neg = false;
     if (i < n && data[i] == '-') {
       exp_neg = true;
-      +i;
+      ++i;
     } else if (i < n && data[i] == '+') {
-      +i;
+      ++i;
     }
     int exp = 0;
     while (i < n && data[i] >= '0' && data[i] <= '9') {
       if (exp < 1000) { exp = exp * 10 + (data[i] - '0'); }
-      +i;
+      ++i;
     }
     // Anything beyond the double range saturates.
     if (exp > 400) {

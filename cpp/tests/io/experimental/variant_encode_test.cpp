@@ -3,102 +3,91 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-`#include ` <cudf_test / base_fixture.hpp>
-`#include ` <cudf_test / column_utilities.hpp>
-`#include ` <cudf_test / column_wrapper.hpp>
-`#include ` <cudf_test / cudf_gtest.hpp>
+#include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
+#include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/cudf_gtest.hpp>
 
-<<<<<<< HEAD
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/experimental/variant.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/span.hpp>
-  == == ==
-  =
-`#include ` <cudf / column / column_factories.hpp>
-`#include ` <cudf / io / experimental / variant.hpp>
-`#include ` <cudf / io / experimental / variant_spec.hpp>
-`#include ` <cudf / lists / lists_column_view.hpp>
-`#include ` <cudf / strings / strings_column_view.hpp>
-`#include ` <cudf / structs / structs_column_view.hpp>
-`#include ` <cudf / utilities / span.hpp>
->>>>>>> 9ca1d0cf78bcde4851c7abf454634431f4c85027
 
-`#include ` <cstdint>
-`#include ` <memory>
-`#include ` <string>
-`#include ` <vector>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
 
-  namespace
+namespace {
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+// Encode a vector of JSON strings with the given column names.
+std::unique_ptr<cudf::column> encode(std::vector<std::string> const& json_rows,
+                                     std::vector<std::string> const& col_names,
+                                     std::vector<bool> const& valid = {})
 {
-  // ─── helpers ─────────────────────────────────────────────────────────────────
-
-  // Encode a vector of JSON strings with the given column names.
-  std::unique_ptr<cudf::column> encode(std::vector<std::string> const& json_rows,
-                                       std::vector<std::string> const& col_names,
-                                       std::vector<bool> const& valid = {})
-  {
-    std::unique_ptr<cudf::column> input_col;
-    if (valid.empty()) {
-      cudf::test::strings_column_wrapper w(json_rows.begin(), json_rows.end());
-      input_col = w.release();
-    } else {
-      cudf::test::strings_column_wrapper w(json_rows.begin(), json_rows.end(), valid.begin());
-      input_col = w.release();
-    }
-    cudf::strings_column_view scv{input_col->view()};
-    std::vector<std::string> names(col_names);
-    return cudf::io::parquet::experimental::encode_strings_to_variant(scv, names);
-  }
-
-  // Encode json_rows[offset .. offset+size) via a sliced strings_column_view.
-  std::unique_ptr<cudf::column> encode_sliced(std::vector<std::string> const& json_rows,
-                                              std::vector<std::string> const& col_names,
-                                              cudf::size_type offset,
-                                              cudf::size_type size)
-  {
+  std::unique_ptr<cudf::column> input_col;
+  if (valid.empty()) {
     cudf::test::strings_column_wrapper w(json_rows.begin(), json_rows.end());
-    auto full_col            = w.release();
-    cudf::column_view sliced = cudf::slice(full_col->view(), {offset, offset + size})[0];
-    cudf::strings_column_view scv{sliced};
-    std::vector<std::string> names(col_names);
-    return cudf::io::parquet::experimental::encode_strings_to_variant(scv, names);
+    input_col = w.release();
+  } else {
+    cudf::test::strings_column_wrapper w(json_rows.begin(), json_rows.end(), valid.begin());
+    input_col = w.release();
   }
+  cudf::strings_column_view scv{input_col->view()};
+  std::vector<std::string> names(col_names);
+  return cudf::io::parquet::experimental::encode_strings_to_variant(scv, names);
+}
 
-  // Extract a field from a VARIANT struct column and cast to INT64.
-  std::unique_ptr<cudf::column> extract_int64(cudf::column_view const& variant,
+// Encode json_rows[offset .. offset+size) via a sliced strings_column_view.
+std::unique_ptr<cudf::column> encode_sliced(std::vector<std::string> const& json_rows,
+                                            std::vector<std::string> const& col_names,
+                                            cudf::size_type offset,
+                                            cudf::size_type size)
+{
+  cudf::test::strings_column_wrapper w(json_rows.begin(), json_rows.end());
+  auto full_col            = w.release();
+  cudf::column_view sliced = cudf::slice(full_col->view(), {offset, offset + size})[0];
+  cudf::strings_column_view scv{sliced};
+  std::vector<std::string> names(col_names);
+  return cudf::io::parquet::experimental::encode_strings_to_variant(scv, names);
+}
+
+// Extract a field from a VARIANT struct column and cast to INT64.
+std::unique_ptr<cudf::column> extract_int64(cudf::column_view const& variant,
+                                            std::string const& path)
+{
+  using namespace cudf::io::parquet::experimental;
+  return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::INT64});
+}
+
+// Extract a field from a VARIANT struct column and cast to FLOAT64.
+std::unique_ptr<cudf::column> extract_float64(cudf::column_view const& variant,
                                               std::string const& path)
-  {
-    using namespace cudf::io::parquet::experimental;
-    return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::INT64});
-  }
+{
+  using namespace cudf::io::parquet::experimental;
+  return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::FLOAT64});
+}
 
-  // Extract a field from a VARIANT struct column and cast to FLOAT64.
-  std::unique_ptr<cudf::column> extract_float64(cudf::column_view const& variant,
-                                                std::string const& path)
-  {
-    using namespace cudf::io::parquet::experimental;
-    return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::FLOAT64});
-  }
-
-  // Extract a field from a VARIANT struct column and cast to STRING.
-  std::unique_ptr<cudf::column> extract_string(cudf::column_view const& variant,
-                                               std::string const& path)
-  {
-    using namespace cudf::io::parquet::experimental;
-    return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::STRING});
-  }
-
-  // Extract a field from a VARIANT struct column and cast to BOOL8.
-  std::unique_ptr<cudf::column> extract_bool(cudf::column_view const& variant,
+// Extract a field from a VARIANT struct column and cast to STRING.
+std::unique_ptr<cudf::column> extract_string(cudf::column_view const& variant,
                                              std::string const& path)
-  {
-    using namespace cudf::io::parquet::experimental;
-    return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::BOOL8});
-  }
+{
+  using namespace cudf::io::parquet::experimental;
+  return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::STRING});
+}
+
+// Extract a field from a VARIANT struct column and cast to BOOL8.
+std::unique_ptr<cudf::column> extract_bool(cudf::column_view const& variant,
+                                           std::string const& path)
+{
+  using namespace cudf::io::parquet::experimental;
+  return extract_variant_field(variant, path, cudf::data_type{cudf::type_id::BOOL8});
+}
 
 }  // namespace
 
@@ -196,10 +185,10 @@ TEST_F(EncodeStringsToVariantTest, SingleRowLongString)
 TEST_F(EncodeStringsToVariantTest, SingleRowShortStringNonAscii)
 {
   // "café" – é is U+00E9, encoded as 2 UTF-8 bytes (0xC3 0xA9), total 5 bytes
-  auto variant = encode({u8R"({"s":"café"})"}, {"s"});
+  auto variant = encode({R"({"s":"café"})"}, {"s"});
 
   auto strs = extract_string(variant->view(), "$.s");
-  cudf::test::strings_column_wrapper expected{u8"café"};
+  cudf::test::strings_column_wrapper expected{"café"};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
 }
 

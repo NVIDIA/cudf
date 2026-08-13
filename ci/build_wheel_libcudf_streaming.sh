@@ -38,6 +38,9 @@ export PIP_NO_BUILD_ISOLATION=0
 
 ./ci/build_wheel.sh "${package_name}" "${package_dir}"
 
+RAPIDS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+RAPIDS_CUDA_MAJOR_MINOR="${RAPIDS_CUDA_VERSION%.*}"
+
 # repair wheels and write to the location that artifact-uploading code expects to find them
 python -m auditwheel repair \
     --exclude libcudf.so \
@@ -46,9 +49,9 @@ python -m auditwheel repair \
     --exclude librmm.so \
     --exclude libucxx.so \
     --exclude libucp.so.0 \
-    --exclude libnvrtc.so \
-    --exclude libnvrtc-builtins.so \
-    --exclude libnvJitLink.so \
+    --exclude libnvrtc.so.${RAPIDS_CUDA_MAJOR} \
+    --exclude libnvrtc-builtins.so.${RAPIDS_CUDA_MAJOR_MINOR} \
+    --exclude libnvJitLink.so.${RAPIDS_CUDA_MAJOR} \
     -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
     ${package_dir}/dist/*
 

@@ -255,7 +255,10 @@ class ParquetOptions:
         will also be skipped if ``max_footer_samples`` is 0.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
-        `parquet_metadatas` to avoid rereading file footers. Enabled by default.
+        `parquet_metadatas` to avoid rereading file footers. Not supported
+        by the in-memory executor, where it defaults to disabled. For the
+        streaming executor, it defaults to being enabled for remote URIs
+        (e.g. ``s3://``) only; pass ``True`` to also prefetch local files.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
@@ -324,7 +327,7 @@ class ParquetOptions:
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
         if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
-            raise TypeError("prefetch_file_metadata must be a bool")
+            raise TypeError("prefetch_file_metadata must be a bool when specified")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -1047,7 +1050,7 @@ class ConfigOptions(Generic[ExecutorType]):
         match user_executor:
             case "in-memory":
                 executor = InMemoryExecutor(**user_executor_options)
-                if parquet_options.prefetch_file_metadata:
+                if parquet_options.prefetch_file_metadata is True:
                     raise NotImplementedError(
                         "Prefetching is not supported for the in-memory executor."
                     )

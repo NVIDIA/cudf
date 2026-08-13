@@ -2344,7 +2344,9 @@ class GroupBy(IR):
             return target_group_keys, []
 
         request_groups: dict[
-            tuple[tuple[bool, tuple[bool], tuple[bool]], tuple[expr.Expr, ...]],
+            tuple[
+                tuple[bool, tuple[bool, ...], tuple[bool, ...]], tuple[expr.Expr, ...]
+            ],
             list[expr.NamedExpr],
         ] = {}
         for request in sorted_requests:

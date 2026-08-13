@@ -441,6 +441,25 @@ def test_groupby_sort_by_first_last_in_memory(in_memory_engine: pl.GPUEngine) ->
     assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=True)
 
 
+def test_groupby_sort_by_multiple_order_keys_in_memory(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["B", "A", "C", "A", "B", "C", "A", "B"],
+            "idx": [2, 3, 2, 1, 1, 1, 2, 3],
+            "seq": [1, 2, 3, 1, 3, 2, 3, 2],
+            "val": [40, 30, 60, 10, 20, 50, 25, 45],
+        }
+    )
+
+    q = df.group_by("g", maintain_order=True).agg(
+        pl.col("val").sort_by("idx").first().alias("first_by_idx"),
+        pl.col("val").sort_by("seq", descending=True).first().alias("first_by_seq"),
+    )
+    assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=True)
+
+
 def test_groupby_sort_by_first_pointwise_in_memory(
     in_memory_engine: pl.GPUEngine,
 ) -> None:

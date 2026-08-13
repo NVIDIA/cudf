@@ -457,7 +457,7 @@ cpdef Column shift(
 
 
 cpdef ColumnOrTable reverse(
-    ColumnOrTable input, object stream=None, DeviceMemoryResource mr=None
+    ColumnOrTable input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Reverse the rows of a column or table.
 

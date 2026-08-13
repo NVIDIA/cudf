@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,6 +26,7 @@
 
 #include <cuda/std/utility>
 #include <thrust/for_each.h>
+#include <thrust/iterator/constant_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -157,13 +158,9 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
                std::overflow_error);
 
   // build the offsets: single string output has offsets [0,chars-size]
-  auto offsets_column = [&] {
-    auto h_offsets = cudf::detail::make_host_vector<size_type>(2, stream);
-    h_offsets[0]   = 0;
-    h_offsets[1]   = chars.size();
-    auto offsets   = cudf::detail::make_device_uvector_async(h_offsets, stream, mr);
-    return std::make_unique<column>(std::move(offsets), rmm::device_buffer{}, 0);
-  }();
+  auto sizes_itr      = thrust::constant_iterator(static_cast<size_type>(chars.size()));
+  auto offsets_column = std::get<0>(
+    cudf::strings::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr));
 
   // build the null mask: only one output row so it is either all-valid or all-null
   auto const null_count =

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,9 +24,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/stream_ref>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <algorithm>
@@ -37,7 +37,7 @@
 namespace cudf {
 
 // Copy ctor w/ optional stream/mr
-column::column(column const& other, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+column::column(column const& other, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
   : _type{other._type},
     _size{other._size},
     _data{other._data, stream, mr},
@@ -137,7 +137,7 @@ void column::set_null_mask(rmm::device_buffer&& new_null_mask, size_type new_nul
 
 void column::set_null_mask(rmm::device_buffer const& new_null_mask,
                            size_type new_null_count,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   if (new_null_count > 0) {
     CUDF_EXPECTS(new_null_mask.size() >= cudf::bitmask_allocation_size_bytes(this->size()),
@@ -157,7 +157,7 @@ void column::set_null_count(size_type new_null_count)
 namespace {
 struct create_column_from_view {
   cudf::column_view view;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename ColumnType>
@@ -253,14 +253,14 @@ struct create_column_from_view {
 }  // anonymous namespace
 
 // Copy from a view
-column::column(column_view view, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+column::column(column_view view, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
   :  // Move is needed here because the dereference operator of unique_ptr returns
      // an lvalue reference, which would otherwise dispatch to the copy constructor
     column{std::move(*type_dispatcher(view.type(), create_column_from_view{view, stream, mr}))}
 {
 }
 
-std::unique_ptr<column> rebind_stream(column&& col, rmm::cuda_stream_view stream)
+std::unique_ptr<column> rebind_stream(column&& col, cuda::stream_ref stream)
 {
   auto const dtype      = col.type();
   auto const sz         = col.size();

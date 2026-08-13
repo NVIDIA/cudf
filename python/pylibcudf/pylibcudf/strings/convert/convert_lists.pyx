@@ -16,6 +16,10 @@ from pylibcudf.libcudf.strings.convert cimport (
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.types cimport type_id
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -28,7 +32,7 @@ cpdef Column format_list_column(
     Column input,
     Scalar na_rep=None,
     Column separators=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

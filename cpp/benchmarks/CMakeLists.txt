@@ -186,6 +186,8 @@ ConfigureNVBench(
   sort/segmented_top_k.cpp
   sort/segmented_sort.cpp
   sort/sort.cpp
+  sort/sort_list_of_numbers.cpp
+  sort/sort_list_of_strings.cu
   sort/sort_lists.cpp
   sort/sort_strings.cpp
   sort/sort_structs.cpp

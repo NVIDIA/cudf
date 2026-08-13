@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <thrust/transform.h>
@@ -68,11 +69,20 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
                                                                       stream,
                                                                       mr);
 
+  // The sort cannot add nulls: release a null-free child's all-valid mask and skip the parent
+  // bitmask copy when it holds no nulls, so the output is nullable only where nulls are present.
+  auto sorted_child = std::move(sorted_child_table->release().front());
+  // Defensive: keeps sort_lists' no-spurious-mask contract independent of the by-key internals --
+  // currently a no-op, since the shared gather already normalizes.
+  if (sorted_child->null_count() == 0) { sorted_child->set_null_mask(rmm::device_buffer{}, 0); }
+
   return make_lists_column(input.size(),
                            std::move(output_offset),
-                           std::move(sorted_child_table->release().front()),
+                           std::move(sorted_child),
                            input.null_count(),
-                           cudf::detail::copy_bitmask(input.parent(), stream, mr));
+                           input.null_count() == 0
+                             ? rmm::device_buffer{}
+                             : cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
 
 std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
@@ -94,11 +104,20 @@ std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
                                                                              stream,
                                                                              mr);
 
+  // The sort cannot add nulls: release a null-free child's all-valid mask and skip the parent
+  // bitmask copy when it holds no nulls, so the output is nullable only where nulls are present.
+  auto sorted_child = std::move(sorted_child_table->release().front());
+  // Defensive: keeps stable_sort_lists' no-spurious-mask contract independent of the by-key
+  // internals -- currently a no-op, since the shared gather already normalizes.
+  if (sorted_child->null_count() == 0) { sorted_child->set_null_mask(rmm::device_buffer{}, 0); }
+
   return make_lists_column(input.size(),
                            std::move(output_offset),
-                           std::move(sorted_child_table->release().front()),
+                           std::move(sorted_child),
                            input.null_count(),
-                           cudf::detail::copy_bitmask(input.parent(), stream, mr));
+                           input.null_count() == 0
+                             ? rmm::device_buffer{}
+                             : cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
 }  // namespace detail
 

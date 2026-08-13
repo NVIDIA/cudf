@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -562,13 +562,34 @@ TEST_F(ListDistinctTest, InputListsOfStructsHaveNull)
   {
     auto const input_original = cudf::make_lists_column(
       3, int32s_col{0, 8, 16, 24}.release(), get_structs().release(), 0, {});
-    auto const expected_original = cudf::make_lists_column(
-      3, int32s_col{0, 6, 12, 20}.release(), get_expected().release(), 0, {});
-    auto const input    = cudf::slice(*input_original, {1, 3})[0];
-    auto const expected = cudf::slice(*expected_original, {1, 3})[0];
+    auto const input = cudf::slice(*input_original, {1, 3})[0];
+
+    // The sliced range holds no struct-level nulls, so the result's struct child is non-nullable;
+    // build the expected column directly (slicing `get_expected()` would keep its allocated mask).
+    auto const expected = [] {
+      auto child1 =
+        int32s_col{{null, 1, 1, 1, 1, 2, null, null, 2, 2, 2, 3, 3, 3}, nulls_at({0, 6, 7})};
+      auto child2  = strings_col{{"", /*NULL*/
+                                  "Bear",
+                                  "Cat",
+                                  "Dog",
+                                  "Duck",
+                                  "Panda",
+                                  "ÁÁÁ",
+                                  "ÉÉÉÉÉ",
+                                  "ÁBC",
+                                  "ÁÁÁ",
+                                  "ÍÍÍÍÍ",
+                                  "", /*NULL*/
+                                  "XYZ",
+                                  "ÁBC"},
+                                nulls_at({0, 11})};
+      auto structs = structs_col{{child1, child2}};
+      return cudf::make_lists_column(2, int32s_col{0, 6, 14}.release(), structs.release(), 0, {});
+    }();
 
     auto const results_sorted = distinct_sorted(input);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, *results_sorted);
   }
 }
 

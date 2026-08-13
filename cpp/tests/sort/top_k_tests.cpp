@@ -11,6 +11,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
@@ -18,11 +19,14 @@
 
 #include <cuda/iterator>
 
+#include <limits>
 #include <type_traits>
 #include <vector>
 
-using TestTypes = cudf::test::
-  Concat<cudf::test::IntegralTypesNotBool, cudf::test::FloatingPointTypes, cudf::test::ChronoTypes>;
+using TestTypes = cudf::test::Concat<cudf::test::IntegralTypesNotBool,
+                                     cudf::test::FloatingPointTypes,
+                                     cudf::test::ChronoTypes,
+                                     cudf::test::FixedPointTypes>;
 
 template <typename T>
 struct TopKTypes : public cudf::test::BaseFixture {};
@@ -122,6 +126,44 @@ TYPED_TEST(TopKTypes, TopKSegmented)
     result = cudf::segmented_top_k_order(input, offsets, 3, cudf::order::ASCENDING);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_order, result->view());
   }
+}
+
+// A no-null input whose average segment length (~128) exceeds the fast-sort cutoff at a row count
+// past the CUB small-total pocket routes the default DESCENDING k-selection through the
+// packed-radix segmented-sort fast path, which the null-carrying tests above never reach.
+TYPED_TEST(TopKTypes, TopKSegmentedLongSegmentsNoNulls)
+{
+  using T = TypeParam;
+
+  constexpr cudf::size_type num_segments = 2'048;
+  constexpr cudf::size_type seg_size     = 128;
+  std::vector<int32_t> values(static_cast<std::size_t>(num_segments) * seg_size);
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    values[i] = static_cast<int32_t>(i % seg_size);
+  }
+  auto input = cudf::test::fixed_width_column_wrapper<T, int32_t>(values.begin(), values.end());
+  std::vector<int32_t> offset_vals(num_segments + 1);
+  for (cudf::size_type i = 0; i <= num_segments; ++i) {
+    offset_vals[i] = i * seg_size;
+  }
+  auto offsets =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offset_vals.begin(), offset_vals.end());
+
+  std::vector<int32_t> expected_vals;
+  std::vector<cudf::size_type> expected_offsets{0};
+  for (cudf::size_type s = 0; s < num_segments; ++s) {
+    expected_vals.insert(expected_vals.end(), {127, 126, 125});
+    expected_offsets.push_back(static_cast<cudf::size_type>(expected_vals.size()));
+  }
+  auto expected_leaf =
+    cudf::test::fixed_width_column_wrapper<T, int32_t>(expected_vals.begin(), expected_vals.end());
+  auto expected_off = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    expected_offsets.begin(), expected_offsets.end());
+  auto expected =
+    cudf::make_lists_column(num_segments, expected_off.release(), expected_leaf.release(), 0, {});
+
+  auto result = cudf::segmented_top_k(input, offsets, 3);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view(), result->view());
 }
 
 // Empty segments (leading, trailing, interior, or consecutive) must produce empty result lists.
@@ -470,4 +512,84 @@ TEST_F(TopK, TopKSegmentedEmptyMultiBlock)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
   result = cudf::segmented_top_k_order(input, offsets, 2);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+}
+
+// BOOL8 is packed-radix-supported but not tiered-supported, so a null-bearing bool column takes
+// the packed radix at any list size -- a (type x null) cell outside the typed suite, which
+// excludes bool. One valid true and one valid false per segment keep the unstable top-k
+// deterministic.
+TEST_F(TopK, SegmentedTopKBoolWithNulls)
+{
+  using LCWB = cudf::test::lists_column_wrapper<bool>;
+  using LCWO = cudf::test::lists_column_wrapper<cudf::size_type>;
+  auto input = cudf::test::fixed_width_column_wrapper<bool>({true, false, true, false, true, true},
+                                                            {true, true, false, true, false, true});
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 3, 6});
+  // seg0 valid: true@0, false@1 ; seg1 valid: false@3, true@5. Descending top-2 per segment.
+  LCWB expected({LCWB{true, false}, LCWB{true, false}});
+  LCWO expected_order({LCWO{0, 1}, LCWO{5, 3}});
+  auto result = cudf::segmented_top_k(input, offsets, 2);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+  result = cudf::segmented_top_k_order(input, offsets, 2);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+}
+
+// One 200-element segment averages 100, routing the no-null DECIMAL128 column to the packed
+// radix, whose range gate picks the key width; the three steps force each width in turn.
+TEST_F(TopK, SegmentedTopKDecimal128KeyWidths)
+{
+  auto constexpr scale = numeric::scale_type{0};
+  auto const check     = [&](__int128_t base, __int128_t step) {
+    cudf::size_type const n = 200;
+    std::vector<__int128_t> vals(n);
+    for (cudf::size_type i = 0; i < n; ++i) {
+      vals[i] = base + step * (n - 1 - i);
+    }
+    auto input =
+      cudf::test::fixed_point_column_wrapper<__int128_t>(vals.begin(), vals.end(), scale);
+    auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, n});
+    std::vector<__int128_t> top{base + step * 199, base + step * 198, base + step * 197};
+    auto expected_leaf =
+      cudf::test::fixed_point_column_wrapper<__int128_t>(top.begin(), top.end(), scale);
+    auto expected_off = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 3});
+    auto expected =
+      cudf::make_lists_column(1, expected_off.release(), expected_leaf.release(), 0, {});
+    auto result = cudf::segmented_top_k(input, offsets, 3);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view(), result->view());
+  };
+  check(0, 1);                                 // span < 2^32 -> min-biased uint64 key
+  check(0, static_cast<__int128_t>(1) << 32);  // span >= 2^32, fits int64 -> prefix_key96
+  check(-(static_cast<__int128_t>(1) << 100),  // beyond int64 -> two-phase hi64/lo64
+        static_cast<__int128_t>(1) << 64);
+}
+
+// cudf orders -Inf < finite < +Inf < NaN, so descending top-k leads with NaN then +Inf. Five
+// elements per segment keep the no-null double column on the tiered fast path's network tier,
+// driving `radix_encode_u64`'s NaN canonicalization through the top_k entry point; one NaN and
+// one Inf per segment keep the unstable selection deterministic.
+TEST_F(TopK, SegmentedTopKFloatNaNInfinity)
+{
+  auto constexpr NaN = std::numeric_limits<double>::quiet_NaN();
+  auto constexpr Inf = std::numeric_limits<double>::infinity();
+  using LCWD         = cudf::test::lists_column_wrapper<double>;
+  using LCWO         = cudf::test::lists_column_wrapper<cudf::size_type>;
+  auto input         = cudf::test::fixed_width_column_wrapper<double>(
+    {NaN, -Inf, 3.5, Inf, -2.0, 0.0, 1.0, -Inf, Inf, NaN});
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 5, 10});
+  {
+    LCWD expected({LCWD{NaN, Inf}, LCWD{NaN, Inf}});
+    LCWO expected_order({LCWO{0, 3}, LCWO{9, 8}});
+    auto result = cudf::segmented_top_k(input, offsets, 2);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+    result = cudf::segmented_top_k_order(input, offsets, 2);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  }
+  {
+    LCWD expected({LCWD{-Inf, -2.0}, LCWD{-Inf, 0.0}});
+    LCWO expected_order({LCWO{1, 4}, LCWO{7, 5}});
+    auto result = cudf::segmented_top_k(input, offsets, 2, cudf::order::ASCENDING);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+    result = cudf::segmented_top_k_order(input, offsets, 2, cudf::order::ASCENDING);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  }
 }

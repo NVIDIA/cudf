@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,6 @@
 #include <cudf/lists/set_operations.hpp>
 #include <cudf/lists/sorting.hpp>
 #include <cudf/lists/stream_compaction.hpp>
-#include <cudf/null_mask.hpp>
 
 #include <limits>
 #include <string>
@@ -268,18 +267,11 @@ TEST_F(SetIntersectTest, StringTestsWithNullsUnequal)
        strings_lists{}, /* NULL */
        strings_lists{"aha", "this", "is another", "string???"}},
       null_at(1)};
-    auto const expected = [] {
-      auto str_lists =
-        strings_lists{{strings_lists{}, strings_lists{} /*NULL*/, strings_lists{"this"}},
-                      null_at(1)}
-          .release();
-      auto& child = str_lists->child(cudf::lists_column_view::child_column_index);
-      child.set_null_mask(cudf::create_null_mask(child.size(), cudf::mask_state::ALL_VALID), 0);
-      return str_lists;
-    }();
+    auto const expected =
+      strings_lists{{strings_lists{}, strings_lists{} /*NULL*/, strings_lists{"this"}}, null_at(1)};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs, NULL_UNEQUAL);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, *results_sorted);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
   }
 }
 

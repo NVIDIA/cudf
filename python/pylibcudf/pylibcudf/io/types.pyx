@@ -35,11 +35,13 @@ from pylibcudf.span import is_span
 
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
+from collections.abc import Mapping, Sequence
 import codecs
 import errno
 import io
 import os
 import re
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pylibcudf.libcudf.io.json import \
     json_recovery_mode_t as JSONRecoveryMode  # no-cython-lint
@@ -50,6 +52,10 @@ from pylibcudf.libcudf.io.types import (
     quote_style as QuoteStyle,  # no-cython-lint
     statistics_freq as StatisticsFreq,  # no-cython-lint
 )
+
+if TYPE_CHECKING:
+    from pylibcudf.column import Column
+    from pylibcudf.span import Span
 
 __all__ = [
     "ColumnEncoding",
@@ -66,6 +72,9 @@ __all__ = [
     "TableInputMetadata",
     "TableWithMetadata",
 ]
+
+ColumnNameSpec: TypeAlias = tuple[str, list["ColumnNameSpec"]]
+ChildNameSpec: TypeAlias = Mapping[str, "ChildNameSpec"]
 
 cdef class PartitionInfo:
     """
@@ -298,7 +307,7 @@ cdef class TableInputMetadata:
         self.c_obj = table_input_metadata(table.view())
 
     @property
-    def column_metadata(self):
+    def column_metadata(self) -> list[ColumnInMetadata]:
         return [
             ColumnInMetadata.from_libcudf(&self.c_obj.column_metadata[i], self)
             for i in range(self.c_obj.column_metadata.size())
@@ -322,7 +331,7 @@ cdef class TableWithMetadata:
         [("id", []), ("name", [("first", []), ("last", [])])]
 
     """
-    def __init__(self, Table tbl, list column_names):
+    def __init__(self, Table tbl, list column_names: list[ColumnNameSpec]):
         self.tbl = tbl
 
         self.metadata.schema_info = self._make_column_info(column_names)
@@ -347,7 +356,7 @@ cdef class TableWithMetadata:
         return col_name_infos
 
     @property
-    def columns(self):
+    def columns(self) -> tuple[Column, ...]:
         """
         Return a tuple containing the columns of the table
         """
@@ -360,7 +369,9 @@ cdef class TableWithMetadata:
             names.append((child, grandchildren))
         return names
 
-    def column_names(self, include_children=False):
+    def column_names(
+        self, include_children=False
+    ) -> list[str] | list[ColumnNameSpec]:
         """
         Return a list containing the column names of the table
         """
@@ -377,7 +388,7 @@ cdef class TableWithMetadata:
         return names
 
     @property
-    def child_names(self):
+    def child_names(self) -> ChildNameSpec:
         """
         Return a dictionary mapping the names of columns with children
         to the names of their child columns. Columns without children
@@ -409,7 +420,7 @@ cdef class TableWithMetadata:
         return out
 
     @property
-    def per_file_user_data(self):
+    def per_file_user_data(self) -> list[Mapping[bytes, bytes]]:
         """
         Returns a list containing a dict
         containing file-format specific metadata,
@@ -418,7 +429,7 @@ cdef class TableWithMetadata:
         return self.metadata.per_file_user_data
 
     @property
-    def num_rows_per_source(self):
+    def num_rows_per_source(self) -> list[int]:
         """
         Returns a list containing the number
         of rows for each file being read in.
@@ -427,7 +438,7 @@ cdef class TableWithMetadata:
 
     # The following functions are currently only for Parquet reader
     @property
-    def num_input_row_groups(self):
+    def num_input_row_groups(self) -> int:
         """
         Returns the total number of input
         Parquet row groups across all data sources.
@@ -435,7 +446,7 @@ cdef class TableWithMetadata:
         return self.metadata.num_input_row_groups
 
     @property
-    def num_row_groups_after_stats_filter(self):
+    def num_row_groups_after_stats_filter(self) -> int | None:
         """
         Returns the number of remaining Parquet row groups
         after stats filter. None if no filtering done.
@@ -445,7 +456,7 @@ cdef class TableWithMetadata:
         return None
 
     @property
-    def num_row_groups_after_bloom_filter(self):
+    def num_row_groups_after_bloom_filter(self) -> int | None:
         """
         Returns the number of remaining Parquet row groups
         after bloom filter. None if no filtering done.
@@ -471,7 +482,7 @@ cdef class FilepathSource:
         Known file size in bytes. Omit to query size via KvikIO (HEAD for remote URLs).
     """
 
-    def __init__(self, path, size=None):
+    def __init__(self, path: str | os.PathLike[Any], size: int | None = None):
         self.path = os.fspath(path)
         self.size = size
 
@@ -498,7 +509,19 @@ cdef class SourceInfo:
         If an empty list, constructs an empty SourceInfo.
     """
 
-    def __init__(self, sources):
+    def __init__(
+        self,
+        sources: (
+            Sequence[str]
+            | Sequence[os.PathLike[Any]]
+            | Sequence[FilepathSource]
+            | Sequence[Datasource]
+            | Sequence[io.StringIO]
+            | Sequence[bytes]
+            | Sequence[io.BytesIO]
+            | Sequence[Span]
+        ),
+    ):
         if not sources:
             self.c_obj = move(source_info())
             return
@@ -662,7 +685,14 @@ cdef class SinkInfo:
         (that are not all io.IOBase instances) will raise a ValueError.
     """
 
-    def __init__(self, list sinks):
+    def __init__(
+        self,
+        list sinks: (
+            list[str]
+            | list[os.PathLike[Any]]
+            | list[io.IOBase]
+        ),
+    ):
         cdef vector[data_sink *] data_sinks
         cdef vector[string] paths
 

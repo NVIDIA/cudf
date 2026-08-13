@@ -17,14 +17,20 @@ from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
 from cuda.bindings.cyruntime cimport cudaStream_t
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.types import NullOrder, Order
+    from pylibcudf.typing import CudaStreamLike
+
 __all__ = ["contains", "lower_bound", "upper_bound"]
 
 cpdef Column lower_bound(
     Table haystack,
     Table needles,
-    list column_order,
-    list null_precedence,
-    object stream=None,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Find smallest indices in haystack where needles may be inserted to retain order.
@@ -76,9 +82,9 @@ cpdef Column lower_bound(
 cpdef Column upper_bound(
     Table haystack,
     Table needles,
-    list column_order,
-    list null_precedence,
-    object stream=None,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Find largest indices in haystack where needles may be inserted to retain order.
@@ -128,7 +134,7 @@ cpdef Column upper_bound(
 
 
 cpdef Column contains(
-    Column haystack, Column needles, object stream=None, DeviceMemoryResource mr=None
+    Column haystack, Column needles, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Check whether needles are present in haystack.
 

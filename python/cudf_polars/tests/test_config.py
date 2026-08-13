@@ -524,6 +524,24 @@ def test_parquet_options_object_passthrough() -> None:
     assert config.parquet_options is parquet_options
 
 
+def test_parquet_options_object_engine_default() -> None:
+    # If a user passes in a ParquetOptions object instead of a plain dict, and
+    # doesn't set prefetch_file_metadata on it, we still need to fill in the
+    # right default for the chosen executor.
+    parquet_options = ParquetOptions()
+    assert isinstance(parquet_options.prefetch_file_metadata, Unspecified)
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="in-memory", parquet_options=parquet_options)
+    )
+    assert config.parquet_options.prefetch_file_metadata is False
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
+
 def test_validate_raise_on_fail() -> None:
     with pytest.raises(TypeError, match="'raise_on_fail' must be"):
         ConfigOptions.from_polars_engine(

@@ -657,6 +657,8 @@ nitpick_ignore = [
     ("py:class", "CudaStreamLike"),
     ("py:class", "Datasource"),
     ("py:class", "Span"),
+    ("py:class", "SupportsArrayInterface"),
+    ("py:class", "SupportsCudaArrayInterface"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [

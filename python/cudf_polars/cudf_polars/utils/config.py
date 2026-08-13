@@ -29,6 +29,8 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
+import kvikio.defaults
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -163,15 +165,13 @@ def _make_default_factory(
 
 def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
     """Resolve kvikio thread count from executor options with env var fallback."""
-    return int(
-        executor_options.get(
-            "kvikio_nthreads",
-            os.environ.get(
-                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                os.environ.get("KVIKIO_NTHREADS", "256"),
-            ),
-        )
-    )
+    if "kvikio_nthreads" in executor_options:
+        return int(executor_options["kvikio_nthreads"])
+    cudf_env = os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS")
+    if cudf_env is not None:
+        return int(cudf_env)
+    current = kvikio.defaults.get("num_threads")
+    return current if current > 1 else 256
 
 
 def _bool_converter(v: str) -> bool:

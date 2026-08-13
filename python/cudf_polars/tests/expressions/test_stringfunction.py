@@ -247,7 +247,7 @@ def test_slice_column(engine: pl.GPUEngine, slice_column_data):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.parametrize("name", [pl.col("a").head, pl.col("a").tail])
+@pytest.mark.parametrize("expr", [pl.col("a").head, pl.col("a").tail])
 def test_head_tail_expr_n(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame(
         {"a": ["abcdef", "hello", None, "xy", "abcd"], "n": [2, 0, 3, None, -1]}

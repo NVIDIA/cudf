@@ -10,7 +10,10 @@ from rmm.pylibrmm.stream cimport Stream
 
 from .table cimport Table
 from .utils cimport _get_stream
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["tables_equal"]

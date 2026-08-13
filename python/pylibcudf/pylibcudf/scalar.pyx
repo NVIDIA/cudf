@@ -64,7 +64,10 @@ from .column cimport Column
 from .traits cimport is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from functools import singledispatch
 from ._interop_helpers import ArrowLike, ColumnMetadata
 

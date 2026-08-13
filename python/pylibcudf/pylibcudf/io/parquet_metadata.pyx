@@ -24,7 +24,10 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.types cimport DataType
 
-from typing_extensions import Buffer
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing_extensions import Buffer
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 

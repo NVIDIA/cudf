@@ -7,7 +7,10 @@ from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport convert_ipv4 as cpp_convert_ipv4
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t

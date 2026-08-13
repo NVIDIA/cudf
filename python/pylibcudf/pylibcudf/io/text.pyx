@@ -9,7 +9,10 @@ from libcpp.utility cimport move
 
 from pylibcudf.column cimport Column
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from pylibcudf.libcudf.column.column cimport column

@@ -34,7 +34,10 @@ from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 
 __all__ = [
     "read_csv",

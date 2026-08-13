@@ -48,7 +48,10 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.types cimport DataType
 
 from pylibcudf.utils cimport _get_stream
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 
 from cython.operator import dereference
 

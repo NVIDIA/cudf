@@ -10,7 +10,10 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_durations as cpp_convert_durations,
 )
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 

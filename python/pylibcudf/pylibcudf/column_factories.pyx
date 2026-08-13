@@ -20,7 +20,10 @@ from .types cimport DataType, type_id
 
 from .types import MaskState, TypeId
 from .utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 

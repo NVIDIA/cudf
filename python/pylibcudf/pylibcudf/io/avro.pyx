@@ -19,7 +19,10 @@ from pylibcudf.libcudf.io.avro cimport (
 from pylibcudf.libcudf.types cimport size_type
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 
 
 __all__ = ["read_avro", "AvroReaderOptions", "AvroReaderOptionsBuilder"]

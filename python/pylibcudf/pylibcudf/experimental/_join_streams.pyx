@@ -11,7 +11,10 @@ from pylibcudf.libcudf.utilities.span cimport host_span
 from rmm.pylibrmm.stream cimport Stream
 
 from ..utils cimport _get_stream
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 
 
 __all__ = ["join_streams"]

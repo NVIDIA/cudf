@@ -14,9 +14,13 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
-from pylibcudf.types import NullOrder, Order
-from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.types import NullOrder, Order
+    from pylibcudf.utils import CudaStreamLike
 
 __all__ = ["merge"]
 

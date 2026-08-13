@@ -31,14 +31,16 @@ from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span, host_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing_extensions import Buffer
+    from pylibcudf.utils import CudaStreamLike
 
 from pylibcudf.span import is_span
 from pylibcudf.io.parquet_metadata import FileMetaData
 
 import pylibcudf.libcudf.io.hybrid_scan
-
-from typing_extensions import Buffer
 
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
 

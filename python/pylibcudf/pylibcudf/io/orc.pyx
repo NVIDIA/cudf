@@ -56,7 +56,10 @@ from pylibcudf.types cimport DataType
 from pylibcudf.variant cimport get_if, holds_alternative
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 
 
 __all__ = [

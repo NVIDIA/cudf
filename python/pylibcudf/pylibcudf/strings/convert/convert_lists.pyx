@@ -16,7 +16,10 @@ from pylibcudf.libcudf.strings.convert cimport (
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.types cimport type_id
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 

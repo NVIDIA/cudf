@@ -11,7 +11,10 @@ from pylibcudf.libcudf.io.timezone cimport (
 from pylibcudf.libcudf.table.table cimport table
 
 from ..utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from ..table cimport Table
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource

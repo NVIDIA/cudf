@@ -15,7 +15,10 @@ from pylibcudf.libcudf.nvtext.stemmer cimport (
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.nvtext.stemmer cimport ColumnOrSize
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 
 from pylibcudf.libcudf.nvtext.stemmer import letter_type as LetterType # no-cython-lint
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource

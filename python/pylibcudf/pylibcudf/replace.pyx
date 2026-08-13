@@ -19,7 +19,10 @@ from pylibcudf.libcudf.replace import \
 from .column cimport Column
 from .scalar cimport Scalar
 from .utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [

@@ -32,7 +32,10 @@ from .expressions cimport Expression
 from .gpumemoryview cimport gpumemoryview
 from .types cimport DataType, null_aware, output_nullability
 from .utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 ctypedef const cpp_transform.transform_input const_transform_input

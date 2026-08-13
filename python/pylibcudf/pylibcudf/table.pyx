@@ -35,7 +35,10 @@ from pylibcudf.libcudf.types cimport size_type
 from .column cimport Column
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from pylibcudf._interop_helpers cimport (
     _release_schema,
     _release_array,

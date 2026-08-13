@@ -15,7 +15,10 @@ from pylibcudf.libcudf.strings cimport strip as cpp_strip
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.side_type cimport side_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from pylibcudf.utils import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t

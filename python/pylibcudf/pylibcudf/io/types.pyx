@@ -41,7 +41,7 @@ import errno
 import io
 import os
 import re
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pylibcudf.libcudf.io.json import \
     json_recovery_mode_t as JSONRecoveryMode  # no-cython-lint
@@ -52,8 +52,10 @@ from pylibcudf.libcudf.io.types import (
     quote_style as QuoteStyle,  # no-cython-lint
     statistics_freq as StatisticsFreq,  # no-cython-lint
 )
-from pylibcudf.column import Column
-from pylibcudf.span import Span
+
+if TYPE_CHECKING:
+    from pylibcudf.column import Column
+    from pylibcudf.span import Span
 
 __all__ = [
     "ColumnEncoding",

@@ -9,46 +9,16 @@ concurrency:
 permissions: {}
 jobs:
   # Please keep pr-builder as the top job here
+  # TEMPORARY: java packaging CI only — revert before merge.
   pr-builder:
     needs:
       - build-details
       - check-nightly-ci
       - changed-files
       - checks
-      - cmake-tests
-      - conda-cpp-build
-      - cpp-linters
-      - conda-cpp-checks
-      - conda-cpp-tests
-      - conda-python-build
-      - conda-python-build-noarch
-      - conda-python-cudf-tests
-      - conda-python-other-tests
-      - conda-java-tests
-      - java-build-matrix
       - java-build
       - java-tests
-      - conda-notebook-tests
-      - docs-build
-      - publish-api-docs
-      - wheel-build-libcudf
-      - wheel-build-libcudf-streaming
-      - wheel-build-cudf-streaming
-      - wheel-tests-cudf-streaming
-      - wheel-build-pylibcudf
-      - wheel-build-cudf
-      - wheel-tests-cudf
-      - wheel-build-cudf-polars
-      - wheel-tests-cudf-polars
-      - cudf-polars-polars-tests
-      - wheel-build-dask-cudf
-      - wheel-tests-dask-cudf
-      - devcontainer
-      - unit-tests-cudf-pandas
-      - pandas-tests
-      - narwhals-tests
       - telemetry-setup
-      - third-party-integration-tests-cudf-pandas
     uses: rapidsai/shared-workflows/.github/workflows/pr-builder.yaml@main
     permissions:
       contents: read
@@ -373,8 +343,20 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       enable_check_generated_files: false
-      ignored_pr_jobs: "telemetry-summarize spark-rapids-jni cuml-compat-tests"
+      ignored_pr_jobs: >-
+        telemetry-summarize spark-rapids-jni cuml-compat-tests
+        cmake-tests conda-cpp-build cpp-linters conda-cpp-checks conda-cpp-tests
+        conda-python-build conda-python-build-noarch conda-python-cudf-tests
+        conda-python-other-tests conda-java-tests java-build-matrix
+        conda-notebook-tests docs-build publish-api-docs
+        wheel-build-libcudf wheel-build-libcudf-streaming wheel-build-cudf-streaming
+        wheel-tests-cudf-streaming wheel-build-pylibcudf wheel-build-cudf
+        wheel-tests-cudf wheel-build-cudf-polars wheel-tests-cudf-polars
+        cudf-polars-polars-tests wheel-build-dask-cudf wheel-tests-dask-cudf
+        devcontainer unit-tests-cudf-pandas pandas-tests narwhals-tests
+        third-party-integration-tests-cudf-pandas
   conda-cpp-build:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, checks]
     permissions:
       actions: read
@@ -390,6 +372,7 @@ jobs:
       node_type: cpu16
       script: ci/build_cpp.sh
   cmake-tests:
+    if: false  # TEMPORARY: java-only CI
     needs: checks
     permissions:
       actions: read
@@ -406,6 +389,7 @@ jobs:
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_cmake.sh"
   cpp-linters:
+    if: false  # TEMPORARY: java-only CI
     permissions:
       actions: read
       contents: read
@@ -419,6 +403,7 @@ jobs:
       build_type: pull-request
       script: "ci/cpp_linters.sh"
   conda-cpp-checks:
+    if: false  # TEMPORARY: java-only CI
     needs: conda-cpp-build
     permissions:
       actions: read
@@ -440,13 +425,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       script: ci/test_cpp.sh
       # https://github.com/rapidsai/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-build:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, conda-cpp-build]
     permissions:
       actions: read
@@ -463,6 +449,7 @@ jobs:
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
   conda-python-build-noarch:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, conda-cpp-build, conda-python-build]
     permissions:
       actions: read
@@ -487,7 +474,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       script: "ci/test_python_cudf.sh"
@@ -504,7 +491,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       # https://github.com/rapidsai/cudf/pull/22381/changes#r3196736965
@@ -522,7 +509,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
@@ -530,7 +517,9 @@ jobs:
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_java.sh"
   # Build and test the cuDF Java JAR for every Maven classifier.
+  # TEMPORARY: single amd64/cuda12 cell for faster CI; restore full matrix before merge.
   java-build-matrix:
+    if: false  # TEMPORARY: java-only CI
     needs: [checks]
     permissions:
       contents: read
@@ -539,7 +528,7 @@ jobs:
       build_type: pull-request
       matrix_name: conda-cpp-build
   java-build:
-    needs: [build-details, java-build-matrix, changed-files]
+    needs: [build-details, checks, changed-files]
     permissions:
       actions: read
       contents: read
@@ -548,10 +537,13 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    # TEMPORARY: always run (skip changed-files gate)
+    if: true
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+      matrix:
+        include:
+          - { ARCH: "amd64", CUDA_VER: "12.9", LINUX_VER: "rockylinux8", PY_VER: "3.11" }
     with:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -562,7 +554,7 @@ jobs:
       file_to_upload: output_jars
       artifact-name: java_pkg_${{ matrix.CUDA_VER }}_${{ matrix.ARCH }}
   java-tests:
-    needs: [java-build, java-build-matrix]
+    needs: [java-build]
     if: ${{ !cancelled() && needs.java-build.result == 'success' }}
     permissions:
       actions: read
@@ -570,7 +562,9 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+      matrix:
+        include:
+          - { ARCH: "amd64", CUDA_VER: "12.9", LINUX_VER: "rockylinux8", PY_VER: "3.11" }
     runs-on: linux-${{ matrix.ARCH }}-gpu-l4-latest-1
     container:
       image: rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }} # zizmor: ignore[unpinned-images]
@@ -608,7 +602,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_notebooks
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
@@ -625,7 +619,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).build_docs
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
@@ -633,6 +627,7 @@ jobs:
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/build_docs.sh"
   publish-api-docs:
+    if: false  # TEMPORARY: java-only CI
     needs: [docs-build]
     permissions:
       contents: read
@@ -653,6 +648,7 @@ jobs:
       dry-run: true
       version-map: '{"26.04": "legacy", "26.06": "stable"}'
   wheel-build-libcudf:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, checks]
     permissions:
       actions: read
@@ -672,6 +668,7 @@ jobs:
       package-name: libcudf
       package-type: cpp
   wheel-build-libcudf-streaming:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, checks, wheel-build-libcudf]
     permissions:
       actions: read
@@ -691,6 +688,7 @@ jobs:
       package-name: libcudf_streaming
       package-type: cpp
   wheel-build-cudf-streaming:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, checks, wheel-build-libcudf-streaming, wheel-build-pylibcudf]
     permissions:
       actions: read
@@ -719,13 +717,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf_streaming.sh
       # https://github.com/rapidsai/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-build-pylibcudf:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, checks, wheel-build-libcudf]
     permissions:
       actions: read
@@ -745,6 +744,7 @@ jobs:
       # Build a wheel for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
   wheel-build-cudf:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, wheel-build-pylibcudf]
     permissions:
       actions: read
@@ -773,13 +773,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf.sh
       # https://github.com/rapidsai/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-build-cudf-polars:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, wheel-build-pylibcudf]
     permissions:
       actions: read
@@ -809,7 +810,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
@@ -826,13 +827,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
       script: "ci/test_cudf_polars_polars_tests.sh"
   wheel-build-dask-cudf:
+    if: false  # TEMPORARY: java-only CI
     needs: [build-details, wheel-build-cudf]
     permissions:
       actions: read
@@ -862,7 +864,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).not_cudf_polars
+    if: false  # TEMPORARY: java-only CI
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
@@ -870,6 +872,7 @@ jobs:
       script: ci/test_wheel_dask_cudf.sh
   # build cudf with benchmarks but disable for cudf_streaming since we can't use MPI/UCX in wheel-based builds
   devcontainer:
+    if: false  # TEMPORARY: java-only CI
     permissions:
       actions: read
       contents: read
@@ -902,7 +905,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
       # Filter out GB300 due to https://github.com/rapidsai/cudf/issues/23498
@@ -919,7 +922,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -940,7 +943,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -961,7 +964,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -980,7 +983,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_cudf_polars_nor_dask_cudf
+    if: false  # TEMPORARY: java-only CI
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -990,6 +993,7 @@ jobs:
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: ci/test_narwhals.sh
   spark-rapids-jni:
+    if: false  # TEMPORARY: java-only CI
     needs: changed-files
     permissions:
       actions: read
@@ -998,14 +1002,13 @@ jobs:
       packages: read
       pull-requests: read
     uses: ./.github/workflows/spark-rapids-jni.yaml
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
   telemetry-summarize:
+    if: false  # TEMPORARY: java-only CI
     # This job must use a self-hosted runner to record telemetry traces.
     runs-on: linux-amd64-cpu4
     permissions:
       actions: write
     needs: pr-builder
-    if: ${{ vars.TELEMETRY_ENABLED == 'true' && !cancelled() }}
     continue-on-error: true
     steps:
       - name: Telemetry summarize

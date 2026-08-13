@@ -804,18 +804,19 @@ CUDF_KERNEL void __launch_bounds__(block_size)
             auto const ticks_per_sec  = cudf::detail::powers_of_ten[9 - min(s->chunk.scale, 9)];
             auto const nanos_per_tick = cudf::detail::powers_of_ten[min(s->chunk.scale, 9)];
 
-            // Use the floor of the timestamp to keep the nanosecond remainder non-negative.
-            // See https://github.com/rapidsai/cudf/issues/19350.
             auto seconds = ts / ticks_per_sec;
             auto nanos   = (ts - seconds * ticks_per_sec) * nanos_per_tick;
+
+            // Adjust to keep the nanosecond remainder non-negative.
+            // See https://github.com/rapidsai/cudf/issues/19350.
             if (nanos < 0) {
               seconds -= 1;
               nanos += 1'000'000'000;
             }
-            // Apache ORC readers borrow a second when the stored seconds are negative and the
-            // stored nanos are at least 1 ms (ORC-306/ORC-763, mirrored in the reader), so give
-            // that second back here. Timestamps in the last 999 ms before the epoch then store zero
-            // seconds and are read back a second later, as documented on `write_orc` (ORC-771).
+            // ORC readers borrow a second when the stored seconds are negative and the stored nanos
+            // are at least 1 ms (ORC-306/ORC-763, mirrored in the reader), so give that second back
+            // here. Timestamps in the last 999 ms before the epoch then store zero seconds and are
+            // read back a second later, as documented on `write_orc` (ORC-771).
             if (seconds < 0 and nanos > 999'999) { seconds += 1; }
 
             s->vals.i64[nz_idx] = seconds - orc_utc_epoch;

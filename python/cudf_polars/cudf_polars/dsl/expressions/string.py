@@ -595,8 +595,7 @@ class StringFunction(Expr):
                     plc_column.size(),
                     stream=df.stream,
                 )
-                if input_null_mask:
-                    plc_column = plc_column.with_mask(input_null_mask, input_null_count)
+                plc_column = plc_column.with_mask(input_null_mask, input_null_count)
                 return Column(plc_column, dtype=self.dtype)
             else:
                 plc_column = plc.strings.findall.find_re(

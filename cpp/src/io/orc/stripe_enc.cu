@@ -812,15 +812,10 @@ CUDF_KERNEL void __launch_bounds__(block_size)
               seconds -= 1;
               nanos += 1'000'000'000;
             }
-            // Apache ORC readers borrow a second from the seconds stream when the stored seconds
-            // are negative and the stored nanos are at least 1 ms (see ORC-306/ORC-763 and the
-            // matching logic in the reader), so the writer has to give that second back here. This
-            // makes the encoding identical to the Apache ORC writer, which also means that
-            // timestamps within 999 ms before the epoch end up stored with zero seconds; readers
-            // cannot tell those apart from the same nanos one second later, and the statistics
-            // (which are computed from the input values) describe them as written rather than as
-            // read. Apache ORC has the same limitation and asserts the resulting one second shift
-            // in its own tests (ORC-771).
+            // Apache ORC readers borrow a second when the stored seconds are negative and the
+            // stored nanos are at least 1 ms (ORC-306/ORC-763, mirrored in the reader), so give
+            // that second back here. Timestamps in the last 999 ms before the epoch then store zero
+            // seconds and are read back a second later, as documented on `write_orc` (ORC-771).
             if (seconds < 0 and nanos > 999'999) { seconds += 1; }
 
             s->vals.i64[nz_idx] = seconds - orc_utc_epoch;

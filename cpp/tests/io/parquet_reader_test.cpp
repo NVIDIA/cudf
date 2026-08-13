@@ -7,6 +7,7 @@
 #include "io/utilities/time_utils.hpp"
 #include "io_test_utils.hpp"
 #include "parquet_common.hpp"
+#include "parquet_delta_test_utils.hpp"
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -15,6 +16,7 @@
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/reshape.hpp>
@@ -34,6 +36,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -527,10 +530,15 @@ TEST_F(ParquetReaderTest, ColumnSelectionModesAreExclusive)
   auto selected_by_index = cudf::io::parquet_reader_options{};
   selected_by_index.set_column_indices({});
   EXPECT_THROW(selected_by_index.set_column_field_ids({}), cudf::logic_error);
+  EXPECT_THROW(selected_by_index.enable_allow_mismatched_pq_schemas(true), cudf::logic_error);
 
   auto selected_by_field_id = cudf::io::parquet_reader_options{};
   selected_by_field_id.set_column_field_ids({});
   EXPECT_THROW(selected_by_field_id.set_column_names({}), cudf::logic_error);
+
+  auto mismatched_schemas_allowed = cudf::io::parquet_reader_options{};
+  mismatched_schemas_allowed.enable_allow_mismatched_pq_schemas(true);
+  EXPECT_THROW(mismatched_schemas_allowed.set_column_indices({}), cudf::logic_error);
 }
 
 TEST_F(ParquetReaderTest, SelectNestedColumn)
@@ -1090,6 +1098,383 @@ TEST_F(ParquetReaderTest, DecimalRead)
     cudf::test::fixed_point_column_wrapper<__int128_t> col2(
       col2_data.begin(), col2_data.end(), validity_c2, numeric::scale_type{-1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(2), col2);
+  }
+}
+
+// Reading Parquet DELTA-encoded pages whose mini-blocks hold more than 64 values. No stock
+// writer emits over 64 values/mini-block (cudf and parquet-mr write 32, pyarrow and arrow-rs at
+// most 64), so the files are built in-memory by the parquet_delta_test_utils.hpp helpers.
+namespace {
+
+cudf::io::parquet_reader_options delta_fixture_reader_options(
+  std::vector<uint8_t> const& file_bytes,
+  int64_t skip_rows,
+  std::optional<cudf::size_type> num_rows)
+{
+  auto builder = cudf::io::parquet_reader_options::builder(
+    cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(file_bytes.data()), file_bytes.size()}});
+  if (skip_rows > 0) { builder.skip_rows(skip_rows); }
+  if (num_rows.has_value()) { builder.num_rows(*num_rows); }
+  return builder.build();
+}
+
+// read a DELTA_BINARY_PACKED file, optionally trimmed to [skip_rows, skip_rows + num_rows), and
+// compare with the matching slice of `expected`
+void delta_large_mini_block_read_test(std::vector<uint8_t> const& file_bytes,
+                                      std::vector<int64_t> const& expected,
+                                      int64_t skip_rows                       = 0,
+                                      std::optional<cudf::size_type> num_rows = std::nullopt)
+{
+  auto const result =
+    cudf::io::read_parquet(delta_fixture_reader_options(file_bytes, skip_rows, num_rows));
+  auto const first        = expected.begin() + skip_rows;
+  auto const last         = num_rows.has_value() ? first + *num_rows : expected.end();
+  auto const expected_col = cudf::test::fixed_width_column_wrapper<int64_t>(first, last);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected_col);
+}
+
+// same as above for the DELTA_BYTE_ARRAY / DELTA_LENGTH_BYTE_ARRAY string files
+void delta_large_mini_block_string_read_test(std::vector<uint8_t> const& file_bytes,
+                                             std::vector<std::string> const& expected,
+                                             int64_t skip_rows                       = 0,
+                                             std::optional<cudf::size_type> num_rows = std::nullopt)
+{
+  auto const result =
+    cudf::io::read_parquet(delta_fixture_reader_options(file_bytes, skip_rows, num_rows));
+  auto const first        = expected.begin() + skip_rows;
+  auto const last         = num_rows.has_value() ? first + *num_rows : expected.end();
+  auto const expected_col = cudf::test::strings_column_wrapper(first, last);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected_col);
+}
+
+// same as above for the LIST<INT64> files; the expected column is built from the lists and
+// sliced to the requested row range
+void delta_large_mini_block_list_read_test(std::vector<uint8_t> const& file_bytes,
+                                           std::vector<std::vector<int64_t>> const& expected,
+                                           int64_t skip_rows                       = 0,
+                                           std::optional<cudf::size_type> num_rows = std::nullopt)
+{
+  auto const result =
+    cudf::io::read_parquet(delta_fixture_reader_options(file_bytes, skip_rows, num_rows));
+
+  std::vector<int32_t> offsets{0};
+  std::vector<int64_t> leaf_values;
+  for (auto const& list : expected) {
+    leaf_values.insert(leaf_values.end(), list.begin(), list.end());
+    offsets.push_back(leaf_values.size());
+  }
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
+  auto child =
+    cudf::test::fixed_width_column_wrapper<int64_t>(leaf_values.begin(), leaf_values.end());
+  auto const num_lists    = static_cast<cudf::size_type>(expected.size());
+  auto const expected_col = cudf::make_lists_column(
+    num_lists, offsets_col.release(), child.release(), 0, rmm::device_buffer{});
+
+  auto const start           = static_cast<cudf::size_type>(skip_rows);
+  auto const end             = num_rows.has_value() ? start + *num_rows : num_lists;
+  auto const expected_sliced = cudf::slice(expected_col->view(), {start, end}).front();
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result.tbl->view().column(0), expected_sliced);
+}
+
+// same as above for LIST<STRING> files
+void delta_large_mini_block_string_list_read_test(
+  std::vector<uint8_t> const& file_bytes,
+  std::vector<std::vector<std::string>> const& expected,
+  int64_t skip_rows                       = 0,
+  std::optional<cudf::size_type> num_rows = std::nullopt)
+{
+  auto const result =
+    cudf::io::read_parquet(delta_fixture_reader_options(file_bytes, skip_rows, num_rows));
+
+  std::vector<int32_t> offsets{0};
+  std::vector<std::string> leaf;
+  for (auto const& list : expected) {
+    leaf.insert(leaf.end(), list.begin(), list.end());
+    offsets.push_back(leaf.size());
+  }
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
+  auto child              = cudf::test::strings_column_wrapper(leaf.begin(), leaf.end());
+  auto const num_lists    = static_cast<cudf::size_type>(expected.size());
+  auto const expected_col = cudf::make_lists_column(
+    num_lists, offsets_col.release(), child.release(), 0, rmm::device_buffer{});
+
+  auto const start           = static_cast<cudf::size_type>(skip_rows);
+  auto const end             = num_rows.has_value() ? start + *num_rows : num_lists;
+  auto const expected_sliced = cudf::slice(expected_col->view(), {start, end}).front();
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result.tbl->view().column(0), expected_sliced);
+}
+
+}  // namespace
+
+TEST_F(ParquetReaderTest, DeltaBinaryLargeMiniBlock128)
+{
+  // block_size=128, mini_block_count=1 -> 128 values/mini-block: the reader previously rejected
+  // mini-blocks over 64 values with DELTA_PARAMS_UNSUPPORTED (0x100).
+  auto const values = delta_test_int64_values(173);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(values, 128, 1), values);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryLargeMiniBlock256)
+{
+  // block_size=256, mini_block_count=1 -> 256 values/mini-block (8 passes), beyond what
+  // simply raising the cap to 128 would cover.
+  auto const values = delta_test_int64_values(301);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(values, 256, 1), values);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryLargeMiniBlock96)
+{
+  // block_size=384, mini_block_count=4 -> 96 values/mini-block: exercises multiple
+  // mini-blocks per block (both the within-block and next-block advance paths) and a
+  // non-power-of-two pass count (3).
+  auto const values = delta_test_int64_values(141);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(values, 384, 4), values);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryMiniBlock64)
+{
+  // block_size=256, mini_block_count=4 -> 64 values/mini-block: the mini-block size pyarrow and
+  // arrow-rs write for INT64, and the boundary the rolling buffer and the per-iteration batch cap
+  // are sized for. The in-repo writer emits 32, so nothing else covers it.
+  auto const values = delta_test_int64_values(157);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(values, 256, 4), values);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryLargeMiniBlockSkipRows)
+{
+  // Row-range trims on flat columns are handled on the consumer side (first_row), so leading
+  // skips decode correctly for any mini-block size.
+  auto const v128 = delta_test_int64_values(173);
+  auto const f128 = build_delta_binary_parquet(v128, 128, 1);
+  delta_large_mini_block_read_test(f128, v128, 40);
+  delta_large_mini_block_read_test(f128, v128, 40, 50);
+
+  auto const v256 = delta_test_int64_values(301);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(v256, 256, 1), v256, 100, 100);
+
+  auto const v96 = delta_test_int64_values(141);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(v96, 384, 4), v96, 0, 60);
+
+  auto const v64 = delta_test_int64_values(157);
+  delta_large_mini_block_read_test(build_delta_binary_parquet(v64, 256, 4), v64, 65, 64);
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayLargeMiniBlock96)
+{
+  // DELTA_BYTE_ARRAY pages with mini-blocks larger than 64 values. The string-size prepass
+  // reads decoded lengths back per warp-size pass, so any mini-block size is supported.
+  auto const strings = delta_test_strings(141, true);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(strings, 384, 4), strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayLargeMiniBlock128)
+{
+  auto const strings = delta_test_strings(173, true);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(strings, 128, 1), strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayLargeMiniBlock256)
+{
+  auto const strings = delta_test_strings(301, true);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(strings, 256, 1), strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayLargeMiniBlockExactFill)
+{
+  // n = 257 exactly fills the single 256-value mini-block (plus the header value), the shape
+  // where a mis-sized string allocation causes out-of-bounds writes.
+  auto const strings = delta_test_strings(257, true);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(strings, 256, 1), strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayLargeMiniBlockSkipRows)
+{
+  // Flat DELTA_BYTE_ARRAY bounds pages stage leading skipped strings through temp_string_buf
+  // inside the decode loop, so row-range reads work at any mini-block size.
+  auto const s256 = delta_test_strings(301, true);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(s256, 256, 1), s256, 100);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(s256, 256, 1), s256, 160);
+
+  auto const s128 = delta_test_strings(173, true);
+  delta_large_mini_block_string_read_test(
+    build_delta_byte_array_parquet(s128, 128, 1), s128, 40, 60);
+
+  auto const s96 = delta_test_strings(141, true);
+  delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(s96, 384, 4), s96, 0, 70);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlock96)
+{
+  // DELTA_LENGTH_BYTE_ARRAY pages with mini-blocks larger than 64 values.
+  auto const strings = delta_test_strings(141, false);
+  delta_large_mini_block_string_read_test(build_delta_length_byte_array_parquet(strings, 384, 4),
+                                          strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlock128)
+{
+  auto const strings = delta_test_strings(173, false);
+  delta_large_mini_block_string_read_test(build_delta_length_byte_array_parquet(strings, 128, 1),
+                                          strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlock256)
+{
+  auto const strings = delta_test_strings(301, false);
+  delta_large_mini_block_string_read_test(build_delta_length_byte_array_parquet(strings, 256, 1),
+                                          strings);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlockTrimmed)
+{
+  // A num_rows-trimmed read makes the page a bounds page, which sizes the string output from
+  // the delta-decoded lengths (the path that mis-summed lengths when a mini-block did not fit
+  // the rolling buffer).
+  auto const s256 = delta_test_strings(301, false);
+  delta_large_mini_block_string_read_test(
+    build_delta_length_byte_array_parquet(s256, 256, 1), s256, 0, 200);
+
+  auto const s128 = delta_test_strings(173, false);
+  delta_large_mini_block_string_read_test(
+    build_delta_length_byte_array_parquet(s128, 128, 1), s128, 0, 100);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlockSkipRows)
+{
+  // Leading row-range skips sum the skipped lengths one pass at a time (skip_values_and_sum),
+  // so they work for any mini-block size.
+  auto const s256 = delta_test_strings(301, false);
+  delta_large_mini_block_string_read_test(
+    build_delta_length_byte_array_parquet(s256, 256, 1), s256, 100);
+
+  auto const s96 = delta_test_strings(141, false);
+  delta_large_mini_block_string_read_test(
+    build_delta_length_byte_array_parquet(s96, 384, 4), s96, 40, 60);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryListMiniBlock64)
+{
+  // LIST<INT64> with 64 values/mini-block. The leading-skip read resumes the delta decoder
+  // mid-page after skip_values(), the path that requires the single-pass-per-iteration batch.
+  auto const lists = delta_test_lists(150);
+  auto const file  = build_delta_binary_list_parquet(lists, 256, 4);
+  delta_large_mini_block_list_read_test(file, lists);
+  delta_large_mini_block_list_read_test(file, lists, 40);
+  delta_large_mini_block_list_read_test(file, lists, 40, 60);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryListLargeMiniBlock)
+{
+  // LIST<INT64> with mini-blocks larger than the decode batch: a leading skip fast-forwards the
+  // decoder one pass at a time (skip_values) and resumes at a pass boundary, so any mini-block
+  // size works.
+  auto const lists = delta_test_lists(150);
+  for (auto const& [block_size, mini_block_count] :
+       {std::pair{384, 4}, std::pair{128, 1}, std::pair{256, 1}}) {
+    auto const file = build_delta_binary_list_parquet(lists, block_size, mini_block_count);
+    delta_large_mini_block_list_read_test(file, lists);
+    delta_large_mini_block_list_read_test(file, lists, 40);
+    delta_large_mini_block_list_read_test(file, lists, 40, 60);
+  }
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayListLargeMiniBlock)
+{
+  // LIST<STRING> with DELTA_BYTE_ARRAY leaves: a leading skip reconstructs the skipped strings
+  // into temp_string_buf one pass at a time (delta_byte_array_decoder::skip), so any mini-block
+  // size works. The long-string variant takes the character-parallel reconstruction path.
+  auto const lists = delta_test_string_lists(150, true);
+  for (auto const& [block_size, mini_block_count] :
+       {std::pair{256, 4}, std::pair{384, 4}, std::pair{256, 1}}) {
+    auto const file = build_delta_byte_array_list_parquet(lists, block_size, mini_block_count);
+    delta_large_mini_block_string_list_read_test(file, lists);
+    delta_large_mini_block_string_list_read_test(file, lists, 40);
+    delta_large_mini_block_string_list_read_test(file, lists, 40, 60);
+  }
+
+  auto const long_lists = delta_test_string_lists(150, true, 502, 90);
+  auto const file       = build_delta_byte_array_list_parquet(long_lists, 384, 4);
+  delta_large_mini_block_string_list_read_test(file, long_lists, 40);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayListLargeMiniBlock)
+{
+  // LIST<STRING> with DELTA_LENGTH_BYTE_ARRAY leaves: a leading skip resumes the length decoder
+  // mid-page (skip_values_and_sum) at a pass boundary.
+  auto const lists = delta_test_string_lists(150, false);
+  for (auto const& [block_size, mini_block_count] :
+       {std::pair{256, 4}, std::pair{384, 4}, std::pair{256, 1}}) {
+    auto const file =
+      build_delta_length_byte_array_list_parquet(lists, block_size, mini_block_count);
+    delta_large_mini_block_string_list_read_test(file, lists);
+    delta_large_mini_block_string_list_read_test(file, lists, 40);
+    delta_large_mini_block_string_list_read_test(file, lists, 40, 60);
+  }
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryUnsupportedMiniBlockGeometry)
+{
+  // block_size=96, mini_block_count=2 -> 48 values/mini-block, not a multiple of 32:
+  // init_binary_block rejects the geometry and the reader fails with DELTA_PARAMS_UNSUPPORTED
+  // (0x100) before decoding any deltas, rather than reading a malformed mini-block.
+  auto const body = encode_delta_binary_header(96, 2, 100, 0);
+  auto const file = wrap_single_page_parquet(body,
+                                             100,
+                                             cudf::io::parquet::Type::INT64,
+                                             cudf::io::parquet::Encoding::DELTA_BINARY_PACKED,
+                                             false);
+  EXPECT_THROW(cudf::io::read_parquet(delta_fixture_reader_options(file, 0, std::nullopt)),
+               cudf::logic_error);
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryListLargeMiniBlockLeafNulls)
+{
+  // LIST<INT64> whose leaves are ~1/5 null (definition level 2). Only the non-null leaves are
+  // DELTA-encoded, so leaf-null handling and the value->output mapping are exercised at mini-block
+  // sizes past 64 values.
+  auto const base = delta_test_lists(150);  // list shapes and non-null leaf values
+  std::vector<std::vector<std::optional<int64_t>>> lists;
+  size_t leaf_idx = 0;
+  for (auto const& list : base) {
+    auto& out = lists.emplace_back();
+    for (auto const v : list) {
+      // interleave null and present leaves deterministically
+      out.push_back((leaf_idx++ % 5 == 0) ? std::nullopt : std::optional<int64_t>{v});
+    }
+  }
+
+  // expected LIST<INT64> with a nullable child, built from the same lists
+  std::vector<int32_t> offsets{0};
+  std::vector<int64_t> leaf_values;
+  std::vector<bool> leaf_valid;
+  for (auto const& list : lists) {
+    for (auto const& e : list) {
+      leaf_values.push_back(e.value_or(0));
+      leaf_valid.push_back(e.has_value());
+    }
+    offsets.push_back(static_cast<int32_t>(leaf_values.size()));
+  }
+  auto const valid_it = cudf::detail::make_counting_transform_iterator(
+    0, [&leaf_valid](auto i) { return leaf_valid[i]; });
+  auto child = cudf::test::fixed_width_column_wrapper<int64_t>(
+    leaf_values.begin(), leaf_values.end(), valid_it);
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
+  auto const expected = cudf::make_lists_column(static_cast<cudf::size_type>(lists.size()),
+                                                offsets_col.release(),
+                                                child.release(),
+                                                0,
+                                                rmm::device_buffer{});
+
+  for (auto const& [block_size, mini_block_count] :
+       {std::pair{128, 1}, std::pair{384, 4}, std::pair{256, 1}}) {
+    auto const file =
+      build_delta_binary_list_with_leaf_nulls_parquet(lists, block_size, mini_block_count);
+    auto const result = cudf::io::read_parquet(delta_fixture_reader_options(file, 0, std::nullopt));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result.tbl->view().column(0), expected->view());
   }
 }
 
@@ -2721,6 +3106,113 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipAllValid)
   auto result = cudf::io::read_parquet(in_opts);
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {num_valid + 1, num_rows}),
                                 result.tbl->view());
+}
+
+namespace {
+// read `buffer` trimmed to [skip, skip + n) and compare column 0 with the matching slice of
+// `expected`
+void delta_byte_array_nested_skip_check(std::vector<char> const& buffer,
+                                        cudf::table_view const& expected,
+                                        cudf::size_type skip,
+                                        cudf::size_type n)
+{
+  auto const result =
+    cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                             cudf::io::source_info{cudf::host_span<std::byte const>{
+                               reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                             .skip_rows(skip)
+                             .num_rows(n)
+                             .build());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result.tbl->view().column(0),
+                                      cudf::slice(expected, {skip, skip + n}).front().column(0));
+}
+}  // namespace
+
+TEST_F(ParquetReaderTest, DeltaByteArrayStructSkipRows)
+{
+  // STRUCT<STRING> whose string field is DELTA_BYTE_ARRAY encoded. A struct adds a definition level
+  // (the field is nullable here) but no repetition, so leading skips stage the skipped strings
+  // through the in-loop temp_string_buf and carry the prefix seed across rounds -- the flat-column
+  // path, but exercised under a nested schema with nulls.
+  constexpr cudf::size_type num_rows = 400;
+  auto const strings                 = delta_test_strings(num_rows, true);
+  auto const str_valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 5 != 0; });
+
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(cudf::purge_nonempty_nulls(
+    cudf::test::strings_column_wrapper(strings.begin(), strings.end(), str_valids)));
+  auto const struct_col = cudf::make_structs_column(num_rows, std::move(children), 0, {});
+  auto const expected   = cudf::table_view({struct_col->view()});
+
+  cudf::io::table_input_metadata md(expected);
+  md.column_metadata[0].set_name("s");
+  md.column_metadata[0].child(0).set_name("str").set_encoding(
+    cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .write_v2_headers(true)
+      .metadata(std::move(md))
+      .build());
+
+  for (auto const& [skip, n] : std::vector<std::pair<cudf::size_type, cudf::size_type>>{
+         {0, num_rows}, {40, num_rows - 40}, {100, 200}, {160, 33}}) {
+    delta_byte_array_nested_skip_check(buffer, expected, skip, n);
+  }
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayMapSkipRows)
+{
+  // MAP<STRING, STRING> is physically LIST<STRUCT<key, value>>, so both string leaves decode under
+  // repetition. A leading skip resumes each DELTA_BYTE_ARRAY leaf mid-page via
+  // delta_byte_array_decoder::skip, which stages the skipped strings through temp_string_buf and
+  // carries the prefix seed across rounds. Varying map sizes (including empties) exercise the
+  // definition levels.
+  constexpr cudf::size_type num_rows = 250;
+  uint64_t seed                      = 601;
+  std::vector<cudf::size_type> offsets{0};
+  for (cudf::size_type i = 0; i < num_rows; i++) {
+    auto const sz = (delta_test_rand(seed) % 6 == 0)
+                      ? 0
+                      : 1 + static_cast<cudf::size_type>(delta_test_rand(seed) % 6);
+    offsets.push_back(offsets.back() + sz);
+  }
+  auto const n_leaf = static_cast<int>(offsets.back());
+  auto const keys   = delta_test_strings(n_leaf, true, 602);
+  auto const vals   = delta_test_strings(n_leaf, true, 603);
+
+  auto keys_col   = cudf::test::strings_column_wrapper(keys.begin(), keys.end());
+  auto vals_col   = cudf::test::strings_column_wrapper(vals.begin(), vals.end());
+  auto struct_col = cudf::test::structs_column_wrapper({keys_col, vals_col}).release();
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end());
+  auto const map_col = cudf::make_lists_column(
+    num_rows, offsets_col.release(), std::move(struct_col), 0, rmm::device_buffer{});
+  auto const expected = cudf::table_view({map_col->view()});
+
+  cudf::io::table_input_metadata md(expected);
+  md.column_metadata[0].set_name("m");
+  md.column_metadata[0].set_list_column_as_map();
+  md.column_metadata[0].child(1).child(0).set_name("key").set_encoding(
+    cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+  md.column_metadata[0].child(1).child(1).set_name("value").set_encoding(
+    cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .write_v2_headers(true)
+      .metadata(std::move(md))
+      .build());
+
+  for (auto const& [skip, n] : std::vector<std::pair<cudf::size_type, cudf::size_type>>{
+         {0, num_rows}, {40, num_rows - 40}, {70, 100}, {130, 40}}) {
+    delta_byte_array_nested_skip_check(buffer, expected, skip, n);
+  }
 }
 
 // test that using page stats is working for full reads and various skip rows
@@ -5405,5 +5897,167 @@ TEST_F(ParquetReaderTest, RowIndexSelectedRead)
     auto const expected_filtered = cudf::table_view{
       {expected_filtered_source, expected_filtered_row_index, expected_filtered_values}};
     CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::io::read_parquet(read_opts).tbl->view(), expected_filtered);
+  }
+}
+
+TEST_F(ParquetReaderTest, MismatchedSchemaColumnValidation)
+{
+  // Every required column (selected or filter-referenced) must exist and be compatible across all
+  // sources if mismatched schemas are allowed.
+  using i64 = column_wrapper<int64_t>;
+  using f64 = column_wrapper<double>;
+
+  // When mismatched schemas are allowed, a selected column (by name or field ID) absent from any
+  // sources is rejected even if ignore_missing_columns is enabled.
+  {
+    auto const id0 = i64{1, 2, 3};
+    auto const path0 =
+      write_parquet_temp_file(cudf::table_view{{id0}}, "IdOnly.parquet", {"id"}, {1});
+    auto const id1    = i64{4, 5, 6};
+    auto const price1 = f64{10.0, 20.0, 30.0};
+    auto const path1  = write_parquet_temp_file(
+      cudf::table_view{{id1, price1}}, "IdAndPrice.parquet", {"id", "price"}, {1, 2});
+
+    // Selected column `price` is missing from either source
+    {
+      auto opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path0, path1}})
+                    .allow_mismatched_pq_schemas(true)
+                    .ignore_missing_columns(true)
+                    .column_names({"id", "price"})
+                    .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+
+      opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path1, path0}})
+               .allow_mismatched_pq_schemas(true)
+               .ignore_missing_columns(true)
+               .column_names({"id", "price"})
+               .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+    }
+
+    // Filter-only column `price` is missing from either source
+    {
+      // Filter: `price < 100.0`
+      auto value  = cudf::numeric_scalar<double>(100.0);
+      auto lit    = cudf::ast::literal(value);
+      auto col    = cudf::ast::column_name_reference("price");
+      auto filter = cudf::ast::operation(cudf::ast::ast_operator::LESS, col, lit);
+
+      auto opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path0, path1}})
+                    .allow_mismatched_pq_schemas(true)
+                    .ignore_missing_columns(true)
+                    .column_names({"id"})
+                    .filter(filter)
+                    .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+
+      opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path1, path0}})
+               .allow_mismatched_pq_schemas(true)
+               .ignore_missing_columns(true)
+               .column_names({"id"})
+               .filter(filter)
+               .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+    }
+
+    // Selected field ID 2 (`price`) is missing from either
+    {
+      auto opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path0, path1}})
+                    .allow_mismatched_pq_schemas(true)
+                    .ignore_missing_columns(true)
+                    .column_field_ids({1, 2})
+                    .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+
+      opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path1, path0}})
+               .allow_mismatched_pq_schemas(true)
+               .ignore_missing_columns(true)
+               .column_field_ids({1, 2})
+               .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+    }
+  }
+
+  // Selected column `price` is present in all sources but with mismatched type (double vs int64).
+  {
+    auto const id0    = i64{1, 2, 3};
+    auto const price0 = f64{10.0, 20.0, 30.0};
+    auto const path0  = write_parquet_temp_file(
+      cudf::table_view{{id0, price0}}, "Float64Price.parquet", {"id", "price"});
+    auto const id1    = i64{4, 5, 6};
+    auto const price1 = i64{40, 50, 60};
+    auto const path1  = write_parquet_temp_file(
+      cudf::table_view{{id1, price1}}, "Int64Price.parquet", {"id", "price"});
+
+    auto const opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path0, path1}})
+        .allow_mismatched_pq_schemas(true)
+        .column_names({"id", "price"})
+        .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+  }
+}
+
+TEST_F(ParquetReaderTest, NestedMismatchedSchemaColumnValidation)
+{
+  auto const write_record = [](std::unique_ptr<cudf::column> record,
+                               std::string const& filename,
+                               std::vector<std::string> const& child_names) {
+    cudf::table_view const table{{*record}};
+    auto const path = temp_env->get_temp_filepath(filename);
+    cudf::io::table_input_metadata metadata(table);
+    metadata.column_metadata[0].set_name("record");
+    for (size_t idx = 0; idx < child_names.size(); ++idx) {
+      metadata.column_metadata[0].child(idx).set_name(child_names[idx]);
+    }
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{path}, table)
+        .metadata(std::move(metadata)));
+    return path;
+  };
+
+  // Selected nested child must be present in every source
+  {
+    auto a0 = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
+    auto b1 = cudf::test::fixed_width_column_wrapper<int32_t>{4, 5, 6};
+    auto const path0 =
+      write_record(cudf::test::structs_column_wrapper{{a0}}.release(), "RecordA.parquet", {"a"});
+    auto const path1 =
+      write_record(cudf::test::structs_column_wrapper{{b1}}.release(), "RecordB.parquet", {"b"});
+
+    auto opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path0, path1}})
+                  .allow_mismatched_pq_schemas(true)
+                  .column_names({"record.a"})
+                  .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+
+    opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path1, path0}})
+             .allow_mismatched_pq_schemas(true)
+             .column_names({"record.a"})
+             .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+  }
+
+  // Selected struct must have the same children in every source
+  {
+    auto a0 = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
+    auto a1 = cudf::test::fixed_width_column_wrapper<int32_t>{4, 5, 6};
+    auto b1 = cudf::test::fixed_width_column_wrapper<int32_t>{7, 8, 9};
+    auto const path0 =
+      write_record(cudf::test::structs_column_wrapper{{a0}}.release(), "RecordA.parquet", {"a"});
+    auto const path1 = write_record(
+      cudf::test::structs_column_wrapper{{a1, b1}}.release(), "RecordAB.parquet", {"a", "b"});
+
+    auto opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path0, path1}})
+                  .allow_mismatched_pq_schemas(true)
+                  .column_names({"record"})
+                  .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+
+    opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{{path1, path0}})
+             .allow_mismatched_pq_schemas(true)
+             .column_names({"record"})
+             .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
   }
 }

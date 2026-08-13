@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 
@@ -447,11 +447,7 @@ def test_df_sr_binop_col_order(op):
     assert_eq(expect, got)
 
 
-def test_different_shapes_and_columns(request, arithmetic_op):
-    if arithmetic_op is operator.pow:
-        msg = "TODO: Support `pow(1, NaN) == 1` and `pow(NaN, 0) == 1`"
-        request.applymarker(pytest.mark.xfail(reason=msg))
-
+def test_different_shapes_and_columns(arithmetic_op):
     # Empty frame on the right side
     pd_frame = arithmetic_op(pd.DataFrame({"x": [1, 2]}), pd.DataFrame({}))
     cd_frame = arithmetic_op(cudf.DataFrame({"x": [1, 2]}), cudf.DataFrame({}))
@@ -490,12 +486,10 @@ def test_different_shapes_and_same_columns(arithmetic_op):
     assert_eq(cd_frame, pd_frame)
 
 
-def test_different_shapes_and_columns_with_unaligned_indices(
-    request, arithmetic_op
-):
-    if arithmetic_op is operator.pow:
-        msg = "TODO: Support `pow(1, NaN) == 1` and `pow(NaN, 0) == 1`"
-        request.applymarker(pytest.mark.xfail(reason=msg))
+def test_different_shapes_and_columns_with_unaligned_indices(arithmetic_op):
+    # ``pow`` no longer overflows here: aligning the unaligned indices
+    # introduces missing rows, which now promote the integer operands to
+    # float64 (pandas semantics), so the pow is computed in float.
 
     # Test with a RangeIndex
     pdf1 = pd.DataFrame({"x": [4, 3, 2, 1], "y": [7, 3, 8, 6]})

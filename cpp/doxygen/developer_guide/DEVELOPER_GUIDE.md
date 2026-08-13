@@ -26,7 +26,7 @@ A column is an array of data of a single type. Along with Tables, columns are th
 structures used in libcudf. Most libcudf algorithms operate on columns. Columns may have a validity
 mask representing whether each element is valid or null (invalid). Columns of nested types are
 supported, meaning that a column may have child columns. A column is the C++ equivalent to a cuDF
-Python [Series](https://docs.rapids.ai/api/cudf/stable/api_docs/series.html).
+Python [Series](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.series/).
 
 ### Element
 
@@ -41,7 +41,7 @@ A type representing a single element of a data type.
 A table is a collection of columns that all have the same number of elements (rows). A table may
 also have zero columns while still carrying a row count, mirroring an `(N, 0)` DataFrame. A table is
 the C++ equivalent to a cuDF Python
-[DataFrame](https://docs.rapids.ai/api/cudf/stable/api_docs/dataframe.html).
+[DataFrame](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.dataframe/).
 
 ### View
 
@@ -210,9 +210,8 @@ The following guidelines apply to organizing `#include` lines.
  * Tools like `clangd` often auto-insert includes when they can, but they usually get the grouping
    and brackets wrong. Correct the usage of quotes or brackets and then run clang-format to correct
    the grouping.
- * Always check that includes are only necessary for the file in which they are included.
-   Try to avoid excessive including especially in header files. Double check this when you remove
-   code.
+ * Follow the "include what you use" principle. Directly `#include` headers that declare or forward declare as appropriate every symbol a file uses and do not rely on headers being pulled in transitively through another include.
+ * Do not include headers whose symbols the file does not use and avoid excessive including especially in header files. Double check this when you remove code.
  * Avoid relative paths with `..` when possible. Paths with `..` are necessary when including
    (internal) headers from source paths not in the same directory as the including file,
    because source paths are not passed with `-I`.
@@ -230,7 +229,7 @@ data structures you will use when developing libcudf code.
 
 Resource ownership is an essential concept in libcudf. In short, an "owning" object owns a
 resource (such as device memory). It acquires that resource during construction and releases the
-resource in destruction ([RAII](https://en.cppreference.com/w/cpp/language/raii)). A "non-owning"
+resource in destruction ([RAII](https://en.cppreference.com/cpp/language/raii)). A "non-owning"
 object does not own resources. Any class in libcudf with the `*_view` suffix is non-owning. For more
 detail see the [`libcudf` presentation.](https://docs.google.com/presentation/d/1zKzAtc1AWFKfMhiUlV5yRZxSiPLwsObxMlWRWz_f5hA/edit?usp=sharing)
 
@@ -976,7 +975,7 @@ only two objects of different types. Multiple objects of the same type may be re
 `std::vector<T>`.
 
 Alternatively, with C++17 (supported from cudf v0.20),
-[structured binding](https://en.cppreference.com/w/cpp/language/structured_binding)
+[structured binding](https://en.cppreference.com/cpp/language/structured_binding)
 may be used to disaggregate multiple return values:
 
 ```c++
@@ -1161,7 +1160,7 @@ void isolated_helper_function(...);
 } // anonymous namespace
 ```
 
-[**Anonymous namespaces should *never* be used in a header file.**](https://wiki.sei.cmu.edu/confluence/display/cplusplus/DCL59-CPP.+Do+not+define+an+unnamed+namespace+in+a+header+file)
+[**Anonymous namespaces should *never* be used in a header file.**](https://cmu-sei.github.io/secure-coding-standards/sei-cert-cpp-coding-standard/rules/declarations-and-initialization-dcl/dcl59-cpp/)
 
 # Deprecating and Removing Code
 
@@ -1174,7 +1173,7 @@ basis, the libcudf team will notify users of changes that we expect to have sign
 widespread effects.
 
 Where possible, indicate pending API removals using the
-[deprecated](https://en.cppreference.com/w/cpp/language/attributes/deprecated) attribute and
+[deprecated](https://en.cppreference.com/cpp/language/attributes/deprecated) attribute and
 document them using Doxygen's
 [deprecated](https://www.doxygen.nl/manual/commands.html#cmddeprecated) command prior to removal.
 When a replacement API is available for a deprecated API, mention the replacement in both the
@@ -1417,7 +1416,7 @@ template <>
 void type_printer::operator()<double>() { std::cout << "double\n"; }
 ```
 
-The second method is to use [SFINAE](https://en.cppreference.com/w/cpp/language/sfinae) with
+The second method is to use [SFINAE](https://en.cppreference.com/cpp/language/sfinae) with
 `std::enable_if_t`. This is useful to partially specialize for a set of types with a common trait.
 The following example functor prints `integral` or `floating point` for integral or floating point
 types, respectively.
@@ -1579,7 +1578,7 @@ the null masks of both struct fields.
 ## Dictionary columns
 
 Dictionaries provide an efficient way to represent low-cardinality data by storing a single copy
-of each value. A dictionary comprises a column of distinct keys and a column containing an index into
+of each value. A dictionary comprises a column of keys and a column containing an index into
 the keys column for each row of the parent column. The keys column may have any fixed-width data_type
 or STRING data_type. The indices represent the corresponding positions of each
 element's value in the keys. The indices child column can have any signed integer type
@@ -1590,8 +1589,11 @@ input column will produce equivalent dictionary columns but the keys may be in a
 and therefore the indices will not match as well. Using `cudf::dictionary::decode()` on both dictionary
 columns should produce the same result.
 
-Although `cudf::make_dictionary_column()` expects distinct keys, the API does not enforce this constraint.
-Using a dictionary column with non-distinct keys in libcudf APIs may result in undefined behavior.
+The libcudf APIs also accept dictionary columns with non-unique keys.
+However, output dictionary columns will generally contain unique keys in an unspecified order.
+The exceptions are `cudf::make_dictionary_column()`, which accepts keys and indices without
+changing them, and `cudf::dictionary::set_keys()`, which strictly honors the given keys
+(both order and duplicates).
 
 ## Nested column challenges
 

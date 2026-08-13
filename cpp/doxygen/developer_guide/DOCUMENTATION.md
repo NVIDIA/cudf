@@ -29,7 +29,7 @@ Doxygen recognizes and parses block comments and performs specialized output for
 There are almost 200 commands (also called tags in this document) that doxygen recognizes in comment blocks.
 This document provides guidance on which commands/tags to use and how to use them in the libcudf C++ source code.
 
-The doxygen process can be customized using options in the [Doxyfile](../doxygen/Doxyfile).
+The doxygen process can be customized using options in the [Doxyfile](../Doxyfile).
 
 Here are some of the custom options in the Doxyfile for libcudf.
 | Option | Setting | Description |
@@ -369,12 +369,12 @@ The doxygen output includes a _Modules_ page that organizes items into groups sp
 These commands can group common functions across header files, source files, and even namespaces.
 Groups can also be nested by defining new groups within existing groups.
 
-For libcudf, all the group hierarchy is defined in the [doxygen_groups.h](../include/doxygen_groups.h) header file.
-The [doxygen_groups.h](../include/doxygen_groups.h) file does not need to be included in any other source file, because the definitions in this file are used only by the doxygen tool to generate groups in the _Modules_ page.
+For libcudf, all the group hierarchy is defined in the [doxygen_groups.h](../../include/doxygen_groups.h) header file.
+The [doxygen_groups.h](../../include/doxygen_groups.h) file does not need to be included in any other source file, because the definitions in this file are used only by the doxygen tool to generate groups in the _Modules_ page.
 Modify this file only to add or update groups.
 The existing groups have been carefully structured and named, so new groups should be added thoughtfully.
 
-When creating a new API, specify its group using the [\@ingroup](https://www.doxygen.nl/manual/commands.html#cmdingroup) tag and the group reference id from the [doxygen_groups.h](../include/doxygen_groups.h) file.
+When creating a new API, specify its group using the [\@ingroup](https://www.doxygen.nl/manual/commands.html#cmdingroup) tag and the group reference id from the [doxygen_groups.h](../../include/doxygen_groups.h) file.
 
     namespace CUDF_EXPORT cudf {
 
@@ -417,7 +417,7 @@ So include the `@addtogroup` and `@{ ... @}` between the namespace declaration b
 Summary of groups tags
 | Tag/Command | Where to use |
 | ----------- | ------------ |
-| `@defgroup` | For use only in [doxygen_groups.h](../include/doxygen_groups.h) and should include the group's title. |
+| `@defgroup` | For use only in [doxygen_groups.h](../../include/doxygen_groups.h) and should include the group's title. |
 | `@ingroup` | Use inside individual doxygen block comments for declaration statements in a header file. |
 | `@addtogroup` | Use instead of `@ingroup` for multiple declarations in the same file within a namespace declaration. Do not specify a group title. |
 | `@{ ... @}` |  Use only with `@addtogroup`. |

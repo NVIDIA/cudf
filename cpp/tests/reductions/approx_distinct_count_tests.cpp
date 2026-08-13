@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,7 @@
 #include <cudf/table/table_view.hpp>
 
 #include <rmm/device_buffer.hpp>
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <thrust/host_vector.h>
 
@@ -858,4 +859,30 @@ TEST_F(ApproxDistinctCount, SketchBytesAndAlignment)
   EXPECT_GT(cudf::approx_distinct_count::sketch_bytes(14),
             cudf::approx_distinct_count::sketch_bytes(12));
   EXPECT_GE(cudf::approx_distinct_count::sketch_alignment(), alignof(std::int32_t));
+}
+
+TEST_F(ApproxDistinctCount, MemoryResource)
+{
+  auto data = generate_data<int32_t>(2000, 100);
+  cudf::test::fixed_width_column_wrapper<int32_t> input_col(data.begin(), data.end());
+  cudf::table_view input_table({input_col});
+
+  auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+
+  constexpr std::int32_t precision = 12;
+  auto adc                         = cudf::approx_distinct_count(input_table,
+                                         precision,
+                                         null_policy::EXCLUDE,
+                                         nan_policy::NAN_IS_NULL,
+                                         cudf::get_default_stream(),
+                                         mr);
+
+  EXPECT_GE(mr.get_bytes_counter().peak, cudf::approx_distinct_count::sketch_bytes(precision));
+
+  auto approx_count = adc.estimate();
+  auto const exact_count =
+    cudf::distinct_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_VALID);
+
+  EXPECT_TRUE(is_reasonable_approximation(approx_count, exact_count))
+    << "Exact: " << exact_count << ", Approx: " << approx_count;
 }

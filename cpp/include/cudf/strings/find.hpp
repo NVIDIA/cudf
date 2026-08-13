@@ -9,13 +9,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for locating and testing substrings within each string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_find
  * @{
- * @file
- * @brief Strings column APIs for locating and testing substrings within each string.
  */
 
 /**

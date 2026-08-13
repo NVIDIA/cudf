@@ -6,13 +6,16 @@
 
 #include <cudf/utilities/export.hpp>
 
+/**
+ * @file
+ * @brief Enum defining the side of a string to apply strip or pad operations.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_modify
  * @{
- * @file
- * @brief Enum defining the side of a string to apply strip or pad operations.
  */
 
 /**

@@ -232,6 +232,10 @@ html_theme_options = {
     "navbar_align": "content",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
+    "switcher": {
+        "json_url": "https://docs.nvidia.com/cudf/versions.json",
+        "version_match": version,
+    },
 }
 include_pandas_compat = True
 
@@ -321,8 +325,8 @@ texinfo_documents = [
 intersphinx_mapping = {
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
     "dlpack": ("https://dmlc.github.io/dlpack/latest/", None),
-    "nanoarrow": ("https://arrow.apache.org/nanoarrow/latest", None),
-    "numpy": ("https://numpy.org/doc/stable", None),
+    "nanoarrow": ("https://arrow.apache.org/nanoarrow/latest/", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
     # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
     # "pandas": (
     #     "https://pandas.pydata.org/pandas-docs/stable/",
@@ -330,7 +334,7 @@ intersphinx_mapping = {
     # ),
     "polars": ("https://docs.pola.rs/api/python/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
-    "python": ("https://docs.python.org/3", None),
+    "python": ("https://docs.python.org/3/", None),
     "rmm": ("https://docs.rapids.ai/api/rmm/nightly/", None),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",
@@ -637,13 +641,17 @@ nitpick_ignore = [
     ("py:class", "Options"),
     # polars aliases that don't match the public intersphinx targets.
     ("py:class", "pl.DataFrame"),
+    ("py:class", "pl.DataType"),
     ("py:class", "pl.Expr"),
+    ("py:class", "pl.GPUEngine"),
     ("py:class", "pl.LazyFrame"),
     ("py:class", "polars.LazyFrame"),
     ("py:class", "polars.DataFrame"),
     ("py:class", "polars.dataframe.frame.DataFrame"),
     # Sphinx isn't able to resolve this cudf-polars.quent type alias
     ("py:class", "Value"),
+    ("py:class", "polars.lazyframe.frame.LazyFrame"),
+    ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [

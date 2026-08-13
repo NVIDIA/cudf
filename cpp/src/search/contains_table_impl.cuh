@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -133,7 +133,7 @@ void perform_contains(table_view const& haystack,
       return lhs_index_type{idx};
     }));
 
-  auto set = cuco::static_set{cuco::extent{haystack.num_rows()},
+  auto set = cuco::static_set{cuco::extent{static_cast<std::size_t>(haystack.num_rows())},
                               cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
                               cuco::empty_key{rhs_index_type{-1}},
                               d_equal,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -410,13 +410,12 @@ rmm::device_uvector<cudf::size_type> compute_sizes(cudf::device_span<uint32_t co
   // counts the non-zero bytes in the d_data array
   auto d_in = cudf::detail::make_counting_transform_iterator(
     0, cuda::proclaim_return_type<cudf::size_type>([d_data] __device__(auto idx) {
-      idx = idx * MAX_NEW_CHARS;
       // transform function counts number of non-zero bytes in uint32_t value
       auto tfn = [](uint32_t v) -> cudf::size_type {
         return ((v & 0xFF) > 0) + ((v & 0xFF00) > 0) + ((v & 0xFF0000) > 0) +
                ((v & 0xFF000000) > 0);
       };
-      auto const begin = d_data + idx;
+      auto const begin = d_data + (static_cast<int64_t>(idx) * MAX_NEW_CHARS);
       auto const end   = begin + MAX_NEW_CHARS;
       return thrust::transform_reduce(thrust::seq, begin, end, tfn, 0, cuda::std::plus{});
     }));
@@ -543,9 +542,7 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
   // create output chars by calling remove_copy(0) on the bytes in d_normalized
   auto chars       = rmm::device_uvector<char>(total_size, stream, mr);
   auto const begin = reinterpret_cast<char const*>(d_normalized.begin());
-  // the remove() above speeds up the remove_copy() by roughly 10%
-  auto const end =
-    reinterpret_cast<char const*>(remove_safe(d_normalized.begin(), d_normalized.end(), 0, stream));
+  auto const end   = reinterpret_cast<char const*>(d_normalized.end());
   remove_copy_safe(begin, end, chars.data(), 0, stream);
 
   return cudf::make_strings_column(input.size(),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/join/conditional_join.hpp>
+#include <cudf/join/direct_join.hpp>
 #include <cudf/join/filtered_join.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <tuple>
 
 class JoinTest : public cudf::test::BaseFixture {
   static inline cudf::table make_table()
@@ -58,7 +60,7 @@ TEST_F(JoinTest, SortMergeInnerJoin)
 {
   cudf::sort_merge_join obj(
     table1, cudf::sorted::NO, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
-  obj.inner_join(table0, cudf::sorted::NO, cudf::test::get_default_stream());
+  obj.inner_join(table0, cudf::test::get_default_stream());
 }
 
 TEST_F(JoinTest, LeftJoin)
@@ -84,6 +86,13 @@ TEST_F(JoinTest, LeftAntiJoin)
 }
 
 TEST_F(JoinTest, CrossJoin) { cudf::cross_join(table0, table1, cudf::test::get_default_stream()); }
+
+TEST_F(JoinTest, DirectInnerJoin)
+{
+  cudf::test::fixed_width_column_wrapper<uint32_t> left_keys{{0, 1, 2, 5}};
+  cudf::test::fixed_width_column_wrapper<uint32_t> right_keys{{0, 1, 2, 3}};
+  std::ignore = cudf::direct_inner_join(left_keys, right_keys, 6, cudf::test::get_default_stream());
+}
 
 TEST_F(JoinTest, ConditionalInnerJoin)
 {
@@ -152,6 +161,7 @@ TEST_F(JoinTest, LeftJoinWithPostFilter)
                               cudf::device_span<cudf::size_type const>(*hash_join_result.second),
                               left_zero_eq_right_zero,
                               cudf::join_kind::LEFT_JOIN,
+                              std::nullopt,
                               cudf::test::get_default_stream());
 }
 

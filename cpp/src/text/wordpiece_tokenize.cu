@@ -137,7 +137,8 @@ using sub_vocabulary_map_type = cuco::static_map<cudf::size_type,
 // std::unique_ptr<column_device_view> this helper simplifies the return type in a maintainable way
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
-                                             rmm::cuda_stream_view>;
+                                             rmm::cuda_stream_view,
+                                             rmm::device_async_resource_ref>;
 
 /**
  * @brief Internal class manages all the data held by the vocabulary object
@@ -229,7 +230,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
     detail::probe_scheme{detail::vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_thread,
     detail::cuco_storage{},
-    rmm::mr::polymorphic_allocator<char>{},
+    rmm::mr::polymorphic_allocator<char>{mr},
     stream.value());
   // the row index is the token id (data value for each key in the map)
   auto iter = cudf::detail::make_counting_transform_iterator(0, key_pair{});
@@ -255,7 +256,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
     detail::sub_probe_scheme{detail::sub_vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_thread,
     detail::cuco_storage{},
-    rmm::mr::polymorphic_allocator<char>{},
+    rmm::mr::polymorphic_allocator<char>{mr},
     stream.value());
   // insert them without the '##' prefix since that is how they will be looked up
   auto iter_sub = thrust::make_transform_iterator(sub_map_indices.begin(), key_pair{});

@@ -31,6 +31,7 @@ from rapidsmpf.streaming.core.context import Context
 import cudf_polars.quent
 import cudf_polars.quent._logging
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
@@ -44,10 +45,15 @@ from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
     bind_to_gpu,
 )
+from cudf_polars.engine.persisted_result import (
+    PersistedBackend,
+    execute_persisted_query,
+)
 from cudf_polars.quent._context import LocalQuentContext
 from cudf_polars.quent._types import Worker
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
+from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
@@ -67,6 +73,7 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.engine.persisted_result import PersistedQueryResult
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -77,13 +84,13 @@ def evaluate_pipeline_spmd_mode(
     *,
     collect_metadata: bool = False,
     query_id: uuid.UUID,
-) -> tuple[pl.DataFrame, list[ChannelMetadata] | None]:
+) -> tuple[DataFrame, list[ChannelMetadata] | None]:
     """
     Build and evaluate a RapidsMPF streaming pipeline in SPMD mode.
 
     In SPMD mode every rank executes the same Python/Polars script
     independently.  Each rank owns its local DataFrames, which are
-    treated as rank-local fragments of a larger distributed dataset and
+    treated as rank-local partitions of a larger distributed dataset and
     fed directly into the pipeline.  Collective operations (shuffles,
     all-gathers, etc.) coordinate across ranks to produce a globally
     consistent result.
@@ -106,8 +113,9 @@ def evaluate_pipeline_spmd_mode(
 
     Returns
     -------
-    The concatenated output DataFrame and, if ``collect_metadata`` is
-    True, the list of channel metadata objects; otherwise ``None``.
+    The GPU-resident output :class:`~cudf_polars.containers.DataFrame` and,
+    if ``collect_metadata`` is True, the list of channel metadata objects;
+    otherwise ``None``.
     """
     if config_options.executor.spmd_context is None:
         raise RuntimeError("spmd_context must be set for SPMD mode")
@@ -158,8 +166,8 @@ def allgather_polars_dataframe(
     """
     AllGather a rank-local DataFrame so every rank receives the full result.
 
-    Each rank contributes its local ``local_df`` fragment and receives the
-    concatenation of all ranks' fragments in rank order. This is the SPMD
+    Each rank contributes its local ``local_df`` partition and receives the
+    concatenation of all ranks' partitions in rank order. This is the SPMD
     equivalent of a distributed ``collect``: after the call, every rank holds
     the same complete dataset.
 
@@ -256,7 +264,7 @@ class SPMDEngine(StreamingEngine):
     process runs the *same* Python script independently on its own slice of data.
     When launched with the RapidsMPF launcher `rrun`, multiple identical processes
     are started. Each process owns a rank-local :class:`~polars.LazyFrame`
-    representing its fragment of the distributed dataset. Collective operations,
+    representing its partition of the distributed dataset. Collective operations,
     such as shuffles, all-gathers, and joins, coordinate across ranks to produce
     a globally consistent result.
 
@@ -304,7 +312,7 @@ class SPMDEngine(StreamingEngine):
     **DataFrame and LazyFrame semantics**
 
     Because every rank runs an independent Python process, a :class:`~polars.DataFrame`
-    is always *rank-local* i.e. it contains only that rank's fragment of the distributed
+    is always *rank-local* i.e. it contains only that rank's partition of the distributed
     dataset.  This is true whether the DataFrame originates from a file reader or from
     Python literals.
 
@@ -444,7 +452,7 @@ class SPMDEngine(StreamingEngine):
         self._comm: Communicator | None = comm
         self._ctx: Context | None = None
         self._py_executor: ThreadPoolExecutor | None = None
-
+        self._store_uid = uuid.uuid4().hex
         exit_stack = contextlib.ExitStack()
 
         # TODO: there's no reason our API needs a plain dict[str, Any] rather than
@@ -560,6 +568,10 @@ class SPMDEngine(StreamingEngine):
             engine_options=options.to_engine_options(),
         )
 
+    def _drop_persisted(self) -> None:
+        """Drop this engine's persisted partitions from the rank-local store."""
+        rank_local_store.close_store(self._store_uid)
+
     def _reset(
         self,
         *,
@@ -596,6 +608,8 @@ class SPMDEngine(StreamingEngine):
         # Collective: synchronize all ranks before tearing down the Context.
         if self._comm.nranks > 1:
             barrier(self._comm)
+        # Free persisted partitions before the Context is torn down.
+        self._drop_persisted()
         # Same-thread shutdown, _reset runs on the thread that built the
         # Context (the test driver's main thread). The per-engine RMM
         # resource is kept alive across resets, see :meth:`_cleanup_ctx`.
@@ -772,6 +786,9 @@ class SPMDEngine(StreamingEngine):
         if self._ctx is None:
             return  # already shut down
 
+        # Free persisted partitions before _cleanup_ctx tears down the Context.
+        self._drop_persisted()
+
         # Order matters: ``super().shutdown()`` closes ``self._exit_stack``,
         # which invokes ``self._cleanup_ctx``. That requires ``self._ctx`` to
         # still be set so the rapidsmpf Context can be shut down correctly.
@@ -804,3 +821,80 @@ class SPMDEngine(StreamingEngine):
             results = all_gather_host_data(self.comm, self.context.br(), op_id, data)
 
         return [json.loads(r) for r in results]
+
+    @unstable()
+    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:
+        """
+        Execute a :class:`~polars.LazyFrame` and return a GPU-resident result.
+
+        Unlike :meth:`~polars.LazyFrame.collect`, this method does not copy the
+        result to host memory. The returned :class:`~cudf_polars.engine.persisted_result.PersistedQueryResult`
+        keeps each rank's partition GPU-resident in its process. Call its
+        :meth:`~cudf_polars.engine.persisted_result.PersistedQueryResult.lazy` to
+        chain further operations without an intermediate host round-trip.
+
+        This is a collective operation: every rank must call it with an
+        equivalent query.
+
+        Parameters
+        ----------
+        lf
+            The lazy query to execute.
+
+        Returns
+        -------
+        A persisted query result; each rank's partition stays GPU-resident in
+        the process that produced it.
+
+        Examples
+        --------
+        >>> with SPMDEngine() as engine:  # doctest: +SKIP
+        ...     result = engine.execute(pl.scan_parquet("data/*.parquet"))
+        ...     # Chain further work without copying to host:
+        ...     df = result.lazy().filter(pl.col("x") > 0).collect(engine=engine)
+        """
+        backend = SpmdPersistedBackend(
+            self._store_uid, self.context, self.comm, self.py_executor
+        )
+        return execute_persisted_query(self, lf, backend, self._store_uid)
+
+
+class SpmdPersistedBackend(PersistedBackend):
+    """Persisted-result backend for SPMD."""
+
+    def __init__(
+        self,
+        uid: str,
+        ctx: Context,
+        comm: Communicator,
+        py_executor: ThreadPoolExecutor,
+    ) -> None:
+        self._uid = uid
+        self._ctx = ctx
+        self._comm = comm
+        self._py_executor = py_executor
+
+    def execute_persisted(
+        self,
+        ir: IR,
+        config_options: ConfigOptions[StreamingExecutor],
+        query_id: uuid.UUID,
+    ) -> list[int]:
+        """Evaluate and store this rank's partition (see :class:`PersistedBackend`)."""
+        rank = persisted_result.evaluate_and_persist(
+            self._uid,
+            self._ctx,
+            self._comm,
+            self._py_executor,
+            ir,
+            config_options,
+            query_id,
+            # SPMD collects rank-locally: each rank reads its own partition, so a
+            # duplicated output must stay whole on every rank (not deduplicated).
+            deduplicate_replicated=False,
+        )
+        return [rank]
+
+    def drop_persisted(self, query_id: uuid.UUID) -> None:
+        """Drop this rank's partition from this engine's store (see :class:`PersistedBackend`)."""
+        rank_local_store.drop_query(self._uid, query_id)

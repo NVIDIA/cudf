@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,7 +30,6 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 #include <limits>
@@ -1532,11 +1531,11 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
   // StructBegin, StructEnd. Also, all LineEnd are removed as well, as these are not relevant after
   // this stage anymore
   filter_fst.Transduce(
-    cuda::std::make_reverse_iterator(
-      thrust::make_zip_iterator(tokens.data(), token_indices.data()) + tokens.size()),
+    cuda::std::make_reverse_iterator(cuda::make_zip_iterator(tokens.data(), token_indices.data()) +
+                                     tokens.size()),
     static_cast<SymbolOffsetT>(tokens.size()),
     cuda::std::make_reverse_iterator(
-      thrust::make_zip_iterator(filtered_tokens_out.data(), filtered_token_indices_out.data()) +
+      cuda::make_zip_iterator(filtered_tokens_out.data(), filtered_token_indices_out.data()) +
       tokens.size()),
     cuda::make_discard_iterator(),
     d_num_selected_tokens.data(),
@@ -1594,7 +1593,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
   // Input to the full pushdown automaton finite-state transducer, where a input symbol comprises
   // the combination of a character from the JSON input together with the stack context for that
   // character.
-  auto zip_in = thrust::make_zip_iterator(json_in.data(), stack_symbols.data());
+  auto zip_in = cuda::make_zip_iterator(json_in.data(), stack_symbols.data());
 
   // Spark, as the main stakeholder in the `recover_from_error` option, has the specific need to
   // ignore any characters that follow the first value on each JSON line. This is an FST that
@@ -2138,7 +2137,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
 
       // Prepare iterator that returns (string_offset, string_length)-tuples
       auto offset_length_it =
-        thrust::make_zip_iterator(d_string_offsets.begin(), d_string_lengths.begin());
+        cuda::make_zip_iterator(d_string_offsets.begin(), d_string_lengths.begin());
 
       data_type target_type{};
 

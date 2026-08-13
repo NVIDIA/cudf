@@ -101,7 +101,8 @@ using vocabulary_map_type = cuco::static_map<cudf::size_type,
 // std::unique_ptr<column_device_view> this helper simplifies the return type in a maintainable way
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
-                                             rmm::cuda_stream_view>;
+                                             rmm::cuda_stream_view,
+                                             rmm::device_async_resource_ref>;
 
 struct tokenize_vocabulary::tokenize_vocabulary_impl {
   std::unique_ptr<cudf::column> const vocabulary;
@@ -144,7 +145,7 @@ tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
     detail::probe_scheme{detail::vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_device,
     detail::cuco_storage{},
-    rmm::mr::polymorphic_allocator<char>{},
+    rmm::mr::polymorphic_allocator<char>{mr},
     stream.value());
 
   // the row index is the token id (value for each key in the map)

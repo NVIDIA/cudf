@@ -17,13 +17,16 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief Class for mark-based hash joins used to implement semi/anti joins
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_join
  * @{
- * @file
- * @brief Class for mark-based hash joins used to implement semi/anti joins
  */
 
 namespace detail {
@@ -75,26 +78,35 @@ class mark_join {
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param prefilter Controls whether an optional probe-side prefilter is enabled
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the internal hash table and prefilter
    */
   mark_join(cudf::table_view const& left,
             cudf::null_equality compare_nulls,
             cudf::join_prefilter prefilter,
-            rmm::cuda_stream_view stream = cudf::get_default_stream());
+            rmm::cuda_stream_view stream = cudf::get_default_stream(),
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+              cudf::get_current_device_resource_ref());
 
   /**
-   * @brief Constructs a mark join object with explicit prefilter selection.
+   * @brief Constructs a mark join object with explicit prefilter selection and the given load
+   * factor.
+   *
+   * @throws std::invalid_argument if `load_factor` is not in (0, 1]
    *
    * @param left The left table; the hash table is built from this table
    * @param load_factor Hash table load factor in range (0,1]
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param prefilter Controls whether an optional probe-side prefilter is enabled
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the internal hash table and prefilter
    */
   mark_join(cudf::table_view const& left,
             double load_factor,
             cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
             cudf::join_prefilter prefilter    = cudf::join_prefilter::NO,
-            rmm::cuda_stream_view stream      = cudf::get_default_stream());
+            rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+              cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns left row indices that have at least one match in the right table.

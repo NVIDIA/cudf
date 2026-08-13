@@ -11,13 +11,16 @@
 
 #include <optional>
 
+/**
+ * @file
+ * @brief Strings column APIs for casting short strings to/from an integer bit representation.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_convert
  * @{
- * @file
- * @brief Strings column APIs for casting short strings to/from an integer bit representation.
  */
 
 /**

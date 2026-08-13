@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,14 +21,17 @@
 #include <algorithm>
 #endif
 
+/**
+ * @file
+ * @brief Class definition for fixed point data type
+ */
+
 /// `fixed_point` and supporting types
 namespace CUDF_EXPORT numeric {
 
 /**
  * @addtogroup fixed_point_classes
  * @{
- * @file
- * @brief Class definition for fixed point data type
  */
 
 /// The scale type for fixed_point
@@ -86,7 +89,7 @@ CUDF_HOST_DEVICE inline constexpr Rep ipow(T exponent)
   // Note: Including an array here introduces too much register pressure
   // https://simple.wikipedia.org/wiki/Exponentiation_by_squaring
   // This is the iterative equivalent of the recursive definition (faster)
-  // Quick-bench for squaring: http://quick-bench.com/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
+  // Quick-bench for squaring: https://quick-bench.com:443/q/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
   if (exponent == 0) { return static_cast<Rep>(1); }
   auto extra  = static_cast<Rep>(1);
   auto square = static_cast<Rep>(Base);
@@ -158,8 +161,6 @@ CUDF_HOST_DEVICE inline constexpr T shift(T const& val, scale_type const& scale)
 /**
  * @addtogroup fixed_point_classes
  * @{
- * @file
- * @brief Class definition for fixed point data type
  */
 
 /**

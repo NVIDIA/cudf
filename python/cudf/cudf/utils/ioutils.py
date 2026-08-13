@@ -898,7 +898,9 @@ double_precision : int, default 10
     The number of decimal places to use when encoding
     floating point values.
 force_ascii : bool, default True
-    Force encoded string to be ASCII.
+    Force encoded string to be ASCII. If False, non-ASCII characters
+    are written as-is instead of being escaped to ``\\uXXXX`` sequences.
+    Supported with both the ``pandas`` and ``cudf`` engines.
 date_unit : string, default 'ms' (milliseconds)
     The time unit to encode to, governs timestamp and ISO8601
     precision.  One of 's', 'ms', 'us', 'ns' for second, millisecond,

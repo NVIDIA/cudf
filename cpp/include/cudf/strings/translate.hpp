@@ -12,13 +12,16 @@
 
 #include <vector>
 
+/**
+ * @file
+ * @brief Strings column APIs for translating or filtering individual characters.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_modify
  * @{
- * @file
- * @brief Strings column APIs for translating or filtering individual characters.
  */
 
 /**

@@ -13,14 +13,17 @@
 
 #include <queue>
 
+/**
+ * @file
+ * @brief APIs for applying Delta Lake style deletion vectors when reading Parquet data.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io::parquet::experimental {
 
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief APIs for applying Delta Lake style deletion vectors when reading Parquet data.
  */
 
 /**
@@ -45,6 +48,9 @@ struct deletion_vector_info {
   std::vector<size_t> row_group_offsets;
   /// Number of rows in each row group to be read from the Parquet source(s)
   std::vector<size_type> row_group_num_rows;
+
+  /// Whether the roaring bitmaps represent retention vectors
+  bool are_retention_vectors = false;
 };
 
 /**
@@ -144,6 +150,7 @@ class chunked_parquet_reader {
   std::queue<size_type> _deletion_vector_row_counts;
   size_t _start_row;
   bool _is_unspecified_row_group_data;
+  bool _are_retentions;
   rmm::cuda_stream_view _stream;
   rmm::device_async_resource_ref _mr;
   rmm::device_async_resource_ref _table_mr;

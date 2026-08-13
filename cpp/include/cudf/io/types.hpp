@@ -38,7 +38,6 @@ namespace io {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 /**

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -317,12 +317,9 @@ def test_loc_datetime_index_string_slice_non_monotonic(sli):
         slice((1, 2), None),
         slice(None, (1, 2)),
         (1, 1),
-        pytest.param(
-            (1, slice(None)),
-            marks=pytest.mark.xfail(
-                reason="https://github.com/pandas-dev/pandas/issues/46704"
-            ),
-        ),
+        # ``.loc[(1, slice(None))]`` now drops the scalar-selected level to
+        # match pandas (pandas-dev/pandas#46704 is fixed in pandas 3.0).
+        (1, slice(None)),
         1,
         2,
     ],
@@ -438,3 +435,60 @@ def test_loc_wrong_type_slice_datetimeindex():
     )
     with pytest.raises(TypeError):
         ser_pd.loc[2:]
+
+
+def test_series_loc_multiindex_scalar_selection():
+    mi = pd.MultiIndex.from_tuples([(0, 0), (1, 1), (2, 1)], names=["A", "B"])
+    psr = pd.Series([1, 2, 3], index=mi)
+    gsr = cudf.from_pandas(psr)
+
+    # Selecting the second level by a scalar drops it, keeping level "A".
+    assert_eq(gsr.loc[:, 1], psr.loc[:, 1])
+    assert isinstance(gsr.loc[:, 1].index, cudf.Index)
+    assert not isinstance(gsr.loc[:, 1].index, cudf.MultiIndex)
+
+    # Every level selected by a scalar -> scalar.
+    assert gsr.loc[(1, 1)] == psr.loc[(1, 1)]
+
+
+def test_series_loc_drops_multiple_scalar_levels():
+    mi = pd.MultiIndex.from_arrays(
+        [["x"], ["y"], ["z"]], names=["a", "b", "c"]
+    )
+    psr = pd.Series([0], index=mi)
+    gsr = cudf.from_pandas(psr)
+    # "x" and "z" are scalar-selected -> dropped; the slice on "b" is kept.
+    expected = psr.loc["x", :, "z"]
+    result = gsr.loc["x", :, "z"]
+    assert_eq(result, expected)
+
+
+def test_series_loc_tuple_of_lists_stays_series():
+    index = pd.MultiIndex.from_product([[10, 20, 30], [1, 2, 3]])
+    psr = pd.Series(np.arange(9), index=index).sort_index()
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = gsr.loc[([10, 20], [2, 3])]
+    expected = psr.loc[([10, 20], [2, 3])]
+    assert_eq(result, expected)
+    assert isinstance(result, cudf.Series)
+
+
+def test_loc_datetime_key_out_of_bounds():
+    # A label beyond the index unit's range cannot be present: pandas
+    # raises KeyError for scalar lookups and OutOfBoundsDatetime for
+    # list keys.
+    index = np.array(["2000-01-01", "2000-01-02"], dtype="datetime64[ns]")
+    ser_pd = pd.Series([1, 2], index=pd.Index(index))
+    ser_cudf = cudf.Series([1, 2], index=cudf.Index(index))
+    key = np.datetime64("9999-01-01", "s")
+
+    with pytest.raises(KeyError):
+        ser_pd.loc[key]
+    with pytest.raises(KeyError):
+        ser_cudf.loc[key]
+
+    with pytest.raises(pd.errors.OutOfBoundsDatetime):
+        ser_pd.loc[[key]]
+    with pytest.raises(pd.errors.OutOfBoundsDatetime):
+        ser_cudf.loc[[key]]

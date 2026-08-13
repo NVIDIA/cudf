@@ -19,14 +19,17 @@
 #include <variant>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for reading and writing CSV files.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief APIs for reading and writing CSV files.
  */
 
 /**
@@ -532,7 +535,7 @@ class csv_reader_options {
    *
    * @param pfx String used as prefix in for each column name
    */
-  void set_prefix(std::string pfx) { _prefix = pfx; }
+  void set_prefix(std::string pfx) { _prefix = std::move(pfx); }
 
   /**
    * @brief Sets whether to rename duplicate column names.
@@ -682,17 +685,16 @@ class csv_reader_options {
   /**
    * @brief Sets the expected quoting style used in the input CSV data.
    *
-   * Note: Only the following quoting styles are supported:
-   *   1. MINIMAL: String columns containing special characters like row-delimiters/
-   *               field-delimiter/quotes will be quoted.
-   *   2. NONE: No quoting is done for any columns.
+   * The reader accepts all defined quoting styles. `NONE` disables quotation parsing; all other
+   * styles enable it.
    *
    * @param quoting Quoting style used
    */
   void set_quoting(quote_style quoting)
   {
-    CUDF_EXPECTS(quoting == quote_style::MINIMAL || quoting == quote_style::NONE,
-                 "Only MINIMAL and NONE are supported for quoting.");
+    CUDF_EXPECTS(quoting == quote_style::MINIMAL || quoting == quote_style::ALL ||
+                   quoting == quote_style::NONNUMERIC || quoting == quote_style::NONE,
+                 "Unsupported quoting style.");
     _quoting = quoting;
   }
 
@@ -864,7 +866,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& compression(compression_type comp)
   {
-    options._compression = comp;
+    options.set_compression(comp);
     return *this;
   }
 
@@ -900,7 +902,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& names(std::vector<std::string> col_names)
   {
-    options._names = std::move(col_names);
+    options.set_names(std::move(col_names));
     return *this;
   }
 
@@ -912,7 +914,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& prefix(std::string pfx)
   {
-    options._prefix = std::move(pfx);
+    options.set_prefix(std::move(pfx));
     return *this;
   }
 
@@ -924,7 +926,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& mangle_dupe_cols(bool val)
   {
-    options._mangle_dupe_cols = val;
+    options.enable_mangle_dupe_cols(val);
     return *this;
   }
 
@@ -936,7 +938,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& use_cols_names(std::vector<std::string> col_names)
   {
-    options._use_cols_names = std::move(col_names);
+    options.set_use_cols_names(std::move(col_names));
     return *this;
   }
 
@@ -948,7 +950,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& use_cols_indexes(std::vector<int> col_indices)
   {
-    options._use_cols_indexes = std::move(col_indices);
+    options.set_use_cols_indexes(std::move(col_indices));
     return *this;
   }
 
@@ -996,7 +998,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& header(size_type hdr)
   {
-    options._header = hdr;
+    options.set_header(hdr);
     return *this;
   }
 
@@ -1008,7 +1010,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& lineterminator(char term)
   {
-    options._lineterminator = term;
+    options.set_lineterminator(term);
     return *this;
   }
 
@@ -1020,7 +1022,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& delimiter(char delim)
   {
-    options._delimiter = delim;
+    options.set_delimiter(delim);
     return *this;
   }
 
@@ -1032,7 +1034,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& thousands(char val)
   {
-    options._thousands = val;
+    options.set_thousands(val);
     return *this;
   }
 
@@ -1044,7 +1046,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& decimal(char val)
   {
-    options._decimal = val;
+    options.set_decimal(val);
     return *this;
   }
 
@@ -1056,7 +1058,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& comment(char val)
   {
-    options._comment = val;
+    options.set_comment(val);
     return *this;
   }
 
@@ -1068,7 +1070,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& windowslinetermination(bool val)
   {
-    options._windowslinetermination = val;
+    options.enable_windowslinetermination(val);
     return *this;
   }
 
@@ -1080,7 +1082,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& delim_whitespace(bool val)
   {
-    options._delim_whitespace = val;
+    options.enable_delim_whitespace(val);
     return *this;
   }
 
@@ -1092,7 +1094,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& skipinitialspace(bool val)
   {
-    options._skipinitialspace = val;
+    options.enable_skipinitialspace(val);
     return *this;
   }
 
@@ -1104,7 +1106,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& skip_blank_lines(bool val)
   {
-    options._skip_blank_lines = val;
+    options.enable_skip_blank_lines(val);
     return *this;
   }
 
@@ -1116,7 +1118,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& quoting(quote_style style)
   {
-    options._quoting = style;
+    options.set_quoting(style);
     return *this;
   }
 
@@ -1128,7 +1130,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& quotechar(char ch)
   {
-    options._quotechar = ch;
+    options.set_quotechar(ch);
     return *this;
   }
 
@@ -1140,7 +1142,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& doublequote(bool val)
   {
-    options._doublequote = val;
+    options.enable_doublequote(val);
     return *this;
   }
 
@@ -1153,7 +1155,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& detect_whitespace_around_quotes(bool val)
   {
-    options._detect_whitespace_around_quotes = val;
+    options.enable_detect_whitespace_around_quotes(val);
     return *this;
   }
 
@@ -1165,7 +1167,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& parse_dates(std::vector<std::string> col_names)
   {
-    options._parse_dates_names = std::move(col_names);
+    options.set_parse_dates(std::move(col_names));
     return *this;
   }
 
@@ -1177,7 +1179,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& parse_dates(std::vector<int> col_indices)
   {
-    options._parse_dates_indexes = std::move(col_indices);
+    options.set_parse_dates(std::move(col_indices));
     return *this;
   }
 
@@ -1189,7 +1191,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& parse_hex(std::vector<std::string> col_names)
   {
-    options._parse_hex_names = std::move(col_names);
+    options.set_parse_hex(std::move(col_names));
     return *this;
   }
 
@@ -1201,7 +1203,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& parse_hex(std::vector<int> col_indices)
   {
-    options._parse_hex_indexes = std::move(col_indices);
+    options.set_parse_hex(std::move(col_indices));
     return *this;
   }
 
@@ -1213,7 +1215,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& dtypes(std::map<std::string, data_type> types)
   {
-    options._dtypes = std::move(types);
+    options.set_dtypes(std::move(types));
     return *this;
   }
 
@@ -1225,7 +1227,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& dtypes(std::vector<data_type> types)
   {
-    options._dtypes = std::move(types);
+    options.set_dtypes(std::move(types));
     return *this;
   }
 
@@ -1237,7 +1239,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& true_values(std::vector<std::string> vals)
   {
-    options._true_values.insert(options._true_values.end(), vals.begin(), vals.end());
+    options.set_true_values(std::move(vals));
     return *this;
   }
 
@@ -1249,7 +1251,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& false_values(std::vector<std::string> vals)
   {
-    options._false_values.insert(options._false_values.end(), vals.begin(), vals.end());
+    options.set_false_values(std::move(vals));
     return *this;
   }
 
@@ -1297,7 +1299,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& dayfirst(bool val)
   {
-    options._dayfirst = val;
+    options.enable_dayfirst(val);
     return *this;
   }
 
@@ -1309,7 +1311,7 @@ class csv_reader_options_builder {
    */
   csv_reader_options_builder& timestamp_type(data_type type)
   {
-    options._timestamp_type = type;
+    options.set_timestamp_type(type);
     return *this;
   }
 
@@ -1354,7 +1356,6 @@ table_with_metadata read_csv(
 /**
  * @addtogroup io_writers
  * @{
- * @file
  */
 
 /**
@@ -1617,7 +1618,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& names(std::vector<std::string> names)
   {
-    options._names = names;
+    options.set_names(std::move(names));
     return *this;
   }
 
@@ -1629,7 +1630,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& na_rep(std::string val)
   {
-    options._na_rep = val;
+    options.set_na_rep(std::move(val));
     return *this;
   };
 
@@ -1641,7 +1642,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& include_header(bool val)
   {
-    options._include_header = val;
+    options.enable_include_header(val);
     return *this;
   }
 
@@ -1653,7 +1654,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& rows_per_chunk(int val)
   {
-    options._rows_per_chunk = val;
+    options.set_rows_per_chunk(val);
     return *this;
   }
 
@@ -1665,7 +1666,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& line_terminator(std::string term)
   {
-    options._line_terminator = term;
+    options.set_line_terminator(std::move(term));
     return *this;
   }
 
@@ -1677,7 +1678,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& inter_column_delimiter(char delim)
   {
-    options._inter_column_delimiter = delim;
+    options.set_inter_column_delimiter(delim);
     return *this;
   }
 
@@ -1689,7 +1690,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& true_value(std::string val)
   {
-    options._true_value = val;
+    options.set_true_value(std::move(val));
     return *this;
   }
 
@@ -1701,7 +1702,7 @@ class csv_writer_options_builder {
    */
   csv_writer_options_builder& false_value(std::string val)
   {
-    options._false_value = val;
+    options.set_false_value(std::move(val));
     return *this;
   }
 

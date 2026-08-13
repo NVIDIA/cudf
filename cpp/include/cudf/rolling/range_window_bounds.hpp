@@ -8,12 +8,15 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/export.hpp>
 
+/**
+ * @file
+ * @brief Class defining range-based window boundary sizes for rolling window operations
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup aggregation_rolling
  * @{
- * @file
- * @brief Class defining range-based window boundary sizes for rolling window operations
  */
 
 /**

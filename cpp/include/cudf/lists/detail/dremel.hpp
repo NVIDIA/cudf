@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,11 +50,12 @@ struct dremel_data {
  *
  * Dremel is a query system created by Google for ad hoc data analysis. The Dremel engine is
  * described in depth in the paper "Dremel: Interactive Analysis of Web-Scale
- * Datasets" (https://research.google/pubs/pub36632/). One of the key components of Dremel
- * is an encoding that converts record-like data into a columnar store for efficient memory
- * accesses. The Parquet file format uses Dremel encoding to handle nested data, so libcudf
- * requires some facilities for working with this encoding. Furthermore, libcudf leverages
- * Dremel encoding as a means for performing lexicographic comparisons of nested columns.
+ * Datasets" (https://research.google/pubs/dremel-interactive-analysis-of-web-scale-datasets-2/).
+ * One of the key components of Dremel is an encoding that converts record-like data into a columnar
+ * store for efficient memory accesses. The Parquet file format uses Dremel encoding to handle
+ * nested data, so libcudf requires some facilities for working with this encoding. Furthermore,
+ * libcudf leverages Dremel encoding as a means for performing lexicographic comparisons of nested
+ * columns.
  *
  * Dremel encoding is built around two concepts, the repetition and definition levels.
  * Since describing them thoroughly is out of scope for this docstring, here are a couple of

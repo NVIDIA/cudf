@@ -183,7 +183,8 @@ class mark_join {
             cudf::null_equality compare_nulls,
             double load_factor,
             cudf::join_prefilter prefilter,
-            rmm::cuda_stream_view stream);
+            rmm::cuda_stream_view stream,
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
     cudf::table_view const& right, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);

@@ -9,12 +9,15 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for transposing a table.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reshape_transpose
  * @{
- * @file
- * @brief APIs for transposing a table.
  */
 
 /**

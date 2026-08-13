@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -7,14 +7,17 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 
+/**
+ * @file
+ * @brief tdigest data APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 //! Tdigest interfaces
 namespace tdigest {
 /**
  * @addtogroup tdigest
  * @{
- * @file
- * @brief tdigest data APIs
  */
 
 /**
@@ -22,7 +25,7 @@ namespace tdigest {
  * provides a wrapper on the compound column for tdigest operations.
  *
  * A tdigest is a "compressed" set of input scalars represented as a sorted
- * set of centroids (https://arxiv.org/pdf/1902.04023.pdf).
+ * set of centroids (https://arxiv.org/pdf/1902.04023).
  * This data can be queried for quantile information. Each row in a tdigest
  * column represents an entire tdigest.
  *

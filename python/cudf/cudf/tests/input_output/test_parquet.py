@@ -671,7 +671,7 @@ def test_parquet_reader_select_nonexistent_columns(ignore_missing_columns):
     else:
         with pytest.raises(
             ValueError,
-            match="Encountered non-existent column in selected path",
+            match=r"Encountered non-existent column '[^']+' in the selected path",
         ):
             cudf.read_parquet(
                 buf,
@@ -1306,7 +1306,8 @@ def test_parquet_reader_struct_select_columns_nonexistent_error(data, columns):
     pa.parquet.write_table(table, buff)
 
     with pytest.raises(
-        ValueError, match="Encountered non-existent column in selected path"
+        ValueError,
+        match=r"Encountered non-existent column '[^']+' in the selected path",
     ):
         cudf.read_parquet(buff, columns=columns, ignore_missing_columns=False)
 
@@ -4409,7 +4410,10 @@ def test_parquet_reader_with_mismatched_schemas_error():
 
     with pytest.raises(
         ValueError,
-        match="Encountered mismatching SchemaElement properties for a column in the selected path",
+        match=(
+            r"Encountered mismatching data type or schema across the "
+            r"Parquet sources for column '[^']+'"
+        ),
     ):
         cudf.read_parquet(
             [buf1, buf2], columns=["millis"], allow_mismatched_pq_schemas=True
@@ -4437,8 +4441,11 @@ def test_parquet_reader_with_mismatched_schemas_error():
     df2.to_parquet(buf2)
 
     with pytest.raises(
-        IndexError,
-        match="Encountered mismatching number of children for a column in the selected path",
+        ValueError,
+        match=(
+            r"Encountered mismatching number of children across Parquet "
+            r"sources for column '[^']+'"
+        ),
     ):
         cudf.read_parquet(
             [buf1, buf2],
@@ -4447,8 +4454,11 @@ def test_parquet_reader_with_mismatched_schemas_error():
         )
 
     with pytest.raises(
-        IndexError,
-        match="Encountered mismatching schema tree depths across data sources",
+        ValueError,
+        match=(
+            r"Encountered missing nested column '[^']+' across Parquet "
+            r"sources for column '[^']+'"
+        ),
     ):
         cudf.read_parquet(
             [buf1, buf2],

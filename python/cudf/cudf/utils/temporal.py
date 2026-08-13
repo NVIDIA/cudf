@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 
+import numpy as np
 import pandas as pd
 
 import cudf
@@ -18,6 +19,43 @@ unit_to_nanoseconds_conversion = {
     "h": 3_600_000_000_000,
     "D": 86_400_000_000_000,
 }
+
+_unit_to_name = {
+    "s": "second",
+    "ms": "millisecond",
+    "us": "microsecond",
+    "ns": "nanosecond",
+}
+
+
+def raise_if_datetime_seconds_out_of_bounds(
+    lo: pd.Timestamp, hi: pd.Timestamp, target_unit: str
+) -> None:
+    """Raise OutOfBoundsDatetime if [lo, hi] exceeds target_unit's range.
+
+    The representable range in ``target_unit`` is +/-(2**63 - 1) of that
+    unit since the epoch (the int64 minimum is the NaT sentinel).
+    ``lo``/``hi`` are second-truncated values of the data being checked,
+    so the range is widened to the enclosing whole seconds: values that
+    only exceed the bounds within the boundary second are not detected,
+    but in-bounds values are never rejected. ``lo``/``hi`` may be NaT
+    (e.g. from an all-null column), whose comparisons are always False.
+    """
+    bound = np.iinfo(np.int64).max
+    factor = unit_to_nanoseconds_conversion[target_unit]
+    max_allowed = pd.Timestamp(np.datetime64((bound * factor) // 10**9, "s"))
+    min_allowed = pd.Timestamp(
+        np.datetime64(-((bound * factor + 10**9 - 1) // 10**9), "s")
+    )
+    offender = None
+    if hi > max_allowed:
+        offender = hi
+    elif lo < min_allowed:
+        offender = lo
+    if offender is not None:
+        raise pd.errors.OutOfBoundsDatetime(
+            f"Out of bounds {_unit_to_name[target_unit]} timestamp: {offender}"
+        )
 
 
 def infer_format(element: str, **kwargs) -> str:

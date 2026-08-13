@@ -1220,6 +1220,50 @@ void reprog::check_for_errors()
   }
 }
 
+std::pair<literal_fast_path, std::string> reprog::check_for_literal_fast_path() const
+{
+  if (_flags != regex_flags::DEFAULT) { return {literal_fast_path::NONE, {}}; }
+  if (_startinst_ids.size() > 2) { return {literal_fast_path::NONE, {}}; }
+  auto const count = static_cast<size_type>(_insts.size());
+  if (count < 2) { return {literal_fast_path::NONE, {}}; }
+
+  auto inst = _insts[_startinst_id];
+
+  // Optional BOL at the start of the pattern
+  bool const has_bol = (inst.type == BOL);
+  if (has_bol) {
+    auto const id = inst.u2.next_id;
+    if (id < 0 || id >= count) { return {literal_fast_path::NONE, {}}; }
+    inst = _insts[id];
+  }
+
+  // Accumulate sequential CHAR bytes
+  std::string literal;
+  while (inst.type == CHAR && inst.u1.c != 0) {
+    std::array<char, 5> utf8                     = {};
+    utf8[from_char_utf8(inst.u1.c, utf8.data())] = 0;
+    literal += utf8.data();
+    auto const id = inst.u2.next_id;
+    if (id < 0 || id >= count) { return {literal_fast_path::NONE, {}}; }
+    inst = _insts[id];
+  }
+  if (literal.empty()) { return {literal_fast_path::NONE, {}}; }
+
+  // If we are at END then we are literal-only or starts-with.
+  if (inst.type == END) {
+    return {has_bol ? literal_fast_path::STARTS_WITH : literal_fast_path::LITERAL_ONLY,
+            std::move(literal)};
+  }
+  // Final check for ends-with: EOL followed by END
+  if (!has_bol && inst.type == EOL && inst.u1.c == 'Z') {
+    auto const id = inst.u2.next_id;
+    if (id >= 0 && id < count && _insts[id].type == END) {
+      return {literal_fast_path::ENDS_WITH, std::move(literal)};
+    }
+  }
+  return {literal_fast_path::NONE, {}};
+}
+
 match_flags reprog::compute_match_flags() const
 {
   static std::unordered_set<int> const non_consuming_inst_types{
@@ -1346,6 +1390,14 @@ void reprog::print() const
     printf("\n");
   }
   if (_num_capturing_groups) { printf("Number of capturing groups: %d\n", _num_capturing_groups); }
+
+  auto [fp, literal] = check_for_literal_fast_path();
+  switch (fp) {
+    case literal_fast_path::LITERAL_ONLY: printf("literal-only: %s\n", literal.c_str()); break;
+    case literal_fast_path::STARTS_WITH: printf("starts-with: %s\n", literal.c_str()); break;
+    case literal_fast_path::ENDS_WITH: printf("ends-with: %s\n", literal.c_str()); break;
+    default: break;
+  }
 }
 #endif
 

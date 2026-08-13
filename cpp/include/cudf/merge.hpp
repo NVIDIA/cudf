@@ -12,12 +12,15 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for merging a set of sorted tables into a single sorted table.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_merge
  * @{
- * @file
- * @brief APIs for merging a set of sorted tables into a single sorted table.
  */
 
 /**

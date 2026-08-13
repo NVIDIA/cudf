@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import numpy as np
+import pandas as pd
 
 import pylibcudf as plc
 
@@ -721,7 +722,15 @@ def parse_single_row_loc_key(
                     return MaskIndexer(BooleanMask(key, n))
             elif index.dtype.kind == "M":
                 # Try to turn strings into datetimes
-                key = as_column(key, dtype=index.dtype)
+                try:
+                    key = as_column(key, dtype=index.dtype)
+                except pd.errors.OutOfBoundsDatetime:
+                    if is_scalar:
+                        # A label beyond the index unit's bounds cannot
+                        # be present; pandas raises KeyError for scalar
+                        # lookups but OutOfBoundsDatetime for list keys.
+                        raise KeyError(key.element_indexing(0))
+                    raise
             haystack = index._column
             gather_map = ordered_find(key, haystack)
             if is_scalar and len(gather_map.column) == 1:

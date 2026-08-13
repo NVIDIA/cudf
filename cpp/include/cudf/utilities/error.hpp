@@ -15,12 +15,15 @@
 #include <string>
 #include <type_traits>
 
+/**
+ * @file
+ * @brief Exception types and error-checking macros used throughout libcudf.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup utility_error
  * @{
- * @file
- * @brief Exception types and error-checking macros used throughout libcudf.
  */
 
 /**

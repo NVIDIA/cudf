@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import operator
@@ -11,7 +11,10 @@ import pytest
 
 import cudf
 from cudf.testing import assert_eq
-from cudf.testing._utils import set_random_null_mask_inplace
+from cudf.testing._utils import (
+    gen_rand_ufunc_input,
+    set_random_null_mask_inplace,
+)
 
 
 @pytest.mark.parametrize("has_nulls", [True, False])
@@ -49,7 +52,7 @@ def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
     rng = np.random.default_rng(0)
     pandas_args = args = [
         cudf.Series(
-            rng.integers(low=1, high=10, size=N),
+            gen_rand_ufunc_input(numpy_ufunc, rng, N),
             index=rng.choice(range(N), N, False) if indexed else None,
         )
         for _ in range(numpy_ufunc.nin)
@@ -72,6 +75,16 @@ def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
             else args
         )
         mask = reduce(operator.or_, (a.isna() for a in aligned)).to_pandas()
+        if numpy_ufunc in (np.power, np.float_power):
+            # pandas honors 1 ** x == 1 and x ** 0 == 1 even when x is
+            # missing, and cudf matches, so those positions are valid in the
+            # result. The 0-filled pandas args already compute 1 there
+            # (1 ** 0 and 0 ** 0), so just unmask them.
+            base, exponent = aligned
+            identity = ((base == 1).fillna(False) & exponent.isna()) | (
+                (exponent == 0).fillna(False) & base.isna()
+            )
+            mask &= ~identity.to_pandas()
 
     got = numpy_ufunc(*args)
 

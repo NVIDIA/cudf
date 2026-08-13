@@ -10,13 +10,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for capitalizing strings and detecting title case.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_case
  * @{
- * @file
- * @brief Strings column APIs for capitalizing strings and detecting title case.
  */
 
 /**

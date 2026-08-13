@@ -12,12 +12,15 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief APIs for replacing null and specified values within columns.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup transformation_replace
  * @{
- * @file
- * @brief APIs for replacing null and specified values within columns.
  */
 
 /**

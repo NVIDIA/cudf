@@ -376,7 +376,9 @@ class MultiIndex(Index):
 
         return self._set_names(names=names, inplace=inplace)
 
-    def _maybe_materialize_codes_and_levels(self: Self) -> Self:
+    def _maybe_materialize_codes_and_levels(
+        self: Self, *, sort: bool = True
+    ) -> Self:
         """
         Set self._codes and self._levels from self._columns _when_ needed.
 
@@ -384,12 +386,20 @@ class MultiIndex(Index):
         due to being expensive and sometimes unnecessary for operations.
 
         MultiIndex methods are responsible for calling this when needed.
+
+        ``sort`` controls the order of the materialized ``levels``. The default
+        ``sort=True`` mirrors ``MultiIndex.from_arrays`` (which also factorizes
+        with ``sort=True``), matching pandas' always-sorted levels for indexes
+        built from raw data. Callers that build a ``MultiIndex`` with a
+        meaningful level order (e.g. the result of ``stack``/``unstack``, which
+        pandas constructs with explicit, *unsorted* levels) should pass
+        ``sort=False`` so that a subsequent ``to_pandas()`` preserves that order.
         """
         if self._levels is None and self._codes is None:
             levels = []
             codes = []
             for col in self._data.values():
-                code, cats = factorize(col)
+                code, cats = factorize(col, sort=sort)
                 codes.append(as_column(code.astype(np.dtype(np.int64))))
                 levels.append(cats)
             self._levels = levels
@@ -770,12 +780,60 @@ class MultiIndex(Index):
     @_performance_tracking
     def _compute_validity_mask(self, index, row_tuple, max_length):
         """Computes the valid set of indices of values in the lookup"""
-        # TODO: A non-slice(None) will probably raise in as_column
-        lookup_dict = {
-            i: as_column(row)
-            for i, row in enumerate(row_tuple)
-            if not (isinstance(row, slice) and row == slice(None))
-        }
+        # An all-wildcard per-level key (every component ``slice(None)``, e.g.
+        # ``df.loc[(slice(None), slice(None))]``) is an identity selection of
+        # all rows. Handle it directly: skipping every component below would
+        # build a 0-column lookup whose merge has no common columns and raises.
+        if isinstance(row_tuple, tuple) and all(
+            isinstance(row, slice) and row == slice(None) for row in row_tuple
+        ):
+            return ColumnBase.from_range(range(max_length))
+        # The pandas-matching lookup semantics below (cartesian-product of the
+        # per-level keys, de-duplicated indexer labels, deterministic
+        # result ordering, and strict KeyError for missing labels/combinations)
+        # are intentionally gated on ``mode.pandas_compatible`` rather than
+        # applied unconditionally. Ungating is correctness-safe (the cuDF unit
+        # suite passes either way), but it would change and slow down the
+        # classic (non-compatible) fast path:
+        #   * The deterministic ``sort_values`` was already gated here before
+        #     this code (see the original "deterministic order" comment and the
+        #     ``# TODO: Remove this after merge/join obtain deterministic
+        #     ordering`` note) -- the merge is order-unstable, so the sort is a
+        #     pandas-compat-only cost that classic mode deliberately skips.
+        #   * The per-level membership checks add a GPU scan per level, and the
+        #     multi-level monotonic check needs a host round-trip
+        #     (``to_pandas().apply(tuple, ...)``), on every ``.loc`` call.
+        #   * Classic mode preserves its historical lenient behavior (positional
+        #     zip, no dedup, empty-result instead of KeyError on a missing
+        #     combination).
+        pandas_compatible = cudf.get_option("mode.pandas_compatible")
+        if pandas_compatible:
+            # Build the lookup as the cartesian product, in key order, of the
+            # per-level key lists (pandas semantics). A positional zip of the
+            # level lists would only match the diagonal combinations.
+            positions = []
+            keylists = []
+            for i, row in enumerate(row_tuple):
+                if isinstance(row, slice) and row == slice(None):
+                    continue
+                positions.append(i)
+                keylists.append(
+                    list(row)
+                    if (is_list_like(row) and not isinstance(row, tuple))
+                    else [row]
+                )
+            product = list(itertools.product(*keylists))
+            lookup_dict = {
+                pos: as_column([combo[j] for combo in product])
+                for j, pos in enumerate(positions)
+            }
+        else:
+            # TODO: A non-slice(None) will probably raise in as_column
+            lookup_dict = {
+                i: as_column(row)
+                for i, row in enumerate(row_tuple)
+                if not (isinstance(row, slice) and row == slice(None))
+            }
         lookup = cudf.DataFrame._from_data(lookup_dict)
         frame = cudf.DataFrame._from_data(
             ColumnAccessor(
@@ -801,15 +859,61 @@ class MultiIndex(Index):
         # in a deterministic order.
         # TODO: Remove this after merge/join
         # obtain deterministic ordering.
-        if cudf.get_option("mode.pandas_compatible"):
+        if pandas_compatible:
+            # Drop duplicate lookup keys so that duplicate labels in the
+            # indexer do not cause a cartesian explosion in the merge
+            # (pandas GH#40978).
+            lookup = lookup.drop_duplicates(keep="first")
+            # pandas returns rows in the natural (source-index) order only when
+            # the source index is lexsorted AND the lookup keys are themselves
+            # monotonically increasing (so indexer order == natural order).
+            # Otherwise it returns rows in the order the labels appear in the
+            # indexer.
+            if lookup._num_columns <= 1:
+                lookup_monotonic = (
+                    lookup._num_columns == 0
+                    or lookup._columns[0].is_monotonic_increasing
+                )
+            else:
+                lookup_monotonic = pd.MultiIndex.from_frame(
+                    lookup.to_pandas()
+                ).is_monotonic_increasing
+            natural_order = lookup_monotonic and index.is_monotonic_increasing
             lookup_order = "_" + "_".join(map(str, lookup._column_names))
             lookup[lookup_order] = ColumnBase.from_range(range(len(lookup)))
-            postprocess = operator.methodcaller(
-                "sort_values", by=[lookup_order, "idx"]
-            )
+            if natural_order:
+                postprocess = operator.methodcaller("sort_values", by=["idx"])
+            else:
+                postprocess = operator.methodcaller(
+                    "sort_values", by=[lookup_order, "idx"]
+                )
         else:
             postprocess = lambda r: r  # noqa: E731
         result = postprocess(lookup.merge(data_table))["idx"]
+        if pandas_compatible:
+            # Every requested label (scalar or list element) must exist in its
+            # level, and the requested combination must match at least one
+            # row; otherwise pandas raises KeyError.
+            for idx, row in enumerate(row_tuple):
+                if isinstance(row, slice) and row == slice(None):
+                    continue
+                level_col = index.levels[idx]._column
+                if is_list_like(row) and not isinstance(row, tuple):
+                    # Bulk membership check (one pass) rather than a scan per
+                    # element; only fall back to a host loop to surface the
+                    # first missing label when something is actually absent.
+                    present = as_column(list(row)).isin(level_col)
+                    if not present.all():
+                        for element, ok in zip(
+                            row, present.values.get(), strict=True
+                        ):
+                            if not ok:
+                                raise KeyError(element)
+                elif row not in level_col:
+                    raise KeyError(row)
+            if len(result) == 0:
+                raise KeyError(row_tuple)
+            return result
         # Avoid computing levels unless the result of the merge is empty,
         # which suggests that a KeyError should be raised.
         if len(result) == 0:
@@ -829,6 +933,15 @@ class MultiIndex(Index):
         # if not open end or beginning, get range lowest beginning index
         # to highest ending index
         if isinstance(row_tuple, slice):
+            if row_tuple.step not in (None, 1):
+                # Strided / reversed MultiIndex label slicing is not modeled by
+                # the label-range machinery below (it ignores the step and
+                # reversal, silently returning the wrong rows). Raise so that
+                # pandas-compatible callers fall back to pandas' correct
+                # label-slice handling instead of producing a wrong result.
+                raise NotImplementedError(
+                    "MultiIndex label slicing with a step is not supported"
+                )
             if (
                 isinstance(row_tuple.start, numbers.Number)
                 or isinstance(row_tuple.stop, numbers.Number)
@@ -847,70 +960,80 @@ class MultiIndex(Index):
                 range(start_values.min(), stop_values.max() + 1)
             )
         elif isinstance(row_tuple, numbers.Number):
-            return row_tuple
+            # A scalar row key in .loc is a LABEL on the first level, not a
+            # positional index. Look it up by label so a partial scalar key
+            # (e.g. ``df.loc[10]``) selects matching rows and drops the level.
+            return self._compute_validity_mask(index, (row_tuple,), max_length)
         return self._compute_validity_mask(index, row_tuple, max_length)
 
     @_performance_tracking
-    def _index_and_downcast(self, result, index, index_key):
+    def _index_and_downcast(self, result, index, index_key, per_level=False):
         if isinstance(index_key, (numbers.Number, slice)):
-            index_key = [index_key]
-        if (
-            len(index_key) > 0 and not isinstance(index_key, tuple)
-        ) or isinstance(index_key[0], slice):
-            index_key = index_key[0]
+            index_key = (index_key,)
+        # A bare slice or list-like of level-0 labels (not a per-level tuple)
+        # keeps every level; only set the index on a DataFrame result.
+        if not isinstance(index_key, tuple):
+            if isinstance(result, cudf.DataFrame):
+                result.index = index
+            return result
 
-        slice_access = isinstance(index_key, slice)
-        # Count the last n-k columns where n is the number of columns and k is
-        # the length of the indexing tuple
-        size = 0
-        if not isinstance(index_key, (numbers.Number, slice)):
-            size = len(index_key)
-        num_selected = max(0, index.nlevels - size)
+        nlevels = index.nlevels
+        cols = list(index._columns)
+        names = list(index.names)
 
-        # determine if we should downcast from a DataFrame to a Series
-        need_downcast = (
-            isinstance(result, cudf.DataFrame)
-            and len(result) == 1  # only downcast if we have a single row
-            and not slice_access  # never downcast if we sliced
-            # On a 1-level MultiIndex, keep the result a DataFrame (with the
-            # MultiIndex preserved) rather than downcasting to a Series.
-            and self.nlevels > 1
-            and (
-                size == 0  # index_key was an integer
-                # we indexed into a single row directly, using its label:
-                or len(index_key) == self.nlevels
+        if nlevels == 1:
+            # On a 1-level MultiIndex, keep the result as-is (a DataFrame with
+            # the MultiIndex preserved) rather than dropping the level or
+            # downcasting to a Series.
+            if isinstance(result, cudf.DataFrame):
+                result.index = index
+            return result
+
+        if per_level:
+            # Series.loc / DataFrame "Form A" (a single per-level tuple): drop
+            # exactly the levels selected by a SCALAR, positionally; keep the
+            # levels selected by a slice or a list-like.
+            sel = list(index_key) + [slice(None)] * (nlevels - len(index_key))
+            keep = [i for i, s in enumerate(sel) if not is_scalar(s)]
+        else:
+            # DataFrame two-axis ``loc[rowkey, colkey]``: an all-scalar partial
+            # row tuple drops that many LEADING levels (pandas' all-or-nothing
+            # rule); any slice/list-like keeps all levels.
+            if all(is_scalar(s) for s in index_key):
+                keep = list(range(len(index_key), nlevels))
+            else:
+                keep = list(range(nlevels))
+
+        if len(keep) == 0:
+            # Every level was scalar-selected: collapse one dimension.
+            if isinstance(result, cudf.DataFrame):
+                if len(result) > 1:
+                    # Duplicate full-key matches: pandas keeps every matched
+                    # row as a DataFrame rather than collapsing a dimension.
+                    return result
+                if len(result) == 1:
+                    result = result.T
+                    return result[result._column_names[0]]
+                # Pandas returns an empty Series named by the requested key.
+                return cudf.Series._from_data(
+                    {},
+                    name=tuple(
+                        col.element_indexing(0) if len(col) else None
+                        for col in cols
+                    ),
+                )
+            return result
+
+        if len(keep) == 1:
+            result.index = cudf.Index._from_column(
+                cols[keep[0]], name=names[keep[0]]
             )
-        )
-        if need_downcast:
-            result = result.T
-            return result[result._column_names[0]]
-
-        if len(result) == 0 and not slice_access:
-            # Pandas returns an empty Series with a tuple as name
-            # the one expected result column
-            result = cudf.Series._from_data(
-                {}, name=tuple(col[0] for col in index._columns)
+        else:
+            new_index = MultiIndex._from_data(
+                {i: cols[k] for i, k in enumerate(keep)}
             )
-        elif num_selected == 1:
-            # If there's only one column remaining in the output index, convert
-            # it into an Index and name the final index values according
-            # to that column's name.
-            *_, last_column = index._data.columns
-            index = cudf.Index._from_column(last_column, name=index.names[-1])
-        elif num_selected > 1:
-            # Otherwise pop the leftmost levels, names, and codes from the
-            # source index until it has the correct number of columns (n-k)
-            result.reset_index(drop=True)
-            if index.names is not None:
-                result.names = index.names[size:]
-            index = MultiIndex(
-                levels=index.levels[size:],
-                codes=index._codes[size:],
-                names=index.names[size:],
-            )
-
-        if isinstance(index_key, tuple):
-            result.index = index
+            new_index.names = [names[k] for k in keep]
+            result.index = new_index
         return result
 
     @_performance_tracking
@@ -921,7 +1044,27 @@ class MultiIndex(Index):
         | slice
         | tuple[Any, ...]
         | list[tuple[Any, ...]],
+        per_level: bool = False,
     ) -> DataFrameOrSeries:
+        def _reject_sets(x):
+            # pandas rejects a set or dict anywhere in a .loc indexer. Scan
+            # recursively so it survives ``__getitem__``'s re-nesting retry as
+            # well.
+            if isinstance(x, (set, frozenset)):
+                raise TypeError(
+                    "Passing a set as an indexer is not supported. "
+                    "Use a list instead."
+                )
+            if isinstance(x, dict):
+                raise TypeError(
+                    "Passing a dict as an indexer is not supported. "
+                    "Use a list instead."
+                )
+            if isinstance(x, tuple):
+                for el in x:
+                    _reject_sets(el)
+
+        _reject_sets(row_tuple)
         if isinstance(row_tuple, slice):
             if row_tuple.step == 0:
                 raise ValueError("slice step cannot be zero")
@@ -944,7 +1087,9 @@ class MultiIndex(Index):
         else:
             indices = cudf.Series(valid_indices)
         result = df.take(indices)
-        final = self._index_and_downcast(result, result.index, row_tuple)
+        final = self._index_and_downcast(
+            result, result.index, row_tuple, per_level=per_level
+        )
         return final
 
     @_performance_tracking
@@ -1593,21 +1738,18 @@ class MultiIndex(Index):
             ('aa', 'b')],
            )
         """
-        name_i = self._column_names[i] if isinstance(i, int) else i
-        name_j = self._column_names[j] if isinstance(j, int) else j
-        to_swap = {name_i, name_j}
-        new_data = {}
+        lvl_i = self._level_index_from_level(i)
+        lvl_j = self._level_index_from_level(j)
+        order = list(range(self.nlevels))
+        order[lvl_i], order[lvl_j] = order[lvl_j], order[lvl_i]
+        keys = self._column_names
+        columns = self._columns
         # TODO: Preserve self._codes and self._levels if set
-        for k, v in self._column_labels_and_values:
-            if k not in to_swap:
-                new_data[k] = v
-            elif k == name_i:
-                new_data[name_j] = self._data[name_j]
-            elif k == name_j:
-                new_data[name_i] = self._data[name_i]
-        midx = type(self)._from_data(new_data)
-        if all(n is None for n in self.names):
-            midx = midx.set_names(self.names)
+        midx = type(self)._from_data({keys[k]: columns[k] for k in order})
+        # the accessor keys may be positional stand-ins (e.g. for
+        # duplicated or unset level names), so carry the level names
+        # over from ``self.names`` rather than deriving them from keys
+        midx.names = [self.names[k] for k in order]
         return midx
 
     @_performance_tracking
@@ -1964,14 +2106,14 @@ class MultiIndex(Index):
         except ValueError:
             if not is_integer(level):
                 raise KeyError(f"Level {level} not found")
-            if level < 0:
-                level += self.nlevels
-            if level >= self.nlevels:
+            norm = level + self.nlevels if level < 0 else level
+            if not 0 <= norm < self.nlevels:
+                # matches pandas MultiIndex._get_level_number
                 raise IndexError(
-                    f"Level {level} out of bounds. "
-                    f"Index has {self.nlevels} levels."
+                    f"Too many levels: Index has only {self.nlevels} "
+                    f"levels, {level} is not a valid level number"
                 ) from None
-            return level
+            return norm
 
     @_performance_tracking
     def get_indexer(self, target, method=None, limit=None, tolerance=None):
@@ -2047,6 +2189,18 @@ class MultiIndex(Index):
             )
 
         return self._return_get_indexer_result(result_series.to_cupy())
+
+    def __contains__(self, key) -> bool:
+        # Mirror pandas' ``MultiIndex.__contains__``: delegate to ``get_loc``,
+        # which already implements correct partial- and full-tuple membership.
+        # The inherited ``Index.__contains__`` only checks the first level's
+        # column (treating the whole tuple as a scalar), which is incorrect.
+        hash(key)
+        try:
+            self.get_loc(key)
+            return True
+        except (LookupError, TypeError, ValueError):
+            return False
 
     @_performance_tracking
     def get_loc(self, key):

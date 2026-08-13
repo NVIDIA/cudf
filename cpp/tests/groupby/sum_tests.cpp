@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -282,4 +282,56 @@ TEST_F(GroupByDecimal128ShmemAlignmentTest, Decimal128SumAfterInt32Sum)
     cudf::gather(cudf::table_view({results[1].results[0]->view()}), *sort_order);
   auto const expected = fp128{{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, scale};
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, sorted_result->get_column(0));
+}
+
+// Regression test for https://github.com/rapidsai/cudf/issues/23150.
+// Blackwell returned incorrect sums when aggregating three DECIMAL128 columns.
+TEST_F(GroupByDecimal128ShmemAlignmentTest, MultiColumnDecimal128Sum)
+{
+  using namespace numeric;
+  using fp128 = cudf::test::fixed_point_column_wrapper<__int128_t>;
+
+  constexpr int num_cols             = 3;
+  constexpr cudf::size_type num_rows = 1'000'000;
+  constexpr int num_groups           = 4;
+  auto const scale                   = scale_type{-2};
+
+  // A large base makes each group's running sum cross the 2^64 low-word boundary, exercising
+  // carry propagation in the fallback, and every fifth row is negated to exercise borrow.
+  constexpr __int128_t base = static_cast<__int128_t>(1) << 50;
+
+  std::vector<int32_t> keys_data(num_rows);
+  std::vector<std::vector<__int128_t>> vals_data(num_cols, std::vector<__int128_t>(num_rows));
+  std::vector<std::vector<__int128_t>> sums(num_cols, std::vector<__int128_t>(num_groups, 0));
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    auto const k = i % num_groups;
+    keys_data[i] = k;
+    for (int c = 0; c < num_cols; ++c) {
+      auto v = base + static_cast<__int128_t>((100 + i % 7) * 100 + (13 * c + i) % 100);
+      if (i % 5 == 0) { v = -v; }
+      vals_data[c][i] = v;
+      sums[c][k] += v;
+    }
+  }
+
+  auto const keys =
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys_data.begin(), keys_data.end());
+  std::vector<fp128> vals;
+  std::vector<cudf::groupby::aggregation_request> requests(num_cols);
+  for (int c = 0; c < num_cols; ++c) {
+    vals.emplace_back(vals_data[c].begin(), vals_data[c].end(), scale);
+    requests[c].values = vals[c];
+    requests[c].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  }
+
+  cudf::groupby::groupby gb(cudf::table_view({keys}));
+  auto [result_keys, results] = gb.aggregate(requests);
+
+  auto const sort_order = cudf::sorted_order(result_keys->view());
+  for (int c = 0; c < num_cols; ++c) {
+    auto const sorted =
+      cudf::gather(cudf::table_view({results[c].results[0]->view()}), *sort_order);
+    auto const expected = fp128(sums[c].begin(), sums[c].end(), scale);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, sorted->get_column(0));
+  }
 }

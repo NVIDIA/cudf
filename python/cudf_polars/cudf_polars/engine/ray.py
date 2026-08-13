@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -28,10 +27,12 @@ from rapidsmpf.streaming.core.context import Context
 import cudf_polars.quent
 import cudf_polars.quent._logging
 import cudf_polars.quent._types
+from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
     check_reserved_keys,
+    drop_if_replicated,
     evaluate_on_rank,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
@@ -40,8 +41,13 @@ from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
     bind_to_gpu,
 )
+from cudf_polars.engine.persisted_result import (
+    PersistedBackend,
+    execute_persisted_query,
+)
 from cudf_polars.quent._context import LocalQuentContext
 from cudf_polars.quent._types import Worker
+from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import MemoryResourceConfig, RayContext
 
 if TYPE_CHECKING:
@@ -56,8 +62,55 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.engine.persisted_result import PersistedQueryResult
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
+
+
+class RayPersistedBackend(PersistedBackend):
+    """Persisted-result backend for Ray."""
+
+    def __init__(self, uid: str, rank_actors: list[ActorHandle[RankActor]]) -> None:
+        self._uid = uid
+        self._rank_actors = rank_actors
+
+    def execute_persisted(
+        self,
+        ir: IR,
+        config_options: ConfigOptions[StreamingExecutor],
+        query_id: uuid.UUID,
+    ) -> list[int]:
+        """Run the query on every actor (see :class:`PersistedBackend`)."""
+        actor_config_options = config_options.drop_unserializable()
+        ir_ref = ray.put(ir)
+        try:
+            return ray.get(
+                [
+                    actor.execute_persisted.remote(
+                        self._uid, ir_ref, actor_config_options, query_id=query_id
+                    )
+                    for actor in self._rank_actors
+                ]
+            )
+        except Exception:
+            # An actor may have failed after others already stored their
+            # partition. Drop the query on every actor (idempotent) to avoid
+            # orphaning GPU partitions, then re-raise. drop_persisted suppresses
+            # its own failures, so no outer guard is needed here.
+            self.drop_persisted(query_id)
+            raise
+
+    def drop_persisted(self, query_id: uuid.UUID) -> None:
+        """Drop the query's partitions on every actor (see :class:`PersistedBackend`)."""
+        # Suppress failures so cleanup (GC finalizer / explicit release) never
+        # raises when the actors are already gone (engine shutdown or actor death).
+        with contextlib.suppress(Exception):
+            ray.get(
+                [
+                    actor.drop_persisted.remote(self._uid, query_id)
+                    for actor in self._rank_actors
+                ]
+            )
 
 
 def evaluate_pipeline_ray_mode(
@@ -104,15 +157,7 @@ def evaluate_pipeline_ray_mode(
     if config_options.executor.ray_context is None:
         raise RuntimeError("ray_context must be set when cluster='ray'")
     rank_actors = config_options.executor.ray_context.rank_actors
-
-    # Strip ray_context before pickling config_options for remote calls:
-    # actors don't need the full actor list, and sending actor handles to each
-    # actor is wasteful.
-    actor_config_options = dataclasses.replace(
-        config_options,
-        executor=dataclasses.replace(config_options.executor, ray_context=None),
-    )
-
+    actor_config_options = config_options.drop_unserializable()
     quent_context = config_options.executor.quent_context
     if quent_context is not None:
         quent_logger = config_options.executor.ray_context.quent_logger
@@ -315,6 +360,8 @@ class RankActor:
         # Collective: all ranks idle before any rank tears down its Context.
         if self._comm.nranks > 1:
             barrier(self._comm)
+        # Drop persisted partitions before tearing down the Context.
+        rank_local_store.close_all()
         self._ctx.shutdown()
         self._ctx = None
         self._rapidsmpf_options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -355,6 +402,8 @@ class RankActor:
         # the process. Shut down the Context explicitly on the same thread
         # that constructed it.
         try:
+            # Drop persisted partitions before tearing down the Context.
+            rank_local_store.close_all()
             if self._ctx is not None:
                 self._ctx.shutdown()
         finally:
@@ -432,7 +481,7 @@ class RankActor:
         Returns
         -------
         result
-            This rank's output fragment as a Polars DataFrame.
+            This rank's output partition as a Polars DataFrame.
         metadata
             Collected channel metadata if ``collect_metadata`` is ``True``,
             otherwise ``None``.
@@ -464,7 +513,7 @@ class RankActor:
         # collected list is returned to the client (see the return statement),
         # which is the cost we care about saving when the caller doesn't need
         # the metadata.
-        df, metadata = evaluate_on_rank(
+        gpu_df, metadata = evaluate_on_rank(
             self._ctx,
             self._comm,
             self._py_executor,
@@ -473,9 +522,58 @@ class RankActor:
             local_quent_context=local_quent_context,
             query_id=query_id,
         )
-        if self._comm.rank != 0 and metadata and metadata[-1].duplicated:
-            df = df.clear()
-        return df, metadata if collect_metadata else None
+        gpu_df = drop_if_replicated(gpu_df, self._comm.rank, metadata)
+        return gpu_df.to_polars(), metadata if collect_metadata else None
+
+    def execute_persisted(
+        self,
+        uid: str,
+        ir: IR,
+        config_options: ConfigOptions[StreamingExecutor],
+        *,
+        query_id: uuid.UUID,
+    ) -> int:
+        """
+        Execute a query, keeping this rank's partition GPU-resident on this actor.
+
+        Parameters
+        ----------
+        uid
+            The producing engine's store uid on this actor.
+        ir
+            The pre-lowered IR tree.
+        config_options
+            Executor configuration forwarded from the client.
+        query_id
+            Unique identifier for the query.
+
+        Returns
+        -------
+        This actor's communicator rank.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`setup_worker` has not been called first.
+        """
+        if self._ctx is None or self._comm is None:
+            raise RuntimeError("setup_worker must be called before execute_persisted")
+        return persisted_result.evaluate_and_persist(
+            uid,
+            self._ctx,
+            self._comm,
+            self._py_executor,
+            ir,
+            config_options,
+            query_id,
+            # Partitions are gathered to the client and concatenated, so a
+            # duplicated output is deduplicated to a single copy.
+            deduplicate_replicated=True,
+        )
+
+    def drop_persisted(self, uid: str, query_id: uuid.UUID) -> None:
+        """Drop this query's partitions from this engine's store (idempotent)."""
+        rank_local_store.drop_query(uid, query_id)
 
     def _drain_quent_events(self) -> list[dict[str, Any]]:
         """
@@ -645,6 +743,9 @@ class RayEngine(StreamingEngine):
             engine = quent_context.engine
         else:
             engine = cudf_polars.quent.Engine(id=uuid.uuid4())
+
+        # This engine's store uid, used to key its partitions in each actor's process rank-local store.
+        self._store_uid = uuid.uuid4().hex
 
         if num_ranks is not None:
             if num_ranks < 1:
@@ -934,3 +1035,31 @@ class RayEngine(StreamingEngine):
         return ray.get(
             [rank._run.remote(func, *args, **kwargs) for rank in self.rank_actors]
         )
+
+    @unstable()
+    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:
+        """
+        Execute a :class:`~polars.LazyFrame` and return a distributed result.
+
+        Unlike :meth:`~polars.LazyFrame.collect`, worker outputs remain as separate
+        partitions rather than being concatenated into a single dataframe. Call
+        ``.lazy()`` on the returned result to build further queries.
+
+        Parameters
+        ----------
+        lf
+            The lazy query to execute.
+
+        Returns
+        -------
+        Distributed query result backed by per-rank GPU-persisted partitions
+        kept in the producing actors.
+
+        Examples
+        --------
+        >>> with RayEngine() as engine:  # doctest: +SKIP
+        ...     result = engine.execute(pl.scan_parquet("data/*.parquet"))
+        ...     df = result.lazy().filter(pl.col("x") > 0).collect(engine=engine)
+        """
+        backend = RayPersistedBackend(self._store_uid, self.rank_actors)
+        return execute_persisted_query(self, lf, backend, self._store_uid)

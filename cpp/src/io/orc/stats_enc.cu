@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -140,7 +140,7 @@ struct stats_state_s {
 
 /*
  * Protobuf encoding - see
- * https://developers.google.com/protocol-buffers/docs/encoding
+ * https://protobuf.dev/programming-guides/encoding/
  */
 // Protobuf varint encoding for unsigned int
 __device__ inline uint8_t* pb_encode_uint(uint8_t* p, uint64_t v)

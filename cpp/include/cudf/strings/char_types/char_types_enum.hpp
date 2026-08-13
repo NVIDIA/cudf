@@ -7,13 +7,16 @@
 #include <cstdint>
 #include <type_traits>
 
+/**
+ * @file
+ * @brief Enum of character type bitmask values used to classify string characters
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_types
  * @{
- * @file
- * @brief Enum of character type bitmask values used to classify string characters
  */
 
 /**

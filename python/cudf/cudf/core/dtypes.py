@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -249,6 +249,25 @@ class CategoricalDtype(_BaseDtype):
     def _codes_dtype(self) -> np.dtype:
         """Return the dtype used for categorical codes."""
         return min_unsigned_type(len(self.categories))
+
+    @cached_property
+    def _pandas_codes_dtype(self) -> np.dtype:
+        """The signed dtype pandas uses for these categorical codes.
+
+        pandas coerces codes when constructing categorical data (see
+        ``pandas.core.arrays.categorical.coerce_indexer_dtype``): a signed
+        integer that widens int8 -> int16 -> int32 -> int64 once the
+        category count reaches the narrower type's max (int8 is used only
+        for *fewer* than ``np.iinfo(np.int8).max`` (127) categories). cudf
+        stores codes as the unsigned ``_codes_dtype`` (a zero-copy view of
+        the underlying dictionary indices), so pandas-facing code paths
+        cast to this dtype instead.
+        """
+        n_categories = len(self.categories)
+        for candidate in (np.int8, np.int16, np.int32):
+            if n_categories < np.iinfo(candidate).max:
+                return np.dtype(candidate)
+        return np.dtype(np.int64)
 
     def to_pandas(self) -> pd.CategoricalDtype:
         """

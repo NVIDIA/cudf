@@ -10,14 +10,17 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for filtering elements from each row of a list column using a boolean mask
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 
 /**
  * @addtogroup lists_filtering
  * @{
- * @file
- * @brief APIs for filtering elements from each row of a list column using a boolean mask
  */
 
 /**

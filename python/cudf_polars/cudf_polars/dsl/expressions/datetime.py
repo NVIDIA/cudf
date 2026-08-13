@@ -141,6 +141,7 @@ class TemporalFunction(Expr):
     }
     _valid_ops: ClassVar[set[Name]] = {
         *_COMPONENT_MAP.keys(),
+        Name.Round,
         Name.IsLeapYear,
         Name.OrdinalDay,
         Name.ToString,
@@ -151,6 +152,7 @@ class TemporalFunction(Expr):
         Name.TimeStamp,
         Name.CastTimeUnit,
         Name.Truncate,
+        Name.Date,
         Name.DaysInMonth,
         Name.Quarter,
         *_CENTURY_MILLENNIUM_DIVISOR.keys(),
@@ -175,12 +177,15 @@ class TemporalFunction(Expr):
             self.children[0].dtype.plc_type
         ):
             raise NotImplementedError("ToString is not supported on duration types")
-        elif self.name is TemporalFunction.Name.Truncate:
+        elif self.name in {
+            TemporalFunction.Name.Truncate,
+            TemporalFunction.Name.Round,
+        }:
             every = cast("Literal", self.children[1]).value
             match = re.fullmatch(r"(\d+)(ns|us|ms|s|m|h|d)", every)
             if match is None or int(match.group(1)) != 1:
                 # https://github.com/rapidsai/cudf/issues/18654 to support non-1 buckets
-                raise NotImplementedError(f"Unsupported truncate bucket: {every!r}")
+                raise NotImplementedError(f"Unsupported bucket: {every!r}")
             self.options = (self._TRUNCATE_FREQ_MAP[match.group(2)],)
 
     def do_evaluate(
@@ -224,6 +229,16 @@ class TemporalFunction(Expr):
             return column.astype(
                 DataType(pl.Datetime(time_unit)), stream=df_stream
             ).astype(self.dtype, stream=df_stream)
+        elif self.name is TemporalFunction.Name.Round:
+            (column, _) = columns
+            return Column(
+                plc.datetime.round_datetimes(
+                    column.obj,
+                    self.options[0],
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
         elif self.name is TemporalFunction.Name.Truncate:
             (column, _) = columns
             return Column(
@@ -232,6 +247,14 @@ class TemporalFunction(Expr):
                     self.options[0],
                     stream=df.stream,
                 ),
+                dtype=self.dtype,
+            )
+        elif self.name is TemporalFunction.Name.Date:
+            (column,) = columns
+            # Casting the timestamp to TIMESTAMP_DAYS (the storage of ``pl.Date``)
+            # drops the sub-day component.
+            return Column(
+                plc.unary.cast(column.obj, self.dtype.plc_type, stream=df.stream),
                 dtype=self.dtype,
             )
         elif self.name is TemporalFunction.Name.DaysInMonth:

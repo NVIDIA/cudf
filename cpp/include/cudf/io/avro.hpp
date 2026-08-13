@@ -15,13 +15,16 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for reading Avro files into a table.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief APIs for reading Avro files into a table.
  */
 
 class avro_reader_options_builder;
@@ -151,7 +154,7 @@ class avro_reader_options_builder {
    */
   avro_reader_options_builder& columns(std::vector<std::string> col_names)
   {
-    options._columns = std::move(col_names);
+    options.set_columns(std::move(col_names));
     return *this;
   }
 
@@ -163,7 +166,7 @@ class avro_reader_options_builder {
    */
   avro_reader_options_builder& skip_rows(size_type val)
   {
-    options._skip_rows = val;
+    options.set_skip_rows(val);
     return *this;
   }
 
@@ -175,7 +178,7 @@ class avro_reader_options_builder {
    */
   avro_reader_options_builder& num_rows(size_type val)
   {
-    options._num_rows = val;
+    options.set_num_rows(val);
     return *this;
   }
 

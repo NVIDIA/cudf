@@ -19,13 +19,16 @@
 #include <optional>
 #include <utility>
 
+/**
+ * @file
+ * @brief APIs for conditional joins based on an arbitrary AST predicate expression.
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_join
  * @{
- * @file
- * @brief APIs for conditional joins based on an arbitrary AST predicate expression.
  */
 
 /**

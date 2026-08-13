@@ -83,7 +83,7 @@ class DecimalColumn(NumericalBaseColumn):
         # Narrow type for mypy - we know col_dtype is a decimal type
         assert isinstance(col_dtype, DecimalDtype)
         p = col_dtype.precision
-        # https://docs.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
+        # https://learn.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
         nrows = len(self)
         if reduction_op in {"min", "max"}:
             new_p = p
@@ -344,7 +344,7 @@ def _get_decimal_type(
     precision & scale when performing the binary operation
     `op` for the given dtypes.
 
-    For precision & scale calculations see : https://docs.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
+    For precision & scale calculations see : https://learn.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
     """
 
     # This should at some point be hooked up to libcudf's

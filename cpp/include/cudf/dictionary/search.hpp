@@ -8,13 +8,16 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for searching for a key value within a dictionary column's keys.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace dictionary {
 /**
  * @addtogroup dictionary_search
  * @{
- * @file
- * @brief APIs for searching for a key value within a dictionary column's keys.
  */
 
 /**

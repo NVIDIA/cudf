@@ -190,6 +190,24 @@ def test_cudf_json_writer(pdf, lines):
     assert_eq(pdf_string, gdf_string)
 
 
+@pytest.mark.parametrize("force_ascii", [True, False])
+def test_cudf_json_writer_force_ascii(force_ascii):
+    pdf = pd.DataFrame({"a": [1, 2, 3], "b": ["4", "5", "\U0001f331"]})
+    gdf = cudf.DataFrame(pdf)
+
+    pdf_string = pdf.to_json(
+        orient="records", lines=True, force_ascii=force_ascii
+    )
+    gdf_string = gdf.to_json(
+        orient="records",
+        lines=True,
+        engine="cudf",
+        force_ascii=force_ascii,
+    )
+
+    assert_eq(pdf_string, gdf_string)
+
+
 def test_cudf_json_writer_read(gdf_writer_types):
     dtypes = {
         col_name: col_name[len("col_") :]

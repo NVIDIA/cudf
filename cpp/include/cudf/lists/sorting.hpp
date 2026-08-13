@@ -10,13 +10,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief API for segmented sorting of elements within each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_sort
  * @{
- * @file
- * @brief API for segmented sorting of elements within each row of a list column
  */
 
 /**

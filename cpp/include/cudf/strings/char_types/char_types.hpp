@@ -10,13 +10,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for identifying and filtering strings by character type
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_types
  * @{
- * @file
- * @brief APIs for identifying and filtering strings by character type
  */
 
 /**

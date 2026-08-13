@@ -502,10 +502,14 @@ int main(int argc, char** argv)
 
   // We're only going to measure the last run, so disable initially.
   stats->disable();
+  RAPIDSMPF_EXPECTS(args.pinned_mem_disable || rapidsmpf::is_pinned_memory_resources_supported(),
+                    "pinned host memory is not supported on this system; pass `-L` to disable it.",
+                    std::runtime_error);
+  auto pinned_pool_properties =
+    args.pinned_mem_disable ? rapidsmpf::PinnedMemoryDisabled : rapidsmpf::PinnedPoolProperties{};
   auto br = rapidsmpf::BufferResource::create(
     rmm_mr,
-    args.pinned_mem_disable ? rapidsmpf::PinnedMemoryResource::Disabled
-                            : rapidsmpf::PinnedMemoryResource::make_if_available(),
+    std::move(pinned_pool_properties),
     std::move(memory_limits),
     std::chrono::milliseconds{1},
     std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking),

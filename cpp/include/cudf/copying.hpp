@@ -19,13 +19,16 @@
 #include <span>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for gather, scatter, split, slice, etc.
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_copy
  * @{
- * @file
- * @brief Column APIs for gather, scatter, split, slice, etc.
  */
 
 /**

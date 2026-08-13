@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
-#include "strings/regex/regcomp.h"
+#include "common.cuh"
+#include "regcomp.h"
 
 #include <cudf/strings/regex/flags.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -12,8 +13,6 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
-#include <cuda/std/optional>
-#include <cuda/std/utility>
 #include <cuda_runtime.h>
 
 #include <functional>
@@ -23,36 +22,12 @@ namespace cudf {
 namespace strings {
 namespace detail {
 
-/**
- * @brief Template type used on `find` to specify desired position values in returned match_result
- */
-enum class positional : int8_t {
-  BEGIN_END = 0,  /// both begin and end positions are returned
-  END_ONLY  = 1,  /// only the end position is returned
-};
-
 template <positional P>
 struct reljunk;
-
-using match_pair   = cuda::std::pair<cudf::size_type, cudf::size_type>;
-using match_result = cuda::std::optional<match_pair>;
 
 constexpr int32_t MAX_SHARED_MEM      = 2048;  ///< Memory size for storing prog instruction data
 constexpr std::size_t MAX_WORKING_MEM = 0x01'FFFF'FFFF;  ///< Memory size for state data
 constexpr int32_t MINIMUM_THREADS     = 256;  // Minimum threads for computing working memory
-
-/**
- * @brief Regex class stored on the device and executed by reprog_device.
- *
- * This class holds the unique data for any regex CCLASS instruction.
- */
-struct alignas(16) reclass_device {
-  int32_t builtins{};
-  int32_t count{};
-  reclass_range const* literals{};
-
-  __device__ inline bool is_match(char32_t const ch, uint8_t const* flags) const;
-};
 
 class reprog;
 
@@ -68,7 +43,7 @@ class reprog;
  * Once the buffer is allocated, pass the device pointer to the `set_working_memory()`
  * member function.
  */
-class reprog_device {
+class alignas(16) reprog_device {
  public:
   reprog_device()                                = delete;
   ~reprog_device()                               = default;
@@ -119,12 +94,14 @@ class reprog_device {
   }
 
   /**
-   * @brief Returns the size needed for working memory for the given thread count.
+   * @brief Return the size in bytes needed for working memory to
+   * execute insts_count instructions in parallel over num_threads threads.
    *
-   * @param num_threads Number of threads to be executed in parallel
-   * @return Size of working memory in bytes
+   * @param num_threads Number of parallel threads (usually one per string in a strings column)
+   * @param insts_count Number of instructions from a compiled regex pattern
+   * @return Number of bytes needed for working memory
    */
-  [[nodiscard]] std::size_t working_memory_size(int32_t num_threads) const;
+  static std::size_t compute_working_memory_size(int32_t num_threads, int32_t insts_count);
 
   /**
    * @brief Compute working memory for the given thread count with a maximum size.
@@ -232,6 +209,11 @@ class reprog_device {
   [[nodiscard]] __device__ inline reclass_device get_class(int32_t id) const;
 
   /**
+   * @brief Returns the size needed for working memory for the given thread count for this instance
+   */
+  [[nodiscard]] std::size_t working_memory_size(int32_t num_threads) const;
+
+  /**
    * @brief Executes the regex pattern on the given string.
    */
   template <positional P>
@@ -265,22 +247,12 @@ class reprog_device {
   reinst const* _insts{};             // array of regex instructions
   int32_t const* _startinst_ids{};    // array of start instruction ids
   reclass_device const* _classes{};   // array of regex classes
+  bool _empty_match_possible{};       // true if the regex can match an empty string
 
-  std::size_t _prog_size{};      // total size of this instance
-  void* _buffer{};               // working memory buffer
-  int32_t _thread_count{};       // threads available in working memory
-  bool _empty_match_possible{};  // true if the regex can match an empty string
+  std::size_t _prog_size{};  // total size of this instance
+  void* _buffer{};           // working memory buffer
+  int32_t _thread_count{};   // threads available in working memory
 };
-
-/**
- * @brief Return the size in bytes needed for working memory to
- * execute insts_count instructions in parallel over num_threads threads.
- *
- * @param num_threads Number of parallel threads (usually one per string in a strings column)
- * @param insts_count Number of instructions from a compiled regex pattern
- * @return Number of bytes needed for working memory
- */
-std::size_t compute_working_memory_size(int32_t num_threads, int32_t insts_count);
 
 /**
  * @brief Converts a match_pair from character positions to byte positions

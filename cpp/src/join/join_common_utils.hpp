@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -19,6 +19,15 @@
 namespace cudf::detail {
 
 constexpr int DEFAULT_JOIN_BLOCK_SIZE = 128;
+
+/**
+ * @brief Validates and returns a hash-table load factor.
+ *
+ * @param load_factor The load factor to validate
+ * @return The validated load factor
+ * @throws std::invalid_argument if `load_factor` is not in (0, 1]
+ */
+double checked_load_factor(double load_factor);
 
 // Convenient alias for a pair of unique pointers to device uvectors.
 using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

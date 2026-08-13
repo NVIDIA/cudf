@@ -303,9 +303,8 @@ class CategoricalColumn(ColumnBase):
         if arrow_type:
             raise NotImplementedError(f"{arrow_type=} is not supported.")
 
-        signed_dtype = min_signed_type(len(self.categories))
         codes = (
-            self.codes.astype(signed_dtype)
+            self.codes.astype(self.dtype._pandas_codes_dtype)
             .fillna(_DEFAULT_CATEGORICAL_VALUE)
             .to_numpy()
         )

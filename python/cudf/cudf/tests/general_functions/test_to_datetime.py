@@ -453,3 +453,25 @@ def test_to_datetime_rejects_non_datetime_dotted_string():
         ValueError, match="Unable to infer the timestamp format"
     ):
         cudf.to_datetime(cudf.Series(["1.2"]))
+
+
+def test_to_datetime_out_of_bounds_nanosecond_precision_string():
+    # More than 6 fractional-second digits imply nanosecond precision,
+    # and year 2263 exceeds the nanosecond Timestamp range.
+    data = np.array(["2263-01-01 00:00:00.123456789"], dtype=object)
+    assert_exceptions_equal(
+        lfunc=pd.to_datetime,
+        rfunc=cudf.to_datetime,
+        lfunc_args_and_kwargs=([data],),
+        rfunc_args_and_kwargs=([data],),
+    )
+
+
+def test_to_datetime_format_f_out_of_ns_bounds_keeps_us():
+    # With an explicit %f format, values beyond the nanosecond range
+    # keep microsecond precision like pandas' unit inference.
+    data = ["2263-01-01 00:00:00.123456"]
+    fmt = "%Y-%m-%d %H:%M:%S.%f"
+    expected = pd.to_datetime(data, format=fmt)
+    result = cudf.to_datetime(data, format=fmt)
+    assert_eq(result, expected)

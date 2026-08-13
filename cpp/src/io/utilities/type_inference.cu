@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cub/block/block_reduce.cuh>
+#include <cuda/iterator>
 #include <cuda/std/tuple>
 
 #include <cstddef>
@@ -247,7 +248,7 @@ cudf::io::column_type_histogram infer_column_type(OptionsView const& options,
 cudf::data_type infer_data_type(
   cudf::io::json_inference_options_view const& options,
   device_span<char const> data,
-  thrust::zip_iterator<cuda::std::tuple<size_type const*, size_type const*>> offset_length_begin,
+  cuda::zip_iterator<size_type const*, size_type const*> offset_length_begin,
   std::size_t const size,
   rmm::cuda_stream_view stream)
 {

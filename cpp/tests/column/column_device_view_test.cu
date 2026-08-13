@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
@@ -55,4 +56,30 @@ TEST_F(ColumnDeviceViewTest, MismatchingType)
                             input_device_view->end<T>(),
                             output_device_view->begin<int64_t>()),
                cudf::logic_error);
+}
+
+TEST_F(ColumnDeviceViewTest, ExplicitMemoryResourceControl)
+{
+  auto harness = cudf::test::memory_resource_test_harness{this->mr()};
+  auto stream  = cudf::get_default_stream();
+  auto input   = cudf::test::strings_column_wrapper({"one", "two"}).release();
+
+  auto immutable_view = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result = cudf::column_device_view::create(input->view(), stream, harness.output_mr());
+    harness.synchronize(stream);
+    return result;
+  }();
+  auto mutable_view = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result =
+      cudf::mutable_column_device_view::create(input->mutable_view(), stream, harness.output_mr());
+    harness.synchronize(stream);
+    return result;
+  }();
+
+  harness.expect_output_allocations_live(stream);
+  immutable_view.reset();
+  mutable_view.reset();
+  harness.expect_no_live_allocations(stream);
 }

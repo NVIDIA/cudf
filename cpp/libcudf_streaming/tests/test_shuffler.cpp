@@ -139,8 +139,7 @@ class MemoryLimits_NumPartition
     memory_limits        = std::get<0>(GetParam());
     total_num_partitions = std::get<1>(GetParam());
     total_num_rows       = std::get<2>(GetParam());
-    br                   = rapidsmpf::BufferResource::create(
-      mr(), rapidsmpf::PinnedMemoryResource::Disabled, memory_limits);
+    br = rapidsmpf::BufferResource::create(mr(), rapidsmpf::PinnedMemoryDisabled, memory_limits);
 
     shuffler = std::make_unique<rapidsmpf::shuffler::Shuffler>(GlobalEnvironment->comm_,
                                                                0,  // op_id
@@ -267,7 +266,7 @@ TEST(Shuffler, SpillOnInsertAndExtraction)
   // exposed via `device_mr_adaptor()`, so the test can observe per-rank
   // allocation counts via `get_main_record().num_current_allocs()`.
   auto br        = rapidsmpf::BufferResource::create(cudf::get_current_device_resource_ref(),
-                                              rapidsmpf::PinnedMemoryResource::Disabled,
+                                              rapidsmpf::PinnedMemoryDisabled,
                                                      {{rapidsmpf::MemoryType::DEVICE, k_no_spill_limit}},
                                               std::nullopt  // disable periodic spill check
   );

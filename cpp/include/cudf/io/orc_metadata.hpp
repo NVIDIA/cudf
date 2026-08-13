@@ -23,7 +23,6 @@ namespace io {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 //! ORC data type

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import logging
@@ -30,10 +31,12 @@ from rapidsmpf.streaming.core.context import Context
 import cudf_polars.quent
 import cudf_polars.quent._logging
 import cudf_polars.quent._types
+from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
     check_reserved_keys,
+    drop_if_replicated,
     evaluate_on_rank,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
@@ -42,7 +45,12 @@ from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
     bind_to_gpu,
 )
+from cudf_polars.engine.persisted_result import (
+    PersistedBackend,
+    execute_persisted_query,
+)
 from cudf_polars.quent._context import LocalQuentContext
+from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import DaskContext, MemoryResourceConfig
 
 if TYPE_CHECKING:
@@ -55,6 +63,7 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.engine.persisted_result import PersistedQueryResult
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -122,6 +131,99 @@ class _WorkerContext:
     quent_worker: cudf_polars.quent._types.Worker
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
+
+
+def _worker_evaluate_persisted(
+    ir: IR,
+    config_options: ConfigOptions[StreamingExecutor],
+    *,
+    uid: str,
+    query_id: uuid.UUID,
+    dask_worker: distributed.Worker | None = None,
+) -> int:
+    """
+    Evaluate a query on this worker, keeping its partition GPU-resident.
+
+    Parameters
+    ----------
+    ir
+        Pre-lowered root IR node.
+    config_options
+        Executor configuration (``dask_context`` is already stripped).
+    uid
+        Unique identifier for the cluster instance.
+    query_id
+        Unique identifier for the query.
+    dask_worker
+        Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
+
+    Returns
+    -------
+    This worker's rank index.
+    """
+    assert dask_worker is not None
+    mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
+    if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
+        raise RuntimeError(
+            "_setup_worker must be called before _worker_evaluate_persisted"
+        )
+    return persisted_result.evaluate_and_persist(
+        uid,
+        mp_ctx.ctx,
+        mp_ctx.comm,
+        mp_ctx.py_executor,
+        ir,
+        config_options,
+        query_id,
+        # Partitions are gathered to the client and concatenated, so a duplicated
+        # output is deduplicated to a single copy.
+        deduplicate_replicated=True,
+    )
+
+
+class DaskPersistedBackend(PersistedBackend):
+    """Persisted-result backend for Dask."""
+
+    def __init__(self, dask_context: DaskContext) -> None:
+        self._client = dask_context.client
+        self._uid = dask_context.rapidsmpf_id
+        self._addresses: tuple[str, ...] = ()
+
+    def execute_persisted(
+        self,
+        ir: IR,
+        config_options: ConfigOptions[StreamingExecutor],
+        query_id: uuid.UUID,
+    ) -> list[int]:
+        """Run the query on every worker (see :class:`PersistedBackend`)."""
+        worker_config = config_options.drop_unserializable()
+        # {worker_address: rank}; the partition for that rank stays there.
+        try:
+            rank_map = self._client.run(
+                functools.partial(_worker_evaluate_persisted, uid=self._uid),
+                ir,
+                worker_config,
+                query_id=query_id,
+            )
+        except Exception:
+            # A worker may have failed after others already stored their
+            # partition. _addresses is still empty (client.run raised before
+            # returning), so drop_persisted broadcasts to every worker.
+            self.drop_persisted(query_id)
+            raise
+        self._addresses = tuple(rank_map.keys())
+        return list(rank_map.values())
+
+    def drop_persisted(self, query_id: uuid.UUID) -> None:
+        """Drop the query's partitions on every worker (see :class:`PersistedBackend`)."""
+        # Empty tuple -> None so client.run targets all workers (failure path).
+        targets = list(self._addresses) or None
+        # Suppress failures so cleanup (GC finalizer / explicit release) never
+        # raises when the workers are already gone (engine shutdown or worker death).
+        with contextlib.suppress(Exception):
+            self._client.run(
+                rank_local_store.drop_query, self._uid, query_id, workers=targets
+            )
 
 
 def _setup_root(
@@ -356,6 +458,9 @@ def _teardown_worker(
             mp_ctx.quent_logger.emit(mp_ctx.quent_worker._exit())
             traces = mp_ctx.quent_logger.drain()
 
+        # Drop this engine's persisted partitions before the Context is torn down,
+        # so they don't outlive their allocator.
+        rank_local_store.close_store(uid)
         if mp_ctx.py_executor is not None:
             mp_ctx.py_executor.shutdown(wait=True, cancel_futures=True)
         # Shut down the Context explicitly on the same thread that
@@ -405,6 +510,9 @@ def _reset_worker(
     # Collective: all ranks idle before any rank tears down its Context.
     if mp_ctx.comm.nranks > 1:
         barrier(mp_ctx.comm)
+    # Drop this engine's persisted partitions before the Context is torn down, so they
+    # don't outlive their allocator. This invalidates any live QueryResult from execute().
+    rank_local_store.close_store(uid)
     # Explicit shutdown is thread-affine. ``distributed.worker.run``
     # dispatches sync work onto the worker's event-loop thread, which is
     # the same thread that built the Context in ``_setup_worker``.
@@ -463,7 +571,7 @@ def _worker_evaluate(
     query_id: uuid.UUID,
     quent_context: cudf_polars.quent.QuentContext | None = None,
     dask_worker: distributed.Worker | None = None,
-) -> tuple[pl.DataFrame, list[ChannelMetadata] | None]:
+) -> tuple[int, pl.DataFrame, list[ChannelMetadata] | None]:
     """
     Lower and execute a Polars IR query on this Dask worker's GPU.
 
@@ -491,8 +599,10 @@ def _worker_evaluate(
 
     Returns
     -------
+    rank
+        This worker's rank index.
     result
-        This worker's output fragment as a Polars DataFrame.
+        This worker's output partition as a Polars DataFrame.
     metadata
         Collected channel metadata if ``collect_metadata`` is ``True``,
         otherwise ``None``.
@@ -516,7 +626,7 @@ def _worker_evaluate(
     # collect_metadata parameter still controls whether the collected list is
     # returned to the client (see the return statement), which is the cost we
     # care about saving when the caller doesn't need the metadata.
-    df, metadata = evaluate_on_rank(
+    gpu_df, metadata = evaluate_on_rank(
         mp_ctx.ctx,
         mp_ctx.comm,
         mp_ctx.py_executor,
@@ -525,9 +635,8 @@ def _worker_evaluate(
         local_quent_context=local_quent_context,
         query_id=query_id,
     )
-    if mp_ctx.comm.rank != 0 and metadata and metadata[-1].duplicated:
-        df = df.clear()
-    return df, metadata if collect_metadata else None
+    gpu_df = drop_if_replicated(gpu_df, mp_ctx.comm.rank, metadata)
+    return mp_ctx.comm.rank, gpu_df.to_polars(), metadata if collect_metadata else None
 
 
 def drain_quent_events(
@@ -596,12 +705,7 @@ def evaluate_pipeline_dask_mode(
         quent_context._emit_query_group_events(quent_logger)
         quent_context._emit_query_events(quent_logger)
 
-    # Strip dask_context before pickling config_options for remote calls.
-    worker_config = dataclasses.replace(
-        config_options,
-        executor=dataclasses.replace(config_options.executor, dask_context=None),
-    )
-
+    worker_config = config_options.drop_unserializable()
     result_map = dask_context.client.run(
         functools.partial(_worker_evaluate, uid=dask_context.rapidsmpf_id),
         ir,
@@ -611,10 +715,10 @@ def evaluate_pipeline_dask_mode(
         query_id=query_id,
     )
 
-    dfs: list[pl.DataFrame] = []
+    ranked: list[tuple[int, pl.DataFrame]] = []
     metadata_collector: list[ChannelMetadata] = []
-    for df, md in result_map.values():
-        dfs.append(df)
+    for rank, df, md in result_map.values():
+        ranked.append((rank, df))
         if md is not None:
             metadata_collector.extend(md)
 
@@ -622,6 +726,9 @@ def evaluate_pipeline_dask_mode(
         quent_logger = dask_context.quent_logger
         assert quent_logger is not None
         quent_context._emit_query_exit_events(quent_logger)
+
+    ranked.sort(key=lambda p: p[0])
+    dfs = [df for _, df in ranked]
     return pl.concat(dfs), metadata_collector or None
 
 
@@ -1047,3 +1154,31 @@ class DaskEngine(StreamingEngine):
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         return list(self._dask_ctx.client.run(func, *args, **kwargs).values())
+
+    @unstable()
+    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:
+        """
+        Execute a :class:`~polars.LazyFrame` and return a distributed result.
+
+        Unlike :meth:`~polars.LazyFrame.collect`, worker outputs remain as separate
+        partitions rather than being concatenated into a single dataframe. Call
+        ``.lazy()`` on the returned result to build further queries.
+
+        Parameters
+        ----------
+        lf
+            The lazy query to execute.
+
+        Returns
+        -------
+        A persisted query result; each rank's partition stays GPU-resident on
+        the worker that produced it.
+
+        Examples
+        --------
+        >>> with DaskEngine() as engine:  # doctest: +SKIP
+        ...     result = engine.execute(pl.scan_parquet("data/*.parquet"))
+        ...     df = result.lazy().filter(pl.col("x") > 0).collect(engine=engine)
+        """
+        backend = DaskPersistedBackend(self._dask_ctx)
+        return execute_persisted_query(self, lf, backend, self._dask_ctx.rapidsmpf_id)

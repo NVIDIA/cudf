@@ -25,7 +25,11 @@ from cudf_polars.dsl.expressions.binaryop import BinOp
 from cudf_polars.dsl.expressions.boolean import BooleanFunction
 from cudf_polars.dsl.expressions.datetime import TemporalFunction
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
-from cudf_polars.dsl.expressions.rolling import GroupedWindow, RollingWindow
+from cudf_polars.dsl.expressions.rolling import (
+    FixedSizeRollingWindow,
+    GroupedWindow,
+    RollingWindow,
+)
 from cudf_polars.dsl.expressions.selection import Filter, Gather
 from cudf_polars.dsl.expressions.slicing import Slice
 from cudf_polars.dsl.expressions.sorting import Sort, SortBy
@@ -44,6 +48,7 @@ __all__ = [
     "ErrorExpr",
     "Expr",
     "Filter",
+    "FixedSizeRollingWindow",
     "Gather",
     "GroupedWindow",
     "Item",

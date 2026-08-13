@@ -584,6 +584,7 @@ void host_decompress(compression_type compression,
     h_results[i] = {tasks[i].get(), codec_status::SUCCESS};
   }
 
+  cudf::detail::join_streams(streams, stream);
   cudf::detail::cuda_memcpy<codec_exec_result>(results, h_results, stream);
 }
 
@@ -790,20 +791,37 @@ void decompress(compression_type compression,
     results, stream, cudf::get_current_device_resource_ref());
   device_span<codec_exec_result> results_view = tmp_results;
 
-  auto const streams = cudf::detail::fork_streams(stream, 2);
-  detail::device_decompress(compression,
-                            inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
-                            outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
-                            results_view.subspan(split_idx, results_view.size() - split_idx),
-                            max_uncomp_chunk_size,
-                            max_total_uncomp_size,
-                            streams[0]);
-  detail::host_decompress(compression,
-                          inputs_view.subspan(0, split_idx),
-                          outputs_view.subspan(0, split_idx),
-                          results_view.subspan(0, split_idx),
-                          streams[1]);
-  cudf::detail::join_streams(streams, stream);
+  // Chunks [0, split_idx) go to the host engine, [split_idx, end) to the device engine.
+  auto const has_host_work   = split_idx > 0;
+  auto const has_device_work = split_idx < inputs_view.size();
+
+  // Only fork/join when both host and device have work.
+  if (has_host_work and has_device_work) {
+    auto const streams = cudf::detail::fork_streams(stream, 2);
+    detail::device_decompress(compression,
+                              inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
+                              outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
+                              results_view.subspan(split_idx, results_view.size() - split_idx),
+                              max_uncomp_chunk_size,
+                              max_total_uncomp_size,
+                              streams[0]);
+    detail::host_decompress(compression,
+                            inputs_view.subspan(0, split_idx),
+                            outputs_view.subspan(0, split_idx),
+                            results_view.subspan(0, split_idx),
+                            streams[1]);
+    cudf::detail::join_streams(streams, stream);
+  } else if (has_device_work) {
+    detail::device_decompress(compression,
+                              inputs_view,
+                              outputs_view,
+                              results_view,
+                              max_uncomp_chunk_size,
+                              max_total_uncomp_size,
+                              stream);
+  } else {
+    detail::host_decompress(compression, inputs_view, outputs_view, results_view, stream);
+  }
 
   copy_results_to_original_order(results_view, results, order, stream);
 }

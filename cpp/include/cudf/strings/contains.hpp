@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,6 +10,11 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file strings/contains.hpp
+ * @brief Strings APIs for regex contains, count, matches, like
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -18,8 +23,6 @@ struct regex_program;
 /**
  * @addtogroup strings_contains
  * @{
- * @file strings/contains.hpp
- * @brief Strings APIs for regex contains, count, matches, like
  */
 
 /**

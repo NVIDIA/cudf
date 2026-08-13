@@ -14,12 +14,15 @@
 #include <memory>
 #include <span>
 
+/**
+ * @file
+ * @brief Concatenate columns APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup copy_concatenate
  * @{
- * @file
- * @brief Concatenate columns APIs
  */
 
 /**

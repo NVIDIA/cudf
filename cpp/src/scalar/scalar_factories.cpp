@@ -15,6 +15,8 @@
 namespace cudf {
 namespace {
 struct scalar_construction_helper {
+  data_type type_;
+
   template <typename T,
             std::enable_if_t<is_fixed_width<T>() and not is_fixed_point<T>()>* = nullptr>
   std::unique_ptr<scalar> operator()(rmm::cuda_stream_view stream,
@@ -31,7 +33,8 @@ struct scalar_construction_helper {
   {
     using Type       = device_storage_type_t<T>;
     using ScalarType = scalar_type_t<T>;
-    return std::make_unique<ScalarType>(Type{}, numeric::scale_type{0}, false, stream, mr);
+    return std::make_unique<ScalarType>(
+      Type{}, numeric::scale_type{type_.scale()}, false, stream, mr);
   }
 
   template <typename T, typename... Args, std::enable_if_t<not is_fixed_width<T>()>* = nullptr>
@@ -49,7 +52,7 @@ std::unique_ptr<scalar> make_numeric_scalar(data_type type,
 {
   CUDF_EXPECTS(is_numeric(type), "Invalid, non-numeric type.");
 
-  return type_dispatcher(type, scalar_construction_helper{}, stream, mr);
+  return type_dispatcher(type, scalar_construction_helper{type}, stream, mr);
 }
 
 // Allocate storage for a single timestamp element
@@ -59,7 +62,7 @@ std::unique_ptr<scalar> make_timestamp_scalar(data_type type,
 {
   CUDF_EXPECTS(is_timestamp(type), "Invalid, non-timestamp type.");
 
-  return type_dispatcher(type, scalar_construction_helper{}, stream, mr);
+  return type_dispatcher(type, scalar_construction_helper{type}, stream, mr);
 }
 
 // Allocate storage for a single duration element
@@ -69,7 +72,7 @@ std::unique_ptr<scalar> make_duration_scalar(data_type type,
 {
   CUDF_EXPECTS(is_duration(type), "Invalid, non-duration type.");
 
-  return type_dispatcher(type, scalar_construction_helper{}, stream, mr);
+  return type_dispatcher(type, scalar_construction_helper{type}, stream, mr);
 }
 
 // Allocate storage for a single fixed width element
@@ -79,7 +82,7 @@ std::unique_ptr<scalar> make_fixed_width_scalar(data_type type,
 {
   CUDF_EXPECTS(is_fixed_width(type), "Invalid, non-fixed-width type.");
 
-  return type_dispatcher(type, scalar_construction_helper{}, stream, mr);
+  return type_dispatcher(type, scalar_construction_helper{type}, stream, mr);
 }
 
 std::unique_ptr<scalar> make_list_scalar(column_view elements,

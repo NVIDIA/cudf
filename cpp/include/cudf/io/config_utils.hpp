@@ -6,6 +6,11 @@
 
 #include <cudf/utilities/export.hpp>
 
+/**
+ * @file
+ * @brief APIs for configuring KvikIO-based I/O behavior.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 //! `KvikIO`
@@ -14,8 +19,6 @@ namespace kvikio_integration {
 /**
  * @addtogroup io_configuration
  * @{
- * @file
- * @brief APIs for configuring KvikIO-based I/O behavior.
  */
 
 /**

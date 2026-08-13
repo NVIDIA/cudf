@@ -9,13 +9,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for querying JSON values from a strings column using `get_json_object()`
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup json_object
  * @{
- * @file
- * @brief APIs for querying JSON values from a strings column using `get_json_object()`
  */
 
 /**
@@ -140,7 +143,7 @@ class get_json_object_options {
  * Applies a JSONPath string to an incoming strings column where each row in the column
  * is a valid json string.  The output is returned by row as a strings column.
  *
- * https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+ * https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
  * Implements only the operators: $ . [] *
  *
  * @throw std::invalid_argument if provided an invalid operator or an empty name

@@ -14,14 +14,17 @@
 #include <optional>
 #include <string_view>
 
+/**
+ * @file
+ * @brief APIs for splitting text data on multibyte delimiters.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 namespace text {
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief APIs for splitting text data on multibyte delimiters.
  */
 
 /**

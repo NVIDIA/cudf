@@ -13,7 +13,7 @@ the cuDF library directly should be considered.
 
 - cuDF does offer some functions and methods that pandas does not. For
   example, cuDF has a [`.list`
-  accessor](https://docs.rapids.ai/api/cudf/stable/api_docs/list_handling/)
+  accessor](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/series/#list-handling)
   for working with list-like data. If you need access to the
   additional functionality in cuDF, you will need to use the cuDF
   package directly.

@@ -3,6 +3,7 @@
 
 import functools
 import operator
+import re
 
 import numpy as np
 import pandas as pd
@@ -560,3 +561,17 @@ def test_lists_contains_bool():
 
     assert data.list.contains(True)[0]
     assert not data.list.contains(False)[0]
+
+
+def test_list_accessor_invalid_dtype_message():
+    # The .list accessor error message names the required 'list[pyarrow]'
+    # dtype and reports the offending dtype, matching pandas.
+    gs = cudf.Series([1, 2, 3])
+    with pytest.raises(
+        AttributeError,
+        match=re.escape(
+            "Can only use the '.list' accessor with 'list[pyarrow]' dtype, "
+            "not int64."
+        ),
+    ):
+        gs.list

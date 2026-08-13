@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int64_t, uint8_t
 
@@ -49,6 +49,7 @@ cdef class ParquetReaderOptions:
     cpdef void set_columns(self, list col_names)
     cpdef void set_column_names(self, list col_names)
     cpdef void set_column_indices(self, list col_indices)
+    cpdef void set_column_field_ids(self, list column_field_ids)
     cpdef void set_filter(self, Expression filter)
     cpdef void set_source(self, SourceInfo src)
     cpdef bool is_enabled_use_jit_filter(self)
@@ -68,6 +69,7 @@ cdef class ParquetReaderOptionsBuilder:
     cpdef ParquetReaderOptionsBuilder columns(self, list col_names)
     cpdef ParquetReaderOptionsBuilder column_names(self, list col_names)
     cpdef ParquetReaderOptionsBuilder column_indices(self, list col_indices)
+    cpdef ParquetReaderOptionsBuilder column_field_ids(self, list column_field_ids)
     cpdef ParquetReaderOptionsBuilder use_jit_filter(self, bool use_jit_filter)
     cpdef ParquetReaderOptionsBuilder case_sensitive_names(self, bool val)
     cpdef ParquetReaderOptionsBuilder decimal_width(self, type_id width)

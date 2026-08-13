@@ -11,13 +11,16 @@
 
 #include <optional>
 
+/**
+ * @file
+ * @brief Strings column APIs for extracting substrings by character position.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_slice
  * @{
- * @file
- * @brief Strings column APIs for extracting substrings by character position.
  */
 
 /**

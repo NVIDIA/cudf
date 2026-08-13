@@ -1042,6 +1042,33 @@ def test_change_column_dtype_in_empty():
     assert_eq(pdf, gdf)
 
 
+def test_init_from_dict_of_empty_lists():
+    # Untyped empty sequences become float64 in the DataFrame
+    # constructor to match pandas (while Series([]) remains object).
+    pdf = pd.DataFrame({"a": [], "b": []})
+    gdf = cudf.DataFrame({"a": [], "b": []})
+    assert_eq(pdf, gdf)
+    assert gdf["a"].dtype == np.dtype("float64")
+
+
+def test_init_from_dict_of_empty_iterator():
+    # Iterators drain into an untyped empty sequence, so they follow the
+    # same float64 default as empty lists.
+    pdf = pd.DataFrame({"a": iter([])})
+    gdf = cudf.DataFrame({"a": iter([])})
+    assert_eq(pdf, gdf)
+    assert gdf["a"].dtype == np.dtype("float64")
+
+
+def test_init_from_dict_of_empty_range():
+    # An empty range stays int64 like pandas (which converts range via
+    # np.arange), unlike untyped empty lists/tuples/iterators.
+    pdf = pd.DataFrame({"a": range(0)})
+    gdf = cudf.DataFrame({"a": range(0)})
+    assert_eq(pdf, gdf)
+    assert gdf["a"].dtype == np.dtype("int64")
+
+
 @pytest.mark.parametrize(
     "data,cols,index",
     [

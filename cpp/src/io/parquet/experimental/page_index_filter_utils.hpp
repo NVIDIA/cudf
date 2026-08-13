@@ -23,27 +23,6 @@ namespace cudf::io::parquet::experimental::detail {
 using metadata_base = parquet::detail::metadata;
 
 /**
- * @brief Find the offset of the column chunk with the given schema index in the row group
- *
- * @param row_group Row group
- * @param schema_idx Schema index
- * @return Offset of the column chunk iterator
- */
-[[nodiscard]] size_type find_colchunk_iter_offset(RowGroup const& row_group, size_type schema_idx);
-
-/**
- * @brief Compute if the page index is present in all parquet data sources for all columns
- *
- * @param file_metadatas Span of parquet footer metadata
- * @param row_group_indices Span of input row group indices
- * @return Boolean indicating if the page index is present in all parquet data sources for all
- * columns
- */
-[[nodiscard]] bool compute_has_page_index(
-  std::span<metadata_base const> file_metadatas,
-  std::span<std::vector<size_type> const> row_group_indices);
-
-/**
  * @brief Compute page row offsets and column chunk page (count) offsets for a given column schema
  * index
  *

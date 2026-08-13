@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/strings/detail/find.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
@@ -79,7 +80,6 @@ std::unique_ptr<column> count(strings_column_view const& input,
 
   return results;
 }
-
 }  // namespace detail
 
 // external APIs

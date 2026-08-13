@@ -9,6 +9,11 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for finding all regex matches within each string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -17,8 +22,6 @@ struct regex_program;
 /**
  * @addtogroup strings_contains
  * @{
- * @file
- * @brief Strings column APIs for finding all regex matches within each string.
  */
 
 /**

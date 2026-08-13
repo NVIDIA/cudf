@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -28,6 +28,8 @@ class Gather(Expr):
         self.dtype = dtype
         self.children = (values, indices)
         self.is_pointwise = False
+        if not plc.traits.is_integral_not_bool(indices.dtype.plc_type):
+            raise NotImplementedError("Gather with non-integer indices")
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME

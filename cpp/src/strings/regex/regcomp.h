@@ -135,6 +135,7 @@ class reprog {
   void finalize();
   void check_for_errors();
 
+  [[nodiscard]] std::pair<literal_fast_path, std::string> check_for_literal_fast_path() const;
   [[nodiscard]] match_flags compute_match_flags() const;
 
 #ifndef NDEBUG
@@ -147,7 +148,7 @@ class reprog {
   int32_t _startinst_id{};              // id of first instruction
   std::vector<int32_t> _startinst_ids;  // short-cut to speed-up ORs
   int32_t _num_capturing_groups{};
-  [[maybe_unused]] regex_flags _flags{};
+  regex_flags _flags{};
 
   reprog(regex_flags);
   void collapse_nops();

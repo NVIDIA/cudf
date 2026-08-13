@@ -27,6 +27,7 @@
 #include <iterator>
 #include <string>
 #include <tuple>
+#include <type_traits>
 
 namespace {
 
@@ -228,13 +229,90 @@ std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf
   return cudf::concatenate(table_views, stream, mr);
 }
 
+namespace {
+
+// Shared implementation templated over the reader; the single-file and multi-file public helpers
+// below forward to it.
+template <typename ReaderType, typename InputType>
+auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
+                                              ReaderType const& reader,
+                                              cudf::io::parquet_reader_options const& options,
+                                              rmm::cuda_stream_view stream,
+                                              rmm::device_async_resource_ref mr)
+{
+  reader.reset_column_selection();
+  auto const row_group_indices = reader.all_row_groups(options);
+
+  if constexpr (std::is_same_v<ReaderType,
+                               cudf::io::parquet::experimental::hybrid_scan_multifile>) {
+    auto const dict_pages = reader.dictionary_pages_byte_ranges(row_group_indices, options);
+    CUDF_EXPECTS(dict_pages.first.size() > 0, "No dictionary page byte ranges found");
+
+    auto const dict_page_ranges_per_source =
+      group_byte_ranges_by_source(dict_pages, inputs.datasources.size());
+    [[maybe_unused]] auto [dict_page_buffers, dict_page_data_per_source, task] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        inputs.datasource_refs, dict_page_ranges_per_source, stream, mr);
+    task.get();
+
+    std::vector<cudf::device_span<uint8_t const>> dict_page_data;
+    for (auto const& source_dict_pages : dict_page_data_per_source) {
+      dict_page_data.insert(
+        dict_page_data.end(), source_dict_pages.begin(), source_dict_pages.end());
+    }
+
+    return reader.filter_row_groups_with_dictionary_pages(
+      dict_page_data, row_group_indices, options, stream);
+  } else {
+    auto const dict_page_byte_ranges =
+      reader.secondary_filters_byte_ranges(row_group_indices, options).second;
+    CUDF_EXPECTS(dict_page_byte_ranges.size() > 0, "No dictionary page byte ranges found");
+
+    [[maybe_unused]] auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        inputs, dict_page_byte_ranges, stream, mr);
+    dict_page_tasks.get();
+
+    return reader.filter_row_groups_with_dictionary_pages(
+      dict_page_data, row_group_indices, options, stream);
+  }
+}
+
+}  // namespace
+
+std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
+  cudf::io::datasource& datasource,
+  cudf::io::parquet::experimental::hybrid_scan_reader const& reader,
+  cudf::io::parquet_reader_options const& options,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr)
+{
+  return filter_row_groups_with_dictionaries_impl(datasource, reader, options, stream, mr);
+}
+
+std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
+  multifile_inputs const& inputs,
+  cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
+  cudf::io::parquet_reader_options const& options,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr)
+{
+  return filter_row_groups_with_dictionaries_impl(inputs, reader, options, stream, mr);
+}
+
 template <typename T, size_t NumTableConcats, bool IsConstantStrings, bool IsNullable>
 std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_stats(
   cudf::size_type str_col_value,
   cudf::io::compression_type compression,
+  std::vector<std::string> column_names,
+  std::vector<cudf::size_type> column_order,
   rmm::cuda_stream_view stream)
 {
   static_assert(NumTableConcats >= 1, "Concatenated table must contain at least one table");
+
+  CUDF_EXPECTS(column_names.size() == column_order.size(),
+               "Column names and column order must have the same size");
+  CUDF_EXPECTS(column_order.size() == 3, "Column order must include all three test columns");
 
   auto col0 = testdata::ascending<T>();
   auto col1 = []() {
@@ -291,12 +369,21 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
     output = table_view{{columns[0]->view(), columns[1]->view(), columns[2]->view()}};
   }
 
+  // Reorder the base [col0, col1, col2] columns into the requested physical order, naming them in
+  // that new order.
+  std::vector<cudf::column_view> reordered_columns;
+  reordered_columns.reserve(column_order.size());
+  for (auto const col_idx : column_order) {
+    reordered_columns.emplace_back(output.column(col_idx));
+  }
+  output = table_view{reordered_columns};
+
   auto table = cudf::concatenate(std::vector<table_view>(NumTableConcats, output), stream);
   output     = table->view();
   cudf::io::table_input_metadata output_metadata(output);
-  output_metadata.column_metadata[0].set_name("col0");
-  output_metadata.column_metadata[1].set_name("col1");
-  output_metadata.column_metadata[2].set_name("col2");
+  for (std::size_t i = 0; i < column_names.size(); ++i) {
+    output_metadata.column_metadata[i].set_name(column_names[i]);
+  }
 
   std::vector<char> buffer;
   cudf::io::parquet_writer_options out_opts =
@@ -321,7 +408,11 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 #define INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE) \
   template std::pair<std::unique_ptr<cudf::table>, std::vector<char>>                     \
   create_parquet_with_stats<T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE>(                  \
-    cudf::size_type, cudf::io::compression_type, rmm::cuda_stream_view)
+    cudf::size_type,                                                                      \
+    cudf::io::compression_type,                                                           \
+    std::vector<std::string>,                                                             \
+    std::vector<cudf::size_type>,                                                         \
+    rmm::cuda_stream_view)
 
 #define INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(T)       \
   INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, false); \

@@ -12,6 +12,11 @@
 
 #include <optional>
 
+/**
+ * @file
+ * @brief Strings column APIs for replacing substrings matching a regex pattern.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -20,8 +25,6 @@ struct regex_program;
 /**
  * @addtogroup strings_replace
  * @{
- * @file
- * @brief Strings column APIs for replacing substrings matching a regex pattern.
  */
 
 /**

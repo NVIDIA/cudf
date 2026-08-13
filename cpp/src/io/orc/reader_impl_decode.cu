@@ -16,6 +16,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/config_utils.hpp>
@@ -203,12 +204,23 @@ rmm::device_buffer decompress_stripe_data(
                    });
 
   if (num_uncompressed_blocks > 0) {
-    cudf::io::detail::gpu_copy_uncompressed_blocks(
-      device_span<device_span<uint8_t const>>{inflate_in.data() + num_compressed_blocks,
-                                              num_uncompressed_blocks},
-      device_span<device_span<uint8_t>>{inflate_out.data() + num_compressed_blocks,
-                                        num_uncompressed_blocks},
-      stream);
+    auto const inputs   = inflate_in.data() + num_compressed_blocks;
+    auto const outputs  = inflate_out.data() + num_compressed_blocks;
+    auto const src_iter = cuda::make_transform_iterator(
+      cuda::counting_iterator<std::size_t>{0},
+      cuda::proclaim_return_type<uint8_t const*>(
+        [inputs] __device__(std::size_t i) { return inputs[i].data(); }));
+    auto const dst_iter = cuda::make_transform_iterator(
+      cuda::counting_iterator<std::size_t>{0},
+      cuda::proclaim_return_type<uint8_t*>(
+        [outputs] __device__(std::size_t i) { return outputs[i].data(); }));
+    auto const size_iter = cuda::make_transform_iterator(
+      cuda::counting_iterator<std::size_t>{0},
+      cuda::proclaim_return_type<size_t>([inputs, outputs] __device__(std::size_t i) {
+        return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
+      }));
+    cudf::detail::batched_memcpy_async(
+      src_iter, dst_iter, size_iter, num_uncompressed_blocks, stream);
   }
 
   // Copy without stream sync, thus need to wait for stream sync below to access.

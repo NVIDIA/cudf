@@ -35,6 +35,36 @@ def _is_bool(val: Any) -> bool:
     return isinstance(val, (bool, np.bool_))
 
 
+def _is_nan_scalar(val: Any) -> bool:
+    return isinstance(val, (float, np.floating)) and val != val
+
+
+def _label_contains_nan(label: Any) -> bool:
+    if isinstance(label, tuple):
+        return any(_is_nan_scalar(lv) for lv in label)
+    return _is_nan_scalar(label)
+
+
+def _canonicalize_nan_label(label: Any) -> Any:
+    """Map float NaN elements of a label to the np.nan singleton.
+
+    No NaN object ever compares equal to any NaN (including itself), so
+    equality alone can never match a NaN-containing label. dict lookups and
+    tuple comparison, however, short-circuit on object *identity* before
+    trying ``==`` — and that shortcut is exactly what this canonicalization
+    targets: with every NaN mapped to the one ``np.nan`` object, two
+    canonicalized labels holding NaN in the same position match by identity.
+    This restores pandas' all-NaNs-are-equal label semantics for labels
+    round-tripped through a pandas Index, which materializes fresh NaN
+    objects on iteration.
+    """
+    if isinstance(label, tuple):
+        return tuple(np.nan if _is_nan_scalar(lv) else lv for lv in label)
+    if _is_nan_scalar(label):
+        return np.nan
+    return label
+
+
 class _NestedGetItemDict(dict):
     """A dictionary whose __getitem__ method accesses nested dicts.
 
@@ -102,6 +132,10 @@ class ColumnAccessor(MutableMapping):
     verify : bool, optional
         For non ColumnAccessor inputs, whether to verify
         column length and data.values() are all Columns
+    pandas_index : pd.Index, optional
+        The source pandas index the keys were taken from, if any.
+        A matching pd.MultiIndex primes the ``to_pandas_index`` cache
+        (see ``_prime_to_pandas_index``).
     """
 
     _data: dict[Hashable, ColumnBase]
@@ -117,6 +151,7 @@ class ColumnAccessor(MutableMapping):
         label_dtype: DtypeObj | None = None,
         verify: bool = True,
         level_dtypes: tuple[DtypeObj, ...] | None = None,
+        pandas_index: pd.Index | None = None,
     ) -> None:
         if isinstance(data, ColumnAccessor):
             self._data = data._data
@@ -125,6 +160,11 @@ class ColumnAccessor(MutableMapping):
             self.rangeindex: bool = data.rangeindex
             self.label_dtype: DtypeObj | None = data.label_dtype
             self._level_dtypes = data._level_dtypes
+            if "to_pandas_index" in data.__dict__:
+                # carry over the primed/cached pandas index: it holds
+                # fidelity (e.g. explicit unsorted level order) that a
+                # rebuild from tuples would lose
+                self.to_pandas_index = data.__dict__["to_pandas_index"]
         elif isinstance(data, MutableMapping):
             # This code path is performance-critical for copies and should be
             # modified with care.
@@ -157,12 +197,50 @@ class ColumnAccessor(MutableMapping):
             raise ValueError(
                 f"data must be a ColumnAccessor or MutableMapping, not {type(data).__name__}"
             )
+        if pandas_index is not None:
+            self._prime_to_pandas_index(pandas_index)
+
+    def _prime_to_pandas_index(self, index: pd.Index) -> None:
+        """Prime the cached ``to_pandas_index`` with the exact source index.
+
+        Rebuilding a pandas MultiIndex from the stored tuple labels re-sorts
+        its levels, losing an explicit unsorted level layout (the level
+        order affects pandas operations that work on level codes, e.g.
+        legacy ``stack(sort=True)``). Keeping the source MultiIndex itself
+        preserves that fidelity. Only a hierarchical columns axis whose
+        length matches the data is primed; anything else is ignored.
+        """
+        if (
+            self.multiindex
+            and isinstance(index, pd.MultiIndex)
+            and len(self._data) == len(index)
+        ):
+            self.to_pandas_index = index
 
     def __iter__(self) -> Iterator:
         return iter(self._data)
 
     def __getitem__(self, key: Hashable) -> ColumnBase:
-        return self._data[key]
+        try:
+            return self._data[key]
+        except KeyError:
+            if _label_contains_nan(key):
+                # NaN labels lose object identity when round-tripped through
+                # a pandas Index; retry with NaNs canonicalized so all NaNs
+                # match by identity, as pandas label semantics require.
+                canon = _canonicalize_nan_label(key)
+                for existing in self._data:
+                    c = _canonicalize_nan_label(existing)
+                    try:
+                        match = c is canon or bool(c == canon)
+                    except TypeError:
+                        # e.g. a pd.NA label: its comparisons return pd.NA,
+                        # whose truthiness raises. Ambiguity is not a match;
+                        # keep scanning for a genuine NaN label.
+                        match = False
+                    if match:
+                        return self._data[existing]
+            raise
 
     def __setitem__(self, key: Hashable, value: ColumnBase) -> None:
         self.set_by_label(key, value)
@@ -322,6 +400,35 @@ class ColumnAccessor(MutableMapping):
                     self.names,
                     names=self.level_names,
                 )
+                if (
+                    self._level_dtypes is not None
+                    and len(self._level_dtypes) == result.nlevels
+                ):
+                    # ``from_tuples`` re-infers every level dtype from the
+                    # materialized labels, degrading e.g. categorical levels
+                    # to str, object levels to str once mixed-type labels are
+                    # selected away, and int64 levels with missing entries to
+                    # float64. Restore each preserved level dtype when the
+                    # cast is lossless (round-trips to the inferred values).
+                    new_levels = []
+                    changed = False
+                    for lvl, level_dtype in zip(
+                        result.levels, self._level_dtypes, strict=True
+                    ):
+                        if lvl.dtype != level_dtype:
+                            try:
+                                cast_lvl = lvl.astype(level_dtype)
+                            except (TypeError, ValueError):
+                                pass
+                            else:
+                                # missing-aware equality: ``==`` would treat
+                                # NaN entries as unequal to themselves
+                                if cast_lvl.astype(lvl.dtype).equals(lvl):
+                                    lvl = cast_lvl
+                                    changed = True
+                        new_levels.append(lvl)
+                    if changed:
+                        result = result.set_levels(new_levels)
         else:
             # Determine if we can return a RangeIndex
             if self.rangeindex:

@@ -9,13 +9,16 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for splitting strings using a delimiter string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_split
  * @{
- * @file
- * @brief Strings column APIs for splitting strings using a delimiter string.
  */
 
 /**

@@ -3,7 +3,7 @@
 from cython.operator cimport dereference
 import warnings
 
-from libc.stdint cimport int64_t, uint8_t
+from libc.stdint cimport int32_t, int64_t, uint8_t
 
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr, make_unique
@@ -251,7 +251,7 @@ cdef class ParquetReaderOptions:
 
         Parameters
         ----------
-        col_names : list
+        col_indices : list
             List of top-level column indices
 
         Returns
@@ -262,6 +262,24 @@ cdef class ParquetReaderOptions:
         for idx in col_indices:
             vec.push_back(idx)
         self.c_obj.set_column_indices(vec)
+
+    cpdef void set_column_field_ids(self, list column_field_ids):
+        """
+        Sets Parquet field IDs of the columns/fields to be read.
+
+        Parameters
+        ----------
+        column_field_ids : list
+            List of Parquet field IDs
+
+        Returns
+        -------
+        None
+        """
+        cdef vector[int32_t] vec
+        for field_id in column_field_ids:
+            vec.push_back(field_id)
+        self.c_obj.set_column_field_ids(vec)
 
     cpdef void set_filter(self, Expression filter):
         """
@@ -465,7 +483,7 @@ cdef class ParquetReaderOptionsBuilder:
 
         Parameters
         ----------
-        col_names : list[int]
+        col_indices : list[int]
             List of top-level column indices
 
         Returns
@@ -476,6 +494,25 @@ cdef class ParquetReaderOptionsBuilder:
         for idx in col_indices:
             vec.push_back(idx)
         self.c_obj.column_indices(vec)
+        return self
+
+    cpdef ParquetReaderOptionsBuilder column_field_ids(self, list column_field_ids):
+        """
+        Sets Parquet field IDs of the columns/fields to be read.
+
+        Parameters
+        ----------
+        column_field_ids : list[int]
+            List of Parquet field IDs
+
+        Returns
+        -------
+        ParquetReaderOptionsBuilder
+        """
+        cdef vector[int32_t] vec
+        for field_id in column_field_ids:
+            vec.push_back(field_id)
+        self.c_obj.column_field_ids(vec)
         return self
 
     cpdef ParquetReaderOptionsBuilder use_jit_filter(self, bool use_jit_filter):

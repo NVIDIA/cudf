@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -18,23 +18,25 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
-#include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
-#include <cuda/std/cstddef>
-
-#include <cstddef>
 
 namespace cudf::detail {
 
 /**
- * @brief Counts the per-join-kind output size of `filter_join_indices` without materializing
- *        a per-pair boolean buffer.
+ * @brief Fills the per-output contribution counts of `filter_join_indices` without materializing
+ *        the filtered index vectors.
  *
- * Each thread accumulates a private partial count, the block aggregates with CUB, and each
- * block adds its block-sum to `*count_out` exactly once via `cuda::atomic_ref`. For LEFT_JOIN,
- * `left_passing_marks[left_row_index]` is additionally set to `true` for every left row that
- * contributes to the count, which lets the host derive the number of synthetic JoinNoMatch
- * entries.
+ * The total output size is the sum of `output_counts`, which is laid out per join kind so that
+ * each entry records how many output rows the corresponding input contributes:
+ * - INNER_JOIN: `output_counts` is indexed per input pair; entry `i` is `1` if the predicate
+ *   passes and `0` otherwise.
+ * - FULL_JOIN: `output_counts` is indexed per input pair; entry `i` is `1` for a preserved pair
+ *   (predicate passes or the pair already contains a `JoinNoMatch`) and `2` for a failed valid
+ *   pair (which splits into `(left, JoinNoMatch)` and `(JoinNoMatch, right)`).
+ * - LEFT_JOIN: `output_counts` is indexed per left row; the kernel atomically accumulates the
+ *   number of passing pairs for each left row. Left rows with no passing pair are floored to `1`
+ *   by the host afterwards to account for the synthetic `(left, JoinNoMatch)` entry. The buffer
+ *   must be zero-initialized before the launch.
  */
 template <bool has_nulls, bool has_complex_type>
 CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_output_size_kernel(
@@ -44,8 +46,7 @@ CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_
   cudf::device_span<cudf::size_type const> right_indices,
   cudf::ast::detail::expression_device_view device_expression_data,
   cudf::join_kind join_kind,
-  std::size_t* count_out,
-  bool* left_passing_marks)
+  cudf::size_type* output_counts)
 {
   extern __shared__ char raw_intermediate_storage[];
   auto* intermediate_storage =
@@ -53,16 +54,11 @@ CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_
   auto thread_intermediate_storage =
     &intermediate_storage[threadIdx.x * device_expression_data.num_intermediates];
 
-  using BlockReduce = cub::BlockReduce<cuda::std::size_t, DEFAULT_JOIN_BLOCK_SIZE>;
-  __shared__ typename BlockReduce::TempStorage temp_storage;
-
   auto const tid    = cudf::detail::grid_1d::global_thread_id();
   auto const stride = cudf::detail::grid_1d::grid_stride();
 
   auto evaluator = cudf::ast::detail::expression_evaluator<has_nulls, has_complex_type>{
     left_table, right_table, device_expression_data};
-
-  cuda::std::size_t thread_local_count = 0;
 
   for (auto i = tid; i < static_cast<cudf::thread_index_type>(left_indices.size()); i += stride) {
     auto const left_row_index  = left_indices[i];
@@ -85,34 +81,19 @@ CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_
     }
 
     switch (join_kind) {
-      case cudf::join_kind::INNER_JOIN:
-        if (predicate_pass) { ++thread_local_count; }
+      case cudf::join_kind::INNER_JOIN: output_counts[i] = predicate_pass ? 1 : 0; break;
+      case cudf::join_kind::FULL_JOIN:
+        output_counts[i] = (both_valid && !predicate_pass) ? 2 : 1;
         break;
       case cudf::join_kind::LEFT_JOIN:
-        if (predicate_pass) {
-          ++thread_local_count;
-          // Mark the left row as "passing" so the host can derive how many left rows need a
-          // synthetic JoinNoMatch entry. For matched-passing pairs and for pre-existing
-          // (left, JoinNoMatch) entries from upstream hash_join.left_join the left index is a
-          // valid row index in [0, left_table.num_rows()).
-          if (left_row_index >= 0 && left_row_index < left_table.num_rows()) {
-            left_passing_marks[left_row_index] = true;
-          }
+        if (predicate_pass && left_row_index >= 0 && left_row_index < left_table.num_rows()) {
+          cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> count_ref{
+            output_counts[left_row_index]};
+          count_ref.fetch_add(1, cuda::memory_order_relaxed);
         }
-        break;
-      case cudf::join_kind::FULL_JOIN:
-        // Count failed matches: predicate false AND both indices valid.
-        if (both_valid && !predicate_pass) { ++thread_local_count; }
         break;
       default: break;
     }
-  }
-
-  cuda::std::size_t const block_sum = BlockReduce(temp_storage).Sum(thread_local_count);
-
-  if (threadIdx.x == 0) {
-    cuda::atomic_ref<cuda::std::size_t, cuda::thread_scope_device> count_ref{*count_out};
-    count_ref.fetch_add(block_sum, cuda::memory_order_relaxed);
   }
 }
 
@@ -126,8 +107,7 @@ void launch_filter_output_size_kernel(
   cudf::detail::grid_1d const& config,
   std::size_t shmem_per_block,
   cudf::join_kind join_kind,
-  std::size_t* count_out,
-  bool* left_passing_marks,
+  cudf::size_type* output_counts,
   rmm::cuda_stream_view stream)
 {
   filter_join_indices_output_size_kernel<has_nulls, has_complex_type>
@@ -138,8 +118,7 @@ void launch_filter_output_size_kernel(
       right_indices,
       device_expression_data,
       join_kind,
-      count_out,
-      left_passing_marks);
+      output_counts);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

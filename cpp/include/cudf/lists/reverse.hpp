@@ -11,13 +11,16 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief API for reversing the element order within each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_modify
  * @{
- * @file
- * @brief API for reversing the element order within each row of a list column
  */
 
 /**

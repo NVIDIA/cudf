@@ -93,7 +93,6 @@ class DataFrame:
     table: plc.Table
     columns: list[NamedColumn]
     stream: Stream
-    _num_rows_override: int | None
 
     def __init__(
         self, columns: Iterable[Column], stream: Stream, num_rows: int | None = None
@@ -104,24 +103,25 @@ class DataFrame:
         self.columns = [cast("NamedColumn", c) for c in columns]
         self.dtypes = [c.dtype for c in self.columns]
         self.column_map = {c.name: c for c in self.columns}
-        self.table = plc.Table([c.obj for c in self.columns])
+        self.table = plc.Table([c.obj for c in self.columns], num_rows=num_rows)
         self.stream = stream
-        self._num_rows_override = num_rows
 
     def copy(self) -> Self:
         """Return a shallow copy of self."""
         return type(self)(
             (c.copy() for c in self.columns),
             stream=self.stream,
-            num_rows=self._num_rows_override,
+            num_rows=self.num_rows,
         )
 
     def to_polars(self) -> pl.DataFrame:
         """Convert to a polars DataFrame."""
-        if self._num_rows_override is not None and len(self.column_map) == 0:
+        if len(self.column_map) == 0:
+            # polars < 1.38 has no DataFrame(height=...) constructor and cannot
+            # represent a zero-column frame with a non-zero row count.
             if POLARS_VERSION_LT_138:  # pragma: no cover
                 return pl.DataFrame()
-            return pl.DataFrame(height=self._num_rows_override)
+            return pl.DataFrame(height=self.num_rows)
 
         # If the arrow table has empty names, from_arrow produces
         # column_$i. But here we know there is only one such column
@@ -163,8 +163,6 @@ class DataFrame:
     @cached_property
     def num_rows(self) -> int:
         """Number of rows."""
-        if self._num_rows_override is not None:
-            return self._num_rows_override
         return self.table.num_rows()
 
     @classmethod
@@ -195,6 +193,7 @@ class DataFrame:
                 )
             ),
             stream=stream,
+            num_rows=plc_table.num_rows(),
         )
 
     @classmethod
@@ -204,7 +203,6 @@ class DataFrame:
         names: Sequence[str],
         dtypes: Sequence[DataType],
         stream: Stream,
-        num_rows: int | None = None,
     ) -> Self:
         """
         Create from a pylibcudf table.
@@ -221,10 +219,6 @@ class DataFrame:
             CUDA stream used for device memory operations and kernel launches
             on this dataframe. The caller is responsible for ensuring that
             the data in ``table`` is valid on ``stream``.
-        num_rows
-            Optional row count override for zero-width tables. Used to
-            preserve row count when zero-width tables lose their row count
-            during conversion. See https://github.com/rapidsai/cudf/issues/21428
 
         Returns
         -------
@@ -244,7 +238,7 @@ class DataFrame:
                 for c, name, dtype in zip(table.columns(), names, dtypes, strict=True)
             ),
             stream=stream,
-            num_rows=num_rows,
+            num_rows=table.num_rows(),
         )
 
     @classmethod
@@ -285,6 +279,8 @@ class DataFrame:
                 for c, kw in zip(table.columns(), header["columns_kwargs"], strict=True)
             ),
             stream=stream,
+            # A zero-column frame's row count is carried by the packed metadata; preserve it.
+            num_rows=table.num_rows(),
         )
 
     def serialize(
@@ -358,6 +354,7 @@ class DataFrame:
                 for c, other in zip(self.columns, like.columns, strict=True)
             ),
             stream=self.stream,
+            num_rows=self.num_rows,
         )
 
     def with_columns(
@@ -396,20 +393,31 @@ class DataFrame:
         new = {c.name: c for c in columns}
         if replace_only and not self.column_names_set.issuperset(new.keys()):
             raise ValueError("Cannot replace with non-existing names")
-        return type(self)((self.column_map | new).values(), stream=stream)
+        merged = self.column_map | new
+        # Only pass num_rows for a zero-column result. For results with columns, it
+        # must remain None because HStack(should_broadcast=False) intentionally
+        # produces mismatched column lengths that its Select parent reconciles later.
+        return type(self)(
+            merged.values(),
+            stream=stream,
+            num_rows=self.num_rows if not merged else None,
+        )
 
     def discard_columns(self, names: Set[str]) -> Self:
         """Drop columns by name."""
         return type(self)(
             (column for column in self.columns if column.name not in names),
             stream=self.stream,
+            num_rows=self.num_rows,
         )
 
     def select(self, names: Sequence[str] | Mapping[str, Any]) -> Self:
         """Select columns by name returning DataFrame."""
         try:
             return type(self)(
-                (self.column_map[name] for name in names), stream=self.stream
+                (self.column_map[name] for name in names),
+                stream=self.stream,
+                num_rows=self.num_rows,
             )
         except KeyError as e:
             raise ValueError("Can't select missing names") from e
@@ -419,6 +427,7 @@ class DataFrame:
         return type(self)(
             (c.rename(mapping.get(c.name, c.name)) for c in self.columns),
             stream=self.stream,
+            num_rows=self.num_rows,
         )
 
     def select_columns(self, names: Set[str]) -> list[Column]:

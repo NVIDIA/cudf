@@ -17,6 +17,7 @@ import pylibcudf as plc
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
+from cudf_polars.dsl.traversal import traversal
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Sequence
@@ -24,6 +25,25 @@ if TYPE_CHECKING:
     from cudf_polars.typing import Schema
 
 __all__ = ["apply_pre_evaluation", "decompose_aggs", "decompose_single_agg"]
+
+
+_WINDOW_ONLY_UNARY_FUNCTIONS = frozenset(
+    {"rank", "fill_null_with_strategy", "cum_sum", "diff", "shift", "shift_and_fill"}
+)
+
+
+def _contains_fixed_size_rolling_window(value: expr.Expr) -> bool:
+    return any(
+        isinstance(node, expr.FixedSizeRollingWindow) for node in traversal([value])
+    )
+
+
+def _contains_window_only_unary(value: expr.Expr) -> bool:
+    return any(
+        isinstance(node, expr.UnaryFunction)
+        and node.name in _WINDOW_ONLY_UNARY_FUNCTIONS
+        for node in traversal([value])
+    )
 
 
 def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
@@ -94,14 +114,29 @@ def decompose_single_agg(
     """
     agg = named_expr.value
     name = named_expr.name
-    if isinstance(agg, expr.UnaryFunction) and agg.name in {
-        "rank",
-        "fill_null_with_strategy",
-        "cum_sum",
-    }:
+    if isinstance(agg, expr.UnaryFunction) and agg.name in _WINDOW_ONLY_UNARY_FUNCTIONS:
         if context != ExecutionContext.WINDOW:
             raise NotImplementedError(
                 f"{agg.name} is not supported in groupby or rolling context"
+            )
+        if _contains_fixed_size_rolling_window(agg.children[0]):
+            raise NotImplementedError(
+                f"{agg.name} over a window does not support nested fixed-size rolling"
+            )
+        if agg.name in {"diff", "shift", "shift_and_fill"}:
+            if not isinstance(agg.children[1], expr.Literal):
+                raise NotImplementedError(
+                    f"{agg.name} over a window only supports a literal offset"
+                )
+            if agg.name == "shift_and_fill" and not isinstance(
+                agg.children[2], expr.Literal
+            ):
+                raise NotImplementedError(
+                    "shift over a window only supports a literal fill_value"
+                )
+        if agg.name == "diff" and agg.options[0] != "ignore":
+            raise NotImplementedError(
+                "diff over a window only supports null_behavior='ignore'"
             )
         if agg.name == "fill_null_with_strategy" and (
             strategy := agg.options[0]
@@ -117,6 +152,17 @@ def decompose_single_agg(
             post_col = expr.Cast(agg.dtype, True, post_col)  # noqa: FBT003
 
         return [(named_expr, True)], named_expr.reconstruct(post_col)
+    if isinstance(agg, expr.FixedSizeRollingWindow):
+        if context != ExecutionContext.WINDOW:
+            raise NotImplementedError(
+                "Fixed-size rolling is not supported in groupby or rolling context"
+            )
+        if _contains_window_only_unary(agg.children[0]):
+            raise NotImplementedError(
+                "Fixed-size rolling over a window does not support nested "
+                "window-only unary expressions"
+            )
+        return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, expr.UnaryFunction) and agg.name == "null_count":
         (child,) = agg.children
 

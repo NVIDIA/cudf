@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -237,87 +237,28 @@ class data_profile {
  public:
   template <typename T,
             std::enable_if_t<!std::is_same_v<T, bool> && cuda::std::is_integral_v<T>, T>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    auto it = int_params.find(cudf::type_to_id<T>());
-    if (it == int_params.end()) {
-      auto const range = default_range<T>();
-      return distribution_params<T>{default_distribution_id<T>(), range.first, range.second};
-    } else {
-      auto& desc = it->second;
-      return {desc.id, static_cast<T>(desc.lower_bound), static_cast<T>(desc.upper_bound)};
-    }
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<std::is_floating_point_v<T>, T>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    auto it = float_params.find(cudf::type_to_id<T>());
-    if (it == float_params.end()) {
-      auto const range = default_range<T>();
-      return distribution_params<T>{default_distribution_id<T>(), range.first, range.second};
-    } else {
-      auto& desc = it->second;
-      return {desc.id, static_cast<T>(desc.lower_bound), static_cast<T>(desc.upper_bound)};
-    }
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<std::is_same_v<T, bool>>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    return distribution_params<T>{bool_probability_true};
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<cudf::is_chrono<T>()>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    auto it = int_params.find(cudf::type_to_id<T>());
-    if (it == int_params.end()) {
-      auto const range = default_range<T>();
-      return distribution_params<T>{default_distribution_id<T>(), range.first, range.second};
-    } else {
-      auto& desc = it->second;
-      return {
-        desc.id, static_cast<int64_t>(desc.lower_bound), static_cast<int64_t>(desc.upper_bound)};
-    }
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    return string_dist_desc;
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    return list_dist_desc;
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    return struct_dist_desc;
-  }
+  distribution_params<T> get_distribution_params() const;
 
   template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* = nullptr>
-  distribution_params<T> get_distribution_params() const
-  {
-    using rep = typename T::rep;
-    auto it   = decimal_params.find(cudf::type_to_id<T>());
-    if (it == decimal_params.end()) {
-      auto const range = default_range<rep>();
-      auto const scale = std::optional<numeric::scale_type>{};
-      return distribution_params<T>{
-        default_distribution_id<rep>(), range.first, range.second, scale};
-    } else {
-      auto& desc = it->second;
-      return {desc.id,
-              static_cast<rep>(desc.lower_bound),
-              static_cast<rep>(desc.upper_bound),
-              desc.scale};
-    }
-  }
+  distribution_params<T> get_distribution_params() const;
 
   [[nodiscard]] auto get_bool_probability_true() const { return bool_probability_true; }
   [[nodiscard]] auto get_null_probability() const { return null_probability; };
@@ -394,49 +335,15 @@ class data_profile {
     }
   }
 
-  void set_bool_probability_true(double p)
-  {
-    CUDF_EXPECTS(p >= 0. and p <= 1., "probability must be in range [0...1]");
-    bool_probability_true = p;
-  }
-  void set_null_probability(std::optional<double> p)
-  {
-    CUDF_EXPECTS(p.value_or(0.) >= 0. and p.value_or(0.) <= 1.,
-                 "probability must be in range [0...1]");
-    null_probability = p;
-  }
+  void set_bool_probability_true(double p);
+  void set_null_probability(std::optional<double> p);
   void set_cardinality(cudf::size_type c) { cardinality = c; }
   void set_avg_run_length(cudf::size_type avg_rl) { avg_run_length = avg_rl; }
-
-  void set_list_depth(cudf::size_type max_depth)
-  {
-    CUDF_EXPECTS(max_depth > 0, "List depth must be positive");
-    list_dist_desc.max_depth = max_depth;
-  }
-
+  void set_list_depth(cudf::size_type max_depth);
   void set_list_type(cudf::type_id type) { list_dist_desc.element_type = type; }
-
-  void set_struct_depth(cudf::size_type max_depth)
-  {
-    CUDF_EXPECTS(max_depth > 0, "Struct depth must be positive");
-    struct_dist_desc.max_depth = max_depth;
-  }
-
-  void set_struct_types(cudf::host_span<cudf::type_id const> types)
-  {
-    CUDF_EXPECTS(
-      std::none_of(
-        types.begin(), types.end(), [](auto& type) { return type == cudf::type_id::STRUCT; }),
-      "Cannot include STRUCT as its own subtype");
-    struct_dist_desc.leaf_types.assign(types.begin(), types.end());
-  }
-
-  void set_string_char_range(unsigned char lower, unsigned char upper)
-  {
-    CUDF_EXPECTS(lower <= upper, "Lower bound must be <= upper bound");
-    string_dist_desc.char_lower = lower;
-    string_dist_desc.char_upper = upper;
-  }
+  void set_struct_depth(cudf::size_type max_depth);
+  void set_struct_types(cudf::host_span<cudf::type_id const> types);
+  void set_string_char_range(unsigned char lower, unsigned char upper);
 };
 
 /**
@@ -701,12 +608,12 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
 /**
  * @brief Generates an string column filled with ASCII characters only
  *
- * @param num_rows Number of rows in the output column
  * @param profile Data profile for the output column
+ * @param num_rows Number of rows in the output column
  * @param seed Optional, seed for the pseudo-random engine
  */
-std::unique_ptr<cudf::column> create_ascii_string_column(cudf::size_type num_rows,
-                                                         data_profile const& profile,
+std::unique_ptr<cudf::column> create_ascii_string_column(data_profile const& profile,
+                                                         cudf::size_type num_rows,
                                                          unsigned seed = 1);
 
 /**

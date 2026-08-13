@@ -410,20 +410,21 @@ data_type get_return_type(opcode op,
     }
   }
 
-  if (auto* ref = std::get_if<arg_ref>(&op_info.output_type)) {
-    auto arg_index = static_cast<size_t>(*ref);
-    auto type      = args[arg_index].id();
-    auto scale     = numeric::scale_type{is_fixed_point(data_type{type}) ? rescaled : 0};
-    return data_type{type, scale};
-  } else {
-    auto required_type = std::get<types>(op_info.output_type);
-    CUDF_EXPECTS(required_type != types::NONE,
-                 std::format("Invalid type match rule for operator `{}` return type", op_info.name),
-                 std::runtime_error);
-    auto type  = as_type_id(required_type);
-    auto scale = numeric::scale_type{is_fixed_point(data_type{type}) ? rescaled : 0};
-    return data_type{type, scale};
-  }
+  auto type = [&] {
+    if (auto* ref = std::get_if<arg_ref>(&op_info.output_type)) {
+      auto arg_index = static_cast<size_t>(*ref);
+      return args[arg_index].id();
+    } else {
+      auto required_type = std::get<types>(op_info.output_type);
+      CUDF_EXPECTS(
+        required_type != types::NONE,
+        std::format("Invalid type match rule for operator `{}` return type", op_info.name),
+        std::runtime_error);
+      return as_type_id(required_type);
+    }
+  }();
+  return is_fixed_point(data_type{type}) ? data_type{type, numeric::scale_type{rescaled}}
+                                         : data_type{type};
 }
 
 int32_t instance_context::add_output()
@@ -626,12 +627,12 @@ void node::emit_code(instance_context& instance, target_info const& info, code_s
 
       switch (op_) {
         case opcode::GET_INPUT: {
-          sink.emit(
-            std::format(R"***({} {} = {};
+          sink.emit(std::format(
+            R"***({} {} = {};
 )***",
-                        type,
-                        id_,
-                        instance.get_input_vars()[std::get<input_reference>(reference_).index].id));
+            type,
+            id_,
+            instance.get_input_vars()[std::get<input_reference>(reference_).index].id));
         } break;
 
         case opcode::SET_OUTPUT: {

@@ -116,6 +116,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                 parquet_reader_options const& options);
 
   /**
+   * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::dictionary_pages_byte_ranges
+   */
+  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+  dictionary_pages_byte_ranges(cudf::host_span<std::vector<size_type> const> row_group_indices,
+                               parquet_reader_options const& options);
+
+  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan::filter_row_groups_with_dictionary_pages
    */
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_dictionary_pages(
@@ -283,7 +290,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @throws std::invalid_argument if @p row_group_indices.size() is all empty or not equal to the
    * number of input datasources
    *
-   * @param row_group_indices Input row group indices, one per source
+   * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param total_row_groups Total number of row groups across all sources
    * @param pass_read_limit Memory limit to read and decompress row
    * group data

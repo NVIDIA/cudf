@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
@@ -105,3 +105,27 @@ def test_scan_int_null_pandas_compatible(op):
     with cudf.option_context("mode.pandas_compatible", True):
         result = getattr(df_cudf.groupby("b")["a"], op)()
     assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("op", ["cumsum", "cumprod"])
+def test_groupby_cumscan_masked_dtype_preserved(op):
+    # pandas preserves masked extension dtypes for groupby cum-scans
+    # (Int16 stays Int16, GH#58811) while numpy ints promote to 64-bit
+    pdf = pd.DataFrame({"a": [1, 1, 2], "b": [1, pd.NA, 2]}, dtype="Int16")
+    gdf = cudf.DataFrame(pdf)
+
+    expected = getattr(pdf.groupby("a")["b"], op)()
+    result = getattr(gdf.groupby("a")["b"], op)()
+
+    assert_eq(expected, result)
+
+
+def test_groupby_cumsum_numpy_dtype_promotes():
+    # numpy int8 promotes to int64 (pandas GH#37493)
+    pdf = pd.DataFrame({"a": [1, 1], "b": [111, 111]}, dtype="int8")
+    gdf = cudf.DataFrame(pdf)
+
+    expected = pdf.groupby("a").cumsum()
+    result = gdf.groupby("a").cumsum()
+
+    assert_eq(expected, result)

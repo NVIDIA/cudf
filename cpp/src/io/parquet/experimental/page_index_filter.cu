@@ -855,13 +855,11 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
   // Return if empty row group indices
   if (row_group_indices.empty()) { return cudf::make_empty_column(cudf::type_id::BOOL8); }
 
-  // Check if we have page index for all columns in all row groups
-  auto const has_page_index = compute_has_page_index(per_file_metadata, row_group_indices);
-
-  // Return if page index is not present
-  CUDF_EXPECTS(has_page_index,
-               "Page pruning requires the Parquet page index for all output columns",
-               std::runtime_error);
+  // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
+  // reuses one source's schema index for every source, so it is correct only when schemas match.
+  CUDF_EXPECTS(schema_idx_maps.empty(),
+               "Page index statistics filtering does not support mismatched Parquet schemas yet",
+               std::invalid_argument);
 
   // Total number of rows
   auto const total_rows = total_rows_in_row_groups(row_group_indices);
@@ -879,11 +877,32 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
       .get_stats_columns_mask();
 
   // Return early if no columns will participate in stats based page filtering
-  if (stats_columns_mask.empty()) {
-    auto const scalar_true =
-      cudf::numeric_scalar<bool>(true, true, stream, cudf::get_current_device_resource_ref());
-    return cudf::make_column_from_scalar(scalar_true, total_rows, stream, mr);
+  if (stats_columns_mask.empty()) { return build_all_true_row_mask(row_group_indices, stream, mr); }
+
+  // Check if we have page index available for all participating columns
+  std::vector<size_type> stats_column_schemas;
+  stats_column_schemas.reserve(num_columns);
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator{num_columns},
+                [&](auto const col_idx) {
+                  auto const& dtype = output_dtypes[col_idx];
+                  if (stats_columns_mask[col_idx] and
+                      (not cudf::is_compound(dtype) or dtype.id() == cudf::type_id::STRING)) {
+                    stats_column_schemas.push_back(output_column_schemas[col_idx]);
+                  }
+                });
+  // Return early if no participating columns
+  if (stats_column_schemas.empty()) {
+    return build_all_true_row_mask(row_group_indices, stream, mr);
   }
+
+  // We need both column and offset indexes to be present for each participating column.
+  auto const [has_column_index, has_offset_index] =
+    page_index_presence(row_group_indices, stats_column_schemas);
+  CUDF_EXPECTS(has_column_index and has_offset_index,
+               "Filter column page pruning using page-statistics requires both column and "
+               "offset indexes to be present",
+               std::runtime_error);
 
   // Optimization for single column filter: Directly build the row mask from page statistics
   if (num_columns == 1) {
@@ -999,20 +1018,28 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     return thrust::host_vector<bool>(0, stream);
   }
 
-  auto const has_page_index = compute_has_page_index(per_file_metadata, row_group_indices);
-
-  // Return early if page index is not present
-  if (not has_page_index) {
-    CUDF_LOG_WARN("Encountered missing Parquet page index for one or more output columns");
-    return thrust::host_vector<bool>(0, stream);
-  }
-
   // Collect column schema indices from the input columns.
   auto column_schema_indices = std::vector<size_type>(input_columns.size());
   std::transform(
     input_columns.begin(), input_columns.end(), column_schema_indices.begin(), [](auto const& col) {
       return col.schema_idx;
     });
+
+  // Mapping a row mask to data pages only requires page row locations from the offset index.
+  auto const has_offset_index =
+    page_index_presence(row_group_indices, column_schema_indices).second;
+  if (not has_offset_index) {
+    CUDF_LOG_WARN(
+      "Encountered missing Parquet offset index for one or more output columns. Skipping page "
+      "pruning.");
+    return thrust::host_vector<bool>(0, stream);
+  }
+
+  // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
+  // reuses one source's schema index for every source, so it is correct only when schemas match.
+  CUDF_EXPECTS(schema_idx_maps.empty(),
+               "Data page masking does not support mismatched Parquet schemas yet",
+               std::invalid_argument);
 
   // Compute page row offsets and column chunk page offsets for each column
   auto const num_columns = input_columns.size();

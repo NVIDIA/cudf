@@ -106,6 +106,13 @@ struct regex_program {
    */
   [[nodiscard]] std::size_t compute_working_memory_size(int32_t num_strings) const;
 
+  /**
+   * @brief Returns literal string if specific fast-path is possible
+   *
+   * @return Which fast-path is available and the associate literal string
+   */
+  [[nodiscard]] std::pair<literal_fast_path, std::string> get_literal_fast_path() const;
+
  private:
   std::string _pattern;
   regex_flags _flags;

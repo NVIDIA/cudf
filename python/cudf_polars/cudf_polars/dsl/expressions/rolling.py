@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import singledispatchmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pylibcudf as plc
 
@@ -25,13 +25,18 @@ from cudf_polars.dsl.utils.windows import (
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.typing import ClosedInterval, Duration
 
-__all__ = ["GroupedWindow", "RollingWindow", "to_request"]
+__all__ = ["FixedSizeRollingWindow", "GroupedWindow", "RollingWindow", "to_request"]
+
+_REPLACE_POLICY = {
+    "forward": plc.replace.ReplacePolicy.PRECEDING,
+    "backward": plc.replace.ReplacePolicy.FOLLOWING,
+}
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,16 @@ class FillNullWithStrategyOp(UnaryOp):
 
 @dataclass(frozen=True)
 class CumSumOp(UnaryOp):
+    pass
+
+
+@dataclass(frozen=True)
+class ShiftOp(UnaryOp):
+    pass
+
+
+@dataclass(frozen=True)
+class FixedSizeRollingOp(UnaryOp):
     pass
 
 
@@ -206,16 +221,109 @@ class RollingWindow(Expr):  # pragma: no cover; polars >1.36 uses AExpr::Rolling
         return Column(result, dtype=self.dtype)
 
 
+class FixedSizeRollingWindow(Expr):
+    """
+    Fixed-size integer-based rolling window aggregation.
+
+    Handles expressions like ``pl.col("x").rolling_sum(window_size=3)``.
+    Uses ``pylibcudf.rolling.rolling_window`` with integer preceding
+    and following window sizes.
+    """
+
+    __slots__ = (
+        "_agg_request",
+        "agg_name",
+        "fn_params",
+        "following",
+        "min_periods",
+        "preceding",
+    )
+    _non_child = (
+        "dtype",
+        "agg_name",
+        "preceding",
+        "following",
+        "min_periods",
+        "fn_params",
+    )
+
+    _aggregations: ClassVar[dict[str, Callable[..., plc.aggregation.Aggregation]]] = {
+        "sum": plc.aggregation.sum,
+        "min": plc.aggregation.min,
+        "max": plc.aggregation.max,
+        "mean": plc.aggregation.mean,
+        "var": plc.aggregation.variance,
+        "std": plc.aggregation.std,
+    }
+
+    def __init__(
+        self,
+        dtype: DataType,
+        agg_name: str,
+        preceding: int,
+        following: int,
+        min_periods: int,
+        fn_params: tuple[Any, ...],
+        child: Expr,
+    ) -> None:
+        self.dtype = dtype
+        self.agg_name = agg_name
+        self.preceding = preceding
+        self.following = following
+        self.min_periods = min_periods
+        self.fn_params = fn_params
+        self.children = (child,)
+        self.is_pointwise = False
+        self._agg_request = self._make_agg_request()
+        if not plc.rolling.is_valid_rolling_aggregation(
+            child.dtype.plc_type, self._agg_request
+        ):
+            raise NotImplementedError(
+                f"Unsupported fixed-size rolling aggregation {agg_name}"
+            )
+
+    def _make_agg_request(self) -> plc.aggregation.Aggregation:
+        agg_fn = self._aggregations.get(self.agg_name)
+        if agg_fn is None:
+            raise NotImplementedError(
+                f"Unsupported fixed-size rolling aggregation: {self.agg_name}"
+            )  # pragma: no cover; translation validates aggregation names
+        return agg_fn(*self.fn_params)
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate this expression given a dataframe for context."""
+        if context != ExecutionContext.FRAME:
+            raise RuntimeError(
+                "Rolling aggregation inside groupby/over/rolling"
+            )  # pragma: no cover; translation raises first
+        (child,) = self.children
+        col = child.evaluate(df, context=context)
+
+        result = plc.rolling.rolling_window(
+            col.obj,
+            self.preceding,
+            self.following,
+            self.min_periods,
+            self._agg_request,
+            stream=df.stream,
+        )
+        if result.type() != self.dtype.plc_type:
+            result = plc.unary.cast(result, self.dtype.plc_type, stream=df.stream)
+
+        return Column(result, dtype=self.dtype)
+
+
 class GroupedWindow(Expr):
     """
     Compute a window ``.over(...)`` aggregation and broadcast to rows.
 
     Notes
     -----
-    - This expression node currently implements **grouped window mapping**
-      (aggregate once per group, then broadcast back), not rolling windows.
-    - It can be extended later to support `rolling(...).over(...)`
-      when polars supports that expression.
+    - This expression node implements **grouped window mapping**
+      (aggregate once per group, then broadcast back), plus scan-like
+      window operations that require row ordering within each group.
     """
 
     __slots__ = (
@@ -256,11 +364,20 @@ class GroupedWindow(Expr):
             type(named_expr.value).__name__
             for named_expr in self.named_aggs
             if not (
-                isinstance(named_expr.value, (expr.Len, expr.Agg))
+                isinstance(
+                    named_expr.value, (expr.Len, expr.Agg, FixedSizeRollingWindow)
+                )
                 or (
                     isinstance(named_expr.value, expr.UnaryFunction)
                     and named_expr.value.name
-                    in {"rank", "fill_null_with_strategy", "cum_sum"}
+                    in {
+                        "rank",
+                        "fill_null_with_strategy",
+                        "cum_sum",
+                        "diff",
+                        "shift",
+                        "shift_and_fill",
+                    }
                 )
             )
         ]
@@ -416,17 +533,26 @@ class GroupedWindow(Expr):
         cum_named = op.named_exprs
         order_index = op.order_index
 
-        requests: list[plc.groupby.GroupByRequest] = []
-        out_names: list[str] = []
-        out_dtypes: list[DataType] = []
+        data_exprs: list[expr.Expr] = []
+        fill_policies: list[plc.replace.ReplacePolicy | None] = []
+        for ne in cum_named:
+            v = ne.value
+            if (
+                isinstance(v, expr.UnaryFunction)
+                and v.name == "fill_null_with_strategy"
+            ):
+                data_exprs.append(v.children[0].children[0])
+                fill_policies.append(_REPLACE_POLICY[v.options[0]])
+            else:
+                data_exprs.append(v.children[0])
+                fill_policies.append(None)
 
         # Instead of calling self._gather_columns, let's call plc.copying.gather directly
         # since we need plc.Column objects, not cudf_polars Column objects
         val_cols: Sequence[plc.Column]
         if order_index is not None:
             plc_cols = [
-                ne.value.children[0].evaluate(df, context=ExecutionContext.FRAME).obj
-                for ne in cum_named
+                e.evaluate(df, context=ExecutionContext.FRAME).obj for e in data_exprs
             ]
             val_cols = plc.copying.gather(
                 plc.Table(plc_cols),
@@ -436,11 +562,13 @@ class GroupedWindow(Expr):
             ).columns()
         else:
             val_cols = [
-                ne.value.children[0].evaluate(df, context=ExecutionContext.FRAME).obj
-                for ne in cum_named
+                e.evaluate(df, context=ExecutionContext.FRAME).obj for e in data_exprs
             ]
         agg = plc.aggregation.sum()
 
+        requests: list[plc.groupby.GroupByRequest] = []
+        out_names: list[str] = []
+        out_dtypes: list[DataType] = []
         for ne, val_col in zip(cum_named, val_cols, strict=True):
             requests.append(plc.groupby.GroupByRequest(val_col, [agg]))
             out_names.append(ne.name)
@@ -450,7 +578,179 @@ class GroupedWindow(Expr):
         assert isinstance(local_grouper, plc.groupby.GroupBy)
         _, tables = local_grouper.scan(requests)
 
-        return out_names, out_dtypes, tables
+        result_tables: list[plc.Table] = []
+        for tbl, policy in zip(tables, fill_policies, strict=True):
+            if policy is None:
+                result_tables.append(tbl)
+            else:
+                _, filled = local_grouper.replace_nulls(tbl, [policy])
+                result_tables.append(filled)
+        return out_names, out_dtypes, result_tables
+
+    @_apply_unary_op.register
+    def _(
+        self,
+        op: ShiftOp,
+        df: DataFrame,
+        _: plc.groupby.GroupBy,
+    ) -> tuple[list[str], list[DataType], list[plc.Table]]:
+        plc_cols: list[plc.Column] = []
+        offsets: list[int] = []
+        fill_scalars: list[plc.Scalar] = []
+        out_names: list[str] = []
+        out_dtypes: list[DataType] = []
+
+        for ne in op.named_exprs:
+            shift_expr = ne.value
+            assert isinstance(shift_expr, expr.UnaryFunction)
+            data_expr, offset_expr = shift_expr.children[:2]
+            assert isinstance(offset_expr, expr.Literal)
+            offset = offset_expr.value
+            assert isinstance(offset, int)
+
+            plc_col = data_expr.evaluate(df, context=ExecutionContext.FRAME).obj
+            plc_cols.append(plc_col)
+            offsets.append(offset)
+            out_names.append(ne.name)
+            out_dtypes.append(shift_expr.dtype)
+            if shift_expr.name in {"diff", "shift"}:
+                fill_scalars.append(
+                    plc.Scalar.from_py(None, plc_col.type(), stream=df.stream)
+                )
+            else:
+                assert shift_expr.name == "shift_and_fill"
+                fill_expr = shift_expr.children[2]
+                assert isinstance(fill_expr, expr.Literal)
+                fill_scalars.append(
+                    plc.Scalar.from_py(
+                        fill_expr.value, plc_col.type(), stream=df.stream
+                    )
+                )
+
+        assert op.order_index is not None
+        val_cols = plc.copying.gather(
+            plc.Table(plc_cols),
+            op.order_index,
+            plc.copying.OutOfBoundsPolicy.NULLIFY,
+            stream=df.stream,
+        ).columns()
+
+        assert isinstance(op.local_grouper, plc.groupby.GroupBy)
+        shifted_tbl = op.local_grouper.shift(
+            plc.Table(val_cols), offsets, fill_scalars, stream=df.stream
+        )[1]
+        result_tables: list[plc.Table] = []
+        for val_col, shifted_col, ne in zip(
+            val_cols, shifted_tbl.columns(), op.named_exprs, strict=True
+        ):
+            shift_expr = ne.value
+            assert isinstance(shift_expr, expr.UnaryFunction)
+            if shift_expr.name == "diff":
+                result_tables.append(
+                    plc.Table(
+                        [
+                            plc.binaryop.binary_operation(
+                                val_col,
+                                shifted_col,
+                                plc.binaryop.BinaryOperator.SUB,
+                                shift_expr.dtype.plc_type,
+                                stream=df.stream,
+                            )
+                        ]
+                    )
+                )
+            else:
+                result_tables.append(plc.Table([shifted_col]))
+        return out_names, out_dtypes, result_tables
+
+    @_apply_unary_op.register
+    def _(
+        self,
+        op: FixedSizeRollingOp,
+        df: DataFrame,
+        _: plc.groupby.GroupBy,
+    ) -> tuple[list[str], list[DataType], list[plc.Table]]:
+        assert op.order_index is not None
+        assert op.by_cols_for_scan is not None
+
+        names: list[str] = []
+        dtypes: list[DataType] = []
+        tables: list[plc.Table] = []
+        dense_index = plc.filling.sequence(
+            df.num_rows,
+            plc.Scalar.from_py(0, plc.types.SIZE_TYPE, stream=df.stream),
+            plc.Scalar.from_py(1, plc.types.SIZE_TYPE, stream=df.stream),
+            stream=df.stream,
+        )
+        group_keys = plc.Table([c.obj for c in op.by_cols_for_scan])
+
+        def get_window_key(ne: expr.NamedExpr) -> tuple[int, int]:
+            rolling_expr = ne.value
+            assert isinstance(rolling_expr, FixedSizeRollingWindow)
+            return rolling_expr.preceding, rolling_expr.following
+
+        window_counts = Counter(get_window_key(ne) for ne in op.named_exprs)
+        window_bounds_cache: dict[tuple[int, int], tuple[plc.Column, plc.Column]] = {}
+
+        for ne in op.named_exprs:
+            rolling_expr = ne.value
+            assert isinstance(rolling_expr, FixedSizeRollingWindow)
+            (data_expr,) = rolling_expr.children
+            val_col = data_expr.evaluate(df, context=ExecutionContext.FRAME).obj
+            val_col = plc.copying.gather(
+                plc.Table([val_col]),
+                op.order_index,
+                plc.copying.OutOfBoundsPolicy.NULLIFY,
+                stream=df.stream,
+            ).columns()[0]
+
+            window_key = get_window_key(ne)
+            bounds: tuple[plc.Column, plc.Column] | None = window_bounds_cache.get(
+                window_key
+            )
+            if bounds is None:
+                bounds = plc.rolling.make_range_windows(
+                    group_keys,
+                    dense_index,
+                    plc.types.Order.ASCENDING,
+                    plc.types.NullOrder.BEFORE,
+                    plc.rolling.BoundedOpen(
+                        plc.Scalar.from_py(
+                            rolling_expr.preceding,
+                            plc.types.SIZE_TYPE,
+                            stream=df.stream,
+                        )
+                    ),
+                    plc.rolling.BoundedClosed(
+                        plc.Scalar.from_py(
+                            rolling_expr.following,
+                            plc.types.SIZE_TYPE,
+                            stream=df.stream,
+                        )
+                    ),
+                    stream=df.stream,
+                )
+                if window_counts[window_key] > 1:
+                    window_bounds_cache[window_key] = bounds
+
+            result = plc.rolling.rolling_window(
+                val_col,
+                bounds[0],
+                bounds[1],
+                rolling_expr.min_periods,
+                rolling_expr._agg_request,
+                stream=df.stream,
+            )
+            if result.type() != rolling_expr.dtype.plc_type:
+                result = plc.unary.cast(
+                    result, rolling_expr.dtype.plc_type, stream=df.stream
+                )
+
+            names.append(ne.name)
+            dtypes.append(rolling_expr.dtype)
+            tables.append(plc.Table([result]))
+
+        return names, dtypes, tables
 
     def _reorder_to_input(
         self,
@@ -510,12 +810,28 @@ class GroupedWindow(Expr):
             "rank": [],
             "fill_null_with_strategy": [],
             "cum_sum": [],
+            "shift": [],
+            "fixed_size_rolling": [],
         }
 
         for ne in self.named_aggs:
             v = ne.value
-            if isinstance(v, expr.UnaryFunction) and v.name in unary_window_ops:
+            if (
+                isinstance(v, expr.UnaryFunction)
+                and v.name == "fill_null_with_strategy"
+                and isinstance(v.children[0], expr.UnaryFunction)
+                and v.children[0].name == "cum_sum"
+            ):
+                unary_window_ops["cum_sum"].append(ne)
+            elif isinstance(v, expr.UnaryFunction) and v.name in {
+                "diff",
+                "shift_and_fill",
+            }:
+                unary_window_ops["shift"].append(ne)
+            elif isinstance(v, expr.UnaryFunction) and v.name in unary_window_ops:
                 unary_window_ops[v.name].append(ne)
+            elif isinstance(v, FixedSizeRollingWindow):
+                unary_window_ops["fixed_size_rolling"].append(ne)
             else:
                 reductions.append(ne)
         return reductions, unary_window_ops
@@ -599,8 +915,9 @@ class GroupedWindow(Expr):
         ob_nulls_last: bool,
         grouper: plc.groupby.GroupBy,
         stream: Stream,
+        require_sorted_groups: bool = False,
     ) -> tuple[plc.Column | None, list[Column] | None, plc.groupby.GroupBy]:
-        if order_by_col is None:
+        if order_by_col is None and not require_sorted_groups:
             # keep the original ordering
             return None, None, grouper
         order_index = self._build_window_order_index(
@@ -919,11 +1236,6 @@ class GroupedWindow(Expr):
                 assert isinstance(fill_null_expr, expr.UnaryFunction)
                 strategy_exprs[fill_null_expr.options[0]].append(ne)
 
-            replace_policy = {
-                "forward": plc.replace.ReplacePolicy.PRECEDING,
-                "backward": plc.replace.ReplacePolicy.FOLLOWING,
-            }
-
             for strategy, fill_exprs in strategy_exprs.items():
                 names, dtypes, tables = self._apply_unary_op(
                     FillNullWithStrategyOp(
@@ -931,7 +1243,7 @@ class GroupedWindow(Expr):
                         order_index=order_index,
                         by_cols_for_scan=fill_null_by_cols_for_scan,
                         local_grouper=local,
-                        policy=replace_policy[strategy],
+                        policy=_REPLACE_POLICY[strategy],
                     ),
                     df,
                     grouper,
@@ -950,6 +1262,14 @@ class GroupedWindow(Expr):
                 )
 
         if cum_named := unary_window_ops["cum_sum"]:
+            # A fill_null_with_strategy fill runs on the scan output, which is
+            # always in sorted-group order, so it needs a sorted grouper even when
+            # there is no order_by.
+            has_fill = any(
+                isinstance(ne.value, expr.UnaryFunction)
+                and ne.value.name == "fill_null_with_strategy"
+                for ne in cum_named
+            )
             order_index, cum_sum_by_cols_for_scan, local = (
                 self._grouped_window_scan_setup(
                     by_cols,
@@ -965,6 +1285,7 @@ class GroupedWindow(Expr):
                     else False,
                     grouper=grouper,
                     stream=df.stream,
+                    require_sorted_groups=has_fill,
                 )
             )
             names, dtypes, tables = self._apply_unary_op(
@@ -973,6 +1294,83 @@ class GroupedWindow(Expr):
                     order_index=order_index,
                     by_cols_for_scan=cum_sum_by_cols_for_scan,
                     local_grouper=local,
+                ),
+                df,
+                grouper,
+            )
+            broadcasted_cols.extend(
+                self._reorder_to_input(
+                    row_id,
+                    by_cols,
+                    df.num_rows,
+                    tables,
+                    names,
+                    dtypes,
+                    order_index=order_index,
+                    stream=df.stream,
+                )
+            )
+
+        if shift_named := unary_window_ops["shift"]:
+            order_index, shift_by_cols_for_scan, local = (
+                self._grouped_window_scan_setup(
+                    by_cols,
+                    row_id=row_id,
+                    order_by_col=order_by_col
+                    if self._order_by_expr is not None
+                    else None,
+                    ob_desc=self.options[2]
+                    if self._order_by_expr is not None
+                    else False,
+                    ob_nulls_last=self.options[3]
+                    if self._order_by_expr is not None
+                    else False,
+                    grouper=grouper,
+                    stream=df.stream,
+                    require_sorted_groups=True,
+                )
+            )
+            names, dtypes, tables = self._apply_unary_op(
+                ShiftOp(
+                    named_exprs=shift_named,
+                    order_index=order_index,
+                    by_cols_for_scan=shift_by_cols_for_scan,
+                    local_grouper=local,
+                ),
+                df,
+                grouper,
+            )
+            broadcasted_cols.extend(
+                self._reorder_to_input(
+                    row_id,
+                    by_cols,
+                    df.num_rows,
+                    tables,
+                    names,
+                    dtypes,
+                    order_index=order_index,
+                    stream=df.stream,
+                )
+            )
+
+        if fixed_rolling_named := unary_window_ops["fixed_size_rolling"]:
+            order_index, rolling_by_cols_for_scan, _ = self._grouped_window_scan_setup(
+                by_cols,
+                row_id=row_id,
+                order_by_col=order_by_col if self._order_by_expr is not None else None,
+                ob_desc=self.options[2] if self._order_by_expr is not None else False,
+                ob_nulls_last=self.options[3]
+                if self._order_by_expr is not None
+                else False,
+                grouper=grouper,
+                stream=df.stream,
+                require_sorted_groups=True,
+            )
+            names, dtypes, tables = self._apply_unary_op(
+                FixedSizeRollingOp(
+                    named_exprs=fixed_rolling_named,
+                    order_index=order_index,
+                    by_cols_for_scan=rolling_by_cols_for_scan,
                 ),
                 df,
                 grouper,

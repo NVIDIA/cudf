@@ -20,13 +20,16 @@
 #include <memory>
 #include <span>
 
+/**
+ * @file
+ * @brief Roaring bitmap APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup utility_roaring_bitmap
  * @{
- * @file
- * @brief Roaring bitmap APIs
  */
 
 /**

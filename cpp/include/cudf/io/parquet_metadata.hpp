@@ -24,7 +24,6 @@ namespace io {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 //! Parquet physical `Type`

@@ -20,13 +20,16 @@
 #include <variant>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for reading and writing JSON files.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief APIs for reading and writing JSON files.
  */
 
 class json_reader_options_builder;
@@ -611,7 +614,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& dtypes(std::vector<data_type> types)
   {
-    options._dtypes = std::move(types);
+    options.set_dtypes(std::move(types));
     return *this;
   }
 
@@ -623,7 +626,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& dtypes(std::map<std::string, data_type> types)
   {
-    options._dtypes = std::move(types);
+    options.set_dtypes(std::move(types));
     return *this;
   }
 
@@ -635,7 +638,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& dtypes(std::map<std::string, schema_element> types)
   {
-    options._dtypes = std::move(types);
+    options.set_dtypes(std::move(types));
     return *this;
   }
 
@@ -659,7 +662,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& compression(compression_type comp_type)
   {
-    options._compression = comp_type;
+    options.set_compression(comp_type);
     return *this;
   }
 
@@ -671,7 +674,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& byte_range_offset(size_type offset)
   {
-    options._byte_range_offset = offset;
+    options.set_byte_range_offset(offset);
     return *this;
   }
 
@@ -683,7 +686,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& byte_range_size(size_type size)
   {
-    options._byte_range_size = size;
+    options.set_byte_range_size(size);
     return *this;
   }
 
@@ -707,7 +710,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& lines(bool val)
   {
-    options._lines = val;
+    options.enable_lines(val);
     return *this;
   }
 
@@ -720,7 +723,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& mixed_types_as_string(bool val)
   {
-    options._mixed_types_as_string = val;
+    options.enable_mixed_types_as_string(val);
     return *this;
   }
 
@@ -736,7 +739,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& prune_columns(bool val)
   {
-    options._prune_columns = val;
+    options.enable_prune_columns(val);
     return *this;
   }
 
@@ -751,7 +754,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& experimental(bool val)
   {
-    options._experimental = val;
+    options.enable_experimental(val);
     return *this;
   }
 
@@ -763,7 +766,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& dayfirst(bool val)
   {
-    options._dayfirst = val;
+    options.enable_dayfirst(val);
     return *this;
   }
 
@@ -776,7 +779,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& keep_quotes(bool val)
   {
-    options._keep_quotes = val;
+    options.enable_keep_quotes(val);
     return *this;
   }
 
@@ -789,7 +792,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& normalize_single_quotes(bool val)
   {
-    options._normalize_single_quotes = val;
+    options.enable_normalize_single_quotes(val);
     return *this;
   }
 
@@ -802,7 +805,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& normalize_whitespace(bool val)
   {
-    options._normalize_whitespace = val;
+    options.enable_normalize_whitespace(val);
     return *this;
   }
 
@@ -814,7 +817,7 @@ class json_reader_options_builder {
    */
   json_reader_options_builder& recovery_mode(json_recovery_mode_t val)
   {
-    options._recovery_mode = val;
+    options.set_recovery_mode(val);
     return *this;
   }
 
@@ -1045,7 +1048,6 @@ json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
 /**
  * @addtogroup io_writers
  * @{
- * @file
  */
 
 /**
@@ -1300,7 +1302,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& table(table_view tbl)
   {
-    options._table = tbl;
+    options.set_table(tbl);
     return *this;
   }
 
@@ -1312,7 +1314,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& compression(compression_type comptype)
   {
-    options._compression = comptype;
+    options.set_compression(comptype);
     return *this;
   }
 
@@ -1324,7 +1326,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& metadata(table_metadata metadata)
   {
-    options._metadata = std::move(metadata);
+    options.set_metadata(std::move(metadata));
     return *this;
   }
 
@@ -1336,7 +1338,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& na_rep(std::string val)
   {
-    options._na_rep = std::move(val);
+    options.set_na_rep(std::move(val));
     return *this;
   };
 
@@ -1348,7 +1350,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& include_nulls(bool val)
   {
-    options._include_nulls = val;
+    options.enable_include_nulls(val);
     return *this;
   }
 
@@ -1362,7 +1364,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& utf8_escaped(bool val)
   {
-    options._enable_utf8_escaped = val;
+    options.enable_utf8_escaped(val);
     return *this;
   }
 
@@ -1374,7 +1376,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& lines(bool val)
   {
-    options._lines = val;
+    options.enable_lines(val);
     return *this;
   }
 
@@ -1386,7 +1388,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& rows_per_chunk(int val)
   {
-    options._rows_per_chunk = val;
+    options.set_rows_per_chunk(val);
     return *this;
   }
 
@@ -1398,7 +1400,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& true_value(std::string val)
   {
-    options._true_value = std::move(val);
+    options.set_true_value(std::move(val));
     return *this;
   }
 
@@ -1410,7 +1412,7 @@ class json_writer_options_builder {
    */
   json_writer_options_builder& false_value(std::string val)
   {
-    options._false_value = std::move(val);
+    options.set_false_value(std::move(val));
     return *this;
   }
 

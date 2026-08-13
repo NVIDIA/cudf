@@ -13,13 +13,16 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
+/**
+ * @file
+ * @brief API for counting consecutive groups of equivalent rows in a column
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_reduction
  * @{
- * @file
- * @brief API for counting consecutive groups of equivalent rows in a column
  */
 
 /**

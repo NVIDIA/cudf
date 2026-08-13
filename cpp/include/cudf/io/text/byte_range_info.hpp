@@ -10,14 +10,17 @@
 #include <cstdint>
 #include <vector>
 
+/**
+ * @file
+ * @brief Class and helper functions for specifying a byte range within a data source.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 namespace text {
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief Class and helper functions for specifying a byte range within a data source.
  */
 
 /**

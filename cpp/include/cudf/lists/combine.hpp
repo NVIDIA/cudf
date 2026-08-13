@@ -9,6 +9,11 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for concatenating list columns row-wise or column-wise
+ */
+
 namespace CUDF_EXPORT cudf {
 
 //! Lists column APIs
@@ -16,8 +21,6 @@ namespace lists {
 /**
  * @addtogroup lists_combine
  * @{
- * @file
- * @brief APIs for concatenating list columns row-wise or column-wise
  */
 
 /**

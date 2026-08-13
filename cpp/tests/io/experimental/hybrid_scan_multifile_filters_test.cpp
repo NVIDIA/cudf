@@ -16,15 +16,20 @@
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/device_buffer.hpp>
+
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <numeric>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -658,4 +663,96 @@ TYPED_TEST(HybridScanMultifilePageIndexRowMaskTest, BuildRowMaskWithPageIndexSta
     auto constexpr expected_surviving_rows = 2 * num_sources * page_size_for_ordered_tests;
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
+}
+
+TEST_F(HybridScanMultifileFiltersTest, FilterRowGroupsWithDictionaryPages)
+{
+  using T                    = uint32_t;
+  auto constexpr num_sources = 2;
+  auto stream                = cudf::get_default_stream();
+  auto mr                    = cudf::get_current_device_resource_ref();
+
+  // 2 sources, each `dictionary_policy::ALWAYS` with a per-source constant `col2`
+  std::vector<std::vector<char>> file_buffers;
+  file_buffers.reserve(num_sources);
+  srand(0xd1c7);
+  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(100)));  // col2 == "0100"
+  srand(0xfeed);
+  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(200)));  // col2 == "0200"
+
+  auto inputs = multifile_inputs(build_source_info(file_buffers));
+
+  // Filter: `col2 == "0100"` (present only in source A's dictionary)
+  auto literal_value = cudf::string_scalar("0100", true, stream);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_name_reference("col2");
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+
+  auto options      = cudf::io::parquet_reader_options::builder().filter(filter).build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_multifile>(
+    inputs.footer_byte_spans, options);
+
+  // Page index is needed to detect dictionary-only encoded pages
+  setup_page_indexes(*reader, inputs);
+
+  auto const dict_filtered =
+    filter_row_groups_with_dictionaries(inputs, *reader, options, stream, mr);
+
+  // Source A keeps all 4 row groups (col2 == "0100"); source B is fully pruned (only "0200")
+  ASSERT_EQ(dict_filtered.size(), num_sources);
+  EXPECT_EQ(dict_filtered.front(), (std::vector<cudf::size_type>{0, 1, 2, 3}));
+  EXPECT_TRUE(dict_filtered.back().empty());
+}
+
+TEST_F(HybridScanMultifileFiltersTest, MismatchedSchemaDictionaryPruningCollision)
+{
+  using T                    = cudf::duration_ms;
+  auto constexpr num_sources = 2;
+  auto stream                = cudf::get_default_stream();
+  auto mr                    = cudf::get_current_device_resource_ref();
+
+  // Source A: default column order/names, col2 == "0200" (pruned by the filter).
+  // Source B: same columns emitted as {col2, col0, col1}, col2 == "0100" (survives).
+  std::vector<std::vector<char>> file_buffers;
+  file_buffers.reserve(num_sources);
+  srand(0xd1c7);
+  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(200)));
+  srand(0xfeed);
+  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(
+    100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1})));
+
+  auto inputs = multifile_inputs(build_source_info(file_buffers));
+
+  // Filter: `col2 == "0100"`
+  auto literal_value = cudf::string_scalar("0100", true, stream);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_name_reference("col2");
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+
+  auto options = cudf::io::parquet_reader_options::builder()
+                   .allow_mismatched_pq_schemas(true)
+                   .column_names({"col2"})
+                   .filter(filter)
+                   .build();
+
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_multifile>(
+    cudf::host_span<cudf::host_span<uint8_t const> const>{inputs.footer_byte_spans}, options);
+
+  // Ensure the reorder genuinely differs the per-source schemas
+  auto const metadatas = reader->parquet_metadatas();
+  ASSERT_EQ(metadatas.size(), num_sources);
+  EXPECT_EQ(metadatas.front().schema.at(1).name, "col0");
+  EXPECT_EQ(metadatas.back().schema.at(1).name, "col2");
+
+  // Page index is needed to detect dictionary-only encoded pages
+  setup_page_indexes(*reader, inputs);
+
+  auto const dict_filtered =
+    filter_row_groups_with_dictionaries(inputs, *reader, options, stream, mr);
+
+  // Source A is pruned (col2 == "0200"), source B survives (col2 == "0100").
+  ASSERT_EQ(dict_filtered.size(), num_sources);
+  EXPECT_TRUE(dict_filtered.front().empty()) << "Source A should be pruned (col2 == \"0200\")";
+  EXPECT_EQ(dict_filtered.back(), (std::vector<cudf::size_type>{0, 1, 2, 3}))
+    << "Source B should survive (col2 == \"0100\")";
 }

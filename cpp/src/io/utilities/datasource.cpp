@@ -5,6 +5,7 @@
 
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/config_utils.hpp>
@@ -497,14 +498,15 @@ std::unique_ptr<datasource> datasource::create(datasource* source)
 std::future<std::unique_ptr<datasource::buffer>> datasource::host_read_async(size_t offset,
                                                                              size_t size)
 {
-  return std::async(std::launch::deferred,
-                    [this, offset, size] { return host_read(offset, size); });
+  // Run on the host worker pool so fanned-out reads execute in parallel instead of serially.
+  return cudf::detail::host_worker_pool().submit_task(
+    [this, offset, size] { return host_read(offset, size); });
 }
 
 std::future<size_t> datasource::host_read_async(size_t offset, size_t size, uint8_t* dst)
 {
-  return std::async(std::launch::deferred,
-                    [this, offset, size, dst] { return host_read(offset, size, dst); });
+  return cudf::detail::host_worker_pool().submit_task(
+    [this, offset, size, dst] { return host_read(offset, size, dst); });
 }
 
 }  // namespace io

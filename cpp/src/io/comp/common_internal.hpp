@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@ enum class host_engine_state : uint8_t { ON, OFF, AUTO, HYBRID };
 
 /**
  * @brief GZIP header flags
- * See https://tools.ietf.org/html/rfc1952
+ * See https://datatracker.ietf.org/doc/html/rfc1952
  */
 namespace GZIPHeaderFlag {
 constexpr uint8_t ftext    = 0x01;  // ASCII text hint

@@ -44,6 +44,7 @@ Mark Adler    madler@alumni.caltech.edu
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
 #include <cuda/std/tuple>
@@ -971,7 +972,7 @@ __device__ void prefetch_warp(inflate_state_s volatile* s, int t)
 
 /**
  * @brief Parse GZIP header
- * See https://tools.ietf.org/html/rfc1952
+ * See https://datatracker.ietf.org/doc/html/rfc1952
  */
 __device__ int parse_gzip_header(uint8_t const* src, size_t src_size)
 {
@@ -1145,65 +1146,6 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   }
 }
 
-/**
- * @brief Copy a group of buffers
- *
- * blockDim {1024,1,1}
- *
- * @param inputs Source and destination information per block
- */
-CUDF_KERNEL void __launch_bounds__(1024)
-  copy_uncompressed_kernel(device_span<device_span<uint8_t const> const> inputs,
-                           device_span<device_span<uint8_t> const> outputs)
-{
-  __shared__ uint8_t const* volatile src_g;
-  __shared__ uint8_t* volatile dst_g;
-  __shared__ uint32_t volatile copy_len_g;
-
-  uint32_t t = threadIdx.x;
-  uint32_t z = blockIdx.x;
-  uint8_t const* src;
-  uint8_t* dst;
-  uint32_t len, src_align_bytes, src_align_bits, dst_align_bytes;
-
-  if (!t) {
-    src        = inputs[z].data();
-    dst        = outputs[z].data();
-    len        = static_cast<uint32_t>(min(inputs[z].size(), outputs[z].size()));
-    src_g      = src;
-    dst_g      = dst;
-    copy_len_g = len;
-  }
-  __syncthreads();
-  src = src_g;
-  dst = dst_g;
-  len = copy_len_g;
-  // Align output to 32-bit
-  dst_align_bytes = 3 & -reinterpret_cast<intptr_t>(dst);
-  if (dst_align_bytes != 0) {
-    uint32_t align_len = min(dst_align_bytes, len);
-    if (t < align_len) { dst[t] = src[t]; }
-    src += align_len;
-    dst += align_len;
-    len -= align_len;
-  }
-  src_align_bytes = (uint32_t)(3 & reinterpret_cast<uintptr_t>(src));
-  src_align_bits  = src_align_bytes << 3;
-  while (len >= 32) {
-    auto const* src32 = reinterpret_cast<uint32_t const*>(src - src_align_bytes);
-    uint32_t copy_cnt = min(len >> 2, 1024);
-    if (t < copy_cnt) {
-      uint32_t v = src32[t];
-      if (src_align_bits != 0) { v = __funnelshift_r(v, src32[t + 1], src_align_bits); }
-      reinterpret_cast<uint32_t*>(dst)[t] = v;
-    }
-    src += copy_cnt * 4;
-    dst += copy_cnt * 4;
-    len -= copy_cnt * 4;
-  }
-  if (t < len) { dst[t] = src[t]; }
-}
-
 enum class task_type { DECOMPRESSION, COMPRESSION };
 
 class cost_model {
@@ -1270,8 +1212,8 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
   // Precompute costs to avoid repeated computation during sorting
   rmm::device_uvector<double> costs(inputs.size(), stream, mr);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    thrust::make_zip_iterator(inputs.begin(), outputs.begin()),
-                    thrust::make_zip_iterator(inputs.end(), outputs.end()),
+                    cuda::make_zip_iterator(inputs.begin(), outputs.begin()),
+                    cuda::make_zip_iterator(inputs.end(), outputs.end()),
                     costs.begin(),
                     [task_type] __device__(auto const& input_output_pair) {
                       auto const& input  = cuda::std::get<0>(input_output_pair);
@@ -1370,17 +1312,6 @@ void gpuinflate(device_span<device_span<uint8_t const> const> inputs,
   if (inputs.size() > 0) {
     inflate_kernel_no_racecheck<block_size>
       <<<inputs.size(), block_size, 0, stream.value()>>>(inputs, outputs, results, parse_hdr);
-    CUDF_CUDA_TRY(cudaGetLastError());
-  }
-}
-
-void gpu_copy_uncompressed_blocks(device_span<device_span<uint8_t const> const> inputs,
-                                  device_span<device_span<uint8_t> const> outputs,
-                                  rmm::cuda_stream_view stream)
-{
-  constexpr auto block_size = 1024;
-  if (inputs.size() > 0) {
-    copy_uncompressed_kernel<<<inputs.size(), block_size, 0, stream.value()>>>(inputs, outputs);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }

@@ -117,11 +117,11 @@ The steps below reproduce the PDS-H benchmark results using cudf.pandas.
 ### Setup
 
 Install `cudf` following the
-[RAPIDS installation guide](https://docs.rapids.ai/install). For nightly wheels:
+[RAPIDS installation guide](https://docs.rapids.ai/install/). For nightly wheels:
 
 ```bash
 CUDA_MAJOR=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+')
-pip install --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple \
+pip install --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/ \
     "cudf-cu${CUDA_MAJOR}>=0.0.0a0"
 ```
 

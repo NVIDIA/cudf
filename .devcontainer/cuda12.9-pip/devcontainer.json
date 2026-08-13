@@ -5,16 +5,16 @@
     "args": {
       "CUDA": "12.9",
       "PYTHON_PACKAGE_MANAGER": "pip",
-      "BASE": "rapidsai/devcontainers:26.08-cpp-cuda12.9-ucx1.19.0-openmpi5.0.10"
+      "BASE": "rapidsai/devcontainers:26.10-cpp-cuda12.9-ucx1.19.0-openmpi5.0.10"
     },
     "cacheFrom": [
-      "ghcr.io/rapidsai/cudf/devcontainer:26.08-cuda12.9-pip"
+      "ghcr.io/rapidsai/cudf/devcontainer:26.10-cuda12.9-pip"
     ]
   },
   "runArgs": [
     "--rm",
     "--name",
-    "${localEnv:USER:anon}-rapids-${localWorkspaceFolderBasename}-26.08-cuda12.9-pip",
+    "${localEnv:USER:anon}-rapids-${localWorkspaceFolderBasename}-26.10-cuda12.9-pip",
     "--ulimit",
     "nofile=500000"
   ],
@@ -22,7 +22,7 @@
     "gpu": "optional"
   },
   "features": {
-    "ghcr.io/rapidsai/devcontainers/features/rapids-build-utils:26.8": {}
+    "ghcr.io/rapidsai/devcontainers/features/rapids-build-utils:26.10": {}
   },
   "overrideFeatureInstallOrder": [
     "ghcr.io/rapidsai/devcontainers/features/rapids-build-utils"

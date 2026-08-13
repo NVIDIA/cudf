@@ -405,7 +405,7 @@ def _(
         [e.value for e in ir.exprs]
     ):
         return _lower_ir_fallback(
-            ir.reconstruct([child]),
+            ir,
             rec,
             msg=(
                 "fill_null with strategy other than 'zero' or 'one' is not supported "

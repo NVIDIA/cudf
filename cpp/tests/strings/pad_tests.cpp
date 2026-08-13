@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/strings/padding.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/strings/wrap.hpp>
@@ -120,43 +121,37 @@ INSTANTIATE_TEST_CASE_P(StringsPadTest,
 
 TEST_F(StringsPadTest, ZFill)
 {
-  std::vector<char const*> h_strings{
-    "654321", "-12345", nullptr, "", "-5", "0987", "4", "+8.5", "éé", "+abé", "é+a", "100-"};
-  cudf::test::strings_column_wrapper input(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+  auto input = cudf::test::strings_column_wrapper(
+    {"654321", "-12345", "", "", "-5", "0987", "4", "+8.5", "éé", "+abé", "é+a", "100-"},
+    {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1});
   auto strings_view = cudf::strings_column_view(input);
 
   auto results = cudf::strings::zfill(strings_view, 6);
 
-  std::vector<char const*> h_expected{"654321",
-                                      "-12345",
-                                      nullptr,
-                                      "000000",
-                                      "-00005",
-                                      "000987",
-                                      "000004",
-                                      "+008.5",
-                                      "0000éé",
-                                      "+00abé",
-                                      "000é+a",
-                                      "00100-"};
-  cudf::test::strings_column_wrapper expected(
-    h_expected.begin(),
-    h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+  auto expected = cudf::test::strings_column_wrapper({"654321",
+                                                      "-12345",
+                                                      "",
+                                                      "000000",
+                                                      "-00005",
+                                                      "000987",
+                                                      "000004",
+                                                      "+008.5",
+                                                      "0000éé",
+                                                      "+00abé",
+                                                      "000é+a",
+                                                      "00100-"},
+                                                     {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TEST_F(StringsPadTest, ZFillByWidths)
 {
   auto input = cudf::test::strings_column_wrapper(
-    {"654321", "-12345", "", "", "-5", "0987", "4", "+8.5", "éé", "+abé", "é+a", "100-"},
-    {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1});
-  auto sv = cudf::strings_column_view(input);
-  auto widths =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 5, 4, 3, 4, 5, 6, 5, 4, 6, 5, 7});
+    {"654321", "-12345", "", "", "-5", "0987", "4", "+8.5", "éé", "+abé", "é+a", "100-", "123"},
+    {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1});
+  auto sv     = cudf::strings_column_view(input);
+  auto widths = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {6, 5, 4, 3, 4, 5, 6, 5, 4, 6, 5, 7, 0}, {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0});
 
   auto results = cudf::strings::zfill_by_widths(sv, widths);
 
@@ -171,20 +166,39 @@ TEST_F(StringsPadTest, ZFillByWidths)
                                                       "00éé",
                                                       "+00abé",
                                                       "00é+a",
-                                                      "000100-"},
-                                                     {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1});
+                                                      "000100-",
+                                                      ""},
+                                                     {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(StringsPadTest, ZFillByWidthsSliced)
+{
+  auto input = cudf::test::strings_column_wrapper(
+    {"654321", "-12345", "", "", "-5", "0987", "4", "+8.5", "éé", "+abé", "é+a", "100-", "123"},
+    {1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1});
+  auto widths = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {6, 5, 4, 3, 4, 5, 6, 5, 4, 6, 5, 7, 0}, {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0});
+
+  // slice such that both the input and the widths retain a null row
+  auto input_sliced  = cudf::slice(input, {2, 13}).front();
+  auto widths_sliced = cudf::slice(widths, {2, 13}).front();
+  auto sv            = cudf::strings_column_view(input_sliced);
+
+  auto results = cudf::strings::zfill_by_widths(sv, widths_sliced);
+
+  auto expected = cudf::test::strings_column_wrapper(
+    {"", "000", "-005", "00987", "000004", "+08.5", "00éé", "+00abé", "00é+a", "000100-", ""},
+    {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TEST_F(StringsPadTest, ZFillError)
 {
-  auto input = cudf::test::strings_column_wrapper({"654321", "-12345", "", ""}, {1, 1, 0, 1});
-  auto sv    = cudf::strings_column_view(input);
-  auto widths =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 5, 4, 3, 0}, {1, 1, 1, 1, 0});
+  auto input  = cudf::test::strings_column_wrapper({"654321", "-12345", "", ""}, {1, 1, 0, 1});
+  auto sv     = cudf::strings_column_view(input);
+  auto widths = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 5, 4, 3, 2});
   EXPECT_THROW(cudf::strings::zfill_by_widths(sv, widths), std::invalid_argument);
-  auto widths2 = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 5, 4, 3, 2});
-  EXPECT_THROW(cudf::strings::zfill_by_widths(sv, widths2), std::invalid_argument);
 }
 
 TEST_F(StringsPadTest, Wrap1)

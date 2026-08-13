@@ -12,12 +12,15 @@
 
 #include <span>
 
+/**
+ * @file
+ * @brief Scalar factory APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup scalar_factories
  * @{
- * @file
- * @brief Scalar factory APIs
  */
 
 /**

@@ -15,12 +15,15 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column partitioning APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_partition
  * @{
- * @file
- * @brief Column partitioning APIs
  */
 
 /**

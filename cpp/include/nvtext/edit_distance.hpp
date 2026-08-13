@@ -24,7 +24,7 @@ namespace CUDF_EXPORT nvtext {
  *
  * The `output[i]` is the edit distance between `input[i]` and `targets[i]`.
  * This edit distance calculation uses the Levenshtein algorithm as documented here:
- * https://www.cuelogic.com/blog/the-levenshtein-algorithm
+ * https://en.wikipedia.org/wiki/Levenshtein_distance
  *
  * @code{.pseudo}
  * Example:

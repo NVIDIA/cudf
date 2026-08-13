@@ -10,7 +10,7 @@
 
     <groupId>ai.rapids</groupId>
     <artifactId>cudf</artifactId>
-    <version>26.08.0-SNAPSHOT</version>
+    <version>26.10.0-SNAPSHOT</version>
 
     <name>cudfjni</name>
     <description>
@@ -272,7 +272,11 @@
                                 </goals>
                                 <configuration>
                                     <reuseForks>false</reuseForks>
-                                    <test>*/NativeDepsLoaderTest.java</test>
+                                    <excludes combine.self="override"/>
+                                    <includes>
+                                        <include>**/NativeDepsLoaderTest.java</include>
+                                    </includes>
+                                    <failIfNoTests>true</failIfNoTests>
                                 </configuration>
                             </execution>
                         </executions>
@@ -334,7 +338,11 @@
                                 </goals>
                                 <configuration>
                                     <reuseForks>false</reuseForks>
-                                    <test>*/NativeDepsLoaderTest.java</test>
+                                    <excludes combine.self="override"/>
+                                    <includes>
+                                        <include>**/NativeDepsLoaderTest.java</include>
+                                    </includes>
+                                    <failIfNoTests>true</failIfNoTests>
                                 </configuration>
                             </execution>
                         </executions>
@@ -649,6 +657,13 @@
                                 def cm = cudaPattern.matcher(nvccout)
                                 if (cm.find()) {
                                     def classifier = 'cuda' + cm.group(1)
+                                    // Emit "cuda<major>" on x86_64 and "cuda<major>-arm64" on
+                                    // aarch64 so a single pom produces a distinct Maven
+                                    // classifier per architecture.
+                                    def osArch = System.getProperty('os.arch')
+                                    if (osArch == 'aarch64' || osArch == 'arm64') {
+                                        classifier = classifier + '-arm64'
+                                    }
                                     project.properties['cuda.classifier'] = classifier
                                 } else {
                                     throw new RuntimeException('could not find CUDA version')

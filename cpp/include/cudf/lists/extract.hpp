@@ -10,13 +10,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for extracting an element at a given position from each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_extract
  * @{
- * @file
- * @brief APIs for extracting an element at a given position from each row of a list column
  */
 
 /**

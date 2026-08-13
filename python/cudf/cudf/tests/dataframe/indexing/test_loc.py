@@ -1389,6 +1389,157 @@ def test_slice_empty_columns(indexer, column_slice):
     assert_eq(result, expected)
 
 
+# ---------------------------------------------------------------------------
+# MultiIndex .loc behavior (pandas-compatibility fixes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mi_df():
+    # 2-level row MultiIndex, single-level columns.
+    index = cudf.MultiIndex.from_product(
+        [[1, 2], ["a", "b"]], names=["i", "j"]
+    )
+    pdf = pd.DataFrame(
+        {"x": [10, 20, 30, 40], "y": [1, 2, 3, 4]}, index=index.to_pandas()
+    )
+    return cudf.from_pandas(pdf), pdf
+
+
+def test_loc_scalar_column_returns_series(mi_df):
+    gdf, pdf = mi_df
+    assert_eq(gdf.loc[:, "x"], pdf.loc[:, "x"])
+    assert isinstance(gdf.loc[:, "x"], cudf.Series)
+
+
+def test_loc_full_column_tuple_returns_series():
+    columns = pd.MultiIndex.from_tuples(
+        [("a", "foo"), ("a", "bar"), ("b", "foo")]
+    )
+    pdf = pd.DataFrame(np.arange(12).reshape(4, 3), columns=columns)
+    gdf = cudf.from_pandas(pdf)
+    # full column tuple -> Series; partial top-level label -> DataFrame
+    assert_eq(gdf.loc[:, ("a", "foo")], pdf.loc[:, ("a", "foo")])
+    assert isinstance(gdf.loc[:, ("a", "foo")], cudf.Series)
+    assert isinstance(gdf.loc[:, "a"], cudf.DataFrame)
+
+
+def test_loc_list_row_scalar_col_returns_series():
+    index = cudf.MultiIndex.from_arrays([[3], [4]], names=["c", "d"])
+    pdf = pd.DataFrame({"a": 1.0, "b": 2}, index=index.to_pandas())
+    gdf = cudf.from_pandas(pdf)
+    # list-of-one-tuple row + scalar col -> length-1 Series (not a scalar)
+    assert_eq(gdf.loc[[(3, 4)], "b"], pdf.loc[[(3, 4)], "b"])
+    assert isinstance(gdf.loc[[(3, 4)], "b"], cudf.Series)
+    # full scalar tuple row + scalar col -> a scalar
+    assert gdf.loc[(3, 4), "b"] == pdf.loc[(3, 4), "b"]
+    assert np.isscalar(gdf.loc[(3, 4), "b"]) or isinstance(
+        gdf.loc[(3, 4), "b"], np.generic
+    )
+
+
+@pytest.mark.parametrize("indexer", [{1, 2}, ({1, 2}, ["a"])])
+def test_loc_set_indexer_raises(mi_df, indexer):
+    gdf, _ = mi_df
+    with pytest.raises(TypeError, match="as an indexer is not supported"):
+        gdf.loc[indexer]
+
+
+def test_loc_missing_scalar_label_raises_keyerror(mi_df):
+    gdf, pdf = mi_df
+    # 5 is not a level-0 label -> KeyError in both cuDF modes (must not be
+    # silently reinterpreted as a positional row).
+    assert_exceptions_equal(
+        lfunc=pdf.loc.__getitem__,
+        rfunc=gdf.loc.__getitem__,
+        lfunc_args_and_kwargs=([5],),
+        rfunc_args_and_kwargs=([5],),
+    )
+
+
+def test_loc_scalar_row_drops_leading_level(mi_df):
+    gdf, pdf = mi_df
+    # df.loc[scalar, :] selects level-0 == scalar and drops that level.
+    assert_eq(gdf.loc[1, :], pdf.loc[1, :])
+
+
+@pytest.mark.parametrize(
+    "row_indexer",
+    [slice(None, None, -1), slice(None, None, 2), slice(2, 1, -1)],
+)
+def test_loc_strided_multiindex_slice_not_implemented(mi_df, row_indexer):
+    gdf, _ = mi_df
+    # Strided/reversed MultiIndex label slices are not supported on the
+    # classic fast path (they would silently return the wrong rows).
+    with pytest.raises(NotImplementedError):
+        gdf.loc[row_indexer]
+
+
+def test_loc_empty_multiindex_columns_preserve_dtype():
+    # Selecting zero columns from a MultiIndex-columns frame keeps the
+    # per-level column dtype (so inferred_type stays "string", not "empty").
+    data = np.arange(20, dtype="float64").reshape(5, 4)
+    gmi = cudf.MultiIndex.from_product([["foo", "bar"], ["alpha", "beta"]])
+    gdf = cudf.DataFrame(data, index=range(5), columns=gmi).sort_index(
+        level=0, axis=1
+    )
+    pdf = pd.DataFrame(
+        data, index=range(5), columns=gmi.to_pandas()
+    ).sort_index(level=0, axis=1)
+
+    result = gdf.loc[:, ([], slice(None))]
+    expected = pdf.loc[:, ([], slice(None))]
+    assert result.shape == expected.shape
+    assert (
+        result.columns.get_level_values(0).inferred_type
+        == expected.columns.get_level_values(0).inferred_type
+    )
+
+
+@pytest.mark.parametrize(
+    "indexer,expected_values",
+    [
+        (([10, 20], [2, 3]), [1, 2, 4, 5]),
+        (([10, 30], [1]), [0, 6]),
+    ],
+)
+def test_loc_multi_list_cartesian_pandas_compatible(indexer, expected_values):
+    index = pd.MultiIndex.from_product([[10, 20, 30], [1, 2, 3]])
+    pdf = pd.DataFrame(
+        np.arange(9, dtype="int64"), index=index, columns=["Data"]
+    )
+    gdf = cudf.from_pandas(pdf)
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = gdf.loc[indexer, "Data"]
+    expected = pdf.loc[indexer, "Data"]
+    assert_eq(result, expected)
+    assert list(result.to_pandas().values) == expected_values
+
+
+def test_loc_duplicate_labels_no_cartesian_explosion_pandas_compatible():
+    # GH#40978: a duplicate label in a level indexer must not multiply the
+    # matched rows (the de-dup keeps the result at 5 rows, not 8).
+    index = pd.MultiIndex.from_tuples([(1, 1), (1, 2), (2, 1), (2, 2), (1, 1)])
+    pdf = pd.DataFrame({"v": range(5)}, index=index)
+    gdf = cudf.from_pandas(pdf)
+    indexer = ([1, 1, 2], slice(None))
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = gdf.loc[indexer, :]
+    assert_eq(result, pdf.loc[indexer, :])
+
+
+def test_loc_missing_combination_raises_pandas_compatible():
+    index = pd.MultiIndex.from_arrays(
+        [["a", "a", "b"], ["1", "2", "2"]], names=["one", "two"]
+    )
+    pdf = pd.DataFrame({"v": [0, 1, 2]}, index=index)
+    gdf = cudf.from_pandas(pdf)
+    # "b" and "1" each exist in their level, but ("b", "1") matches no row.
+    with cudf.option_context("mode.pandas_compatible", True):
+        with pytest.raises(KeyError):
+            gdf.loc[("b", "1"), :]
+
+
 @pytest.mark.parametrize(
     "key", [{1}, {1: 1}, ({1}, "a"), (1, {"a"}), (({1}, 2), "a")]
 )

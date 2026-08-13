@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,11 +67,9 @@ class file_sink : public data_sink {
     _bytes_written += size;
     stream.synchronize();
 
-    // KvikIO's `pwrite()` returns a `std::future<size_t>` so we convert it
-    // to `std::future<void>`
-    return std::async(std::launch::deferred, [this, gpu_data, size, offset]() -> void {
-      _kvikio_file.pwrite(gpu_data, size, offset).get();
-    });
+    // Start the write now via the capture-initializer; only the `.get()` wait is deferred.
+    return std::async(std::launch::deferred,
+                      [fut = _kvikio_file.pwrite(gpu_data, size, offset)]() mutable { fut.get(); });
   }
 
   void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override

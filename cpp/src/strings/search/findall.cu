@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,8 @@ struct findall_fn {
   size_type const* d_offsets;
   string_index_pair* d_indices;
 
-  __device__ void operator()(size_type const idx, reprog_device const prog, int32_t const prog_idx)
+  template <typename ProgDevice>
+  __device__ void operator()(size_type const idx, ProgDevice const prog, int32_t const prog_idx)
   {
     if (d_strings.is_null(idx)) { return; }
     auto const d_str  = d_strings.element<string_view>(idx);
@@ -49,7 +50,7 @@ struct findall_fn {
 
     auto itr = d_str.begin();
     while (itr.position() <= nchars) {
-      auto const match = prog.find(prog_idx, d_str, itr);
+      auto const match = prog.template find(prog_idx, d_str, itr);
       if (!match) { break; }
 
       auto const d_result    = string_from_match(*match, d_str, itr);
@@ -116,24 +117,41 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 
   auto const d_strings = column_device_view::create(input.parent(), stream);
 
-  // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  // Builds the lists offsets column and the matches from a single, already-built
+  // device regex program (avoids a redundant device program build for the count pass).
+  auto const build_matches = [&](auto& d_prog, auto make_functor) {
+    auto const sizes = count_matches(*d_strings, d_prog, input.size(), stream, mr);
+    auto [offsets, total_matches] =
+      cudf::detail::make_offsets_child_column(sizes->view().template begin<size_type>(),
+                                              sizes->view().template end<size_type>(),
+                                              stream,
+                                              mr);
+    auto const d_offsets = offsets->view().template data<size_type>();
 
-  // Create lists offsets column
-  auto const sizes              = count_matches(*d_strings, *d_prog, stream, mr);
-  auto [offsets, total_matches] = cudf::detail::make_offsets_child_column(
-    sizes->view().begin<size_type>(), sizes->view().end<size_type>(), stream, mr);
-  auto const d_offsets = offsets->view().data<size_type>();
+    rmm::device_uvector<string_index_pair> indices(total_matches, stream);
+    launch_for_each_kernel(make_functor(d_offsets, indices.data()), d_prog, input.size(), stream);
+    return std::pair(std::move(offsets), std::move(indices));
+  };
 
-  // Build strings column of the matches
-  rmm::device_uvector<string_index_pair> indices(total_matches, stream);
-  if (groups == 1) {
-    launch_for_each_kernel(
-      one_capture_fn{*d_strings, d_offsets, indices.data()}, *d_prog, input.size(), stream);
-  } else {
-    launch_for_each_kernel(
-      findall_fn{*d_strings, d_offsets, indices.data()}, *d_prog, input.size(), stream);
-  }
+  auto [offsets, indices] = [&]() {
+    if (groups == 1) {
+      auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+      return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+        return one_capture_fn{*d_strings, d_offsets, d_indices};
+      });
+    }
+    if (regex_device_builder::glushkov_fast_path_supported(prog)) {
+      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+      return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+        return findall_fn{*d_strings, d_offsets, d_indices};
+      });
+    }
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
+      return findall_fn{*d_strings, d_offsets, d_indices};
+    });
+  }();
+
   auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
 
   // Build the lists column from the offsets and the strings
@@ -148,14 +166,15 @@ namespace {
 struct find_re_fn {
   column_device_view d_strings;
 
+  template <typename ProgDevice>
   __device__ size_type operator()(size_type const idx,
-                                  reprog_device const prog,
+                                  ProgDevice const prog,
                                   int32_t const thread_idx) const
   {
     if (d_strings.is_null(idx)) { return 0; }
     auto const d_str = d_strings.element<string_view>(idx);
 
-    auto const result = prog.find(thread_idx, d_str, d_str.begin());
+    auto const result = prog.template find(thread_idx, d_str, d_str.begin());
     return result.has_value() ? result.value().first : -1;
   }
 };
@@ -175,9 +194,15 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<size_type>();
-  auto d_prog          = regex_device_builder::create_prog_device(prog, stream);
   auto const d_strings = column_device_view::create(input.parent(), stream);
-  launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+
+  if (regex_device_builder::glushkov_fast_path_supported(prog)) {
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+  } else {
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+  }
 
   return results;
 }

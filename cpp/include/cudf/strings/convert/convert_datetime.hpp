@@ -11,13 +11,16 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for converting strings columns to and from timestamp values
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_convert
  * @{
- * @file
- * @brief APIs for converting strings columns to and from timestamp values
  */
 
 /**
@@ -163,7 +166,7 @@ std::unique_ptr<column> is_timestamp(
  * | \%B | Month name from the `names` parameter |
  *
  * Additional descriptions can be found here:
- * https://en.cppreference.com/w/cpp/chrono/system_clock/formatter
+ * https://en.cppreference.com/cpp/chrono/system_clock/formatter
  *
  * No checking is done for invalid formats or invalid timestamp values.
  * All timestamps values are formatted to UTC.

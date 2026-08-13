@@ -21,6 +21,11 @@
 #include <utility>
 #include <vector>
 
+/**
+ * @file
+ * @brief Class definitions for grouping and aggregating values within groups of rows.
+ */
+
 namespace CUDF_EXPORT cudf {
 //! `groupby` APIs
 namespace groupby {
@@ -34,8 +39,6 @@ struct sort_groupby_helper;
 /**
  * @addtogroup aggregation_groupby
  * @{
- * @file
- * @brief Class definitions for grouping and aggregating values within groups of rows.
  */
 
 /**
@@ -497,6 +500,7 @@ class streaming_groupby {
    *        companion vectors, and aggregation results table are all sized to this
    *        capacity. Cumulative input rows are not bounded.
    * @param null_handling Indicates whether rows in keys that contain NULL values should be included
+   * @param mr Device memory resource used to allocate the persistent hash table
    *
    * @throws std::invalid_argument if `max_distinct_keys <= 0`
    * @throws std::invalid_argument if any requested aggregation kind is unsupported
@@ -504,7 +508,9 @@ class streaming_groupby {
   explicit streaming_groupby(host_span<size_type const> key_indices,
                              host_span<streaming_aggregation_request const> requests,
                              size_type max_distinct_keys,
-                             null_policy null_handling = null_policy::EXCLUDE);
+                             null_policy null_handling = null_policy::EXCLUDE,
+                             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                               cudf::get_current_device_resource_ref());
 
   /**
    * @brief Feed a batch of data into the streaming aggregation.

@@ -16,6 +16,12 @@
 #include <memory>
 #include <optional>
 
+/**
+ * @file
+ * @brief Interface classes for providing input data to the readers from files, host memory, or
+ * device memory.
+ */
+
 namespace CUDF_EXPORT cudf {
 //! IO interfaces
 namespace io {
@@ -23,9 +29,6 @@ namespace io {
 /**
  * @addtogroup io_datasources
  * @{
- * @file
- * @brief Interface classes for providing input data to the readers from files, host memory, or
- * device memory.
  */
 
 /**

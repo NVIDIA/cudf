@@ -23,12 +23,15 @@
 #include <type_traits>
 #include <utility>
 
+/**
+ * @file
+ * @brief APIs for spans
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup utility_span
  * @{
- * @file
- * @brief APIs for spans
  */
 
 /// A constant used to differentiate std::span of static and dynamic extent
@@ -153,6 +156,7 @@ struct host_span {
   constexpr reference operator[](size_type idx) const
   {
     static_assert(sizeof(idx) >= sizeof(size_t), "index type must not be smaller than size_t");
+    assert(idx < _span.size());
     return _span[idx];
   }
 
@@ -232,6 +236,7 @@ struct host_span {
    */
   [[nodiscard]] constexpr host_span first(size_type count) const noexcept
   {
+    assert(count <= _span.size());
     return host_span{_span.data(), count, _is_device_accessible};
   }
 
@@ -243,6 +248,7 @@ struct host_span {
    */
   [[nodiscard]] constexpr host_span last(size_type count) const noexcept
   {
+    assert(count <= _span.size());
     return host_span{_span.data() + _span.size() - count, count, _is_device_accessible};
   }
 
@@ -263,6 +269,7 @@ struct host_span {
   [[nodiscard]] CUDF_HOST_DEVICE constexpr host_span subspan(size_type offset,
                                                              size_type count) const noexcept
   {
+    assert(offset <= _span.size() && count <= _span.size() - offset);
     return host_span{_span.data() + offset, count, _is_device_accessible};
   }
 

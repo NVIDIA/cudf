@@ -18,6 +18,7 @@ from rapidsmpf.streaming._detail.libcoro_spawn_task cimport cpp_set_py_future
 from rapidsmpf.streaming.chunks.utils cimport py_deleter
 from rapidsmpf.streaming.core.channel cimport Channel, cpp_Channel
 from rapidsmpf.streaming.core.context cimport Context, cpp_Context
+from rapidsmpf.streaming.core.cancellation import (await_cpp_future, shutdown_channels)
 
 import asyncio
 
@@ -117,8 +118,9 @@ cdef class BloomFilter:
         The communicator the bloom filter construction is collective over.
     seed
         Seed used for hashing values into the bloom filter.
-    num_filter_blocks
-        Number of blocks used to size the filter.
+    filter_size
+        Filter storage size in bytes. Must be positive and satisfy
+        ``BloomFilter.aligned_size(filter_size) == filter_size``.
     """
 
     def __init__(
@@ -126,7 +128,7 @@ cdef class BloomFilter:
         Context ctx not None,
         Communicator comm not None,
         uint64_t seed,
-        size_t num_filter_blocks,
+        size_t filter_size,
     ):
         self._comm = comm
         with nogil:
@@ -134,7 +136,7 @@ cdef class BloomFilter:
                 ctx._handle,
                 comm._handle,
                 seed,
-                num_filter_blocks,
+                filter_size,
             )
 
     def __dealloc__(self):
@@ -153,22 +155,22 @@ cdef class BloomFilter:
         return self._comm
 
     @staticmethod
-    def fitting_num_blocks(size_t l2size):
+    def aligned_size(size_t size):
         """
-        Return the number of blocks needed to fit within an L2 cache size.
+        Return the largest valid filter size no greater than a byte count.
 
         Parameters
         ----------
-        l2size
-            Size of the L2 cache in bytes.
+        size
+            Byte count to align.
 
         Returns
         -------
-        Number of blocks to use in the filter.
+        Largest valid filter size less than or equal to ``size``.
         """
         cdef size_t ret
         with nogil:
-            ret = cpp_fitting_num_blocks(l2size)
+            ret = cpp_aligned_size(size)
         return ret
 
     async def build(
@@ -208,7 +210,11 @@ cdef class BloomFilter:
                 cpp_set_py_future,
                 move(cpp_OwningWrapper(<void*><PyObject*>ret, py_deleter)),
             )
-        await ret
+        # Note: multi-rank, if we get an exception we can't cancel the
+        # in-progress AllReduce, so this might still hang.
+        await await_cpp_future(
+            ret, on_cancel=lambda: shutdown_channels(ctx, ch_in, ch_out)
+        )
 
     async def apply(
         self,
@@ -248,4 +254,6 @@ cdef class BloomFilter:
                 cpp_set_py_future,
                 move(cpp_OwningWrapper(<void*><PyObject*>ret, py_deleter)),
             )
-        await ret
+        await await_cpp_future(
+            ret, on_cancel=lambda: shutdown_channels(ctx, bloom_filter, ch_in, ch_out)
+        )

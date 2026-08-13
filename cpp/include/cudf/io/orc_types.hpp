@@ -9,13 +9,16 @@
 
 #include <cstdint>
 
+/**
+ * @file
+ * @brief Enums for ORC-specific compression and encoding types.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io::orc {
 /**
  * @addtogroup io_types
  * @{
- * @file
- * @brief Enums for ORC-specific compression and encoding types.
  */
 
 /**

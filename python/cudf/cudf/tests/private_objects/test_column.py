@@ -325,6 +325,13 @@ def test_can_cast_safely_same_kind():
     assert not data.can_cast_safely(to_dtype)
 
 
+def test_can_cast_safely_empty():
+    # An empty column can be cast to any numeric dtype losslessly.
+    data = cudf.Series([], dtype="float64")._column
+    for to_dtype in ["int8", "int64", "uint32", "float32", "bool"]:
+        assert data.can_cast_safely(np.dtype(to_dtype))
+
+
 def test_can_cast_safely_mixed_kind():
     data = cudf.Series([1, 2, 3], dtype="int32")._column
     to_dtype = np.dtype("float32")
@@ -499,6 +506,16 @@ def test_datetime_can_cast_safely():
     )
 
     assert sr._column.can_cast_safely(np.dtype("datetime64[ns]")) is False
+
+    # Pre-epoch values below the target range are also unsafe.
+    sr = cudf.Series(["1600-01-01", "2000-01-31"], dtype="datetime64[ms]")
+    assert sr._column.can_cast_safely(np.dtype("datetime64[ns]")) is False
+
+    # Casting to a coarser resolution truncates sub-resolution
+    # components, so it is not considered safe; equal resolution is.
+    sr = cudf.Series(["2000-01-31"], dtype="datetime64[ns]")
+    assert sr._column.can_cast_safely(np.dtype("datetime64[s]")) is False
+    assert sr._column.can_cast_safely(np.dtype("datetime64[ns]"))
 
 
 @pytest.mark.parametrize(

@@ -17,12 +17,15 @@
 #include <variant>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for filtering rows
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_compact
  * @{
- * @file
- * @brief Column APIs for filtering rows
  */
 
 namespace ast {

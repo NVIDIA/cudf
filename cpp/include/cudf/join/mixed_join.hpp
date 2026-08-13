@@ -19,13 +19,16 @@
 #include <optional>
 #include <utility>
 
+/**
+ * @file
+ * @brief APIs for joining tables using a combination of equality and conditional predicates
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_join
  * @{
- * @file
- * @brief APIs for joining tables using a combination of equality and conditional predicates
  */
 
 /**

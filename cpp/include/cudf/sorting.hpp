@@ -14,13 +14,16 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for sort and rank
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_sort
  * @{
- * @file
- * @brief Column APIs for sort and rank
  */
 
 /**

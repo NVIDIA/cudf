@@ -8,14 +8,17 @@
 
 #include <cuda/std/cstdint>
 
+/**
+ * @file
+ * @brief Enum defining the supported AST operators.
+ */
+
 namespace CUDF_EXPORT cudf {
 
 namespace ast {
 /**
  * @addtogroup expressions
  * @{
- * @file
- * @brief Enum defining the supported AST operators.
  */
 
 /**

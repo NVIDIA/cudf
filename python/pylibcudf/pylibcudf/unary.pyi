@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
@@ -52,6 +52,12 @@ def is_valid(
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def cast(
+    input: Column,
+    data_type: DataType,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...
+def bit_cast(
     input: Column,
     data_type: DataType,
     stream: CudaStreamLike | None = None,

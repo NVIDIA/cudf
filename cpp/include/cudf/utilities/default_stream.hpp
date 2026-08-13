@@ -9,12 +9,15 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
+/**
+ * @file
+ * @brief APIs for querying the default CUDA stream and per-thread default stream status.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup default_stream
  * @{
- * @file
- * @brief APIs for querying the default CUDA stream and per-thread default stream status.
  */
 
 /**

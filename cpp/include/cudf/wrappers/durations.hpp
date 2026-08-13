@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,13 +9,16 @@
 
 #include <cuda/std/chrono>
 
+/**
+ * @file durations.hpp
+ * @brief Concrete type definitions for int32_t and int64_t durations in varying resolutions.
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup timestamp_classes Timestamp
  * @{
- * @file durations.hpp
- * @brief Concrete type definitions for int32_t and int64_t durations in varying resolutions.
  */
 
 /**

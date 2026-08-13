@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -591,15 +591,17 @@ mark_join::mark_join(cudf::table_view const& left,
                      cudf::null_equality compare_nulls,
                      double load_factor,
                      cudf::join_prefilter prefilter,
-                     rmm::cuda_stream_view stream)
+                     rmm::cuda_stream_view stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _has_nested_columns{cudf::has_nested_columns(left)},
     _left{left},
     _nulls_equal{compare_nulls},
     _prefilter{prefilter},
     _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(left, stream)},
-    _bucket_storage{cuco::extent<std::size_t>{compute_mark_join_capacity(left, load_factor)},
-                    rmm::mr::polymorphic_allocator<char>{},
-                    stream.value()}
+    _bucket_storage{
+      cuco::extent<std::size_t>{compute_mark_join_capacity(left, checked_load_factor(load_factor))},
+      rmm::mr::polymorphic_allocator<char>{mr},
+      stream.value()}
 {
   cudf::scoped_range range{"mark_join::mark_join"};
   if (_left.num_rows() == 0) return;
@@ -609,7 +611,7 @@ mark_join::mark_join(cudf::table_view const& left,
       get_bloom_filter_blocks<bloom_filter_type>(_left.num_rows()),
       cuco::cuda_thread_scope<cuda::thread_scope_device>{},
       bloom_filter_policy_type{},
-      bloom_filter_allocator_type{},
+      bloom_filter_allocator_type{std::move(mr)},
       stream.value());
   }
 
@@ -816,9 +818,10 @@ mark_join::~mark_join() = default;
 mark_join::mark_join(cudf::table_view const& left,
                      cudf::null_equality compare_nulls,
                      cudf::join_prefilter prefilter,
-                     rmm::cuda_stream_view stream)
+                     rmm::cuda_stream_view stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<detail::mark_join>(
-      left, compare_nulls, detail::CUCO_DESIRED_LOAD_FACTOR, prefilter, stream)}
+      left, compare_nulls, detail::CUCO_DESIRED_LOAD_FACTOR, prefilter, stream, std::move(mr))}
 {
 }
 
@@ -826,8 +829,10 @@ mark_join::mark_join(cudf::table_view const& left,
                      double load_factor,
                      cudf::null_equality compare_nulls,
                      cudf::join_prefilter prefilter,
-                     rmm::cuda_stream_view stream)
-  : _impl{std::make_unique<detail::mark_join>(left, compare_nulls, load_factor, prefilter, stream)}
+                     rmm::cuda_stream_view stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _impl{std::make_unique<detail::mark_join>(
+      left, compare_nulls, load_factor, prefilter, stream, std::move(mr))}
 {
 }
 

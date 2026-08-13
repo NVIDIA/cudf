@@ -9,6 +9,11 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for extracting matched regex groups from each string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -17,8 +22,6 @@ struct regex_program;
 /**
  * @addtogroup strings_extract
  * @{
- * @file
- * @brief Strings column APIs for extracting matched regex groups from each string.
  */
 
 /**

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -373,7 +373,7 @@ TEST_F(StringsContainsTests, Errors)
 TEST_F(StringsContainsTests, CountTest)
 {
   std::vector<char const*> h_strings{
-    "The quick brown @fox jumps ovér the", "lazy @dog", "1:2:3:4", "00:0:00", nullptr, ""};
+    "The quick brown @fox jumps ovér the", "lazy @dog lazy", "1:2:3:4", "00:0:00", nullptr, ""};
   cudf::test::strings_column_wrapper strings(
     h_strings.begin(), h_strings.end(), cudf::test::iterators::nulls_from_nullptrs(h_strings));
 
@@ -398,6 +398,22 @@ TEST_F(StringsContainsTests, CountTest)
     auto pattern = std::string("\\d+:\\d+");
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       {0, 0, 2, 1, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
+    auto prog    = cudf::strings::regex_program::create(pattern);
+    auto results = cudf::strings::count_re(strings_view, *prog);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
+  {
+    auto pattern = std::string("o");
+    cudf::test::fixed_width_column_wrapper<int32_t> expected(
+      {3, 1, 0, 0, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
+    auto prog    = cudf::strings::regex_program::create(pattern);
+    auto results = cudf::strings::count_re(strings_view, *prog);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
+  {
+    auto pattern = std::string("\\blazy\\b");
+    cudf::test::fixed_width_column_wrapper<int32_t> expected(
+      {0, 2, 0, 0, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
     auto prog    = cudf::strings::regex_program::create(pattern);
     auto results = cudf::strings::count_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -553,6 +569,32 @@ TEST_F(StringsContainsTests, NestedQuantifier)
   auto sv      = cudf::strings_column_view(input);
   auto pattern = std::string(R"((\d{4}\s){4})");
   cudf::test::fixed_width_column_wrapper<bool> expected({true, false, false, true});
+  auto prog    = cudf::strings::regex_program::create(pattern);
+  auto results = cudf::strings::contains_re(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(StringsContainsTests, DeeplyNestedNoStackOverflow)
+{
+  // A pattern with very deep group nesting but only a single character-consuming
+  // position.  It passes the Glushkov state cap (1 position) yet forces the
+  // compiler's ε-closure traversal to walk a very long ε-chain.
+  int32_t const depth = 100000;
+  std::string pattern;
+  pattern.reserve(static_cast<size_t>(depth) * 3 + 1 + static_cast<size_t>(depth));
+  for (int32_t i = 0; i < depth; ++i) {
+    pattern += "(?:";
+  }
+  pattern += "a";
+  for (int32_t i = 0; i < depth; ++i) {
+    pattern += ")";
+  }
+
+  auto input = cudf::test::strings_column_wrapper({"a", "b", "aaa", ""});
+  auto sv    = cudf::strings_column_view(input);
+
+  // The pattern matches any row containing 'a'.
+  cudf::test::fixed_width_column_wrapper<bool> expected({true, false, true, false});
   auto prog    = cudf::strings::regex_program::create(pattern);
   auto results = cudf::strings::contains_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -787,6 +829,16 @@ TEST_F(StringsContainsTests, EndOfString)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_count);
   results = cudf::strings::count_re(view, *prog_ml);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_count);
+
+  pattern  = std::string("abé$");
+  prog     = cudf::strings::regex_program::create(pattern);
+  expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 1, 1});
+  results  = cudf::strings::contains_re(view, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+  prog_ml  = cudf::strings::regex_program::create(pattern, cudf::strings::regex_flags::MULTILINE);
+  expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0, 1, 1});
+  results  = cudf::strings::contains_re(view, *prog_ml);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
 TEST_F(StringsContainsTests, DotAll)
@@ -1266,4 +1318,26 @@ TEST_F(StringsContainsTests, LazyQuantifiers)
     cudf::test::fixed_width_column_wrapper<bool> expected({0, 0, 1, 1, 0, 1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
+}
+
+TEST_F(StringsContainsTests, WhitespaceControlCharacters)
+{
+  // \x1c-\x1f (file/group/record/unit separators) are classified as whitespace
+  // by cudf's codepoint flags table and should match \s.
+  auto input =
+    cudf::test::strings_column_wrapper({"a\x1c"
+                                        "b",
+                                        "a\x1d"
+                                        "b",
+                                        "a\x1e"
+                                        "b",
+                                        "a\x1f"
+                                        "b",
+                                        "a b",
+                                        "ab"});
+  auto sv      = cudf::strings_column_view(input);
+  auto prog    = cudf::strings::regex_program::create("a\\sb");
+  auto results = cudf::strings::contains_re(sv, *prog);
+  cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 1, 1, 1, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }

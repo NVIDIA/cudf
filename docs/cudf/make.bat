@@ -1,4 +1,4 @@
-REM SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+REM SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 REM SPDX-License-Identifier: Apache-2.0
 
 @ECHO OFF
@@ -25,7 +25,7 @@ if errorlevel 9009 (
 	echo.may add the Sphinx directory to PATH.
 	echo.
 	echo.If you don't have Sphinx installed, grab it from
-	echo.http://sphinx-doc.org/
+	echo.https://www.sphinx-doc.org/en/master/
 	exit /b 1
 )
 

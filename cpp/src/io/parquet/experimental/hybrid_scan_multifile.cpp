@@ -295,4 +295,24 @@ std::vector<std::vector<std::vector<size_type>>> hybrid_scan_multifile::construc
   return source_passes;
 }
 
+std::pair<std::vector<text::byte_range_info>, std::vector<size_type>>
+hybrid_scan_multifile::dictionary_pages_byte_ranges(
+  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  parquet_reader_options const& options) const
+{
+  CUDF_FUNC_RANGE();
+  return _impl->dictionary_pages_byte_ranges(row_group_indices, options);
+}
+
+std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_with_dictionary_pages(
+  cudf::host_span<cudf::device_span<uint8_t const> const> dictionary_page_data,
+  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  parquet_reader_options const& options,
+  rmm::cuda_stream_view stream) const
+{
+  CUDF_FUNC_RANGE();
+  return _impl->filter_row_groups_with_dictionary_pages(
+    dictionary_page_data, row_group_indices, options, stream);
+}
+
 }  // namespace cudf::io::parquet::experimental

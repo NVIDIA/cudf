@@ -11,13 +11,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for segmented gather of elements within each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_gather
  * @{
- * @file
- * @brief APIs for segmented gather of elements within each row of a list column
  */
 
 /**

@@ -10,13 +10,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for set operations (overlap, intersection, union, difference) on list columns
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup set_operations
  * @{
- * @file
- * @brief APIs for set operations (overlap, intersection, union, difference) on list columns
  */
 
 /**

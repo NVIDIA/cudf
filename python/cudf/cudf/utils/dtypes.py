@@ -273,12 +273,15 @@ def _get_nan_for_dtype(dtype: DtypeObj) -> ScalarLike:
     """Return the appropriate NaN/NaT value for the given dtype.
 
     Returns the null value for the dtype (e.g., np.float64('nan'),
-    np.datetime64('NaT'), or the dtype's ``na_value`` for pandas
-    nullable extension dtypes).
+    pd.NaT, or the dtype's ``na_value`` for pandas nullable extension
+    dtypes).
     """
     if dtype.kind in "mM":
-        time_unit, _ = np.datetime_data(dtype)
-        return dtype.type("nat", time_unit)
+        # pandas datetime/timedelta reductions return the pd.NaT
+        # singleton for null results, and callers rely on identity
+        # (``result is pd.NaT``), not a unit-qualified
+        # np.datetime64/np.timedelta64 "NaT".
+        return pd.NaT
     elif dtype.kind == "f":
         if is_pandas_nullable_extension_dtype(dtype):
             return dtype.na_value

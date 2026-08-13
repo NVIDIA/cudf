@@ -1136,19 +1136,22 @@ class Scan(IR):
                 table, names = cls._apply_parquet_projection(
                     plc.Table(concatenated_columns), names, with_columns
                 )
-                num_rows = (
-                    cls._get_parquet_row_count_from_metadata(
-                        paths, skip_rows, n_rows, parquet_options, cached_parquet_info
+                if not names:
+                    table = plc.Table(
+                        table.columns(),
+                        num_rows=cls._get_parquet_row_count_from_metadata(
+                            paths,
+                            skip_rows,
+                            n_rows,
+                            parquet_options,
+                            cached_parquet_info,
+                        ),
                     )
-                    if not names
-                    else None
-                )
                 df = DataFrame.from_table(
                     table,
                     names=names,
                     dtypes=[schema[name] for name in names],
                     stream=stream,
-                    num_rows=num_rows,
                 )
                 if include_file_paths is not None:
                     df = Scan.add_file_paths(  # pragma: no cover
@@ -1165,19 +1168,22 @@ class Scan(IR):
                 table, col_names = cls._apply_parquet_projection(
                     tbl_w_meta.tbl, col_names, with_columns
                 )
-                num_rows = (
-                    cls._get_parquet_row_count_from_metadata(
-                        paths, skip_rows, n_rows, parquet_options, cached_parquet_info
+                if not col_names:
+                    table = plc.Table(
+                        table.columns(),
+                        num_rows=cls._get_parquet_row_count_from_metadata(
+                            paths,
+                            skip_rows,
+                            n_rows,
+                            parquet_options,
+                            cached_parquet_info,
+                        ),
                     )
-                    if not col_names
-                    else None
-                )
                 df = DataFrame.from_table(
                     table,
                     col_names,
                     [schema[name] for name in col_names],
                     stream=stream,
-                    num_rows=num_rows,
                 )
                 if include_file_paths is not None:
                     df = Scan.add_file_paths(
@@ -3251,7 +3257,11 @@ class Projection(IR):
             target_length=df.num_rows,
             stream=df.stream,
         )
-        return DataFrame(columns, stream=df.stream)
+        return DataFrame(
+            columns,
+            stream=df.stream,
+            num_rows=df.num_rows if len(schema) == 0 else None,
+        )
 
 
 class MergeSorted(IR):

@@ -140,7 +140,7 @@ struct reduction_function<Source, cudf::aggregation::ARGMIN> : public base_reduc
     CUDF_EXPECTS(params.output_dtype.id() == type_to_id<size_type>(),
                  "ARGMIN aggregation expects output type to be cudf::size_type",
                  cudf::data_type_error);
-    return argmin(params.col, params.stream, params.mr);
+    return argmin(params.col, data_type{type_to_id<Source>()}, params.stream, params.mr);
   }
 };
 
@@ -151,7 +151,7 @@ struct reduction_function<Source, cudf::aggregation::ARGMAX> : public base_reduc
     CUDF_EXPECTS(params.output_dtype.id() == type_to_id<size_type>(),
                  "ARGMAX aggregation expects output type to be cudf::size_type",
                  cudf::data_type_error);
-    return argmax(params.col, params.stream, params.mr);
+    return argmax(params.col, data_type{type_to_id<Source>()}, params.stream, params.mr);
   }
 };
 

@@ -29,6 +29,7 @@ from cudf.utils.dtypes import (
     dtype_to_pylibcudf_type,
     find_common_type,
 )
+from cudf.utils.temporal import unit_to_nanoseconds_conversion
 from cudf.utils.utils import is_na_like
 
 
@@ -379,6 +380,14 @@ class TemporalBaseColumn(ColumnBase, Scannable):
     def can_cast_safely(self, to_dtype: DtypeObj) -> bool:
         if to_dtype.kind == self.dtype.kind:
             to_res, _ = np.datetime_data(to_dtype)
+            if (
+                unit_to_nanoseconds_conversion[to_res]
+                > unit_to_nanoseconds_conversion[self.time_unit]
+            ):
+                # Casting to a coarser resolution truncates any
+                # sub-resolution components; callers (replace, join key
+                # matching) rely on "safely" meaning lossless.
+                return False
             max_val = self.max()
             if isinstance(max_val, (pd.Timedelta, pd.Timestamp)):
                 max_val = max_val.to_numpy().astype(self.dtype)
@@ -403,7 +412,9 @@ class TemporalBaseColumn(ColumnBase, Scannable):
                 np.iinfo(self._UNDERLYING_DTYPE).max,
                 to_res,  # type: ignore[call-overload]
             ).astype(f"m8[{self.time_unit}]", copy=False)
-            return bool(max_dist <= max_to_res and min_dist <= max_to_res)
+            # The negative bound is symmetric: int64 min is the NaT
+            # sentinel, so the valid range is +/-(2**63 - 1).
+            return bool(max_dist <= max_to_res and min_dist >= -max_to_res)
         elif to_dtype == self._UNDERLYING_DTYPE or is_dtype_obj_string(
             to_dtype
         ):

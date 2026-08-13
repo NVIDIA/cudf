@@ -14,8 +14,10 @@
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/hashing/detail/xxhash_64.cuh>
+#include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/reduction/bloom_filter.cuh>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
@@ -24,14 +26,16 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cuco/bloom_filter_policies.cuh>
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuda/iterator>
 #include <thrust/tabulate.h>
 
+#include <functional>
 #include <future>
 #include <numeric>
 #include <optional>
+#include <ranges>
+#include <utility>
 
 namespace cudf::io::parquet::detail {
 namespace {
@@ -49,16 +53,7 @@ namespace {
  * @tparam Key The type of the values to generate a fingerprint for.
  */
 template <class Key>
-using arrow_filter_policy = cuco::parametric_filter_policy<cudf::hashing::detail::XXHash_64<Key>,
-                                                           std::uint32_t,
-                                                           8,
-                                                           8,
-                                                           8,
-                                                           1,
-                                                           1,
-                                                           8,
-                                                           false,
-                                                           false>;
+using arrow_filter_policy = cudf::arrow_filter_policy<cudf::hashing::detail::XXHash_64<Key>>;
 
 /**
  * @brief Converts bloom filter membership results (for each column chunk) to a device column.
@@ -299,219 +294,110 @@ class bloom_filter_expression_converter : public equality_literals_collector {
   std::unique_ptr<ast::literal> _always_true;
 };
 
-/**
- * @brief Reads bloom filter data to device.
- *
- * @param sources Dataset sources
- * @param num_chunks Number of total column chunks to read
- * @param bloom_filter_data Device buffers to hold bloom filter bitsets for each chunk
- * @param bloom_filter_offsets Bloom filter offsets for all chunks
- * @param bloom_filter_sizes Bloom filter sizes for all chunks
- * @param chunk_source_map Association between each column chunk and its source
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param aligned_mr Aligned device memory resource to allocate bloom filter buffers
- */
-void read_bloom_filter_data(host_span<std::unique_ptr<datasource> const> sources,
-                            std::size_t num_chunks,
-                            cudf::host_span<rmm::device_buffer> bloom_filter_data,
-                            cudf::host_span<std::optional<int64_t>> bloom_filter_offsets,
-                            cudf::host_span<std::optional<int32_t>> bloom_filter_sizes,
-                            std::vector<size_type> const& chunk_source_map,
-                            rmm::cuda_stream_view stream,
-                            rmm::device_async_resource_ref aligned_mr)
-{
-  // Using `arrow_filter_policy` with a temporary `cuda::std::byte` key type to extract bloom
-  // filter properties
-  using policy_type = arrow_filter_policy<cuda::std::byte>;
-  auto constexpr filter_block_alignment =
-    alignof(cuco::bloom_filter_ref<cuda::std::byte,
-                                   cuco::extent<std::size_t>,
-                                   cuco::thread_scope_thread,
-                                   policy_type>::filter_block_type);
-  auto constexpr words_per_block = policy_type::words_per_block;
-
-  // Read tasks for bloom filter data
-  std::vector<std::future<std::size_t>> read_tasks;
-
-  // Read bloom filters for all column chunks
-  std::for_each(
-    cuda::counting_iterator<std::size_t>{0},
-    cuda::counting_iterator{num_chunks},
-    [&](auto const chunk) {
-      // If bloom filter offset absent, fill in an empty buffer and skip ahead
-      if (not bloom_filter_offsets[chunk].has_value()) {
-        bloom_filter_data[chunk] = {};
-        return;
-      }
-      // Read bloom filter iff present
-      auto const bloom_filter_offset = bloom_filter_offsets[chunk].value();
-
-      // If Bloom filter size (header + bitset) is available, just read the entire thing.
-      // Else just read 256 bytes which will contain the entire header and may contain the
-      // entire bitset as well.
-      auto constexpr bloom_filter_size_guess = 256;
-      auto const initial_read_size =
-        static_cast<std::size_t>(bloom_filter_sizes[chunk].value_or(bloom_filter_size_guess));
-
-      // Read an initial buffer from source
-      auto& source = sources[chunk_source_map[chunk]];
-      auto buffer  = source->host_read(bloom_filter_offset, initial_read_size);
-
-      // Deserialize the Bloom filter header from the buffer.
-      BloomFilterHeader header;
-      CompactProtocolReader cp{buffer->data(), buffer->size()};
-      cp.read(&header);
-
-      // Check if the bloom filter header is valid.
-      auto const is_header_valid =
-        (header.num_bytes % words_per_block) == 0 and
-        header.compression.compression == BloomFilterCompression::UNCOMPRESSED and
-        header.algorithm.algorithm == BloomFilterAlgorithm::SPLIT_BLOCK and
-        header.hash.hash == BloomFilterHash::XXHASH;
-
-      // Do not read if the bloom filter is invalid
-      if (not is_header_valid) {
-        bloom_filter_data[chunk] = {};
-        CUDF_LOG_WARN("Encountered an invalid bloom filter header. Skipping");
-        return;
-      }
-
-      // Bloom filter header size
-      auto const bloom_filter_header_size = static_cast<int64_t>(cp.bytecount());
-      auto const bitset_size              = static_cast<std::size_t>(header.num_bytes);
-
-      // Check if we already read in the filter bitset in the initial read.
-      if (initial_read_size >= bloom_filter_header_size + bitset_size) {
-        bloom_filter_data[chunk] = rmm::device_buffer{
-          buffer->data() + bloom_filter_header_size, bitset_size, stream, aligned_mr};
-        // The allocated bloom filter buffer must be aligned
-        CUDF_EXPECTS(reinterpret_cast<std::uintptr_t>(bloom_filter_data[chunk].data()) %
-                         filter_block_alignment ==
-                       0,
-                     "Encountered misaligned bloom filter block");
-      }
-      // Read the bitset from datasource.
-      else {
-        auto const bitset_offset = bloom_filter_offset + bloom_filter_header_size;
-        // Directly read to device if preferred
-        if (source->is_device_read_preferred(bitset_size)) {
-          bloom_filter_data[chunk] = rmm::device_buffer{bitset_size, stream, aligned_mr};
-          // The allocated bloom filter buffer must be aligned
-          CUDF_EXPECTS(reinterpret_cast<std::uintptr_t>(bloom_filter_data[chunk].data()) %
-                           filter_block_alignment ==
-                         0,
-                       "Encountered misaligned bloom filter block");
-          auto future_read_size =
-            source->device_read_async(bitset_offset,
-                                      bitset_size,
-                                      static_cast<uint8_t*>(bloom_filter_data[chunk].data()),
-                                      stream);
-
-          read_tasks.emplace_back(std::move(future_read_size));
-        } else {
-          buffer = source->host_read(bitset_offset, bitset_size);
-          bloom_filter_data[chunk] =
-            rmm::device_buffer{buffer->data(), buffer->size(), stream, aligned_mr};
-          // The allocated bloom filter buffer must be aligned
-          CUDF_EXPECTS(reinterpret_cast<std::uintptr_t>(bloom_filter_data[chunk].data()) %
-                           filter_block_alignment ==
-                         0,
-                       "Encountered misaligned bloom filter block");
-        }
-      }
-    });
-
-  // Read task sync function
-  for (auto& task : read_tasks) {
-    task.get();
-  }
-}
-
 }  // namespace
 
-std::size_t aggregate_reader_metadata::get_bloom_filter_alignment() const
+std::optional<std::pair<int64_t, std::size_t>> parse_bloom_filter_header(
+  host_span<uint8_t const> bytes)
 {
-  // Required alignment:
-  // https://github.com/NVIDIA/cuCollections/blob/deab5799f3e4226cb8a49acf2199c03b14941ee4/include/cuco/detail/bloom_filter/bloom_filter_impl.cuh#L55-L67
-  using policy_type        = arrow_filter_policy<cuda::std::byte>;
-  auto constexpr alignment = alignof(cuco::bloom_filter_ref<cuda::std::byte,
-                                                            cuco::extent<std::size_t>,
-                                                            cuco::thread_scope_thread,
-                                                            policy_type>::filter_block_type);
-  static_assert((alignment & (alignment - 1)) == 0, "Alignment must be a power of 2");
-  return std::max<std::size_t>(alignment, rmm::CUDA_ALLOCATION_ALIGNMENT);
+  using policy_type              = arrow_filter_policy<cuda::std::byte>;
+  using word_type                = typename policy_type::word_type;
+  auto constexpr bytes_per_block = sizeof(word_type) * policy_type::words_per_block;
+
+  // Deserialize the bloom filter header from the front of the buffer
+  BloomFilterHeader header;
+  CompactProtocolReader cp{bytes.data(), bytes.size()};
+  cp.read(&header);
+
+  // Check if the bloom filter header is valid
+  auto const is_header_valid =
+    (header.num_bytes % bytes_per_block) == 0 and
+    header.compression.compression == BloomFilterCompression::UNCOMPRESSED and
+    header.algorithm.algorithm == BloomFilterAlgorithm::SPLIT_BLOCK and
+    header.hash.hash == BloomFilterHash::XXHASH;
+  if (not is_header_valid) { return std::nullopt; }
+
+  return std::pair{static_cast<int64_t>(cp.bytecount()),
+                   static_cast<std::size_t>(header.num_bytes)};
 }
 
-std::vector<rmm::device_buffer> aggregate_reader_metadata::read_bloom_filters(
+std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<cuda::std::byte const>>>
+aggregate_reader_metadata::read_bloom_filters(
   host_span<std::unique_ptr<datasource> const> sources,
   host_span<std::vector<size_type> const> row_group_indices,
   host_span<int const> column_schemas,
   size_type total_row_groups,
   rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref aligned_mr) const
+  rmm::device_async_resource_ref mr) const
 {
   // Descriptors for all the chunks that make up the selected columns
   auto const num_input_columns = column_schemas.size();
   auto const num_chunks        = total_row_groups * num_input_columns;
 
-  // Association between each column chunk and its source
-  std::vector<size_type> chunk_source_map(num_chunks);
-
-  // Keep track of column chunk file offsets
-  std::vector<std::optional<int64_t>> bloom_filter_offsets(num_chunks);
-  std::vector<std::optional<int32_t>> bloom_filter_sizes(num_chunks);
-
-  // Gather all bloom filter offsets and sizes.
-  size_type chunk_count = 0;
-
   // Flag to check if we have at least one valid bloom filter offset
   auto have_bloom_filters = false;
-
+  // Speculatively read when a bloom filter's length is absent, enough to cover the header (and
+  // often the whole bitset).
+  auto constexpr speculative_read_size = int64_t{256};
+  // Build complete bloom filter byte ranges (header + bitset) for every column chunk
+  std::vector<std::vector<cudf::io::text::byte_range_info>> bloom_filter_byte_ranges_per_source(
+    row_group_indices.size());
   // For all data sources
-  std::for_each(cuda::counting_iterator<std::size_t>{0},
-                cuda::counting_iterator{row_group_indices.size()},
-                [&](auto const src_index) {
-                  // Get all row group indices in the data source
-                  auto const& rg_indices = row_group_indices[src_index];
-                  // For all row groups
-                  std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
-                    // For all column chunks
-                    std::for_each(
-                      column_schemas.begin(), column_schemas.end(), [&](auto const schema_idx) {
-                        auto& col_meta = get_column_metadata(rg_index, src_index, schema_idx);
-
-                        // Get bloom filter offsets and sizes
-                        bloom_filter_offsets[chunk_count] = col_meta.bloom_filter_offset;
-                        bloom_filter_sizes[chunk_count]   = col_meta.bloom_filter_length;
-
-                        // Set `have_bloom_filters` if `bloom_filter_offset` is valid
-                        if (col_meta.bloom_filter_offset.has_value()) { have_bloom_filters = true; }
-
-                        // Map each column chunk to its source index
-                        chunk_source_map[chunk_count] = src_index;
-                        chunk_count++;
-                      });
-                  });
-                });
+  std::for_each(
+    cuda::counting_iterator<std::size_t>{0},
+    cuda::counting_iterator{row_group_indices.size()},
+    [&](auto const src_index) {
+      auto const& rg_indices = row_group_indices[src_index];
+      auto& source_ranges    = bloom_filter_byte_ranges_per_source[src_index];
+      auto const source_size = static_cast<int64_t>(sources[src_index]->size());
+      source_ranges.reserve(rg_indices.size() * num_input_columns);
+      // For all row groups in the source
+      std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
+        // For all column chunks in the row group
+        std::for_each(column_schemas.begin(), column_schemas.end(), [&](auto const schema_idx) {
+          auto const& col_meta = get_column_metadata(rg_index, src_index, schema_idx);
+          if (col_meta.bloom_filter_offset.has_value()) {
+            have_bloom_filters = true;
+            auto const offset  = col_meta.bloom_filter_offset.value();
+            CUDF_EXPECTS(offset >= 0 and offset < source_size,
+                         "Bloom filter offset is out of datasource bounds");
+            // Length absent: speculatively read enough to recover the header, clamped at EOF
+            auto const length = col_meta.bloom_filter_length.has_value()
+                                  ? static_cast<int64_t>(col_meta.bloom_filter_length.value())
+                                  : std::min(speculative_read_size, source_size - offset);
+            CUDF_EXPECTS(length >= 0 and offset + length <= source_size,
+                         "Bloom filter length is out of datasource bounds");
+            source_ranges.push_back({offset, length});
+          } else {
+            source_ranges.push_back({0, 0});
+          }
+        });
+      });
+    });
 
   // Exit early if we don't have any bloom filters
   if (not have_bloom_filters) { return {}; }
 
-  // Vector to hold bloom filter data
-  std::vector<rmm::device_buffer> bloom_filter_data(num_chunks);
+  // Fetch the header-stripped, 32-byte-aligned bloom filter bitsets to device
+  std::vector<std::reference_wrapper<datasource>> datasource_refs;
+  datasource_refs.reserve(sources.size());
+  std::transform(
+    sources.begin(), sources.end(), std::back_inserter(datasource_refs), [](auto const& source) {
+      return std::ref(*source);
+    });
 
-  // Read bloom filter data
-  read_bloom_filter_data(sources,
-                         num_chunks,
-                         bloom_filter_data,
-                         bloom_filter_offsets,
-                         bloom_filter_sizes,
-                         chunk_source_map,
-                         stream,
-                         aligned_mr);
+  auto [bloom_filter_buffers, bitset_spans_per_source] =
+    fetch_bloom_filters_to_device(datasource_refs, bloom_filter_byte_ranges_per_source, stream, mr);
 
-  // Return bloom filter data
-  return bloom_filter_data;
+  // Flatten the per-source bitset spans into per-chunk order
+  std::vector<cudf::device_span<cuda::std::byte const>> bloom_filter_data;
+  bloom_filter_data.reserve(num_chunks);
+  auto flat_bitset_spans = bitset_spans_per_source | std::views::join;
+  std::transform(flat_bitset_spans.begin(),
+                 flat_bitset_spans.end(),
+                 std::back_inserter(bloom_filter_data),
+                 [](auto const& span) { return cuda::std::as_bytes(span); });
+
+  return {std::move(bloom_filter_buffers), std::move(bloom_filter_data)};
 }
 
 std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::apply_bloom_filters(

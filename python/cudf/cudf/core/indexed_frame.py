@@ -211,7 +211,55 @@ def _indices_from_labels(obj, labels):
     rhs = cudf.DataFrame(
         {"_": ColumnBase.from_range(range(len(obj)))}, index=obj.index
     )
-    return lhs.join(rhs).sort_values(by=["__", "_"])["_"]
+    result = lhs.join(rhs).sort_values(by=["__", "_"])["_"]
+    if result.dtype != rhs._data["_"].dtype:
+        # The merge upcasts the positional column to float64 when some
+        # labels are missing; row positions are exactly representable in
+        # float64, so restore the integer dtype (nulls are preserved).
+        result = result.astype(rhs._data["_"].dtype)
+    return result
+
+
+def _gather_map_from_positions(positions, nrows: int) -> GatherMap:
+    """Build a nullifying GatherMap from a joined positional column.
+
+    A merge that leaves some rows unmatched upcasts a positional column to
+    float64 with nulls; row positions are exactly representable in float64,
+    so cast back and replace nulls with an out-of-bounds sentinel that a
+    nullifying gather turns back into nulls.
+    """
+    positions = positions.astype(SIZE_TYPE_DTYPE)
+    if positions.null_count:
+        positions = positions.fillna(np.int32(np.iinfo(np.int32).min))
+    return GatherMap.from_column_unchecked(positions, nrows, nullify=True)
+
+
+def _unify_categorical_indexes(lhs_index, rhs_index):
+    """Cast two unordered categorical indexes with differing categories to
+    a common merged-categories dtype ahead of a join.
+
+    The merged categories keep first-appearance order (the left categories
+    followed by the right's unseen ones), so a sorted join on the unified
+    codes orders rows by category -- like pandas' union of categoricals --
+    rather than lexically, and the joined index remains categorical.
+    """
+    ldtype = getattr(lhs_index, "dtype", None)
+    rdtype = getattr(rhs_index, "dtype", None)
+    if (
+        isinstance(ldtype, cudf.CategoricalDtype)
+        and isinstance(rdtype, cudf.CategoricalDtype)
+        and not ldtype.ordered
+        and not rdtype.ordered
+        and not ldtype._internal_eq(rdtype)
+    ):
+        merged_categories = cudf.concat(
+            [ldtype.categories, rdtype.categories]
+        ).unique()
+        common = cudf.CategoricalDtype(
+            categories=merged_categories, ordered=False
+        )
+        return lhs_index.astype(common), rhs_index.astype(common)
+    return lhs_index, rhs_index
 
 
 class _FrameIndexer:
@@ -2873,7 +2921,23 @@ class IndexedFrame(Frame):
             if ignore_index:
                 out = out.reset_index(drop=True)
         else:
-            labels = sorted(self._column_names, reverse=not ascending)
+            # The column labels are host-side pandas metadata, so have
+            # pandas compute the sorted column order: a Series holding the
+            # original positions, indexed by the column labels, sorted by
+            # its index yields the positional indexer while inheriting
+            # pandas' exact level resolution and validation, per-level
+            # ascending, sort_remaining, and na_position semantics.
+            pd_columns = self._data.to_pandas_index
+            indexer = pd.Series(
+                range(len(pd_columns)), index=pd_columns
+            ).sort_index(
+                level=level,
+                ascending=ascending,
+                sort_remaining=sort_remaining,
+                na_position=na_position,
+                kind="stable",
+            )
+            labels = [self._column_names[i] for i in indexer]
             result_columns = (self._data[label] for label in labels)
             if ignore_index:
                 ca = ColumnAccessor(
@@ -2888,6 +2952,7 @@ class IndexedFrame(Frame):
                     multiindex=self._data.multiindex,
                     level_names=self._data.level_names,
                     label_dtype=self._data.label_dtype,
+                    level_dtypes=self._data._level_dtypes,
                     verify=False,
                 )
             out = self._from_data_like_self(ca)
@@ -3881,24 +3946,35 @@ class IndexedFrame(Frame):
             if not self.index.is_unique or not index.is_unique:
                 raise ValueError("Cannot align indices with non-unique values")
 
-        lhs = cudf.DataFrame._from_data(self._data, index=self.index)
-        rhs = cudf.DataFrame._from_data({}, index=index)
+        # Join only the indexes, with a positional column standing in for
+        # this frame's rows, and gather the data columns afterwards. Routing
+        # the data columns through the merge would subject them to pandas'
+        # merge dtype semantics (e.g. the numpy int -> float64 upcast on
+        # unmatched rows), which apply to user-facing merges but not to
+        # alignment.
+        lhs_index, rhs_index = _unify_categorical_indexes(self.index, index)
+        pos_col_id = str(uuid4())
+        lhs = cudf.DataFrame._from_data(
+            {pos_col_id: ColumnBase.from_range(range(len(self)))},
+            index=lhs_index,
+        )
+        rhs = cudf.DataFrame._from_data({}, index=rhs_index)
 
         # create a temporary column that we will later sort by
         # to recover ordering after index alignment.
         sort_col_id = str(uuid4())
-        if how == "left":
-            lhs[sort_col_id] = ColumnBase.from_range(range(len(lhs)))
-        elif how == "right":
+        if how == "right":
             rhs[sort_col_id] = ColumnBase.from_range(range(len(rhs)))
 
         result = lhs.join(rhs, how=how, sort=sort)
-        if how in ("left", "right"):
+        if how == "left":
+            result = result.sort_values(pos_col_id)
+        elif how == "right":
             result = result.sort_values(sort_col_id)
-            del result[sort_col_id]
 
-        out = self._from_data(
-            self._data._from_columns_like_self(result._columns)
+        out = self._gather(
+            _gather_map_from_positions(result._data[pos_col_id], len(self)),
+            keep_index=False,
         )
         out.index = result.index
         out.index.names = self.index.names
@@ -3994,7 +4070,6 @@ class IndexedFrame(Frame):
                 )
                 df = cudf.DataFrame()
             else:
-                lhs = cudf.DataFrame._from_data({}, index=index)
                 rhs = cudf.DataFrame._from_data(
                     {
                         # bookkeeping workaround for unnamed series
@@ -4007,11 +4082,36 @@ class IndexedFrame(Frame):
                 )
                 diff = index.difference(df.index)
                 rows_added = len(diff) > 0
-                df = lhs.join(rhs, how="left", sort=True)
+                # Join only the indexes and gather the data columns natively
+                # (see ``_align_to_index``): the merge's pandas dtype
+                # semantics must not leak into reindexing, whose own dtype
+                # rules are applied below. Row order comes from a positional
+                # column on the target rather than from sorting the joined
+                # key: a value sort's collation can disagree with the
+                # target's own ordering (e.g. a categorical target joined
+                # against a string source is decategorized and would sort
+                # lexically rather than by category).
+                pos_col_id = str(uuid4())
+                order_col_id = str(uuid4())
+                lhs = cudf.DataFrame._from_data(
+                    {order_col_id: ColumnBase.from_range(range(len(index)))},
+                    index=index,
+                )
+                pos_rhs = cudf.DataFrame._from_data(
+                    {pos_col_id: ColumnBase.from_range(range(len(rhs)))},
+                    index=rhs.index,
+                )
+                joined = lhs.join(pos_rhs, how="left", sort=False)
+                joined = joined.sort_values(order_col_id)
+                df = rhs._gather(
+                    _gather_map_from_positions(
+                        joined._data[pos_col_id], len(rhs)
+                    ),
+                    keep_index=False,
+                )
+                df.index = joined.index
                 if fill_value is not NA and rows_added:
                     df.loc[diff] = fill_value
-                # double-argsort to map back from sorted to unsorted positions
-                df = df.take(index.argsort(ascending=True).argsort())
 
         index = index if index is not None else df.index
 
@@ -4649,7 +4749,7 @@ class IndexedFrame(Frame):
                 plc.Table([col.plc_column for col in cols]),
                 mask_col.plc_column,
             )
-            return self._from_columns_like_self(
+            result = self._from_columns_like_self(
                 [
                     ColumnBase.create(col, dtype)
                     for col, dtype in zip(
@@ -4659,6 +4759,17 @@ class IndexedFrame(Frame):
                 column_names=self._column_names,
                 index_names=self.index.names if keep_index else None,
             )
+        if (
+            keep_index
+            and isinstance(self.index, MultiIndex)
+            and self.index._levels is not None
+        ):
+            result.index._levels = self.index._levels
+            result.index._codes = [
+                code.apply_boolean_mask(boolean_mask.column)
+                for code in self.index._codes
+            ]
+        return result
 
     def _pandas_repr_compatible(self, nan_rep=None) -> Self:
         """Return Self but with columns prepared for a pandas-like repr."""
@@ -4758,11 +4869,24 @@ class IndexedFrame(Frame):
             new_column_data[name] = col
         # This is to match pandas where the new data columns are always
         # inserted to the left of existing data columns.
+        label_dtype = None
+        if not self._data.multiindex:
+            # pandas computes the result columns by Index.insert into the
+            # existing columns Index, which preserves its dtype (e.g.
+            # Index([None], dtype=object).insert(0, "a") stays object);
+            # rebuilding from the merged labels would re-infer (pandas 3.0
+            # infers "str" for all-string labels). Emulate the insert
+            # provenance.
+            pd_columns = self._data.to_pandas_index
+            for new_name in reversed(list(new_column_data)):
+                pd_columns = pd_columns.insert(0, new_name)
+            label_dtype = pd_columns.dtype
         return (
             ColumnAccessor(
                 {**new_column_data, **self._data},
                 self._data.multiindex,
                 self._data._level_names,
+                label_dtype=label_dtype,
             ),
             index,
         )
@@ -6010,8 +6134,8 @@ class IndexedFrame(Frame):
                 """
                 >>> a.pow(b)
                 a       1
-                b    <NA>
-                c    <NA>
+                b       1
+                c       1
                 d    <NA>
                 e    <NA>
                 dtype: int64
@@ -6053,7 +6177,7 @@ class IndexedFrame(Frame):
                 a       1
                 b    <NA>
                 c    <NA>
-                d    <NA>
+                d       1
                 e    <NA>
                 dtype: int64
                 >>> a.rpow(b, fill_value=0)

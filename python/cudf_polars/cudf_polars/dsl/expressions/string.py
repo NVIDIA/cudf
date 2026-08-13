@@ -149,6 +149,7 @@ class StringFunction(Expr):
         Name.StripCharsEnd,
         Name.StripPrefix,
         Name.StripSuffix,
+        Name.ToInteger,
         Name.Uppercase,
         Name.Reverse,
         Name.Tail,
@@ -315,6 +316,12 @@ class StringFunction(Expr):
                 raise NotImplementedError(
                     "strip operations only support scalar patterns"
                 )
+        elif self.name is StringFunction.Name.ToInteger:
+            base = self.children[1]
+            if not isinstance(base, Literal) or base.value != 10:
+                raise NotImplementedError(
+                    "str.to_integer only supports base 10 on the GPU engine"
+                )
 
     @staticmethod
     def _create_regex_program(
@@ -445,9 +452,10 @@ class StringFunction(Expr):
             else:
                 col_width = self.children[1].evaluate(df, context=context)
                 assert isinstance(col_width, Column)
+                widths = col_width.obj
                 return Column(
                     plc.strings.padding.zfill_by_widths(
-                        column.obj, col_width.obj, stream=df.stream
+                        column.obj, widths, stream=df.stream
                     ),
                     self.dtype,
                 )
@@ -641,6 +649,50 @@ class StringFunction(Expr):
             )
             return Column(
                 plc.json.get_json_object(plc_column, json_path, stream=df.stream),
+                dtype=self.dtype,
+            )
+        elif self.name is StringFunction.Name.ToInteger:
+            (strict,) = self.options
+            plc_column = self.children[0].evaluate(df, context=context).obj
+            parse_ok = plc.strings.convert.convert_integers.is_integer(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            if parse_ok.null_count() > 0:
+                # is_integer marks null inputs as null; treat them as
+                # non-parseable so they map to null in the output.
+                parse_ok = plc.replace.replace_nulls(
+                    parse_ok,
+                    plc.Scalar.from_py(
+                        False,  # noqa: FBT003
+                        plc.DataType(plc.TypeId.BOOL8),
+                        stream=df.stream,
+                    ),
+                    stream=df.stream,
+                )
+            if strict:
+                is_null = plc.unary.is_null(plc_column, stream=df.stream)
+                ok_or_null = plc.binaryop.binary_operation(
+                    parse_ok,
+                    is_null,
+                    plc.binaryop.BinaryOperator.LOGICAL_OR,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                if not plc.reduce.reduce(
+                    ok_or_null,
+                    plc.aggregation.all(),
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                ).to_py(stream=df.stream):
+                    raise InvalidOperationError("conversion from `str` failed.")
+            result = plc.strings.convert.convert_integers.to_integers(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            new_mask, null_count = plc.transform.bools_to_mask(
+                parse_ok, stream=df.stream
+            )
+            return Column(
+                result.with_mask(new_mask, null_count),
                 dtype=self.dtype,
             )
         elif self.name is StringFunction.Name.LenBytes:

@@ -10,7 +10,7 @@
  * CUDA-based brotli decompression
  *
  * Brotli Compressed Data Format
- * https://tools.ietf.org/html/rfc7932
+ * https://datatracker.ietf.org/doc/html/rfc7932
  *
  * Portions of this file are derived from Google's Brotli project at
  * https://github.com/google/brotli, original license text below.
@@ -19,7 +19,7 @@
 /* Copyright 2013 Google Inc. All Rights Reserved.
 
 Distributed under MIT license.
-See file LICENSE for detail or copy at https://opensource.org/licenses/MIT
+See file LICENSE for detail or copy at https://opensource.org/license/MIT
 */
 
 /*
@@ -1903,7 +1903,7 @@ static __device__ void ProcessCommands(debrotli_state_s* s, brotli_dictionary_s 
 
 /**
  * @brief Brotli decoding kernel
- * See https://tools.ietf.org/html/rfc7932
+ * See https://datatracker.ietf.org/doc/html/rfc7932
  *
  * blockDim = {block_size,1,1}
  *

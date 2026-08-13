@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -59,14 +59,17 @@ class hash_join {
    *        any `left` table that will be used later for join.
    * @param compare_nulls Controls whether null join-key values should match or not.
    * @param stream CUDA stream used for device memory operations and kernel launches.
+   * @param mr Device memory resource used to allocate the internal hash table.
    */
   hash_join(cudf::table_view const& right,
             bool has_nulls,
             cudf::null_equality compare_nulls,
-            rmm::cuda_stream_view stream);
+            rmm::cuda_stream_view stream,
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * @copydoc hash_join(cudf::table_view const&, bool, null_equality, rmm::cuda_stream_view)
+   * @copydoc hash_join(cudf::table_view const&, bool, null_equality, rmm::cuda_stream_view,
+   * cuda::mr::any_resource<cuda::mr::device_accessible>)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
@@ -74,7 +77,8 @@ class hash_join {
             bool has_nulls,
             cudf::null_equality compare_nulls,
             double load_factor,
-            rmm::cuda_stream_view stream);
+            rmm::cuda_stream_view stream,
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
    * @copydoc cudf::hash_join::inner_join

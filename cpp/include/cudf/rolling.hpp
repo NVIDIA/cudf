@@ -20,12 +20,15 @@
 #include <span>
 #include <variant>
 
+/**
+ * @file
+ * @brief APIs for computing rolling window aggregations over columns.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup aggregation_rolling
  * @{
- * @file
- * @brief APIs for computing rolling window aggregations over columns.
  */
 
 /**

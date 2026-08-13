@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from textwrap import dedent
@@ -30,6 +30,22 @@ def test_categorical_basic():
     )
 
     assert str(sr) == str(pdsr)
+
+
+@pytest.mark.parametrize("num_categories", [1, 3, 200, 40000])
+def test_cat_codes_signed_dtype(num_categories):
+    # cat.codes must use a signed integer dtype matching pandas (which widens
+    # int8 -> int16 -> int32 as the category count grows), not an unsigned one.
+    categories = [f"c{i}" for i in range(num_categories)]
+    ps = pd.Series(pd.Categorical(categories, categories=categories))
+    gs = cudf.from_pandas(ps)
+
+    expect = ps.cat.codes
+    got = gs.cat.codes
+
+    assert got.dtype.kind == "i"
+    assert got.dtype == expect.dtype
+    assert_eq(expect, got)
 
 
 def test_categorical_integer():
@@ -351,8 +367,10 @@ def test_add_categories_mixed_error():
 def test_categorical_allow_nan():
     gs = cudf.Series([1, 2, np.nan, 10, np.nan, None], nan_as_null=False)
     gs = gs.astype("category")
-    expected_codes = cudf.Series([0, 1, None, 2, None, None], dtype="uint8")
+    # cat.codes uses a signed dtype to match pandas (int8 here, not uint8).
+    expected_codes = cudf.Series([0, 1, None, 2, None, None], dtype="int8")
     assert_eq(expected_codes, gs.cat.codes)
+    assert gs.cat.codes.dtype == np.dtype("int8")
 
     expected_categories = cudf.Index([1.0, 2.0, 10.0], dtype="float64")
     assert_eq(expected_categories, gs.cat.categories)

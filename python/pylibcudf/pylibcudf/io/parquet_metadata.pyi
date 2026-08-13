@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.io.types import SourceInfo
@@ -54,6 +54,8 @@ class FileMetaData:
     def row_groups(self) -> list[RowGroup]: ...
     @property
     def row_group_num_rows(self) -> list[int]: ...
+    @property
+    def columnchunk_metadata(self) -> dict[str, list[int]]: ...
 
 class SortingColumn:
     @property

@@ -16,6 +16,11 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief Interface classes for writing output data to files, host memory, or device memory.
+ */
+
 namespace CUDF_EXPORT cudf {
 //! IO interfaces
 namespace io {
@@ -23,8 +28,6 @@ namespace io {
 /**
  * @addtogroup io_datasinks
  * @{
- * @file
- * @brief Interface classes for writing output data to files, host memory, or device memory.
  */
 
 /**

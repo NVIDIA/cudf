@@ -73,7 +73,6 @@ def df():
         ("parquet", pl.scan_parquet),
     ],
 )
-@pytest.mark.timeout(90)
 def test_parallel_scan(
     tmp_path: Path,
     df: pl.DataFrame,
@@ -91,17 +90,6 @@ def test_parallel_scan(
     make_partitioned_source(df, tmp_path, fmt, n_files=3)
     q = scan_fn(tmp_path)
     assert_gpu_result_equal(q, engine=streaming_engine)
-
-
-def test_scan_parquet_use_rapidsmpf_native(tmp_path, df, streaming_engine_factory):
-    streaming_engine = streaming_engine_factory(
-        StreamingOptions(
-            target_partition_size=1_000,
-            parquet_options={"use_rapidsmpf_native": True},
-        ),
-    )
-    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
-    assert_gpu_result_equal(pl.scan_parquet(tmp_path), engine=streaming_engine)
 
 
 @pytest.mark.parametrize(
@@ -205,7 +193,7 @@ def test_target_partition_size(
     )
     qir = Translator(q._ldf.visit(), _engine).translate_ir()
     config_options = ConfigOptions.from_polars_engine(_engine)
-    ir, info = lower_ir_graph(
+    lowering = lower_ir_graph(
         qir,
         config_options,
         collect_statistics(
@@ -214,6 +202,8 @@ def test_target_partition_size(
             parquet_stats_executor,
         ),
     )
+    ir = lowering.lowered
+    info = lowering.partition_info
     count = info[ir].count
     if blocksize <= 12_000:
         assert count > n_files

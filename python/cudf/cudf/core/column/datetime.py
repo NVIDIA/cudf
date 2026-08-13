@@ -46,6 +46,10 @@ from cudf.utils.dtypes import (
     get_dtype_of_same_kind,
 )
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
+from cudf.utils.temporal import (
+    _unit_to_name,
+    unit_to_nanoseconds_conversion,
+)
 from cudf.utils.utils import _EQUALITY_OPS, is_na_like
 
 if TYPE_CHECKING:
@@ -511,7 +515,7 @@ class DatetimeColumn(TemporalBaseColumn):
         # pandas' isocalendar for datetime64 returns UInt32 with NA preserved.
         is_arrow = isinstance(self.dtype, pd.ArrowDtype)
         target_dtype: DtypeObj = (
-            np.dtype(np.int64) if is_arrow else np.dtype(np.uint32)
+            np.dtype(np.int64) if is_arrow else pd.UInt32Dtype()
         )
         result = {
             field: self.strftime(
@@ -533,6 +537,37 @@ class DatetimeColumn(TemporalBaseColumn):
                 "Cannot use .astype to convert from timezone-naive dtype to timezone-aware dtype. "
                 "Use tz_localize instead."
             )
+        target_unit = (
+            np.datetime_data(dtype)[0]
+            if isinstance(dtype, np.dtype)
+            else dtype.pyarrow_dtype.unit
+        )
+        if (
+            len(self) != self.null_count
+            and unit_to_nanoseconds_conversion[target_unit]
+            < unit_to_nanoseconds_conversion[self.time_unit]
+        ):
+            # Casting to a finer resolution multiplies the underlying
+            # int64 values and can silently wrap around. pandas
+            # bounds-checks every narrowing conversion
+            # (astype_overflowsafe) and raises instead. Compare on the
+            # integer view: a host round-trip through pd.Timestamp can
+            # itself overflow for extreme values.
+            lo, hi = self.astype(np.dtype(np.int64)).minmax()
+            bound = np.iinfo(np.int64).max // (
+                unit_to_nanoseconds_conversion[self.time_unit]
+                // unit_to_nanoseconds_conversion[target_unit]
+            )
+            offender = None
+            if hi > bound:
+                offender = np.datetime64(int(hi), self.time_unit)  # type: ignore[call-overload]
+            elif lo < -bound:
+                offender = np.datetime64(int(lo), self.time_unit)  # type: ignore[call-overload]
+            if offender is not None:
+                raise pd.errors.OutOfBoundsDatetime(
+                    f"Out of bounds {_unit_to_name[target_unit]} "
+                    f"timestamp: {str(offender).replace('T', ' ')}"
+                )
         return self.cast(dtype=dtype)  # type: ignore[return-value]
 
     def as_timedelta_column(self, dtype: np.dtype) -> None:  # type: ignore[override]
@@ -977,7 +1012,9 @@ class DatetimeColumn(TemporalBaseColumn):
         )
 
         transition_times, offsets = _get_tz_data(tzname)
-        transition_times_local = (transition_times + offsets).astype(
+        # Use the raw cast: transition tables contain sentinel entries
+        # beyond the finer units' bounds that intentionally wrap around.
+        transition_times_local = (transition_times + offsets).cast(
             localized.dtype
         )
         indices = (
@@ -1001,6 +1038,20 @@ class DatetimeColumn(TemporalBaseColumn):
 
 
 class DatetimeTZColumn(DatetimeColumn):
+    def _round_dt(
+        self,
+        round_func: Callable[
+            [plc.Column, plc.datetime.RoundingFrequency], plc.Column
+        ],
+        freq: str,
+    ) -> ColumnBase:
+        # Rounding must operate on the local wall-clock time and then be
+        # re-localized to the original timezone to match pandas semantics.
+        rounded_local = cast(
+            "DatetimeColumn", self._local_time._round_dt(round_func, freq)
+        )
+        return rounded_local.tz_localize(str(self.tz))
+
     def to_pandas(
         self,
         *,
@@ -1061,7 +1112,10 @@ class DatetimeTZColumn(DatetimeColumn):
         transition_times, offsets = _get_tz_data(str(self.tz))
         base_dtype = _get_base_dtype(self.dtype)
         indices = (
-            transition_times.astype(base_dtype).searchsorted(
+            # Use the raw cast: transition tables contain sentinel
+            # entries beyond the finer units' bounds that intentionally
+            # wrap around.
+            transition_times.cast(base_dtype).searchsorted(
                 self._utc_time.astype(base_dtype), side="right"
             )
             - 1

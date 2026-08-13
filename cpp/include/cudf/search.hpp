@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,12 +14,15 @@
 
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for lower_bound, upper_bound, and contains
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_search
  * @{
- * @file
- * @brief Column APIs for lower_bound, upper_bound, and contains
  */
 
 /**

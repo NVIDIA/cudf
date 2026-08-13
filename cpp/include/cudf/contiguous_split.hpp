@@ -15,13 +15,16 @@
 #include <span>
 #include <vector>
 
+/**
+ * @file
+ * @brief Table APIs for contiguous_split, pack, unpack, and metadata
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup copy_split
  * @{
- * @file
- * @brief Table APIs for contiguous_split, pack, unpack, and metadata
  */
 
 /**

@@ -11,6 +11,11 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/device_buffer.hpp>
 
+/**
+ * @file
+ * @brief Interfaces for providing stream-ordered chunks of device data to text-based readers.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 namespace text {
@@ -18,8 +23,6 @@ namespace text {
 /**
  * @addtogroup io_readers
  * @{
- * @file
- * @brief Interfaces for providing stream-ordered chunks of device data to text-based readers.
  */
 
 /**

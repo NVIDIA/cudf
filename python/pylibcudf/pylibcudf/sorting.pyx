@@ -30,6 +30,8 @@ __all__ = [
     "stable_sort",
     "stable_sort_by_key",
     "stable_sorted_order",
+    "top_k",
+    "top_k_order",
 ]
 
 cpdef Column sorted_order(

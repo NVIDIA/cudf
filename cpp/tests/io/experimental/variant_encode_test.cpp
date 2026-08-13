@@ -414,3 +414,17 @@ TEST_F(EncodeStringsToVariantTest, NoColumnNames)
   EXPECT_EQ(variant->size(), 2);
   EXPECT_EQ(variant->null_count(), 0);
 }
+
+TEST_F(EncodeStringsToVariantTest, FieldCountLimit)
+{
+  std::vector<std::string> names;
+  for (int i = 0; i < 255; ++i) {
+    names.push_back("f" + std::to_string(i));
+  }
+
+  auto variant = encode({R"({})"}, names);
+  EXPECT_EQ(variant->size(), 1);
+
+  names.push_back("f255");
+  EXPECT_THROW(encode({R"({})"}, names), std::invalid_argument);
+}

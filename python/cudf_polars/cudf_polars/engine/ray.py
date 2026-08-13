@@ -726,6 +726,9 @@ class RayEngine(StreamingEngine):
         num_ranks: int | None = None,
     ) -> None:
         executor_options = executor_options or {}
+        executor_options.setdefault(
+            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
+        )
         engine_options = engine_options or {}
         ray_init_options = ray_init_options or {}
 
@@ -805,7 +808,7 @@ class RayEngine(StreamingEngine):
                         "int",
                         executor_options.get("num_py_executors", 8),
                     ),
-                    kvikio_nthreads=resolve_kvikio_nthreads(executor_options),
+                    kvikio_nthreads=executor_options["kvikio_nthreads"],
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
                     worker_id=worker_id,
@@ -877,7 +880,7 @@ class RayEngine(StreamingEngine):
             [
                 rank.reset.remote(
                     rapidsmpf_options_as_bytes=rapidsmpf_options_as_bytes,
-                    kvikio_nthreads=resolve_kvikio_nthreads(executor_options),
+                    kvikio_nthreads=executor_options["kvikio_nthreads"],
                 )
                 for rank in self._rank_actors
             ]

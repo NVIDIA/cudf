@@ -843,6 +843,9 @@ class DaskEngine(StreamingEngine):
         engine_options: dict[str, Any] | None = None,
     ) -> None:
         executor_options = executor_options or {}
+        executor_options.setdefault(
+            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
+        )
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -957,7 +960,7 @@ class DaskEngine(StreamingEngine):
             rapidsmpf_options_as_bytes,
             quent_context=quent_context,
             num_py_executors=executor_options.get("num_py_executors", 8),
-            kvikio_nthreads=resolve_kvikio_nthreads(executor_options),
+            kvikio_nthreads=executor_options["kvikio_nthreads"],
         )
 
         dask_ctx = DaskContext(
@@ -1017,7 +1020,7 @@ class DaskEngine(StreamingEngine):
             functools.partial(
                 _reset_worker,
                 uid=ctx.rapidsmpf_id,
-                kvikio_nthreads=resolve_kvikio_nthreads(executor_options),
+                kvikio_nthreads=executor_options["kvikio_nthreads"],
             ),
             rapidsmpf_options_as_bytes,
         )

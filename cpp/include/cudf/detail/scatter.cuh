@@ -173,6 +173,57 @@ struct column_scatterer_impl<string_view> {
 };
 
 template <>
+struct column_scatterer_impl<binary_view> {
+  template <typename MapIterator>
+  std::unique_ptr<column> operator()(column_view const& source,
+                                     MapIterator scatter_map_begin,
+                                     MapIterator scatter_map_end,
+                                     column_view const& target,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr) const
+  {
+    auto values        = rmm::device_uvector<binary_view>(target.size(), stream, mr);
+    auto target_device = column_device_view::create(target, stream);
+    auto const target_has_nulls = target.has_nulls();
+    thrust::transform(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<size_type>{0},
+      cuda::counting_iterator{target.size()},
+      values.begin(),
+      [column = *target_device, target_has_nulls] __device__(size_type index) {
+        if (target_has_nulls && column.is_null(index)) { return binary_view{}; }
+        auto const value = column.element<binary_view>(index);
+        auto const data  = value.data() == nullptr && value.empty()
+                             ? reinterpret_cast<uint8_t const*>(1)
+                             : value.data();
+        return binary_view{data, value.size_bytes()};
+      });
+
+    auto source_device         = column_device_view::create(source, stream);
+    auto const source_has_nulls = source.has_nulls();
+    auto source_values          = thrust::make_transform_iterator(
+      cuda::counting_iterator<size_type>{0},
+      cuda::proclaim_return_type<binary_view>(
+        [column = *source_device, source_has_nulls] __device__(size_type index) {
+          if (source_has_nulls && column.is_null(index)) { return binary_view{}; }
+          auto const value = column.element<binary_view>(index);
+          auto const data  = value.data() == nullptr && value.empty()
+                               ? reinterpret_cast<uint8_t const*>(1)
+                               : value.data();
+          return binary_view{data, value.size_bytes()};
+        }));
+    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    source_values,
+                    source_values + cudf::distance(scatter_map_begin, scatter_map_end),
+                    scatter_map_begin,
+                    values.begin());
+
+    return make_binary_column(
+      device_span<binary_view const>{values}, binary_view{}, stream, mr);
+  }
+};
+
+template <>
 struct column_scatterer_impl<list_view> {
   template <typename MapIterator>
   std::unique_ptr<column> operator()(column_view const& source,

@@ -294,6 +294,168 @@ def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
 
 
 @skip_rolling_expr_136_to_138
+@pytest.mark.parametrize(
+    "idx,period",
+    [
+        ([1, 1, 3, 1, 2, 4, 5], "2i"),
+        (
+            [
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 2),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 1),
+                dt.datetime(2025, 1, 1, 9, 3),
+                dt.datetime(2025, 1, 1, 9, 4),
+            ],
+            "2m",
+        ),
+    ],
+    ids=["integer_index", "datetime_index"],
+)
+def test_rolling_sum_over_index_types_and_group_sizes(
+    engine: pl.GPUEngine,
+    idx: list[int] | list[dt.datetime],
+    period: str,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "B", "B", "C", "C", "C", "C"],
+            "idx": idx,
+            "x": [10, 20, 30, 40, 50, 60, 70],
+        }
+    )
+    q = df.select(
+        pl.col("x").sum().rolling("idx", period=period).over("g").alias("sum")
+    )
+    expected = pl.DataFrame({"sum": [10, 20, 30, 40, 90, 60, 130]})
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+@pytest.mark.parametrize(
+    "lf,expected",
+    [
+        (
+            pl.LazyFrame(
+                {
+                    "g": pl.Series([], dtype=pl.String),
+                    "ts": pl.Series([], dtype=pl.Int64),
+                    "x": pl.Series([], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": pl.Series([], dtype=pl.Int64),
+                    "min": pl.Series([], dtype=pl.Int64),
+                    "max": pl.Series([], dtype=pl.Int64),
+                    "mean": pl.Series([], dtype=pl.Float64),
+                    "count": pl.Series([], dtype=pl.UInt32),
+                    "len": pl.Series([], dtype=pl.UInt32),
+                }
+            ),
+        ),
+        (
+            pl.LazyFrame(
+                {
+                    "g": ["A", "A", "B"],
+                    "ts": [1, 2, 1],
+                    "x": pl.Series([None, None, None], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": [0, 0, 0],
+                    "min": [None, None, None],
+                    "max": [None, None, None],
+                    "mean": [None, None, None],
+                    "count": pl.Series([0, 0, 0], dtype=pl.UInt32),
+                    "len": pl.Series([1, 2, 1], dtype=pl.UInt32),
+                },
+                schema={
+                    "sum": pl.Int64,
+                    "min": pl.Int64,
+                    "max": pl.Int64,
+                    "mean": pl.Float64,
+                    "count": pl.UInt32,
+                    "len": pl.UInt32,
+                },
+            ),
+        ),
+        (
+            pl.LazyFrame(
+                {
+                    "g": ["A", "A", "A", "B", "B"],
+                    "ts": [1, 2, 3, 1, 3],
+                    "x": pl.Series([10, None, 30, None, 50], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": [10, 10, 30, 0, 50],
+                    "min": [10, 10, 30, None, 50],
+                    "max": [10, 10, 30, None, 50],
+                    "mean": [10.0, 10.0, 30.0, None, 50.0],
+                    "count": pl.Series([1, 1, 1, 0, 1], dtype=pl.UInt32),
+                    "len": pl.Series([1, 2, 2, 1, 1], dtype=pl.UInt32),
+                },
+                schema={
+                    "sum": pl.Int64,
+                    "min": pl.Int64,
+                    "max": pl.Int64,
+                    "mean": pl.Float64,
+                    "count": pl.UInt32,
+                    "len": pl.UInt32,
+                },
+            ),
+        ),
+        (
+            pl.LazyFrame(
+                {
+                    "g": ["A", "B"],
+                    "ts": [1, 1],
+                    "x": pl.Series([10, None], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": [10, 0],
+                    "min": [10, None],
+                    "max": [10, None],
+                    "mean": [10.0, None],
+                    "count": pl.Series([1, 0], dtype=pl.UInt32),
+                    "len": pl.Series([1, 1], dtype=pl.UInt32),
+                },
+                schema={
+                    "sum": pl.Int64,
+                    "min": pl.Int64,
+                    "max": pl.Int64,
+                    "mean": pl.Float64,
+                    "count": pl.UInt32,
+                    "len": pl.UInt32,
+                },
+            ),
+        ),
+    ],
+    ids=["empty", "all_null", "mixed_null", "single_row_groups"],
+)
+def test_rolling_common_aggs_over_edge_cases(
+    engine: pl.GPUEngine,
+    lf: pl.LazyFrame,
+    expected: pl.DataFrame,
+) -> None:
+    q = lf.sort("g", "ts").select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g").alias("sum"),
+        pl.col("x").min().rolling("ts", period="2i").over("g").alias("min"),
+        pl.col("x").max().rolling("ts", period="2i").over("g").alias("max"),
+        pl.col("x").mean().rolling("ts", period="2i").over("g").alias("mean"),
+        pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
+        pl.len().rolling("ts", period="2i").over("g").alias("len"),
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
 def test_range_rolling_nested_under_range_rolling_over_raises(
     engine: pl.GPUEngine,
 ) -> None:

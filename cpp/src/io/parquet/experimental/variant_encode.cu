@@ -562,8 +562,16 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
     cudf::detail::make_device_uvector(h_views, stream, cudf::get_current_device_resource_ref());
 
   // ── Input null mask ───────────────────────────────────────────────────────
-  bitmask_type const* input_null_mask = input.null_mask();
-  size_type const null_count          = input.null_count();
+  // ── Input null mask ───────────────────────────────────────────────────────
+  size_type const null_count = input.null_count();
+  // copy_bitmask handles input.offset() and yields an offset-free mask
+  rmm::device_buffer owned_null_mask =
+    (null_count > 0)
+      ? cudf::detail::copy_bitmask(
+          input.null_mask(), input.offset(), input.offset() + num_rows, stream, mr)
+      : rmm::device_buffer{};
+  bitmask_type const* input_null_mask =
+    (null_count > 0) ? static_cast<bitmask_type const*>(owned_null_mask.data()) : nullptr;
 
   // ── Compute per-row value blob sizes ─────────────────────────────────────
   rmm::device_uvector<size_type> value_sizes(

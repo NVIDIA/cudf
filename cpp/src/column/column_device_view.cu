@@ -9,7 +9,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <functional>
 #include <numeric>
@@ -54,7 +54,7 @@ namespace {
 template <typename ColumnView, typename ColumnDeviceView>
 std::unique_ptr<ColumnDeviceView, std::function<void(ColumnDeviceView*)>>
 create_device_view_from_view(ColumnView const& source,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   size_type num_children = source.num_children();
@@ -112,7 +112,7 @@ column_device_view::column_device_view(column_view source, void* h_ptr, void* d_
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>
 column_device_view::create(column_view source,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   size_type num_children = source.num_children();
@@ -166,7 +166,7 @@ void mutable_column_device_view::destroy() { delete this; }
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>
 mutable_column_device_view::create(mutable_column_view source,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   return source.num_children() == 0

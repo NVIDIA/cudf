@@ -710,6 +710,20 @@ def test_groupby_sum_decimal_null_group(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_groupby_quantile_nearest_even_length(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "a", "b", "b"],
+            "val": [1.5, 2.5, 10.0, 20.0],
+        }
+    )
+    q = df.group_by("key").agg(
+        pl.col("val").quantile(0.5, interpolation="nearest").alias("q50"),
+        (-pl.col("val")).quantile(0.5, interpolation="nearest").alias("q50_neg"),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 @pytest.mark.xfail(
     raises=AssertionError,
     reason="https://github.com/rapidsai/cudf/issues/19610",

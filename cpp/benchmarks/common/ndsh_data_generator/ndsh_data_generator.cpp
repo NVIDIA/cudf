@@ -23,17 +23,22 @@
 #include <cudf/strings/padding.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <array>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace cudf::datagen {
 
 namespace {
+constexpr cudf::size_type orders_rows_per_scale_factor   = 1'500'000;
+constexpr cudf::size_type order_key_candidate_multiplier = 4;
+
 constexpr std::array nations{
   "ALGERIA", "ARGENTINA", "BRAZIL",         "CANADA",       "EGYPT", "ETHIOPIA", "FRANCE",
   "GERMANY", "INDIA",     "INDONESIA",      "IRAN",         "IRAQ",  "JAPAN",    "JORDAN",
@@ -146,12 +151,15 @@ std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
-  cudf::size_type const o_num_rows = scale_factor * 1'500'000;
+  cudf::size_type const o_num_rows = scale_factor * orders_rows_per_scale_factor;
 
   // Generate the `o_orderkey` column
   auto o_orderkey = [&]() {
-    auto const o_orderkey_candidates = generate_primary_key_column(
-      cudf::numeric_scalar<cudf::size_type>(1), 4 * o_num_rows, stream, mr);
+    auto const o_orderkey_candidates =
+      generate_primary_key_column(cudf::numeric_scalar<cudf::size_type>(1),
+                                  order_key_candidate_multiplier * o_num_rows,
+                                  stream,
+                                  mr);
     auto const o_orderkey_unsorted = cudf::sample(cudf::table_view({o_orderkey_candidates->view()}),
                                                   o_num_rows,
                                                   cudf::sample_with_replacement::FALSE,
@@ -708,6 +716,9 @@ generate_orders_lineitem_part(double scale_factor,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
+  CUDF_EXPECTS(scale_factor <= static_cast<double>(std::numeric_limits<cudf::size_type>::max()) /
+                                 (orders_rows_per_scale_factor * order_key_candidate_multiplier),
+               "Scale factor exceeds the libcudf row limit for orders and lineitem generation");
   // Generate a table with the independent columns of the `orders` table
   auto orders_independent = generate_orders_independent(scale_factor, stream, mr);
 

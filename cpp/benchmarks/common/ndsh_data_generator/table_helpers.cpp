@@ -23,10 +23,12 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <limits>
 #include <vector>
 
 namespace cudf::datagen {
@@ -294,9 +296,12 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
   CUDF_BENCHMARK_RANGE();
   auto const sum_agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
   auto const l_num_rows_scalar =
-    cudf::reduce(o_rep_freqs, *sum_agg, cudf::data_type{cudf::type_id::INT32}, stream, mr);
-  return reinterpret_cast<cudf::numeric_scalar<cudf::size_type>*>(l_num_rows_scalar.get())
-    ->value(stream);
+    cudf::reduce(o_rep_freqs, *sum_agg, cudf::data_type{cudf::type_id::INT64}, stream, mr);
+  auto const l_num_rows =
+    reinterpret_cast<cudf::numeric_scalar<int64_t>*>(l_num_rows_scalar.get())->value(stream);
+  CUDF_EXPECTS(l_num_rows <= std::numeric_limits<cudf::size_type>::max(),
+               "Lineitem row count exceeds the libcudf row limit");
+  return static_cast<cudf::size_type>(l_num_rows);
 }
 
 /**

@@ -55,3 +55,8 @@ TEST_F(NDSHDataGeneratorTest, ScaleFactorPointZeroOne)
   expect_supplier_key_range(lineitem->view().column(2), supplier->num_rows());
   expect_supplier_key_range(partsupp->view().column(1), supplier->num_rows());
 }
+
+TEST_F(NDSHDataGeneratorTest, ScaleFactorExceedsRowLimit)
+{
+  EXPECT_THROW(cudf::datagen::generate_orders_lineitem_part(400), cudf::logic_error);
+}

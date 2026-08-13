@@ -7,7 +7,6 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
-import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
@@ -61,6 +60,7 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
     StreamingExecutor,
+    resolve_kvikio_nthreads,
 )
 
 if TYPE_CHECKING:
@@ -427,18 +427,7 @@ class SPMDEngine(StreamingEngine):
         )
         bind_to_gpu(hw_binding)
 
-        kvikio_nthreads = int(
-            executor_options.get(
-                "kvikio_nthreads",
-                os.environ.get(
-                    "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                    os.environ.get("KVIKIO_NTHREADS", "256"),
-                ),
-            )
-        )
-        if kvikio_nthreads <= 0:
-            raise ValueError(f"kvikio_nthreads must be positive, got {kvikio_nthreads}")
-        kvikio.defaults.set("num_threads", kvikio_nthreads)
+        kvikio.defaults.set("num_threads", resolve_kvikio_nthreads(executor_options))
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -619,18 +608,7 @@ class SPMDEngine(StreamingEngine):
             existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        kvikio_nthreads = int(
-            executor_options.get(
-                "kvikio_nthreads",
-                os.environ.get(
-                    "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                    os.environ.get("KVIKIO_NTHREADS", "256"),
-                ),
-            )
-        )
-        if kvikio_nthreads <= 0:
-            raise ValueError(f"kvikio_nthreads must be positive, got {kvikio_nthreads}")
-        kvikio.defaults.set("num_threads", kvikio_nthreads)
+        kvikio.defaults.set("num_threads", resolve_kvikio_nthreads(executor_options))
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"

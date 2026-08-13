@@ -161,6 +161,19 @@ def _make_default_factory(
     return default_factory
 
 
+def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
+    """Resolve kvikio thread count from executor options with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_nthreads",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                os.environ.get("KVIKIO_NTHREADS", "256"),
+            ),
+        )
+    )
+
+
 def _bool_converter(v: str) -> bool:
     lowered = v.lower()
     if lowered in {"true", "yes", "y", "1"}:
@@ -764,12 +777,7 @@ class StreamingExecutor:
         )
     )
     kvikio_nthreads: int = dataclasses.field(
-        default_factory=lambda: int(
-            os.environ.get(
-                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                os.environ.get("KVIKIO_NTHREADS", "256"),
-            )
-        )
+        default_factory=lambda: resolve_kvikio_nthreads({})
     )
 
     min_device_size: int | None = None

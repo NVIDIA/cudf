@@ -49,7 +49,11 @@ from cudf_polars.engine.persisted_result import (
 from cudf_polars.quent._context import LocalQuentContext
 from cudf_polars.quent._types import Worker
 from cudf_polars.unstable import unstable
-from cudf_polars.utils.config import MemoryResourceConfig, RayContext
+from cudf_polars.utils.config import (
+    MemoryResourceConfig,
+    RayContext,
+    resolve_kvikio_nthreads,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -801,15 +805,7 @@ class RayEngine(StreamingEngine):
                         "int",
                         executor_options.get("num_py_executors", 8),
                     ),
-                    kvikio_nthreads=int(
-                        executor_options.get(
-                            "kvikio_nthreads",
-                            os.environ.get(
-                                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                                os.environ.get("KVIKIO_NTHREADS", "256"),
-                            ),
-                        )
-                    ),
+                    kvikio_nthreads=resolve_kvikio_nthreads(executor_options),
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
                     worker_id=worker_id,
@@ -881,15 +877,7 @@ class RayEngine(StreamingEngine):
             [
                 rank.reset.remote(
                     rapidsmpf_options_as_bytes=rapidsmpf_options_as_bytes,
-                    kvikio_nthreads=int(
-                        executor_options.get(
-                            "kvikio_nthreads",
-                            os.environ.get(
-                                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                                os.environ.get("KVIKIO_NTHREADS", "256"),
-                            ),
-                        )
-                    ),
+                    kvikio_nthreads=resolve_kvikio_nthreads(executor_options),
                 )
                 for rank in self._rank_actors
             ]

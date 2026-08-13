@@ -317,7 +317,18 @@ def engine(
 
 
 @pytest.fixture
-def engine_raise_on_fail() -> pl.GPUEngine:
+def in_memory_engine() -> pl.GPUEngine:
+    """
+    Return an in-memory :class:`polars.GPUEngine` with ``raise_on_fail=True``.
+
+    Use this for tests that intentionally exercise in-memory-only behavior
+    instead of the parametrized engine matrix.
+    """
+    return pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+
+
+@pytest.fixture
+def engine_raise_on_fail(in_memory_engine: pl.GPUEngine) -> pl.GPUEngine:
     """
     Return a default :class:`polars.GPUEngine` with ``raise_on_fail=True``.
 
@@ -332,7 +343,7 @@ def engine_raise_on_fail() -> pl.GPUEngine:
     by a streaming task group.
     """
     # TODO: We should be testing with all supported engine variants
-    return pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    return in_memory_engine
 
 
 @pytest.fixture

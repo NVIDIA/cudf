@@ -17,6 +17,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -32,7 +36,7 @@ cpdef tuple[Table, list] hash_partition(
     int num_partitions,
     cpp_partitioning.hash_id hash_function = cpp_partitioning.hash_id.HASH_MURMUR3,
     uint32_t seed = cpp_partitioning.DEFAULT_HASH_SEED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -102,7 +106,7 @@ cpdef tuple[Table, list] partition(
     Table t,
     Column partition_map,
     int num_partitions,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -155,7 +159,7 @@ cpdef tuple[Table, list] round_robin_partition(
     Table input,
     int num_partitions,
     int start_partition=0,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

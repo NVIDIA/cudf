@@ -29,6 +29,7 @@
 
 #include <limits>
 #include <memory>
+#include <stdexcept>
 
 template <typename T>
 using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
@@ -514,6 +515,20 @@ TEST_F(SemiAntiJoinTest, MarkJoinPrefilterLoadFactorOverload)
   auto sorted_expected     = cudf::gather(expected, *expected_sort_order);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_expected, *sorted_result);
+}
+
+TEST_F(SemiAntiJoinTest, InvalidLoadFactor)
+{
+  column_wrapper<int32_t> keys{0, 1, 2};
+  auto const table = cudf::table_view{{keys}};
+
+  for (auto const load_factor : {-0.1, 0.0, 1.1}) {
+    SCOPED_TRACE(load_factor);
+    EXPECT_THROW(cudf::filtered_join(
+                   table, cudf::null_equality::EQUAL, load_factor, cudf::get_default_stream()),
+                 std::invalid_argument);
+    EXPECT_THROW(cudf::mark_join(table, load_factor), std::invalid_argument);
+  }
 }
 
 TEST_F(SemiAntiJoinTest, FilteredJoinMemoryResource)

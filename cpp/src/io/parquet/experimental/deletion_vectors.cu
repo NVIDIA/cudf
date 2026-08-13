@@ -104,11 +104,15 @@ namespace detail {
                                           deletion_vector_row_counts,
                                           stream,
                                           cudf::get_current_device_resource_ref());
+
+  auto const mask_type = deletion_vector_info.are_retention_vectors
+                           ? cudf::detail::mask_type::RETENTION
+                           : cudf::detail::mask_type::DELETION;
+
   // Filter the table using the deletion vector
-  return table_with_metadata{
+  return cudf::io::table_with_metadata{
     // Supply user-provided mr to apply deletion mask to allocate output table's memory
-    cudf::detail::apply_mask(
-      table_with_index->view(), row_mask->view(), cudf::detail::mask_type::DELETION, stream, mr),
+    cudf::detail::apply_mask(table_with_index->view(), row_mask->view(), mask_type, stream, mr),
     std::move(metadata)};
 }
 
@@ -161,7 +165,7 @@ namespace detail {
     dv_row_counts_queue.push(deletion_vector_row_counts[i]);
   }
 
-  size_t deleted_rows   = 0;
+  size_t matched_rows   = 0;
   size_t remaining_rows = num_rows;
   size_t start_row      = 0;
 
@@ -176,14 +180,15 @@ namespace detail {
                                        is_row_group_data_unspecified,
                                        stream,
                                        cudf::get_current_device_resource_ref());
-    deleted_rows += compute_partial_deleted_row_count(
+    matched_rows += compute_partial_deleted_row_count(
       row_index_column->view(), dv_queue, dv_row_counts_queue, stream);
 
     start_row += chunk_rows;
     remaining_rows -= chunk_rows;
   }
 
-  return deleted_rows;
+  // Bitmap hits are deleted rows for deletion vectors, retained rows for retention vectors
+  return deletion_vector_info.are_retention_vectors ? num_rows - matched_rows : matched_rows;
 }
 
 }  // namespace detail
@@ -200,6 +205,7 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                rmm::device_async_resource_ref mr)
   : _start_row{0},
     _is_unspecified_row_group_data{deletion_vector_info.row_group_offsets.empty()},
+    _are_retentions{deletion_vector_info.are_retention_vectors},
     _stream{stream},
     _mr{mr},
     // Use default mr for the internal chunked reader and row index column if we will
@@ -317,10 +323,11 @@ table_with_metadata chunked_parquet_reader::read_chunk()
                                                   _deletion_vector_row_counts,
                                                   _stream,
                                                   cudf::get_current_device_resource_ref());
-  return table_with_metadata{
+  auto const mask_type =
+    _are_retentions ? cudf::detail::mask_type::RETENTION : cudf::detail::mask_type::DELETION;
+  return cudf::io::table_with_metadata{
     // Supply user-provided mr to apply deletion mask to allocate output table's memory
-    cudf::detail::apply_mask(
-      table_with_index->view(), row_mask->view(), cudf::detail::mask_type::DELETION, _stream, _mr),
+    cudf::detail::apply_mask(table_with_index->view(), row_mask->view(), mask_type, _stream, _mr),
     std::move(metadata)};
 }
 

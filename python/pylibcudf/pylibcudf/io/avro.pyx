@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.string cimport string
@@ -19,6 +19,10 @@ from pylibcudf.libcudf.io.avro cimport (
 from pylibcudf.libcudf.types cimport size_type
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 
 __all__ = ["read_avro", "AvroReaderOptions", "AvroReaderOptionsBuilder"]
@@ -53,7 +57,7 @@ cdef class AvroReaderOptions:
         avro_builder.source = source
         return avro_builder
 
-    cpdef void set_columns(self, list col_names):
+    cpdef void set_columns(self, list col_names: list[str]):
         """
         Set names of the column to be read.
 
@@ -89,7 +93,7 @@ cdef class AvroReaderOptions:
 
 
 cdef class AvroReaderOptionsBuilder:
-    cpdef AvroReaderOptionsBuilder columns(self, list col_names):
+    cpdef AvroReaderOptionsBuilder columns(self, list col_names: list[str]):
         """
         Set names of the column to be read.
 
@@ -153,7 +157,7 @@ cdef class AvroReaderOptionsBuilder:
 
 cpdef TableWithMetadata read_avro(
     AvroReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

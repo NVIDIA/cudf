@@ -23,7 +23,6 @@
 #include <cuda/iterator>
 #include <cuda/numeric>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <cmath>
 #include <cstdint>
@@ -57,8 +56,15 @@ std::size_t derive_pass_read_limit(std::size_t chunk_read_limit)
   return pass_read_limit;
 }
 
-size_type find_colchunk_iter_offset(RowGroup const& row_group, size_type schema_idx)
+size_type find_colchunk_iter_offset(RowGroup const& row_group,
+                                    size_type schema_idx,
+                                    std::optional<size_type> cached_offset)
 {
+  if (cached_offset.has_value() and cached_offset.value() >= 0 and
+      std::cmp_less(cached_offset.value(), row_group.columns.size()) and
+      row_group.columns[cached_offset.value()].schema_idx == schema_idx) {
+    return cached_offset.value();
+  }
   auto const& colchunk_iter =
     std::find_if(row_group.columns.begin(), row_group.columns.end(), [schema_idx](auto const& col) {
       return col.schema_idx == schema_idx;
@@ -719,14 +725,11 @@ void aggregate_reader_metadata::column_info_for_row_group(row_group_info& rg_inf
     auto const max_def_level = schema.max_definition_level;
     auto const max_rep_level = schema.max_repetition_level;
 
-    // If any columns lack the page indexes then just return without modifying the
-    // row_group_info.
-    if (not col_chunk.offset_index.has_value() or not col_chunk.column_index.has_value()) {
-      return;
-    }
+    // Skip this column chunk if it does not have an offset index. This is because the decode
+    // paths can use column-index-derived information only together with offset index data.
+    if (not col_chunk.offset_index.has_value()) { continue; }
 
     auto const& offset_index = col_chunk.offset_index.value();
-    auto const& column_index = col_chunk.column_index.value();
 
     auto& chunk_info     = chunks[col_idx];
     auto const num_pages = offset_index.page_locations.size();
@@ -751,18 +754,24 @@ void aggregate_reader_metadata::column_info_for_row_group(row_group_info& rg_inf
       }
     }
 
+    // Populate additional value-count metadata if column index is also available.
+    auto const* column_index =
+      col_chunk.column_index.has_value() ? &col_chunk.column_index.value() : nullptr;
+
     // Use the definition_level_histogram to get num_valid and num_null. For now, these are
     // only ever used for byte array columns. The repetition_level_histogram might be
     // necessary to determine the total number of values in the page if the
     // definition_level_histogram is absent.
     //
     // In the future we might want the full histograms saved in the `column_info` struct.
-    int64_t const* const def_hist = column_index.definition_level_histogram.has_value()
-                                      ? column_index.definition_level_histogram.value().data()
-                                      : nullptr;
-    int64_t const* const rep_hist = column_index.repetition_level_histogram.has_value()
-                                      ? column_index.repetition_level_histogram.value().data()
-                                      : nullptr;
+    int64_t const* const def_hist =
+      column_index != nullptr and column_index->definition_level_histogram.has_value()
+        ? column_index->definition_level_histogram.value().data()
+        : nullptr;
+    int64_t const* const rep_hist =
+      column_index != nullptr and column_index->repetition_level_histogram.has_value()
+        ? column_index->repetition_level_histogram.value().data()
+        : nullptr;
 
     for (size_t pg_idx = 0; pg_idx < num_pages; pg_idx++) {
       auto const& page_loc = offset_index.page_locations[pg_idx];
@@ -777,8 +786,8 @@ void aggregate_reader_metadata::column_info_for_row_group(row_group_info& rg_inf
       page_info pg_info{.location = page_loc, .num_rows = num_rows};
 
       // check to see if we already have null counts for each page
-      if (column_index.null_counts.has_value()) {
-        pg_info.num_nulls = column_index.null_counts.value()[pg_idx];
+      if (column_index != nullptr and column_index->null_counts.has_value()) {
+        pg_info.num_nulls = column_index->null_counts.value()[pg_idx];
       }
 
       // save variable length byte info if present
@@ -820,24 +829,30 @@ void aggregate_reader_metadata::column_info_for_row_group(row_group_info& rg_inf
         }
       }
 
-      // If none of the ifs above triggered, then we have neither histogram (likely the writer
-      // doesn't produce them, the r:0 d:1 case should have been handled above). The column index
-      // doesn't give us value counts, so we'll have to rely on the page headers. If the histogram
-      // info is missing or insufficient, then just return without modifying the row_group_info.
-      if (not pg_info.num_nulls.has_value() or not pg_info.num_valid.has_value()) { return; }
-
-      // Like above, if using older page indexes that lack size info, then return without modifying
-      // the row_group_info.
-      // TODO: cudf will still set the per-page var_bytes to '0' even for all null pages. Need to
-      // check the behavior of other implementations (once there are some). Some may not set the
-      // var bytes for all null pages, so check the `null_pages` field on the column index.
-      if (schema.type == Type::BYTE_ARRAY and not pg_info.var_bytes_size.has_value()) { return; }
+      // If column-index metadata is insufficient to derive all value information, leave those
+      // fields unset. Later decoding derives the missing values from page headers and levels, and
+      // scans string data when its byte size is unavailable.
 
       chunk_info.pages.push_back(std::move(pg_info));
     }
   }
 
   rg_info.column_chunks = std::move(chunks);
+}
+
+bool aggregate_reader_metadata::has_offset_index(
+  std::span<row_group_info const> row_groups,
+  std::span<input_column_info const> input_columns) const
+{
+  for (auto const& rg_info : row_groups) {
+    auto const& row_group = per_file_metadata[rg_info.source_index].row_groups[rg_info.index];
+    for (auto const& input_column : input_columns) {
+      auto const schema_idx      = map_schema_index(input_column.schema_idx, rg_info.source_index);
+      auto const colchunk_offset = find_colchunk_iter_offset(row_group, schema_idx);
+      if (not row_group.columns[colchunk_offset].offset_index.has_value()) { return false; }
+    }
+  }
+  return true;
 }
 
 void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
@@ -1080,9 +1095,9 @@ void aggregate_reader_metadata::apply_arrow_schema()
       if (std::cmp_equal(pq_schema_elem.num_children, arrow_schema.children.size())) {
         // true if and only if true for all children as well
         return std::all_of(
-          thrust::make_zip_iterator(cuda::std::make_tuple(arrow_schema.children.begin(),
-                                                          pq_schema_elem.children_idx.begin())),
-          thrust::make_zip_iterator(
+          cuda::make_zip_iterator(cuda::std::make_tuple(arrow_schema.children.begin(),
+                                                        pq_schema_elem.children_idx.begin())),
+          cuda::make_zip_iterator(
             cuda::std::make_tuple(arrow_schema.children.end(), pq_schema_elem.children_idx.end())),
           [&](auto const& elem) {
             return validate_schemas(cuda::std::get<0>(elem), cuda::std::get<1>(elem));
@@ -1096,9 +1111,9 @@ void aggregate_reader_metadata::apply_arrow_schema()
   std::function<void(arrow_schema_data_types const&, int const)> co_walk_schemas =
     [&](arrow_schema_data_types const& arrow_schema, int const schema_idx) {
       auto& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
-      std::for_each(thrust::make_zip_iterator(cuda::std::make_tuple(
+      std::for_each(cuda::make_zip_iterator(cuda::std::make_tuple(
                       arrow_schema.children.begin(), pq_schema_elem.children_idx.begin())),
-                    thrust::make_zip_iterator(cuda::std::make_tuple(
+                    cuda::make_zip_iterator(cuda::std::make_tuple(
                       arrow_schema.children.end(), pq_schema_elem.children_idx.end())),
                     [&](auto const& elem) {
                       co_walk_schemas(cuda::std::get<0>(elem), cuda::std::get<1>(elem));
@@ -1121,7 +1136,7 @@ void aggregate_reader_metadata::apply_arrow_schema()
   }
 
   // zip iterator to validate and co-walk the two schemas
-  auto schemas = thrust::make_zip_iterator(
+  auto schemas = cuda::make_zip_iterator(
     cuda::std::make_tuple(arrow_schema_root.children.begin(), pq_schema_root.children_idx.begin()));
 
   // Verify equal number of children at all sub-levels
@@ -1220,6 +1235,49 @@ RowGroup const& aggregate_reader_metadata::get_row_group(size_type row_group_ind
   return per_file_metadata[src_idx].row_groups[row_group_index];
 }
 
+row_group_size_info aggregate_reader_metadata::get_row_group_size_info(
+  size_type row_group_index,
+  size_type src_idx,
+  std::optional<std::span<input_column_info const>> input_columns) const
+{
+  auto const& row_group = get_row_group(row_group_index, src_idx);
+
+  CUDF_EXPECTS(row_group.num_rows >= 0 && std::in_range<size_t>(row_group.num_rows),
+               "Row group has an invalid number of rows",
+               std::invalid_argument);
+  auto size_info =
+    row_group_size_info{.unadjusted_num_rows = static_cast<size_t>(row_group.num_rows)};
+
+  // Helper function to overflow-safeadd compressed sizes
+  auto const add_compressed_size = [&](auto&& current_size, auto&& colchunk_compressed_size) {
+    auto const sum = cuda::add_overflow<size_t>(current_size, colchunk_compressed_size);
+    CUDF_EXPECTS(not sum.overflow,
+                 "Row group compressed size exceeds the supported range",
+                 std::overflow_error);
+    return sum.value;
+  };
+
+  if (input_columns.has_value()) {
+    for (auto const& column : *input_columns) {
+      auto const& column_metadata =
+        get_column_metadata(row_group_index, src_idx, column.schema_idx);
+      size_info.compressed_size =
+        add_compressed_size(size_info.compressed_size, column_metadata.total_compressed_size);
+      size_info.max_leaf_values =
+        std::max<size_t>(size_info.max_leaf_values, column_metadata.num_values);
+    }
+  } else {
+    for (auto const& column_chunk : row_group.columns) {
+      size_info.compressed_size = add_compressed_size(size_info.compressed_size,
+                                                      column_chunk.meta_data.total_compressed_size);
+      size_info.max_leaf_values =
+        std::max<size_t>(size_info.max_leaf_values, column_chunk.meta_data.num_values);
+    }
+  }
+
+  return size_info;
+}
+
 ColumnChunkMetaData const& aggregate_reader_metadata::get_column_metadata(size_type row_group_index,
                                                                           size_type src_idx,
                                                                           int schema_idx) const
@@ -1227,8 +1285,9 @@ ColumnChunkMetaData const& aggregate_reader_metadata::get_column_metadata(size_t
   // Map schema index to the provided source file index
   schema_idx = map_schema_index(schema_idx, src_idx);
 
-  auto const& row_group = per_file_metadata[src_idx].row_groups[row_group_index];
-  return row_group.columns[find_colchunk_iter_offset(row_group, schema_idx)].meta_data;
+  auto const& row_group      = per_file_metadata[src_idx].row_groups[row_group_index];
+  auto const colchunk_offset = find_colchunk_iter_offset(row_group, schema_idx);
+  return row_group.columns[colchunk_offset].meta_data;
 }
 
 std::vector<std::unordered_map<std::string, int64_t>>
@@ -1393,31 +1452,6 @@ std::vector<std::string> aggregate_reader_metadata::get_pandas_index_names() con
     }
   }
   return names;
-}
-
-std::tuple<size_t, size_t, size_t, size_t> aggregate_reader_metadata::get_row_group_properties(
-  RowGroup const& row_group) const
-{
-  auto const compressed_size = std::transform_reduce(
-    row_group.columns.cbegin(),
-    row_group.columns.cend(),
-    size_t{0},
-    std::plus<>(),
-    [](auto const& colchunk) { return colchunk.meta_data.total_compressed_size; });
-
-  auto const total_size = compressed_size + row_group.total_byte_size;
-
-  size_t const max_leaf_values =
-    row_group.columns.empty()
-      ? 0
-      : std::max_element(row_group.columns.cbegin(),
-                         row_group.columns.cend(),
-                         [](auto const& a, auto const& b) {
-                           return a.meta_data.num_values < b.meta_data.num_values;
-                         })
-          ->meta_data.num_values;
-
-  return {compressed_size, total_size, static_cast<size_t>(row_group.num_rows), max_leaf_values};
 }
 
 std::tuple<int64_t,
@@ -1773,10 +1807,6 @@ aggregate_reader_metadata::select_row_groups(
           // Update the number of rows read from this data source
           num_rows_per_source[src_idx] += num_rows_this_row_group;
 
-          // Get row group properties
-          auto const [compressed_size, total_size, num_rows, max_leaf_values] =
-            get_row_group_properties(rg);
-
           // We need the unadjusted start index of this row group to correctly
           // initialize ColumnChunkDesc for this row group in
           // create_global_chunk_info() and calculate the row offset for the first
@@ -1785,10 +1815,8 @@ aggregate_reader_metadata::select_row_groups(
             row_group_info{.index               = rg_idx,
                            .start_row           = row_group_start_row,
                            .source_start_row    = source_row_offsets[rg_idx],
-                           .unadjusted_num_rows = num_rows,
-                           .source_index        = static_cast<cudf::size_type>(src_idx),
-                           .compressed_size     = compressed_size,
-                           .max_leaf_values     = max_leaf_values});
+                           .unadjusted_num_rows = static_cast<size_t>(rg.num_rows),
+                           .source_index        = static_cast<cudf::size_type>(src_idx)});
 
           // If page-level indexes are present, then collect extra chunk and page
           // info. The page indexes rely on absolute row numbers - not adjusted for

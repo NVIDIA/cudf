@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,8 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+
+#include <array>
 
 class TransformTest : public cudf::test::BaseFixture {};
 
@@ -29,15 +31,16 @@ void test_udf(char const* udf,
 
   cudf::transform_input inputs[] = {in};
 
-  cudf::transform_extended(inputs,
-                           udf,
-                           cudf::data_type(cudf::type_to_id<dtype>()),
-                           source_type,
-                           std::nullopt,
-                           cudf::null_aware::NO,
-                           std::nullopt,
-                           cudf::output_nullability::PRESERVE,
-                           cudf::test::get_default_stream());
+  cudf::transform(udf,
+                  source_type,
+                  cudf::null_aware::NO,
+                  std::nullopt,
+                  inputs,
+                  std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<dtype>()),
+                                                    cudf::output_nullability::PRESERVE}},
+                  {},
+                  std::nullopt,
+                  cudf::test::get_default_stream());
 }
 
 TEST_F(TransformTest, Transform)

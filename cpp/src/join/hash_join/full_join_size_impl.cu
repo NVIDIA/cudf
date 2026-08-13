@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -77,7 +76,7 @@ std::size_t get_full_join_size(
   auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, mr);
 
   auto const out_build_begin =
-    thrust::make_transform_output_iterator(right_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
   retrieve_left_join_build_indices(right_table,
                                    left_table,

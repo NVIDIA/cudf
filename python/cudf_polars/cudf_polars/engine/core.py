@@ -734,11 +734,17 @@ def evaluate_on_rank(
     """
     stats = allgather_stats(comm, ctx.br(), ir, config_options, py_executor)
 
+    lowering, node_map = lower_ir_graph_with_node_map(
+        ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
+    )
+    optimized = lowering.optimized
+    ir = lowering.lowered
+    partition_info = lowering.partition_info
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
-        logical_plan_id = ir.get_stable_plan_id()
+        logical_plan_id = optimized.get_stable_plan_id()
         plan, ops, ports, logical_op_by_id = build_plan(
-            ir,
+            optimized,
             config_options,
             query=local_quent_context.context.query,
             plan_id=logical_plan_id,
@@ -751,10 +757,6 @@ def evaluate_on_rank(
             local_quent_context.context._emit_plan_declarations(
                 local_quent_context.logger, plan, ops, ports
             )
-
-    ir, partition_info, node_map = lower_ir_graph_with_node_map(
-        ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
-    )
 
     if comm.rank == 0:
         log_query_plan(ir, config_options)

@@ -31,6 +31,10 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.libcudf.reduce import scan_type as ScanType  # no-cython-lint
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -50,7 +54,7 @@ cpdef Scalar reduce(
     Aggregation agg,
     DataType data_type,
     Scalar init=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a reduction on a column
@@ -111,7 +115,7 @@ cpdef Column scan(
     Column col,
     Aggregation agg,
     scan_type inclusive,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a scan on a column
@@ -156,7 +160,7 @@ cpdef Column scan(
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef tuple minmax(Column col, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple minmax(Column col, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Compute the minimum and maximum of a column
 
     For details, see ``cudf::minmax`` documentation.
@@ -215,7 +219,7 @@ cpdef size_type unique_count(
     Column source,
     null_policy null_handling,
     nan_policy nan_handling,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of unique consecutive elements in the input column.
 
@@ -255,7 +259,7 @@ cpdef size_type distinct_count(
     Column source,
     null_policy null_handling,
     nan_policy nan_handling,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of distinct elements in the input column.
 
@@ -289,7 +293,7 @@ cpdef size_type distinct_count(
 cpdef size_type unique_count_table(
     Table source,
     null_equality nulls_equal,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of unique consecutive rows in the input table.
 
@@ -323,7 +327,7 @@ cpdef size_type unique_count_table(
 cpdef size_type distinct_count_table(
     Table source,
     null_equality nulls_equal,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of distinct rows in the input table.
 

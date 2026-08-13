@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,6 @@
 
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/iterator>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
@@ -109,7 +108,7 @@ struct sorted_order_radix_fn {
     auto dv_in    = vals.begin();
     auto dv_out   = indices.begin<cudf::size_type>();
 
-    auto zip_out = thrust::make_zip_iterator(d_in, dv_in);
+    auto zip_out = cuda::make_zip_iterator(d_in, dv_in);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},

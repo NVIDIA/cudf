@@ -1274,6 +1274,17 @@ class GroupBy(Serializable, Reducible, Scannable):
                 elif agg_kind == "NUNIQUE":
                     cast_dtype = np.dtype(np.int64)
                 elif (
+                    agg_name in {"cumsum", "cumprod"}
+                    and is_pandas_nullable_extension_dtype(orig_dtype)
+                    and orig_dtype.kind in {"i", "u"}
+                ):
+                    # libcudf's SUM/PRODUCT scans promote narrow integers
+                    # to 64-bit. pandas does the same for numpy dtypes
+                    # (int8 -> int64, GH#37493) but preserves masked
+                    # extension dtypes (Int16 stays Int16, GH#58811),
+                    # wrapping on overflow.
+                    cast_dtype = orig_dtype
+                elif (
                     (
                         isinstance(agg_name, str)
                         and agg_name in Reducible._SUPPORTED_REDUCTIONS
@@ -1335,7 +1346,7 @@ class GroupBy(Serializable, Reducible, Scannable):
             # RangeIndex) columns.
             data = ColumnAccessor(
                 data,
-                multiindex=False,
+                multiindex=self.obj._data.multiindex,
                 level_names=self.obj._data.level_names,
                 rangeindex=self.obj._data.rangeindex,
                 label_dtype=self.obj._data.label_dtype,
@@ -1346,11 +1357,26 @@ class GroupBy(Serializable, Reducible, Scannable):
             and self.obj.ndim == 2
             and self.obj._data.level_names != (None,)
         ):
+            mi_kwargs: dict[str, Any] = {}
+            if self.obj._data.multiindex and all(
+                isinstance(label, tuple)
+                and len(label) == self.obj._data.nlevels
+                for label in data
+            ):
+                # the aggregation kept the source's tuple labels: preserve
+                # the MultiIndex columns and their per-level metadata.
+                # Relabeling aggregations (``agg(new=(col, func))``) emit
+                # new flat labels the source's multi-level metadata does
+                # not describe, so they keep the flat default.
+                mi_kwargs = {
+                    "multiindex": True,
+                    "level_dtypes": self.obj._data.level_dtypes,
+                }
             data = ColumnAccessor(
                 data,
-                multiindex=False,
                 level_names=self.obj._data.level_names,
                 label_dtype=self.obj._data.label_dtype,
+                **mi_kwargs,
             )
         else:
             data = ColumnAccessor(data, multiindex=multilevel)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,6 @@ template void launch_filter_output_size_kernel<true, false>(
   cudf::detail::grid_1d const& config,
   std::size_t shmem_per_block,
   cudf::join_kind join_kind,
-  std::size_t* count_out,
-  bool* left_passing_marks,
+  cudf::size_type* output_counts,
   rmm::cuda_stream_view stream);
 }  // namespace cudf::detail

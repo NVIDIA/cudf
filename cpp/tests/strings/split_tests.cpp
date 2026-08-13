@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -514,6 +514,35 @@ TEST_F(StringsSplitTest, SplitRecordRegex)
     // rsplit == split when using default parameters
     result = cudf::strings::rsplit_record_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result->view(), expected);
+  }
+}
+
+TEST_F(StringsSplitTest, SplitRecordRegexLazyQuantifier)
+{
+  auto const input = cudf::test::strings_column_wrapper({"\rbaab\r\ra"});
+  auto const sv    = cudf::strings_column_view(input);
+  using LCW        = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  {
+    LCW expected({LCW{"\rbaa", "\ra"}});
+    auto const prog =
+      cudf::strings::regex_program::create("[^ \v\n\t\r\f]\\r+?\\n*",
+                                           cudf::strings::regex_flags::EXT_NEWLINE,
+                                           cudf::strings::capture_groups::NON_CAPTURE);
+    auto const result = cudf::strings::split_record_re(sv, *prog);
+
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+
+  {
+    LCW expected({LCW{"\rbaa", "a"}});
+    auto const prog =
+      cudf::strings::regex_program::create("[^ \v\n\t\r\f]\\r+\\n*",
+                                           cudf::strings::regex_flags::EXT_NEWLINE,
+                                           cudf::strings::capture_groups::NON_CAPTURE);
+    auto const result = cudf::strings::split_record_re(sv, *prog);
+
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
   }
 }
 

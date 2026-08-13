@@ -553,14 +553,6 @@ abstract class Aggregation {
         return new SumOverflowAggregation();
     }
 
-    /**
-     * @deprecated Use {@link #sumOverflow()} instead.
-     */
-    @Deprecated
-    static SumOverflowAggregation sumWithOverflow() {
-        return sumOverflow();
-    }
-
     static final class ProductAggregation extends NoParamAggregation {
         private ProductAggregation() {
             super(Kind.PRODUCT);

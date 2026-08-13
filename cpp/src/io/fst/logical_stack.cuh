@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -21,7 +21,6 @@
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/scatter.h>
 
 #include <algorithm>
@@ -379,8 +378,8 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       nullptr,
       gen_segments_scan_bytes,
       reset_segments_it,
-      thrust::make_transform_output_iterator(fake_key_segment_it,
-                                             detail::ModToTargetTypeOpT<StackSegmentT>{}),
+      cuda::make_transform_output_iterator(fake_key_segment_it,
+                                           detail::ModToTargetTypeOpT<StackSegmentT>{}),
       num_symbols_in,
       stream));
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveScanByKey(
@@ -478,8 +477,8 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       temp_storage.data(),
       total_temp_storage_bytes,
       reset_segments_it,
-      thrust::make_transform_output_iterator(key_segments.data(),
-                                             detail::ModToTargetTypeOpT<StackSegmentT>{}),
+      cuda::make_transform_output_iterator(key_segments.data(),
+                                           detail::ModToTargetTypeOpT<StackSegmentT>{}),
       num_symbols_in,
       stream));
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveScanByKey(

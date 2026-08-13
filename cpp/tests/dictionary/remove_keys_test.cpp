@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -103,6 +103,54 @@ TEST_F(DictionaryRemoveKeysTest, WithNull)
     cudf::test::fixed_width_column_wrapper<int64_t> expected{{444, 333, 111, 0}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded->view(), expected);
   }
+}
+
+TEST_F(DictionaryRemoveKeysTest, DuplicateKeys)
+{
+  auto input = cudf::test::dictionary_column_wrapper<std::string>(
+    {"eee", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "eee", "aaa"});
+
+  // set_keys with a duplicate "ccc" — position 3 is unreferenced
+  auto dup_keys        = cudf::test::strings_column_wrapper{"aaa", "ccc", "eee", "ccc"};
+  auto const with_dups = cudf::dictionary::set_keys(input, dup_keys);
+
+  // remove "ccc" — both the indexed occurrence at position 1 and the unreferenced
+  // duplicate at position 3 must be dropped
+  auto del_keys = cudf::test::strings_column_wrapper{"ccc"};
+  auto const result =
+    cudf::dictionary::remove_keys(cudf::dictionary_column_view(with_dups->view()), del_keys);
+
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).keys_size(), 2);
+
+  auto expected = cudf::test::strings_column_wrapper(
+    {"eee", "aaa", "", "", "", "", "", "eee", "aaa"}, {1, 1, 0, 0, 0, 0, 0, 1, 1});
+  auto const decoded = cudf::dictionary::decode(result->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded->view(), expected);
+}
+
+TEST_F(DictionaryRemoveKeysTest, RemoveUnusedAfterDuplicateSetKeys)
+{
+  auto input = cudf::test::dictionary_column_wrapper<std::string>(
+    {"eee", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "eee", "aaa"});
+
+  // force duplicate keys
+  auto new_keys        = cudf::test::strings_column_wrapper{"aaa", "ccc", "eee", "ccc"};
+  auto const with_dups = cudf::dictionary::set_keys(input, new_keys);
+  cudf::dictionary_column_view dups_view(with_dups->view());
+
+  // keys are stored in the order given, duplicate included
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(dups_view.keys(), new_keys);
+
+  // remove_unused_keys should drop the unreferenced second "ccc" at position 3
+  auto const cleaned      = cudf::dictionary::remove_unused_keys(dups_view);
+  auto const cleaned_view = cudf::dictionary_column_view(cleaned->view());
+
+  EXPECT_EQ(cleaned_view.keys_size(), 3);
+
+  auto expected_decoded = cudf::test::strings_column_wrapper(
+    {"eee", "aaa", "", "", "ccc", "ccc", "ccc", "eee", "aaa"}, {1, 1, 0, 0, 1, 1, 1, 1, 1});
+  auto const decoded = cudf::dictionary::decode(cleaned_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded->view(), expected_decoded);
 }
 
 TEST_F(DictionaryRemoveKeysTest, Errors)

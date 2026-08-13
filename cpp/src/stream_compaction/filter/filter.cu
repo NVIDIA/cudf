@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -54,16 +54,16 @@ std::unique_ptr<table> filter(std::string const& predicate_udf,
 
   transform_output outputs[] = {transform_output{data_type{type_id::BOOL8}, predicate_nullability}};
 
-  auto result = cudf::multi_transform(predicate_udf,
-                                      source_type,
-                                      is_null_aware,
-                                      user_data,
-                                      predicate_inputs,
-                                      outputs,
-                                      {},
-                                      filter_table.num_rows(),
-                                      stream,
-                                      mr);
+  auto result = cudf::transform(predicate_udf,
+                                source_type,
+                                is_null_aware,
+                                user_data,
+                                predicate_inputs,
+                                outputs,
+                                {},
+                                filter_table.num_rows(),
+                                stream,
+                                mr);
 
   return apply_mask(filter_table, result->get_column(0), mask_type::RETENTION, stream, mr);
 }

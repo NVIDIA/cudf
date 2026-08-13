@@ -19,8 +19,8 @@ binary_column_view::binary_column_view(column_view binary_column) : column_view(
                    offsets_view.type().id() == type_id::INT64,
                  "binary offsets must have type INT32 or INT64");
     CUDF_EXPECTS(offsets_view.null_count() == 0, "binary offsets must not contain nulls");
-    CUDF_EXPECTS(offsets_view.size() == size() + 1,
-                 "binary offsets size must equal the row count plus one");
+    CUDF_EXPECTS(offsets_view.size() >= offset() + size() + 1,
+                 "binary offsets do not cover the column view");
   }
 }
 

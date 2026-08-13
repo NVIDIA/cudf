@@ -12,6 +12,8 @@
 #include <cudf/binary/binary_column_view.hpp>
 #include <cudf/binary/binary_view.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/copying.hpp>
+#include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -165,6 +167,34 @@ TEST_F(BinaryTest, DeviceViewAccessesRows)
 
   EXPECT_EQ(host_sizes, (std::vector<cudf::size_type>{2, 0, 3}));
   EXPECT_EQ(host_first, (std::vector<uint8_t>{0x00, 0x00, 0x61}));
+}
+
+TEST_F(BinaryTest, OwningCopyNormalizesSlicedOffsets)
+{
+  auto const stream = cudf::get_default_stream();
+  auto input        = make_test_column<int64_t>(stream);
+  auto const sliced = cudf::slice(input->view(), {1, 3}, stream).front();
+  auto copied       = std::make_unique<cudf::column>(sliced, stream);
+  auto copied_view  = cudf::binary_column_view{copied->view()};
+
+  EXPECT_EQ(copied->size(), 2);
+  EXPECT_EQ(copied_view.bytes_size(stream), 3);
+  EXPECT_EQ(cudf::detail::get_value<int64_t>(copied_view.offsets(), 0, stream), 0);
+  EXPECT_EQ(cudf::detail::get_value<int64_t>(copied_view.offsets(), 2, stream), 3);
+
+  auto device_view = cudf::column_device_view::create(copied->view(), stream);
+  rmm::device_uvector<cudf::size_type> sizes(copied->size(), stream);
+  rmm::device_uvector<uint8_t> first_bytes(copied->size(), stream);
+  inspect_binary<<<1, copied->size(), 0, stream.value()>>>(
+    device_view.get(), sizes.data(), first_bytes.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  auto const host_sizes = cudf::detail::make_std_vector_async(sizes, stream);
+  auto const host_first = cudf::detail::make_std_vector_async(first_bytes, stream);
+  stream.synchronize();
+
+  EXPECT_EQ(host_sizes, (std::vector<cudf::size_type>{0, 3}));
+  EXPECT_EQ(host_first, (std::vector<uint8_t>{0x00, 0x61}));
 }
 
 }  // namespace

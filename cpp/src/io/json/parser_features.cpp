@@ -5,6 +5,7 @@
 
 #include "nested_json.hpp"
 
+#include <cudf/binary/binary_column_factories.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -149,6 +150,16 @@ struct allnull_column_functor {
     return make_strings_column(
       size, std::move(offsets), rmm::device_buffer{}, size, std::move(null_mask));
   }
+
+  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::binary_view>)>
+  std::unique_ptr<column> operator()(schema_element const&, size_type size) const
+  {
+    auto offsets   = make_zeroed_offsets(size);
+    auto null_mask = cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr);
+    return make_binary_column(
+      size, std::move(offsets), rmm::device_buffer{}, size, std::move(null_mask));
+  }
+
   template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::list_view>)>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
   {

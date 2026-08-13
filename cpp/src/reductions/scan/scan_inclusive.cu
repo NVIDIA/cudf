@@ -159,7 +159,8 @@ struct scan_dispatcher {
     if constexpr (std::is_same_v<T, cudf::struct_view>) {
       return std::is_same_v<Op, DeviceMin> || std::is_same_v<Op, DeviceMax>;
     } else {
-      return std::is_invocable_v<Op, T, T> && !cudf::is_dictionary<T>();
+      return std::is_invocable_v<Op, T, T> && !cudf::is_dictionary<T>() &&
+             !std::is_same_v<T, cudf::binary_view>;
     }
   }
 

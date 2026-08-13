@@ -164,6 +164,13 @@ struct dispatch_to_flatbuf {
 
   template <typename T>
   void operator()()
+    requires(std::is_same_v<T, cudf::binary_view>)
+  {
+    CUDF_FAIL("BINARY is not yet supported by the Parquet Arrow schema writer");
+  }
+
+  template <typename T>
+  void operator()()
     requires(std::is_same_v<T, cudf::timestamp_D>)
   {
     field_type_id = flatbuf::Type_Date;

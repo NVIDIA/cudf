@@ -170,6 +170,13 @@ struct create_column_from_view {
 
   template <typename ColumnType>
   std::unique_ptr<column> operator()()
+    requires(std::is_same_v<ColumnType, cudf::binary_view>)
+  {
+    CUDF_FAIL("Constructing an owning column from a BINARY view is not yet supported");
+  }
+
+  template <typename ColumnType>
+  std::unique_ptr<column> operator()()
     requires(std::is_same_v<ColumnType, cudf::dictionary32>)
   {
     std::vector<std::unique_ptr<column>> children;

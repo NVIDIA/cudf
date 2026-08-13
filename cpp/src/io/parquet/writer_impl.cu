@@ -445,6 +445,14 @@ struct leaf_schema_fn {
 
   template <typename T>
   void operator()()
+    requires(std::is_same_v<T, cudf::binary_view>)
+  {
+    col_schema.type        = Type::BYTE_ARRAY;
+    col_schema.stats_dtype = statistics_dtype::dtype_byte_array;
+  }
+
+  template <typename T>
+  void operator()()
     requires(std::is_same_v<T, cudf::timestamp_D>)
   {
     col_schema.type           = Type::INT32;

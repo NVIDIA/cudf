@@ -151,6 +151,19 @@ struct column_scalar_scatterer_impl<string_view, MapIterator> {
 };
 
 template <typename MapIterator>
+struct column_scalar_scatterer_impl<binary_view, MapIterator> {
+  std::unique_ptr<column> operator()(std::reference_wrapper<scalar const> const&,
+                                     MapIterator,
+                                     size_type,
+                                     column_view const&,
+                                     cuda::stream_ref,
+                                     rmm::device_async_resource_ref) const
+  {
+    CUDF_FAIL("Scattering a BINARY scalar is not yet supported");
+  }
+};
+
+template <typename MapIterator>
 struct column_scalar_scatterer_impl<list_view, MapIterator> {
   std::unique_ptr<column> operator()(std::reference_wrapper<scalar const> const& source,
                                      MapIterator scatter_iter,

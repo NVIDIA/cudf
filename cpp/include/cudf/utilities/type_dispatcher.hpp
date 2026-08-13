@@ -176,6 +176,7 @@ CUDF_TYPE_MAPPING(numeric::decimal32, type_id::DECIMAL32)
 CUDF_TYPE_MAPPING(numeric::decimal64, type_id::DECIMAL64)
 CUDF_TYPE_MAPPING(numeric::decimal128, type_id::DECIMAL128)
 CUDF_TYPE_MAPPING(cudf::struct_view, type_id::STRUCT)
+CUDF_TYPE_MAPPING(cudf::binary_view, type_id::BINARY)
 
 /**
  * @brief Specialization to map 'char' type to type_id::INT8
@@ -549,6 +550,9 @@ CUDF_HOST_DEVICE __forceinline__ constexpr decltype(auto) type_dispatcher(cudf::
         std::forward<Ts>(args)...);
     case type_id::STRUCT:
       return f.template operator()<typename IdTypeMap<type_id::STRUCT>::type>(
+        std::forward<Ts>(args)...);
+    case type_id::BINARY:
+      return f.template operator()<typename IdTypeMap<type_id::BINARY>::type>(
         std::forward<Ts>(args)...);
     default: {
 #ifndef __CUDA_ARCH__

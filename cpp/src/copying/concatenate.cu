@@ -361,6 +361,12 @@ std::unique_ptr<column> concatenate_dispatch::operator()<cudf::string_view>()
 }
 
 template <>
+std::unique_ptr<column> concatenate_dispatch::operator()<cudf::binary_view>()
+{
+  CUDF_FAIL("Concatenating BINARY columns is not yet supported");
+}
+
+template <>
 std::unique_ptr<column> concatenate_dispatch::operator()<cudf::list_view>()
 {
   return cudf::lists::detail::concatenate(views, stream, mr);

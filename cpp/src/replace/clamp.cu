@@ -304,6 +304,19 @@ std::unique_ptr<column> dispatch_clamp::operator()<cudf::list_view>(
 }
 
 template <>
+std::unique_ptr<column> dispatch_clamp::operator()<cudf::binary_view>(
+  column_view const&,
+  scalar const&,
+  scalar const&,
+  scalar const&,
+  scalar const&,
+  rmm::cuda_stream_view,
+  rmm::device_async_resource_ref)
+{
+  CUDF_FAIL("clamp for BINARY is not yet supported");
+}
+
+template <>
 std::unique_ptr<column> dispatch_clamp::operator()<struct_view>(column_view const& input,
                                                                 scalar const& lo,
                                                                 scalar const& lo_replace,

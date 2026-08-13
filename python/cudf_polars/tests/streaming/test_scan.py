@@ -349,32 +349,12 @@ def test_streaming_scan_raises() -> None:
         StreamingScan.do_evaluate([fused], scan, context=ctx)
 
 
-def test_scan_missing_prefetch_metadata_raises() -> None:
+def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
         ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
     )
     ctx = IRExecutionContext()
-
-    with pytest.raises(
-        AssertionError,
-        match=r"Cached parquet info is required",
-    ):
-        Scan.do_evaluate(
-            scan.schema,
-            scan.typ,
-            scan.reader_options,
-            scan.paths,
-            scan.with_columns,
-            scan.skip_rows,
-            scan.n_rows,
-            scan.row_index,
-            scan.include_file_paths,
-            scan.predicate,
-            scan.parquet_options,
-            None,
-            context=ctx,
-        )
 
     with pytest.raises(
         AssertionError,

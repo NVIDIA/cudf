@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_view.hpp>
+#include <cudf/binary/binary_column_view.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/logger_macros.hpp>
@@ -44,6 +45,11 @@ void prefetch_col_data(ColumnView& col, void const* data_ptr, std::string_view k
         data_ptr,
         scv.chars_size(cudf::get_default_stream()) * sizeof(char),
         cudf::get_default_stream());
+    } else if (col.type().id() == type_id::BINARY) {
+      binary_column_view const bcv{col};
+      if (data_ptr == nullptr) { return; }
+      cudf::prefetch::detail::prefetch_noexcept(
+        data_ptr, bcv.bytes_size(cudf::get_default_stream()), cudf::get_default_stream());
     } else {
       CUDF_LOG_DEBUG("Unsupported type: %d", static_cast<int32_t>(col.type().id()));
     }
@@ -119,7 +125,7 @@ column_view_base::column_view_base(data_type type,
     CUDF_EXPECTS(nullptr == data, "EMPTY column should have no data.");
     CUDF_EXPECTS(nullptr == null_mask, "EMPTY column should have no null mask.");
   } else if (is_compound(type)) {
-    if (type.id() != type_id::STRING) {
+    if (type.id() != type_id::STRING and type.id() != type_id::BINARY) {
       CUDF_EXPECTS(nullptr == data, "Compound (parent) columns cannot have data");
     }
   } else if (size > 0) {

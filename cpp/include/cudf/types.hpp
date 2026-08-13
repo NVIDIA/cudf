@@ -43,6 +43,7 @@ namespace CUDF_EXPORT cudf {
 class column;
 class column_view;
 class mutable_column_view;
+class binary_view;
 class string_view;
 class list_view;
 class struct_view;
@@ -212,6 +213,7 @@ enum class type_id : int32_t {
   DECIMAL64,               ///< Fixed-point type with int64_t
   DECIMAL128,              ///< Fixed-point type with __int128_t
   STRUCT,                  ///< Struct elements
+  BINARY,                  ///< Variable-length byte sequence elements
   // `NUM_TYPE_IDS` must be last!
   NUM_TYPE_IDS  ///< Total number of type ids
 };

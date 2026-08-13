@@ -136,6 +136,8 @@ namespace io::parquet::experimental {
  * `@return` `struct<list<uint8> metadata, list<uint8> value>` VARIANT column
  *
  * `@throws` std::invalid_argument if `column_names` contains more than 255 names
+ * `@throws` std::invalid_argument if `column_names` contains duplicate entries
+ * `@throws` std::invalid_argument if any name in `column_names` contains '.' or '['
  */
 [[nodiscard]] std::unique_ptr<column> encode_strings_to_variant(
   cudf::strings_column_view const& input,

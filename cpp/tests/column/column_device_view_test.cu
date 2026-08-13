@@ -16,9 +16,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream_ref>
 #include <thrust/copy.h>
 
 struct ColumnDeviceViewTest : public cudf::test::BaseFixture {};
@@ -26,7 +26,7 @@ struct ColumnDeviceViewTest : public cudf::test::BaseFixture {};
 TEST_F(ColumnDeviceViewTest, Sample)
 {
   using T = int32_t;
-  rmm::cuda_stream_view stream{cudf::get_default_stream()};
+  cuda::stream_ref stream{cudf::get_default_stream()};
   cudf::test::fixed_width_column_wrapper<T> input({1, 2, 3, 4, 5, 6});
   auto output            = cudf::allocate_like(input);
   auto input_device_view = cudf::column_device_view::create(input, stream);
@@ -44,7 +44,7 @@ TEST_F(ColumnDeviceViewTest, Sample)
 TEST_F(ColumnDeviceViewTest, MismatchingType)
 {
   using T = int32_t;
-  rmm::cuda_stream_view stream{cudf::get_default_stream()};
+  cuda::stream_ref stream{cudf::get_default_stream()};
   cudf::test::fixed_width_column_wrapper<T> input({1, 2, 3, 4, 5, 6});
   auto output            = cudf::allocate_like(input);
   auto input_device_view = cudf::column_device_view::create(input, stream);

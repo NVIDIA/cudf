@@ -745,13 +745,6 @@ std::unique_ptr<column> contains(strings_column_view const& input,
   // warp-per-all path for mixed-width large columns. For small columns the two-pass overhead
   // exceeds the savings, so we fall back to warp-per-all (baseline behavior) there.
   if (avg_bytes > AVG_CHAR_BYTES_THRESHOLD) {
-    // For large columns: heterogeneous wins (avoids wasted warp lanes on short strings).
-    // For small columns (≤ 131072 rows): warp-per-all matches the baseline and avoids the
-    // first-pass + second-pass overhead that hurts when there are few strings total.
-    // if (input.size() > size_type{1} << 17) {
-    //  return contains_heterogeneous(input, target, stream, mr);
-    //}
-    // return contains_warp_parallel(input, target, stream, mr);
     return contains_heterogeneous(input, target, stream, mr);
   }
 

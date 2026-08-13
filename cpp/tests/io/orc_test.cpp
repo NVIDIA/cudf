@@ -620,15 +620,19 @@ TEST_F(OrcWriterTest, negTimestampsNano)
 }
 
 // Writes `values` as a timestamp column of type `T`, reads it back at the same resolution and
-// compares the result against `expected_values`.
+// compares the result against `expected_values`. Makes every other value null when `with_nulls` is
+// set.
 template <typename T>
 void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
-                              std::vector<typename T::rep> const& expected_values)
+                              std::vector<typename T::rep> const& expected_values,
+                              bool with_nulls = false)
 {
-  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const input(values.begin(),
-                                                                         values.end());
-  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const expected(expected_values.begin(),
-                                                                            expected_values.end());
+  auto const validity = cudf::detail::make_counting_transform_iterator(
+    0, [with_nulls](auto i) { return not with_nulls or i % 2 == 0; });
+  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const input(
+    values.begin(), values.end(), validity);
+  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const expected(
+    expected_values.begin(), expected_values.end(), validity);
   cudf::table_view const input_table({input});
 
   std::vector<char> out_buffer;
@@ -648,13 +652,16 @@ void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
     expected, result.tbl->view().column(0), cudf::test::debug_output_level::ALL_ERRORS);
 }
 
-// Regression test for https://github.com/rapidsai/cudf/issues/19350.
-// A negative timestamp with a sub-second fractional part used to be split into a negative nanos
-// remainder, which the unsigned SECONDARY stream stored as a huge value. Apache ORC readers reject
-// such files with "nanos > 999999999 or < 0". The writer now emits the same (seconds, nanos) pair
-// as the Apache ORC writer, which round-trips losslessly for every timestamp outside of one second
-// before the epoch. Note that the definitive interop check (reading the generated file with Apache
-// ORC / Spark) has to be performed with an external reader.
+// Verifies that the timestamps that ORC can represent - everything except the last 999 ms before
+// the epoch, see `NegativeTimestampsNearEpoch` - round-trip losslessly.
+//
+// This does not detect a return of the encoding that https://github.com/rapidsai/cudf/issues/19350
+// is about, where a negative fractional timestamp was split into a negative nanos remainder that
+// the unsigned SECONDARY stream stored as a huge value: the libcudf reader sign-extends the stored
+// value and inverts that encoding exactly, so these values round-trip either way. Only an Apache
+// ORC reader rejects such a file ("nanos > 999999999 or < 0"), so the encoding itself has to be
+// verified externally; `NegativeTimestampsNearEpoch` below is the in-repo guard, because its
+// expected values only hold for the Apache encoding.
 TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
 {
   auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{
@@ -694,16 +701,14 @@ TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
 // are not affected.
 TEST_F(OrcWriterTest, NegativeTimestampsNearEpoch)
 {
-  test_timestamp_roundtrip<cudf::timestamp_us>(
-    {-1L,
-     -500L,
-     -500'000L,
-     -999'000L,  // last value shifted by one second
-     -999'001L,  // first value stored losslessly
-     -999'999L,
-     -1'000'001L,
-     -5'999'500L},
-    {999'999L, 999'500L, 500'000L, 1'000L, -999'001L, -999'999L, -1'000'001L, -5'999'500L});
+  // The two values around the -999 ms boundary are the smallest shifted and the largest lossless
+  // timestamp at this resolution.
+  auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{
+    -1L, -500L, -500'000L, -999'000L, -999'001L, -999'999L, -1'000'001L, -5'999'500L};
+  auto const read_back_us = std::vector<cudf::timestamp_us::rep>{
+    999'999L, 999'500L, 500'000L, 1'000L, -999'001L, -999'999L, -1'000'001L, -5'999'500L};
+  test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, read_back_us);
+  test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, read_back_us, /* with_nulls */ true);
 
   test_timestamp_roundtrip<cudf::timestamp_ns>(
     {-1L, -999'000'000L, -999'000'001L, -1'000'000'000L},

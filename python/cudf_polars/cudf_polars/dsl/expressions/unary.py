@@ -574,7 +574,7 @@ class UnaryFunction(Expr):
         if self.name == "entropy":
             base, normalize = self.options
             column = self.children[0].evaluate(df, context=context)
-            if column.size == 1:
+            if column.size in {0, 1} or column.null_count == column.size:
                 return Column(
                     plc.Column.from_scalar(
                         plc.Scalar.from_py(0.0, self.dtype.plc_type, stream=df.stream),
@@ -583,28 +583,33 @@ class UnaryFunction(Expr):
                     ),
                     dtype=self.dtype,
                 )
-            if column.size == 0 or column.null_count == column.size:
-                return Column(
-                    plc.Column.from_scalar(
-                        plc.Scalar.from_py(-0.0, self.dtype.plc_type, stream=df.stream),
-                        1,
-                        stream=df.stream,
-                    ),
-                    dtype=self.dtype,
-                )
             pk = column.astype(self.dtype, stream=df.stream).obj
+            col_ref: plc.expressions.Expression = plc.expressions.ColumnReference(0)
             if normalize:
                 total = plc.reduce.reduce(
                     pk, plc.aggregation.sum(), self.dtype.plc_type, stream=df.stream
                 )
-                pk = plc.binaryop.binary_operation(
-                    pk,
-                    total,
-                    plc.binaryop.BinaryOperator.DIV,
-                    self.dtype.plc_type,
-                    stream=df.stream,
+                col_ref = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    col_ref,
+                    plc.expressions.Literal(total),
                 )
-            column_ref = plc.expressions.ColumnReference(0)
+            log_value = plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOG, col_ref
+            )
+            if base != math.e:
+                log_value = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    log_value,
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOG,
+                        plc.expressions.Literal(
+                            plc.Scalar.from_py(
+                                base, self.dtype.plc_type, stream=df.stream
+                            )
+                        ),
+                    ),
+                )
             expression = plc.expressions.Operation(
                 plc.expressions.ASTOperator.MUL,
                 plc.expressions.Literal(
@@ -612,21 +617,8 @@ class UnaryFunction(Expr):
                 ),
                 plc.expressions.Operation(
                     plc.expressions.ASTOperator.MUL,
-                    column_ref,
-                    plc.expressions.Operation(
-                        plc.expressions.ASTOperator.DIV,
-                        plc.expressions.Operation(
-                            plc.expressions.ASTOperator.LOG, column_ref
-                        ),
-                        plc.expressions.Operation(
-                            plc.expressions.ASTOperator.LOG,
-                            plc.expressions.Literal(
-                                plc.Scalar.from_py(
-                                    base, self.dtype.plc_type, stream=df.stream
-                                )
-                            ),
-                        ),
-                    ),
+                    col_ref,
+                    log_value,
                 ),
             )
             terms = plc.transform.compute_column(

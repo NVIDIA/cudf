@@ -116,7 +116,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
                                              needs_global_memory_fallback.data(),
                                              sizeof(cuda::std::atomic_flag),
                                              stream));
-    stream.wait();
+    stream.sync();
     return h_needs_fallback.test(cuda::std::memory_order_relaxed);
   }();
   if (needs_fallback) { return run_aggs_by_global_mem_kernel(); }

@@ -56,7 +56,7 @@ void expect_match_counts_equal(rmm::device_uvector<cudf::size_type> const& actua
                                cuda::stream_ref stream)
 {
   auto const host_actual_counts = cudf::detail::make_host_vector_async(actual_counts, stream);
-  stream.wait();
+  stream.sync();
 
   ASSERT_EQ(host_actual_counts.size(), expected_counts.size());
   EXPECT_TRUE(
@@ -2432,7 +2432,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.wait();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
@@ -2492,7 +2492,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.wait();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const left_join_size = hash_join.left_join_size(t0.select({0}));
@@ -2616,7 +2616,7 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.wait();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));

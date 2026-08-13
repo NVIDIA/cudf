@@ -804,10 +804,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
             auto const ticks_per_sec  = cudf::detail::powers_of_ten[9 - min(s->chunk.scale, 9)];
             auto const nanos_per_tick = cudf::detail::powers_of_ten[min(s->chunk.scale, 9)];
 
-            // ORC splits a timestamp into whole seconds plus a nanosecond remainder that must be in
-            // [0, 1e9); the unsigned SECONDARY stream cannot represent a negative remainder, and
-            // Apache ORC readers reject one. Integer division truncates toward zero, so use the
-            // floor of the timestamp instead to keep the remainder non-negative.
+            // Use the floor of the timestamp to keep the nanosecond remainder non-negative.
             // See https://github.com/rapidsai/cudf/issues/19350.
             auto seconds = ts / ticks_per_sec;
             auto nanos   = (ts - seconds * ticks_per_sec) * nanos_per_tick;

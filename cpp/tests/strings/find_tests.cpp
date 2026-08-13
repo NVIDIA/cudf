@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/default_stream.hpp>
 
 #include <vector>
 
@@ -226,6 +227,39 @@ TEST_F(StringsFindTest, ContainsLongStrings)
   results  = cudf::strings::contains(strings_view, cudf::string_scalar("~"));
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+}
+
+TEST_F(StringsFindTest, ContainsHeterogeneousMixedWidth)
+{
+  // The average byte width of this column falls strictly between the 64-byte
+  // AVG_CHAR_BYTES_THRESHOLD and the 96-byte HETERO_LENGTH_THRESHOLD used by
+  // `cudf::strings::detail::contains(strings_column_view const&, string_scalar const&, ...)`,
+  // so it exercises the heterogeneous two-pass implementation: rows at or below 96 bytes are
+  // searched thread-per-row while rows above 96 bytes are deferred to the warp-per-row pass.
+  auto const target = cudf::string_scalar("ab");
+
+  auto const row0 = std::string("");               // null row
+  auto const row1 = std::string(40, 'x');          // short (<=96), no match
+  auto const row2 = std::string(88, 'x') + "ab";   // short (<=96), match at boundary
+  auto const row3 = std::string(130, 'x');         // long (>96), no match
+  auto const row4 = std::string(148, 'x') + "ab";  // long (>96), match at boundary
+  auto const row5 = std::string("");               // null row
+  auto const row6 = std::string(64, 'y');          // short (<=96), no match
+  auto const row7 = "ab" + std::string(98, 'z');   // long (>96), match at start
+
+  cudf::test::strings_column_wrapper strings({row0, row1, row2, row3, row4, row5, row6, row7},
+                                             {false, true, true, true, true, false, true, true});
+  auto strings_view = cudf::strings_column_view(strings);
+
+  // Sanity check that this column lands in the heterogeneous dispatch range.
+  auto const avg_bytes = strings_view.chars_size(cudf::get_default_stream()) / strings_view.size();
+  EXPECT_GT(avg_bytes, 64);
+  EXPECT_LT(avg_bytes, 96);
+
+  auto results = cudf::strings::contains(strings_view, target);
+  cudf::test::fixed_width_column_wrapper<bool> expected(
+    {0, 0, 1, 0, 1, 0, 0, 1}, {false, true, true, true, true, false, true, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TEST_F(StringsFindTest, StartsWith)

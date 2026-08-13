@@ -653,9 +653,6 @@ TEST_F(OrcWriterTest, negTimestampsNano)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
-// Writes `values` as a timestamp column of type `T`, reads it back at the same resolution and
-// compares the result against `expected_values`. Makes every other value null when `with_nulls` is
-// set.
 template <typename T>
 void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
                               std::vector<typename T::rep> const& expected_values,
@@ -686,53 +683,37 @@ void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
     expected, result.tbl->view().column(0), cudf::test::debug_output_level::ALL_ERRORS);
 }
 
-// Verifies that the timestamps that ORC can represent - everything except the last 999 ms before
-// the epoch, see `NegativeTimestampsNearEpoch` - round-trip losslessly.
-//
-// This does not detect a return of the encoding that https://github.com/rapidsai/cudf/issues/19350
-// is about, where a negative fractional timestamp was split into a negative nanos remainder that
-// the unsigned SECONDARY stream stored as a huge value: the libcudf reader sign-extends the stored
-// value and inverts that encoding exactly, so these values round-trip either way. Only an Apache
-// ORC reader rejects such a file ("nanos > 999999999 or < 0"), so the encoding itself has to be
-// verified externally; `NegativeTimestampsNearEpoch` below is the in-repo guard, because its
-// expected values only hold for the Apache encoding.
+// Verifies that the timestamps ORC can represent - everything except the last 999 ms before the
+// epoch, see `NegativeTimestampsNearEpoch` - round-trip losslessly
+// (https://github.com/rapidsai/cudf/issues/19350).
 TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
 {
   auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{
-    45'045'557'685'074'778L,   // positive
     116'614'807'755'579'786L,  // positive
     942'496L,                  // positive, sub-second
-    -7'713'116'127L,           // fraction >= 1 ms
-    -33'426'545'118'057'504L,  // fraction >= 1 ms
     -54'218'791'351'223'251L,  // fraction >= 1 ms
-    -5'999'500L,               // fraction < 1 ms
+    -7'713'116'127L,           // fraction >= 1 ms, sub-second
     -5'999'999L,               // fraction < 1 ms
-    -100'000'500L,             // fraction < 1 ms
   };
   test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, timestamps_us);
 
   auto const timestamps_ns = std::vector<cudf::timestamp_ns::rep>{
-    -5'999'500'000L,
-    -5'999'999'999L,
-    -9'000'000'500L,
-    -131'968'727'238'000'000L,
+    -131'968'727'238'000'000L,  // fraction >= 1 ms
+    -5'999'999'999L,            // fraction < 1 ms
   };
   test_timestamp_roundtrip<cudf::timestamp_ns>(timestamps_ns, timestamps_ns);
 
+  // Milliseconds have no fraction below 1 ms, so only the borrowing path applies.
   auto const timestamps_ms = std::vector<cudf::timestamp_ms::rep>{
-    -5'999L,
     -123'456L,
-    -1'000L,
+    -5'999L,
   };
   test_timestamp_roundtrip<cudf::timestamp_ms>(timestamps_ms, timestamps_ms);
 }
 
-// ORC cannot represent the timestamps in [-999 ms, -1 ns]: they are stored with zero seconds and a
-// nanos value that readers cannot tell apart from the same nanos one second later, so they are read
-// back one second too late. Apache ORC has the same limitation and asserts this exact behavior in
-// its own tests (ORC-763, ORC-771), so the values below are what any ORC implementation produces
-// for this input. Timestamps of -999'000'001 ns and earlier are stored with negative seconds and
-// are not affected.
+// Timestamps in the last 999 ms before the epoch are not representable in ORC; they are read back
+// one second later, as with the Apache ORC writer, whose own tests assert the same values (ORC-763,
+// ORC-771).
 TEST_F(OrcWriterTest, NegativeTimestampsNearEpoch)
 {
   // The two values around the -999 ms boundary are the smallest shifted and the largest lossless

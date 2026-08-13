@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,7 +33,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/gather.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/merge.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>

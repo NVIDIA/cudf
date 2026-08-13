@@ -164,7 +164,7 @@ rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
     auto device_view                             = column_device_view::create(input, stream);
     auto valid_it = cudf::detail::make_validity_iterator(*device_view);
     auto data =
-      thrust::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
+      cuda::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
 
     thrust::transform_inclusive_scan(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -242,7 +242,7 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
   // pairs are all (beta, 1-beta x_i) except for the first one
 
   if (!input.has_nulls()) {
-    auto data = thrust::make_zip_iterator(
+    auto data = cuda::make_zip_iterator(
       cuda::std::make_tuple(input.begin<T>(), cuda::counting_iterator<size_type>{0}));
     thrust::transform_inclusive_scan(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -256,7 +256,7 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
     auto device_view = column_device_view::create(input, stream);
     auto valid_it    = detail::make_validity_iterator(*device_view);
 
-    auto data = thrust::make_zip_iterator(cuda::std::make_tuple(
+    auto data = cuda::make_zip_iterator(cuda::std::make_tuple(
       input.begin<T>(), cuda::counting_iterator<size_type>{0}, valid_it, nullcnt.begin()));
 
     thrust::transform_inclusive_scan(

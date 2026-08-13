@@ -60,7 +60,7 @@ TEST_F(JoinTest, SortMergeInnerJoin)
 {
   cudf::sort_merge_join obj(
     table1, cudf::sorted::NO, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
-  obj.inner_join(table0, cudf::sorted::NO, cudf::test::get_default_stream());
+  obj.inner_join(table0, cudf::test::get_default_stream());
 }
 
 TEST_F(JoinTest, LeftJoin)
@@ -161,6 +161,7 @@ TEST_F(JoinTest, LeftJoinWithPostFilter)
                               cudf::device_span<cudf::size_type const>(*hash_join_result.second),
                               left_zero_eq_right_zero,
                               cudf::join_kind::LEFT_JOIN,
+                              std::nullopt,
                               cudf::test::get_default_stream());
 }
 

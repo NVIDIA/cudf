@@ -47,10 +47,12 @@ from cudf.api.types import (
     is_decimal128_dtype,
     is_dict_like,
     is_dtype_equal,
+    is_integer,
     is_list_like,
     is_scalar,
 )
 from cudf.core import indexing_utils, reshape
+from cudf.core.algorithms import factorize
 from cudf.core.column import (
     CategoricalColumn,
     ColumnBase,
@@ -89,6 +91,7 @@ from cudf.core.index import (
 )
 from cudf.core.indexed_frame import (
     IndexedFrame,
+    _check_duplicate_level_names,
     _FrameIndexer,
     _indices_from_labels,
     doc_reset_index_template,
@@ -615,7 +618,12 @@ def _pd_index_level_dtypes(idx) -> tuple | None:
     dtype cannot be inferred from zero entries).
     """
     if isinstance(idx, pd.MultiIndex):
-        return tuple(idx.get_level_values(i).dtype for i in range(idx.nlevels))
+        # use the levels, not get_level_values: materializing a level that
+        # has missing entries (-1 codes) upcasts e.g. int64 to float64
+        return tuple(level.dtype for level in idx.levels)
+    if isinstance(idx, cudf.MultiIndex):
+        # the per-row columns share their dtype with the levels
+        return tuple(dtype for _, dtype in idx._dtypes)
     return None
 
 
@@ -837,7 +845,7 @@ def _array_to_column_accessor(
         columns_labels = columns
     else:
         columns_labels = pd.RangeIndex(data.shape[1])
-    return ColumnAccessor(
+    ca = ColumnAccessor(
         {
             column_label: as_column(data[:, i], nan_as_null=nan_as_null)
             for column_label, i in zip(
@@ -850,7 +858,9 @@ def _array_to_column_accessor(
         label_dtype=columns_labels.dtype,
         level_names=tuple(columns_labels.names),
         level_dtypes=_pd_index_level_dtypes(columns_labels),
+        pandas_index=columns_labels,
     )
+    return ca
 
 
 @_performance_tracking
@@ -1280,6 +1290,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 level_names=tuple(columns.names),
                 label_dtype=columns.dtype,
                 level_dtypes=_pd_index_level_dtypes(columns),
+                pandas_index=columns,
             )
         elif isinstance(data, Mapping):
             # Note: We excluded ColumnAccessor already above
@@ -1351,6 +1362,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
         if dtype:
             self._data = self.astype(dtype)._data
+
+        final_pd_columns = (
+            second_columns if second_columns is not None else columns
+        )
+        if isinstance(final_pd_columns, pd.Index):
+            self._data._prime_to_pandas_index(final_pd_columns)
 
     @classmethod
     def _from_data(  # type: ignore[override]
@@ -2554,6 +2571,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 )
             elif self._data._level_names == other._data._level_names:
                 ca_attributes["level_names"] = self._data.level_names
+                if self._data.multiindex == other._data.multiindex:
+                    # equal labels can still fail the ``equals`` check above
+                    # on level-dtype differences (e.g. Int8 vs int64); the
+                    # result keeps hierarchical columns like pandas
+                    ca_attributes["multiindex"] = self._data.multiindex
         elif isinstance(other, (dict, Mapping)):
             # Need to fail early on host mapping types because we ultimately
             # convert everything to a dict.
@@ -3237,6 +3259,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         rangeindex = False
         label_dtype = None
         level_names = None
+        level_dtypes = None
         if isinstance(columns, (pd.MultiIndex, cudf.MultiIndex)):
             multiindex = True
             if isinstance(columns, cudf.MultiIndex):
@@ -3246,6 +3269,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             if pd_columns.nunique(dropna=False) != len(pd_columns):
                 raise ValueError("Duplicate column names are not allowed")
             level_names = list(pd_columns.names)
+            level_dtypes = _pd_index_level_dtypes(pd_columns)
         elif isinstance(columns, (Index, ColumnBase, Series)):
             level_names = (getattr(columns, "name", None),)
             rangeindex = isinstance(columns, cudf.RangeIndex)
@@ -3282,7 +3306,9 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             level_names=level_names,
             label_dtype=label_dtype,
             rangeindex=rangeindex,
+            level_dtypes=level_dtypes,
             verify=False,
+            pandas_index=pd_columns,
         )
 
     def _set_columns_like(self, other: ColumnAccessor) -> None:
@@ -8096,6 +8122,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 "https://github.com/pandas-dev/pandas/issues/53515"
             )
 
+        _check_duplicate_level_names(
+            [lv for lv in level if not is_integer(lv)],
+            self._data.level_names,
+        )
+
         # Compute the columns to stack based on specified levels
 
         level_indices: list[int] = []
@@ -8110,10 +8141,24 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 "mixture of both."
             )
         else:
-            # Must be a list of positions, normalize negative positions
-            level_indices = [
-                lv + self._data.nlevels if lv < 0 else lv for lv in level
-            ]
+            # Must be a list of positions; normalize negative positions
+            # and validate bounds to match pandas MultiIndex._get_level_number
+            nlevels = self._data.nlevels
+            for lv in level:
+                if lv < 0:
+                    if lv + nlevels < 0:
+                        raise IndexError(
+                            f"Too many levels: Index has only {nlevels} "
+                            f"levels, {lv} is not a valid level number"
+                        )
+                    level_indices.append(lv + nlevels)
+                else:
+                    if lv >= nlevels:
+                        raise IndexError(
+                            f"Too many levels: Index has only {nlevels} "
+                            f"levels, not {lv + 1}"
+                        )
+                    level_indices.append(lv)
 
         unnamed_levels_indices = [
             i for i in range(self._data.nlevels) if i not in level_indices
@@ -8121,48 +8166,130 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         has_unnamed_levels = len(unnamed_levels_indices) > 0
 
         column_name_idx = self._data.to_pandas_index
-        # Construct new index from the levels specified by `level`
-        named_levels = pd.MultiIndex.from_arrays(
-            [column_name_idx.get_level_values(lv) for lv in level_indices]
+        # pandas' Index.get_level_values resolves an integer argument by
+        # name first: if a level is *named* that integer, that level is
+        # returned regardless of position. All lookups below use positional
+        # indices, so strip the names to force positional resolution and
+        # re-attach the real names afterwards.
+        nameless_column_name_idx = column_name_idx.set_names(
+            [None] * column_name_idx.nlevels
         )
+        # Construct new index from the levels specified by `level`
+        if isinstance(column_name_idx, pd.MultiIndex):
+            # build from codes/levels to keep the level dtypes: materializing
+            # via get_level_values/from_arrays turns missing entries into NaN
+            # and upcasts e.g. int64 levels to float64
+            named_levels = pd.MultiIndex(
+                levels=[column_name_idx.levels[i] for i in level_indices],
+                codes=[column_name_idx.codes[i] for i in level_indices],
+                names=[column_name_idx.names[i] for i in level_indices],
+                verify_integrity=False,
+            )
+        else:
+            named_levels = pd.MultiIndex.from_arrays(
+                [
+                    nameless_column_name_idx.get_level_values(lv).rename(
+                        column_name_idx.names[lv]
+                    )
+                    for lv in level_indices
+                ]
+            )
 
         # Since `level` may only specify a subset of all levels, `unique()` is
-        # required to remove duplicates. In pandas, the order of the keys in
-        # the specified levels are always sorted.
+        # required to remove duplicates. In pandas legacy stack, the keys of
+        # the specified levels are sorted by their level *codes* when the
+        # columns have multiple levels (flat column labels keep their
+        # original order): level order is preserved even for unsorted levels
+        # and missing labels (code -1) come first.
         unique_named_levels = named_levels.unique()
-        if not future_stack:
-            unique_named_levels = unique_named_levels.sort_values()
+        if not future_stack and self._data.nlevels > 1:
+            unique_named_levels = unique_named_levels.take(
+                np.lexsort(tuple(reversed(unique_named_levels.codes)))
+            )
 
         # Each index from the original dataframe should repeat by the number
         # of unique values in the named_levels
         repeated_index = self.index.repeat(len(unique_named_levels))
 
         # Each column name should tile itself by len(df) times
-        cols = [
-            as_column(unique_named_levels.get_level_values(i))
-            for i in range(unique_named_levels.nlevels)
-        ]
+        nameless_unique_named_levels = unique_named_levels.set_names(
+            [None] * unique_named_levels.nlevels
+        )
+        cols = []
+        for i in range(unique_named_levels.nlevels):
+            if future_stack:
+                # pandas future stack materializes the level values (a
+                # level with missing entries becomes e.g. float64 with NaN)
+                cols.append(
+                    as_column(nameless_unique_named_levels.get_level_values(i))
+                )
+            else:
+                # pandas legacy stack keeps the original level dtype and
+                # represents missing entries as nulls (-1 codes)
+                level_col = as_column(unique_named_levels.levels[i])
+                level_codes = np.asarray(unique_named_levels.codes[i]).astype(
+                    "int64"
+                )
+                level_codes[level_codes == -1] = np.iinfo(SIZE_TYPE_DTYPE).min
+                cols.append(
+                    level_col.take(as_column(level_codes), nullify=True)
+                )
         with access_columns(*cols, mode="read", scope="internal"):
             plc_table = plc.reshape.tile(
                 plc.Table([col.plc_column for col in cols]),
                 self.shape[0],
             )
             tiled_index = [
-                ColumnBase.create(plc, dtype=dtype_from_pylibcudf_column(plc))
-                for plc in plc_table.columns()
+                ColumnBase.create(plc_col, dtype=src_col.dtype)
+                for src_col, plc_col in zip(
+                    cols, plc_table.columns(), strict=True
+                )
             ]
 
-        # Assemble the final index
-        new_index_columns = [*repeated_index._columns, *tiled_index]
+        # Assemble the final index — build levels/codes first so the
+        # MultiIndex can be constructed in one step via _simple_new.
+        # Codes/levels are attached eagerly, matching how pandas' stack builds
+        # the result MultiIndex, so a later unstack can restore the original
+        # row/column order (lazy materialization would sort the levels):
+        # the original index contributes its own levels/codes (repeated);
+        # a flat original index and the tiled stacked level(s) get
+        # appearance-order factorization.
         index_names = [*self.index.names, *unique_named_levels.names]
-        new_index = MultiIndex._from_data(dict(enumerate(new_index_columns)))
-        # Materialize the levels in order of first appearance (rather than the
-        # default sorted order) so that converting the result to pandas keeps
-        # the level order pandas' own ``stack`` produces. Otherwise a later
-        # ``unstack``/``to_pandas`` would lexicographically reorder the pivoted
-        # axis (e.g. ``"foo_10"`` before ``"foo_2"``).
-        new_index._maybe_materialize_codes_and_levels(sort=False)
-        new_index.names = index_names
+        new_levels: list[cudf.Index] = []
+        new_codes: list[ColumnBase] = []
+        n_tile = len(unique_named_levels)
+        if isinstance(self.index, MultiIndex):
+            src = self.index._maybe_materialize_codes_and_levels()
+            for src_level, src_code in zip(
+                src._levels,
+                src._codes,
+                strict=True,
+            ):
+                new_levels.append(src_level)
+                new_codes.append(
+                    Index._from_column(src_code.astype(np.dtype(np.int64)))
+                    .repeat(n_tile)
+                    ._column
+                )
+        else:
+            code, cats = factorize(self.index)
+            new_levels.append(cats)
+            new_codes.append(
+                Index._from_column(as_column(code).astype(np.dtype(np.int64)))
+                .repeat(n_tile)
+                ._column
+            )
+        for tiled_col in tiled_index:
+            code, cats = factorize(Index._from_column(tiled_col))
+            new_codes.append(as_column(code).astype(np.dtype(np.int64)))
+            new_levels.append(cats)
+        new_index_columns = [*repeated_index._columns, *tiled_index]
+        new_index = MultiIndex._simple_new(
+            ColumnAccessor(dict(enumerate(new_index_columns))),
+            new_levels,
+            new_codes,
+            pd.core.indexes.frozen.FrozenList(index_names),
+        )
 
         # Compute the column indices that serves as the input for
         # `interleave_columns`
@@ -8171,41 +8298,49 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         )
 
         if has_unnamed_levels:
-            unnamed_level_values = pd.MultiIndex.from_arrays(
-                list(
-                    map(
-                        column_name_idx.get_level_values,
-                        unnamed_levels_indices,
-                    )
-                )
+            # the columns axis has multiple levels here, so column_name_idx
+            # is always a pd.MultiIndex; build from codes/levels to keep the
+            # level dtypes and to resolve the levels positionally
+            unnamed_level_values = pd.MultiIndex(
+                levels=[
+                    column_name_idx.levels[i] for i in unnamed_levels_indices
+                ],
+                codes=[
+                    column_name_idx.codes[i] for i in unnamed_levels_indices
+                ],
+                names=[
+                    column_name_idx.names[i] for i in unnamed_levels_indices
+                ],
+                verify_integrity=False,
             )
 
         def unnamed_group_generator():
             if has_unnamed_levels:
-                for _, grpdf in column_idx_df.groupby(by=unnamed_level_values):
+                # sort=False iterates groups in first-appearance order, i.e.
+                # exactly ``unnamed_level_values.unique()`` order (also for
+                # NaN-containing tuple keys, which sorted groupby would
+                # reorder via codes), so the stacked columns can be zipped
+                # 1:1 with those keys when assembling the result.
+                for _, grpdf in column_idx_df.groupby(
+                    by=unnamed_level_values, sort=False, dropna=False
+                ):
                     # When stacking part of the levels, some combinations
                     # of keys may not be present in this group but can be
                     # present in others. Reindexing with the globally computed
                     # `unique_named_levels` assigns -1 to these key
                     # combinations, representing an all-null column that
                     # is used in the subsequent libcudf call.
-                    if future_stack:
-                        yield grpdf.reindex(
-                            unique_named_levels, axis=0, fill_value=-1
-                        ).values
-                    else:
-                        yield (
-                            grpdf.reindex(
-                                unique_named_levels, axis=0, fill_value=-1
-                            )
-                            .sort_index()
-                            .values
-                        )
+                    # ``reindex`` returns rows in target order, so the
+                    # legacy path needs no further sorting (the target was
+                    # already sorted above).
+                    yield grpdf.reindex(
+                        unique_named_levels, axis=0, fill_value=-1
+                    ).values
             else:
-                if future_stack:
+                if future_stack or self._data.nlevels == 1:
                     yield column_idx_df.values
                 else:
-                    yield column_idx_df.sort_index().values
+                    yield column_idx_df.reindex(unique_named_levels).values
 
         # For each of the group constructed from the unnamed levels,
         # invoke `interleave_columns` to stack the values.
@@ -8261,23 +8396,35 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 unnamed_level_values = unnamed_level_values.get_level_values(0)
             unnamed_level_values = unnamed_level_values.unique()
 
-            data = ColumnAccessor(
-                dict(
-                    zip(
-                        unnamed_level_values,
-                        [
-                            stacked[i]
-                            for i in unnamed_level_values.argsort().argsort()
-                        ]
-                        if not future_stack
-                        else [
-                            stacked[i] for i in unnamed_level_values.argsort()
-                        ],
-                        strict=True,
+            if isinstance(unnamed_level_values, pd.MultiIndex):
+                # build the labels from levels/codes to preserve scalar
+                # types: iterating a MultiIndex materializes e.g. an int64
+                # level containing a missing entry as float
+                keys: list[tuple[Any, ...]] = [
+                    tuple(
+                        unnamed_level_values.levels[j][c]
+                        if c != -1
+                        else np.nan
+                        for j, c in enumerate(row)
                     )
-                ),
+                    for row in zip(*unnamed_level_values.codes, strict=True)
+                ]
+            else:
+                keys = unnamed_level_values
+
+            # ``stacked`` is in group first-appearance order (groupby with
+            # sort=False above), which is exactly the order of
+            # ``unnamed_level_values.unique()``: zip 1:1.
+            data = ColumnAccessor(
+                dict(zip(keys, stacked, strict=True)),
                 isinstance(unnamed_level_values, pd.MultiIndex),
                 unnamed_level_values.names,
+                label_dtype=(
+                    None
+                    if isinstance(unnamed_level_values, pd.MultiIndex)
+                    else unnamed_level_values.dtype
+                ),
+                level_dtypes=_pd_index_level_dtypes(unnamed_level_values),
             )
 
             result = DataFrame._from_data(
@@ -8285,7 +8432,18 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
         if not future_stack and dropna:
-            return result.dropna(how="all")
+            # Compute the row mask explicitly so the eagerly-attached
+            # codes can be subset alongside the data; pandas keeps the full
+            # pre-drop level set through dropna.
+            # _apply_boolean_mask propagates pre-set levels/codes on the
+            # index automatically.
+            if isinstance(result, Series):
+                keep = result.notna()
+            else:
+                keep = ~result.isna().all(axis=1)
+            return result._apply_boolean_mask(
+                BooleanMask(keep._column, len(result))
+            )
         else:
             return result
 

@@ -18,10 +18,9 @@
 
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
-#include <cuco/utility/error.hpp>
-
 #include <limits>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 template <typename T>
@@ -723,12 +722,15 @@ TEST_F(DistinctJoinTest, InvalidLoadFactor)
   Table t0(std::move(cols0));
 
   // Test load factor of -0.1
-  EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, -0.1), cuco::logic_error);
+  EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, -0.1),
+               std::invalid_argument);
   // Test load factor of 0
-  EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, 0.0), cuco::logic_error);
+  EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, 0.0),
+               std::invalid_argument);
 
   // Test load factor > 1
-  EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, 1.1), cuco::logic_error);
+  EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, 1.1),
+               std::invalid_argument);
 }
 
 TEST_F(DistinctJoinTest, DistinctLargeExtentOverflowPrevention)

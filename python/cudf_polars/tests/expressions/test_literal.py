@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
 @pytest.fixture(
@@ -96,6 +97,55 @@ def test_select_literal_series(engine: pl.GPUEngine):
     )
 
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        5,
+        "abc",
+    ],
+)
+@pytest.mark.parametrize("n", [0, 1, 3])
+def test_repeat_literal(engine: pl.GPUEngine, value, n):
+    df = pl.LazyFrame({"a": [1, 2, 3]})
+    q = df.select(pl.repeat(value, n))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_repeat_len(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3]})
+    q = df.select(pl.repeat("abc", pl.len()))
+    assert_gpu_result_equal(
+        q,
+        engine=engine,
+        collect_kwargs={"optimizations": pl.QueryOptFlags(projection_pushdown=False)},
+    )
+
+
+def test_repeat_null_unsupported(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3]})
+    q = df.select(pl.repeat(None, 2))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_repeat_negative_literal_raises(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3]})
+    q = df.select(pl.repeat(5, -1))
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
+
+
+def test_repeat_negative_expression_result_raises(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [-3, 1, 2]})
+    q = df.select(pl.repeat("x", pl.col("a").min()))
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            pl.exceptions.InvalidOperationError, match="must not be negative"
+        ):
+            q.collect(engine=engine)
 
 
 @pytest.mark.parametrize(

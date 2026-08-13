@@ -13,23 +13,37 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.zip.CRC32;
 
 /**
  * This class will load the native dependencies.
  */
 public class NativeDepsLoader {
   private static final Logger log = LoggerFactory.getLogger(NativeDepsLoader.class);
+  private static final int COPY_BUFFER_SIZE = 1024 * 1024;
+  // Positional extraction uses one copy buffer per worker.
+  private static final int MAX_CONCURRENT_CHUNK_READS =
+      Math.max(1, Math.min(12, Runtime.getRuntime().availableProcessors()));
+  private static final String CHUNK_MANIFEST_SUFFIX = ".chunks.properties";
+  private static final String CHUNK_DIRECTORY_SUFFIX = ".chunks/";
+  private static final String CHUNK_FORMAT_VERSION = "1";
 
   /**
    * Set this system property to true to prevent unpacked dependency files from
@@ -285,6 +299,9 @@ public class NativeDepsLoader {
    * @throws IOException on any error trying to load the libraries.
    */
   public static File loadNativeDep(String depName, boolean preserveDep) throws IOException {
+    if (libNativeDir != null) {
+      validateLibNativeDir(new String[]{depName});
+    }
     String os = System.getProperty("os.name");
     String arch = System.getProperty("os.arch");
     return loadDep(os, arch, depName, preserveDep);
@@ -338,8 +355,8 @@ public class NativeDepsLoader {
     return loc;
   }
 
-  /** Extract the contents of a library resource into a temporary file */
-  private static File createFile(String os, String arch, String baseName) throws IOException {
+  /** Extract the contents of a library resource into a temporary file. */
+  static File createFile(String os, String arch, String baseName) throws IOException {
     String mappedName = System.mapLibraryName(baseName);
     // Fast path: when ai.rapids.cudf.lib-native-dir is set, the loader skips
     // JAR extraction entirely and uses the pre-unpacked file from the
@@ -354,21 +371,25 @@ public class NativeDepsLoader {
       return loc;
     }
     String path = arch + "/" + os + "/" + mappedName;
-    File loc;
-    URL resource = loader.getResource(path);
-    if (resource == null) {
+    URL chunkManifestResource = loader.getResource(path + CHUNK_MANIFEST_SUFFIX);
+    URL resource = chunkManifestResource == null ? loader.getResource(path) : null;
+    if (chunkManifestResource == null && resource == null) {
       throw new FileNotFoundException("Could not locate native dependency " + path);
     }
     long t0 = System.currentTimeMillis();
-    try (InputStream in = resource.openStream()) {
-      loc = File.createTempFile(baseName, ".so");
-      loc.deleteOnExit();
-      try (OutputStream out = new FileOutputStream(loc)) {
-        byte[] buffer = new byte[1024 * 16];
-        int read = 0;
-        while ((read = in.read(buffer)) >= 0) {
-          out.write(buffer, 0, read);
-        }
+    File loc = File.createTempFile(baseName, ".so");
+    loc.deleteOnExit();
+    boolean success = false;
+    try {
+      if (chunkManifestResource == null) {
+        extractConventionalResource(resource, loc);
+      } else {
+        extractChunkedResource(chunkManifestResource, mappedName, loc);
+      }
+      success = true;
+    } finally {
+      if (!success && loc.exists() && !loc.delete()) {
+        log.warn("Could not delete partial native dependency {}", loc);
       }
     }
     if (libLogLoadTiming) {
@@ -377,6 +398,261 @@ public class NativeDepsLoader {
       log.info("Extracted {} in {} ms (size={} MB)", mappedName, elapsed, sizeMB);
     }
     return loc;
+  }
+
+  private static void extractConventionalResource(URL resource, File loc) throws IOException {
+    try (InputStream in = resource.openStream();
+         OutputStream out = new FileOutputStream(loc)) {
+      copy(in, out, new byte[COPY_BUFFER_SIZE]);
+    }
+  }
+
+  private static void extractChunkedResource(URL manifestResource, String mappedName, File loc)
+      throws IOException {
+    extractChunkedResource(
+        manifestResource, mappedName, loc, MAX_CONCURRENT_CHUNK_READS);
+  }
+
+  static void extractChunkedResource(URL manifestResource, String mappedName, File loc,
+                                     int maxConcurrentReads) throws IOException {
+    if (maxConcurrentReads <= 0) {
+      throw new IllegalArgumentException("maxConcurrentReads must be positive");
+    }
+    ChunkManifest manifest = ChunkManifest.load(manifestResource);
+    int concurrentReads = Math.min(maxConcurrentReads, manifest.chunkCount);
+    ExecutorService executor = Executors.newFixedThreadPool(concurrentReads);
+    List<Future<?>> chunkFutures = new ArrayList<>(manifest.chunkCount);
+    try (RandomAccessFile out = new RandomAccessFile(loc, "rw")) {
+      out.setLength(manifest.librarySize);
+      FileChannel outputChannel = out.getChannel();
+      try {
+        for (int i = 0; i < manifest.chunkCount; i++) {
+          chunkFutures.add(submitChunkExtraction(
+              executor, manifestResource, mappedName, manifest, outputChannel, i));
+        }
+        executor.shutdown();
+        awaitChunks(chunkFutures, mappedName);
+      } finally {
+        shutdownAndAwait(executor);
+      }
+    }
+  }
+
+  private static Future<?> submitChunkExtraction(
+      ExecutorService executor, URL manifestResource, String mappedName,
+      ChunkManifest manifest, FileChannel outputChannel, int chunkIndex) throws IOException {
+    String chunkName = String.format(Locale.ROOT, "%05d", chunkIndex);
+    URL chunkResource = new URL(
+        manifestResource, mappedName + CHUNK_DIRECTORY_SUFFIX + chunkName);
+    long outputOffset = manifest.chunkSize * chunkIndex;
+    long expectedSize = manifest.expectedChunkSize(chunkIndex);
+    long expectedCrc32 = manifest.expectedChunkCrc32(chunkIndex);
+    return executor.submit(() -> {
+      extractChunk(chunkResource, outputChannel, outputOffset, expectedSize, expectedCrc32);
+      return null;
+    });
+  }
+
+  private static void awaitChunks(List<Future<?>> futures, String mappedName)
+      throws IOException {
+    IOException failure = null;
+    for (int i = 0; i < futures.size(); i++) {
+      try {
+        futures.get(i).get();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IOException(String.format(Locale.ROOT,
+            "Interrupted while extracting native dependency chunk %s/%05d",
+            mappedName, i), e);
+      } catch (ExecutionException e) {
+        Throwable cause = e.getCause();
+        IOException chunkFailure = cause instanceof IOException
+            ? (IOException) cause
+            : new IOException(String.format(Locale.ROOT,
+                "Could not extract native dependency chunk %s/%05d", mappedName, i), cause);
+        if (failure == null) {
+          failure = chunkFailure;
+        } else {
+          failure.addSuppressed(chunkFailure);
+        }
+      }
+    }
+    if (failure != null) {
+      throw failure;
+    }
+  }
+
+  private static void shutdownAndAwait(ExecutorService executor) {
+    executor.shutdownNow();
+    boolean interrupted = Thread.interrupted();
+    while (!executor.isTerminated()) {
+      try {
+        executor.awaitTermination(1, TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+        interrupted = true;
+      }
+    }
+    if (interrupted) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  private static void extractChunk(
+      URL resource, FileChannel outputChannel, long outputOffset,
+      long expectedSize, long expectedCrc32) throws IOException {
+    byte[] buffer = new byte[COPY_BUFFER_SIZE];
+    ByteBuffer bytes = ByteBuffer.wrap(buffer);
+    CRC32 crc = new CRC32();
+    long totalBytes = 0;
+    try (InputStream in = resource.openStream()) {
+      int read;
+      while ((read = in.read(buffer)) != -1) {
+        if (read == 0) {
+          continue;
+        }
+        if (read > expectedSize - totalBytes) {
+          throw new IOException(String.format(Locale.ROOT,
+              "Native dependency chunk %s exceeds expected size of %d bytes",
+              resource, expectedSize));
+        }
+
+        crc.update(buffer, 0, read);
+        bytes.clear();
+        bytes.limit(read);
+        long writeOffset = outputOffset + totalBytes;
+        while (bytes.hasRemaining()) {
+          int written = outputChannel.write(bytes, writeOffset);
+          if (written <= 0) {
+            throw new IOException("Could not make progress writing native dependency " + resource);
+          }
+          writeOffset += written;
+        }
+        totalBytes += read;
+      }
+    } catch (FileNotFoundException e) {
+      throw new IOException("Could not locate native dependency chunk " + resource, e);
+    }
+
+    if (totalBytes != expectedSize) {
+      throw new IOException(String.format(Locale.ROOT,
+          "Native dependency chunk %s has size %d bytes, expected %d",
+          resource, totalBytes, expectedSize));
+    }
+    if (crc.getValue() != expectedCrc32) {
+      throw new IOException(String.format(Locale.ROOT,
+          "Native dependency chunk CRC32 mismatch for %s: expected %08x but extracted %08x",
+          resource, expectedCrc32, crc.getValue()));
+    }
+  }
+
+  private static void copy(InputStream in, OutputStream out, byte[] buffer)
+      throws IOException {
+    int read;
+    while ((read = in.read(buffer)) != -1) {
+      if (read > 0) {
+        out.write(buffer, 0, read);
+      }
+    }
+  }
+
+  private static final class ChunkManifest {
+    private static final String FORMAT_VERSION_KEY = "format.version";
+    private static final String LIBRARY_SIZE_KEY = "library.size";
+    private static final String CHUNK_SIZE_KEY = "chunk.size";
+    private static final String CHUNK_COUNT_KEY = "chunk.count";
+
+    private final long librarySize;
+    private final long chunkSize;
+    private final int chunkCount;
+    private final long[] chunkCrc32;
+
+    private ChunkManifest(long librarySize, long chunkSize, int chunkCount, long[] chunkCrc32) {
+      this.librarySize = librarySize;
+      this.chunkSize = chunkSize;
+      this.chunkCount = chunkCount;
+      this.chunkCrc32 = chunkCrc32;
+    }
+
+    private static ChunkManifest load(URL resource) throws IOException {
+      Properties properties = new Properties();
+      try (InputStream in = resource.openStream()) {
+        properties.load(in);
+      } catch (IllegalArgumentException e) {
+        throw new IOException("Malformed native dependency chunk manifest " + resource, e);
+      }
+      String version = require(properties, FORMAT_VERSION_KEY, resource);
+      if (!CHUNK_FORMAT_VERSION.equals(version)) {
+        throw new IOException("Unsupported native dependency chunk manifest version " + version
+            + " in " + resource);
+      }
+      long librarySize = parsePositiveLong(properties, LIBRARY_SIZE_KEY, resource);
+      long chunkSize = parsePositiveLong(properties, CHUNK_SIZE_KEY, resource);
+      long chunkCountLong = parsePositiveLong(properties, CHUNK_COUNT_KEY, resource);
+      if (chunkCountLong > Integer.MAX_VALUE) {
+        throw new IOException("Native dependency chunk count is too large in " + resource);
+      }
+      long expectedChunkCount = 1 + ((librarySize - 1) / chunkSize);
+      if (chunkCountLong != expectedChunkCount) {
+        throw new IOException(String.format(Locale.ROOT,
+            "Invalid native dependency chunk count in %s: expected %d but found %d",
+            resource, expectedChunkCount, chunkCountLong));
+      }
+      int chunkCount = (int) chunkCountLong;
+      long[] chunkCrc32 = new long[chunkCount];
+      for (int i = 0; i < chunkCount; i++) {
+        String key = String.format(Locale.ROOT, "chunk.%05d.crc32", i);
+        chunkCrc32[i] = parseCrc32(properties, key, resource);
+      }
+      return new ChunkManifest(librarySize, chunkSize, chunkCount, chunkCrc32);
+    }
+
+    private static long parseCrc32(Properties properties, String key, URL resource)
+        throws IOException {
+      String value = require(properties, key, resource);
+      if (!value.matches("[0-9a-fA-F]{8}")) {
+        throw new IOException("Invalid " + key + " in " + resource + ": " + value);
+      }
+      try {
+        return Long.parseLong(value, 16);
+      } catch (NumberFormatException e) {
+        throw new IOException("Invalid " + key + " in " + resource + ": " + value, e);
+      }
+    }
+
+    private static long parsePositiveLong(Properties properties, String key, URL resource)
+        throws IOException {
+      String value = require(properties, key, resource);
+      try {
+        long parsed = Long.parseLong(value);
+        if (parsed <= 0) {
+          throw new NumberFormatException("value must be positive");
+        }
+        return parsed;
+      } catch (NumberFormatException e) {
+        throw new IOException("Invalid " + key + " in " + resource + ": " + value, e);
+      }
+    }
+
+    private static String require(Properties properties, String key, URL resource)
+        throws IOException {
+      String value = properties.getProperty(key);
+      if (value == null || value.trim().isEmpty()) {
+        throw new IOException("Missing " + key + " in native dependency chunk manifest "
+            + resource);
+      }
+      return value.trim();
+    }
+
+    private long expectedChunkSize(int chunkIndex) {
+      if (chunkIndex == chunkCount - 1) {
+        return librarySize - (chunkSize * chunkIndex);
+      }
+      return chunkSize;
+    }
+
+    private long expectedChunkCrc32(int chunkIndex) {
+      return chunkCrc32[chunkIndex];
+    }
   }
 
   /**

@@ -11,7 +11,7 @@ import pandas as pd
 
 import cudf
 from cudf.api.extensions import no_default
-from cudf.api.types import is_list_like, is_scalar
+from cudf.api.types import is_integer, is_list_like, is_scalar
 from cudf.core.column import (
     ColumnBase,
     as_column,
@@ -938,8 +938,11 @@ def get_dummies(
 
 def _pivot(
     col_accessor: ColumnAccessor,
-    index: Index | MultiIndex,
-    columns: Index | MultiIndex,
+    index_labels: Index | MultiIndex,
+    index_idx: ColumnBase,
+    columns_labels: Index | MultiIndex,
+    columns_idx: ColumnBase,
+    promote_ints_on_missing: bool = False,
 ) -> DataFrame:
     """
     Reorganize the values of the DataFrame according to the given
@@ -947,14 +950,22 @@ def _pivot(
 
     Parameters
     ----------
-    col_accessor : DataFrame
-    index : Index
-        Index labels of the result
-    columns : Index
-        Column labels of the result
+    col_accessor : ColumnAccessor
+        Values to pivot into the result's columns.
+    index_labels : Index
+        Distinct index keys; row labels of the result.
+    index_idx : ColumnBase
+        Position of each source row's key within ``index_labels``.
+    columns_labels : Index
+        Distinct column keys; labels of the result's new column level(s).
+    columns_idx : ColumnBase
+        Position of each source row's key within ``columns_labels``.
+    promote_ints_on_missing : bool
+        Promote integer source columns to float64 when the reshape
+        introduces missing cells, as pandas' unstack does. The unstack
+        and pivot paths want this; pivot_table/crosstab fill missing
+        cells afterwards and keep the integer dtype.
     """
-    columns_labels, columns_idx = columns._encode()
-    index_labels, index_idx = index._encode()
     column_labels = columns_labels.to_pandas().to_flat_index()
 
     result = {}
@@ -964,12 +975,26 @@ def _pivot(
             return x if isinstance(x, tuple) else (x,)
 
         nrows = len(index_labels)
+        promote_ints = promote_ints_on_missing and cudf.get_option(
+            "mode.pandas_compatible"
+        )
         for col_label, col in col_accessor.items():
             names = [
                 as_tuple(col_label) + as_tuple(name) for name in column_labels
             ]
             new_size = nrows * len(names)
             scatter_map = (columns_idx * np.int32(nrows)) + index_idx
+            if (
+                promote_ints
+                and new_size > len(col)
+                and isinstance(col.dtype, np.dtype)
+                and col.dtype.kind in "iu"
+            ):
+                # pandas builds one 2-D values block per source column and
+                # promotes the whole block to float64 when the reshape
+                # introduces missing entries, so even gap-free result
+                # columns become float64
+                col = col.astype(np.dtype(np.float64))
             target_col = column_empty(row_count=new_size, dtype=col.dtype)
             target_col[scatter_map] = col
             result.update(
@@ -984,14 +1009,80 @@ def _pivot(
                 )
             )
 
-    # the result of pivot always has a MultiIndex
+    # the result of pivot always has a MultiIndex; the leading level(s)
+    # come from the source frame's column labels, so preserve their names
     ca = ColumnAccessor(
         result,
         multiindex=True,
-        level_names=(None, *columns._column_names),
+        level_names=(
+            *col_accessor.level_names,
+            *columns_labels.names,
+        ),
         verify=False,
     )
     return cudf.DataFrame._from_data(ca, index=index_labels)
+
+
+def _unstack_encode_by_codes(
+    mi: MultiIndex, level
+) -> tuple[Index | MultiIndex, ColumnBase, Index | MultiIndex, ColumnBase]:
+    """Encode unstack keys ordered by the MultiIndex level codes.
+
+    libcudf's ``encode`` orders distinct keys by sorted value with nulls
+    last, but pandas' unstack orders keys by the index's level codes: the
+    level order is preserved and missing entries (code -1) come first.
+    Encoding the integer code columns instead of the level values yields
+    exactly that order.
+    """
+    lvl_idx = mi._level_index_from_level(level)
+    mi._maybe_materialize_codes_and_levels()
+    names = mi.names
+
+    def encode_side(sel: list[int]) -> tuple[Index | MultiIndex, ColumnBase]:
+        code_cols = []
+        for i in sel:
+            code = mi._codes[i].astype(np.dtype(np.int64)).copy()  # type: ignore[index]
+            # Normalize the NA sentinel (``MultiIndex.__init__`` stores
+            # ``iinfo(SIZE_TYPE_DTYPE).min``, lazy factorization stores -1)
+            # so the missing-key group encodes as one key that sorts first.
+            code[code < 0] = -1
+            code_cols.append(code)
+        code_frame = cudf.DataFrame._from_data(
+            ColumnAccessor(dict(enumerate(code_cols)), verify=False)
+        )
+        key_codes, idx = code_frame._encode()
+        labels_data = {}
+        out_levels = []
+        out_codes = []
+        for j, i in enumerate(sel):
+            kc = key_codes._columns[j].astype(np.dtype(np.int64))
+            out_levels.append(mi._levels[i])  # type: ignore[index]
+            out_codes.append(kc)
+            gather_codes = kc.copy()
+            gather_codes[gather_codes == -1] = np.iinfo(SIZE_TYPE_DTYPE).min
+            # key by position: level names may be duplicated or None
+            labels_data[j] = mi._levels[i]._column.take(  # type: ignore[index]
+                gather_codes, nullify=True
+            )
+        if len(labels_data) == 1:
+            labels: Index | MultiIndex = cudf.Index._from_column(
+                next(iter(labels_data.values())), name=names[sel[0]]
+            )
+        else:
+            mi_labels = cudf.MultiIndex._from_data(labels_data)
+            mi_labels.names = [names[i] for i in sel]
+            # carry the original level objects and the keys' codes so that
+            # a subsequent unstack/stack keeps ordering by the original
+            # levels, exactly like pandas (which reuses the level objects)
+            mi_labels._levels = out_levels
+            mi_labels._codes = out_codes
+            labels = mi_labels
+        return labels, idx
+
+    remaining = [i for i in range(mi.nlevels) if i != lvl_idx]
+    index_labels, index_idx = encode_side(remaining)
+    columns_labels, columns_idx = encode_side([lvl_idx])
+    return index_labels, index_idx, columns_labels, columns_idx
 
 
 def pivot(
@@ -1125,8 +1216,20 @@ def pivot(
     if len(columns_index) != len(columns_index.drop_duplicates()):
         raise ValueError("Duplicate index-column pairs found. Cannot reshape.")
 
+    selection = data._data.select_by_label(cols_to_select)
+    if values is not no_default:
+        # pandas rebuilds the columns axis from ``values`` and drops the
+        # original columns-axis name(s)
+        selection._level_names = (None,) * selection.nlevels
+    columns_labels, columns_idx = column_data._encode()
+    index_labels, index_idx = index_data._encode()
     result = _pivot(
-        data._data.select_by_label(cols_to_select), index_data, column_data
+        selection,
+        index_labels,
+        index_idx,
+        columns_labels,
+        columns_idx,
+        promote_ints_on_missing=True,
     )
     result._attrs = data.attrs
 
@@ -1229,6 +1332,23 @@ def unstack(df, level, fill_value=None, sort: bool = True):
           2    7
     dtype: int64
     """
+    return _unstack(df, level, fill_value=fill_value, sort=sort)
+
+
+def _unstack(
+    df,
+    level,
+    fill_value=None,
+    sort: bool = True,
+    promote_ints_on_missing: bool = True,
+):
+    """``unstack`` implementation.
+
+    ``promote_ints_on_missing`` promotes integer source columns to float64
+    when the reshape introduces missing cells, like pandas' unstack.
+    ``pivot_table`` (and thereby ``crosstab``) disables it because those fill
+    the missing cells afterwards and keep the integer dtype.
+    """
     if not isinstance(df, cudf.DataFrame):
         raise ValueError("`df` should be a cudf Dataframe object.")
 
@@ -1256,7 +1376,14 @@ def unstack(df, level, fill_value=None, sort: bool = True):
     if not is_scalar(level):
         if not level:
             return df
+        if len(level) == 1:
+            # pandas normalizes a length-1 list-like level to a scalar
+            level = level[0]
     if not isinstance(df.index, cudf.MultiIndex):
+        if not is_integer(level):
+            # pandas validates non-integer levels against the flat index
+            # name and raises KeyError on a mismatch
+            df.index._validate_index_level(level)
         dtype = df._columns[0].dtype
         if any(col_dtype != dtype for _, col_dtype in df._dtypes):
             raise ValueError(
@@ -1271,10 +1398,22 @@ def unstack(df, level, fill_value=None, sort: bool = True):
         res._attrs = df.attrs
         return res
     else:
-        index = df.index.droplevel(level)
+        from cudf.core.indexed_frame import _check_duplicate_level_names
+
+        specified = [level] if is_scalar(level) else list(level)
+        _check_duplicate_level_names(
+            [lv for lv in specified if not is_integer(lv)],
+            df.index.names,
+        )
         if is_scalar(level):
-            columns = df.index.get_level_values(level)
+            # order rows/columns by the removed level's codes (pandas
+            # semantics: level order preserved, missing entries first),
+            # not by sorted level values
+            index_labels, index_idx, columns_labels, columns_idx = (
+                _unstack_encode_by_codes(df.index, level)
+            )
         else:
+            index = df.index.droplevel(level)
             new_names = []
             ca_data = {}
             for lev in level:
@@ -1285,8 +1424,37 @@ def unstack(df, level, fill_value=None, sort: bool = True):
                 ColumnAccessor(ca_data, verify=False)
             )
             columns.names = new_names
-        result = _pivot(df, index, columns)
+            columns_labels, columns_idx = columns._encode()
+            index_labels, index_idx = index._encode()
+        result = _pivot(
+            df._data,
+            index_labels,
+            index_idx,
+            columns_labels,
+            columns_idx,
+            promote_ints_on_missing=promote_ints_on_missing,
+        )
         result._attrs = df.attrs
+        if is_scalar(level) and result._data.multiindex:
+            # pandas keeps unused categories of the removed level
+            # ("removed_level_full", pandas GH 17845) in
+            # result.columns.levels even though no columns are created
+            # for them.
+            _, level_idx = df.index._level_to_ca_label(level)
+            full_level = df.index.levels[level_idx].to_pandas()
+            pdi = result._data.to_pandas_index
+            level_values = pdi.get_level_values(-1)
+            new_codes = full_level.get_indexer(level_values)
+            # -1 codes for NA labels are pandas' canonical missing
+            # representation; only bail out when a non-NA label failed
+            # to map into the full level
+            if ((new_codes >= 0) | pd.isna(level_values)).all():
+                result._data.to_pandas_index = pd.MultiIndex(
+                    levels=[*pdi.levels[:-1], full_level],
+                    codes=[*pdi.codes[:-1], new_codes],
+                    names=pdi.names,
+                    verify_integrity=False,
+                )
         if result.index.nlevels == 1:
             result.index = result.index.get_level_values(result.index.names[0])
         return result
@@ -1600,7 +1768,13 @@ def pivot_table(
                 to_unstack.append(i)
             else:
                 to_unstack.append(name)
-        table = agged.unstack(to_unstack)
+        table = _unstack(
+            agged,
+            to_unstack,
+            # pandas keeps the integer dtype when the missing cells are
+            # filled afterwards, and promotes to float64 when they are not
+            promote_ints_on_missing=fill_value is None,
+        )
 
     if fill_value is not None:
         table = table.fillna(fill_value)

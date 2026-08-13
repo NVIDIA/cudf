@@ -44,6 +44,7 @@ Mark Adler    madler@alumni.caltech.edu
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
 #include <cuda/std/tuple>
@@ -1211,8 +1212,8 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
   // Precompute costs to avoid repeated computation during sorting
   rmm::device_uvector<double> costs(inputs.size(), stream, mr);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    thrust::make_zip_iterator(inputs.begin(), outputs.begin()),
-                    thrust::make_zip_iterator(inputs.end(), outputs.end()),
+                    cuda::make_zip_iterator(inputs.begin(), outputs.begin()),
+                    cuda::make_zip_iterator(inputs.end(), outputs.end()),
                     costs.begin(),
                     [task_type] __device__(auto const& input_output_pair) {
                       auto const& input  = cuda::std::get<0>(input_output_pair);

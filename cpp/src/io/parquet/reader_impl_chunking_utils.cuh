@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -128,7 +128,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
  * @param size_limit The size limit in bytes of the subpass
  * @param num_columns The number of columns
  * @param is_first_subpass Boolean indicating if this is the first subpass
- * @param has_page_index Boolean indicating if we have a page index
+ * @param has_offset_index Boolean indicating if offset indexes are available
  * @param stream The stream to execute cuda operations on
  * @returns A tuple containing a vector of page_span structs indicating the page indices to include
  * for each column to be processed, the total number of pages over all columns, and the total
@@ -144,7 +144,7 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
   size_t size_limit,
   size_t num_columns,
   bool is_first_subpass,
-  bool has_page_index,
+  bool has_offset_index,
   rmm::cuda_stream_view stream);
 
 /**
@@ -626,7 +626,7 @@ struct get_page_span {
   size_t const start_row;
   size_t const end_row;
   bool const is_first_subpass;
-  bool const has_page_index;
+  bool const has_offset_index;
 
   get_page_span(device_span<size_type const> _page_offsets,
                 device_span<ColumnChunkDesc const> _chunks,
@@ -634,14 +634,14 @@ struct get_page_span {
                 size_t _start_row,
                 size_t _end_row,
                 bool _is_first_subpass,
-                bool _has_page_index)
+                bool _has_offset_index)
     : page_offsets(_page_offsets),
       chunks(_chunks),
       page_row_index(_page_row_index),
       start_row(_start_row),
       end_row(_end_row),
       is_first_subpass(_is_first_subpass),
-      has_page_index(_has_page_index)
+      has_offset_index(_has_offset_index)
   {
   }
 
@@ -656,13 +656,13 @@ struct get_page_span {
     // For list columns, the row counts are estimates so we need all prefix pages to correctly
     // compute page bounds. For non-list columns, we can get an exact span of pages.
     auto start_page              = first_page_index;
-    auto const update_start_page = has_page_index or (not is_list) or (not is_first_subpass);
+    auto const update_start_page = has_offset_index or (not is_list) or (not is_first_subpass);
     if (update_start_page) {
       start_page += cuda::std::distance(
         column_page_start,
         thrust::lower_bound(thrust::seq, column_page_start, column_page_end, start_row));
     }
-    if (page_row_index[start_page] == start_row and (has_page_index or not is_list)) {
+    if (page_row_index[start_page] == start_row and (has_offset_index or not is_list)) {
       start_page++;
     }
 
@@ -787,13 +787,13 @@ struct row_group_pass_data {
  * @brief Partition row groups into passes based on compressed size, leaf value count,
  * and row count thresholds.
  *
- * @param row_groups_info Span of row group metadata
+ * @param row_group_sizes Span of row group size information
  * @param comp_read_limit Maximum compressed bytes per pass
  * @param skip_rows Number of leading rows to skip (affects the effective size of the first row
  * group)
  * @return A row_group_pass_data containing pass boundary offsets and cumulative row counts
  */
-row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info const> row_groups_info,
+row_group_pass_data compute_row_group_passes(std::span<row_group_size_info const> row_group_sizes,
                                              std::size_t comp_read_limit,
                                              int64_t skip_rows);
 

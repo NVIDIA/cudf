@@ -131,3 +131,18 @@ def test_transform_scan_lambda():
     got = gdf.groupby("key")["val"].transform(lambda x: x.cumsum())
 
     assert_eq(expect, got)
+
+
+def test_transform_singleton_groups_index():
+    # every group a singleton with sort=True: the result must still be
+    # relabeled with the original index, not the group keys
+    pdf = pd.DataFrame(
+        {"id": [3.0, 1.0, 2.0], "val": [10.0, 20.0, 30.0]},
+        index=["r0", "r1", "r2"],
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("id", sort=True)["val"].transform("mean")
+    got = gdf.groupby("id", sort=True)["val"].transform("mean")
+
+    assert_eq(expect, got)

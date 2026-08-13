@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stdint cimport uint8_t
@@ -500,7 +500,7 @@ cdef class FileMetaData:
 
         Returns
         -------
-        row_counts
+        list
             A list with the row count per row group in this file.
 
         Notes
@@ -514,6 +514,53 @@ cdef class FileMetaData:
         cdef Py_ssize_t i
         cdef Py_ssize_t n = self.c_obj.row_groups.size()
         return [self.c_obj.row_groups[i].num_rows for i in range(n)]
+
+    @property
+    def columnchunk_metadata(self):
+        """
+        Get a map of dotted column paths to lists of
+        `total_uncompressed_size` values from every column chunk in
+        this file.
+
+        Returns
+        -------
+        dict[str, list[int]]
+            Map of dotted column paths (``".".join(path_in_schema)``)
+            to lists of `total_uncompressed_size` metadata from all
+            their column chunks.
+
+        Notes
+        -----
+        Equivalent to, but faster than, walking each row group's columns:
+
+        .. code-block:: python
+
+           >>> result: dict[str, list[int]] = {}
+           >>> for rg in file_metadata.row_groups:
+           ...     for col in rg.columns:
+           ...         name = ".".join(col.meta_data.path_in_schema)
+           ...         result.setdefault(name, []).append(
+           ...             col.meta_data.total_uncompressed_size
+           ...         )
+        """
+        cdef Py_ssize_t i, j, k, n_path, n_col
+        cdef Py_ssize_t n_rg = self.c_obj.row_groups.size()
+        cdef dict result = {}
+        cdef str name
+        cdef list path_parts
+        for i in range(n_rg):
+            n_col = self.c_obj.row_groups[i].columns.size()
+            for j in range(n_col):
+                n_path = self.c_obj.row_groups[i].columns[j].meta_data.path_in_schema.size()
+                path_parts = [
+                    self.c_obj.row_groups[i].columns[j].meta_data.path_in_schema[k].decode("utf-8")
+                    for k in range(n_path)
+                ]
+                name = ".".join(path_parts)
+                result.setdefault(name, []).append(
+                    self.c_obj.row_groups[i].columns[j].meta_data.total_uncompressed_size
+                )
+        return result
 
     @classmethod
     def from_bytes(cls, const uint8_t[::1] footer_bytes):

@@ -158,7 +158,9 @@ def prefetch_parquet_file_metadata_for_ir(
     cm: contextlib.AbstractContextManager[concurrent.futures.Executor | None]
 
     if py_executor is None:
-        cm = py_executor = concurrent.futures.ThreadPoolExecutor()
+        cm = py_executor = concurrent.futures.ThreadPoolExecutor(
+            thread_name_prefix="cudf-polars-io"
+        )
     else:
         # We didn't create the executor, so we don't close it.
         cm = contextlib.nullcontext()

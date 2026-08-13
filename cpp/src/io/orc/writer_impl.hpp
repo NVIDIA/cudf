@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
@@ -23,6 +24,7 @@
 #include <cuda/iterator>
 #include <thrust/host_vector.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -97,10 +99,17 @@ struct file_segmentation {
 
 /**
  * @brief ORC per-chunk streams of encoded data.
+ *
+ * The encoded bytes of each (stripe, stream) pair occupy an aligned byte range (extent) within one
+ * of the arenas below. Streams with size that is not known in advance are written into the
+ * transient arena, which is freed as soon as gathering completes.
  */
 struct encoded_data {
-  std::vector<std::vector<rmm::device_uvector<uint8_t>>> data;  // Owning array of the encoded data
-  hostdevice_2dvector<encoder_chunk_streams> streams;  // streams of encoded data, per chunk
+  rmm::device_uvector<uint8_t> persistent_buffer;       // extents that may be read in place
+  rmm::device_uvector<uint8_t> transient_buffer;        // extents always copied out by the gather
+  rmm::device_uvector<uint8_t> gathered_buffer;         // arena for gather_stripes output
+  std::vector<std::vector<device_span<uint8_t>>> data;  // [stripe][strm_id] views
+  hostdevice_2dvector<encoder_chunk_streams> streams;   // streams of encoded data, per chunk
 };
 
 /**
@@ -169,7 +178,7 @@ struct persisted_statistics {
     num_rows = 0;
   }
 
-  void persist(int num_table_rows,
+  void persist(uint64_t num_table_rows,
                single_write_mode write_mode,
                intermediate_statistics&& intermediate_stats,
                rmm::cuda_stream_view stream);
@@ -179,7 +188,7 @@ struct persisted_statistics {
   std::vector<rmm::device_uvector<char>> string_pools;
   std::vector<statistics_dtype> stats_dtypes;
   std::vector<data_type> col_types;
-  int num_rows = 0;
+  uint64_t num_rows = 0;
 };
 
 /**

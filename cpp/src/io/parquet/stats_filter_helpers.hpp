@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -280,21 +280,22 @@ class stats_caster_base {
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
+        auto null_mask_buffer        = rmm::device_buffer{
+          null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+        stream.synchronize();
         return cudf::make_strings_column(
           val.size(),
           std::make_unique<column>(std::move(d_offsets), rmm::device_buffer{0, stream, mr}, 0),
           d_chars.release(),
           null_count,
-          rmm::device_buffer{
-            null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr});
+          std::move(null_mask_buffer));
       }
+      auto data             = cudf::detail::make_device_uvector_async(val, stream, mr);
+      auto null_mask_buffer = rmm::device_buffer{
+        null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+      stream.synchronize();
       return std::make_unique<column>(
-        dtype,
-        val.size(),
-        cudf::detail::make_device_uvector_async(val, stream, mr).release(),
-        rmm::device_buffer{
-          null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr},
-        null_count);
+        dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
     }
   };
 };

@@ -2921,7 +2921,23 @@ class IndexedFrame(Frame):
             if ignore_index:
                 out = out.reset_index(drop=True)
         else:
-            labels = sorted(self._column_names, reverse=not ascending)
+            # The column labels are host-side pandas metadata, so have
+            # pandas compute the sorted column order: a Series holding the
+            # original positions, indexed by the column labels, sorted by
+            # its index yields the positional indexer while inheriting
+            # pandas' exact level resolution and validation, per-level
+            # ascending, sort_remaining, and na_position semantics.
+            pd_columns = self._data.to_pandas_index
+            indexer = pd.Series(
+                range(len(pd_columns)), index=pd_columns
+            ).sort_index(
+                level=level,
+                ascending=ascending,
+                sort_remaining=sort_remaining,
+                na_position=na_position,
+                kind="stable",
+            )
+            labels = [self._column_names[i] for i in indexer]
             result_columns = (self._data[label] for label in labels)
             if ignore_index:
                 ca = ColumnAccessor(
@@ -4733,7 +4749,7 @@ class IndexedFrame(Frame):
                 plc.Table([col.plc_column for col in cols]),
                 mask_col.plc_column,
             )
-            return self._from_columns_like_self(
+            result = self._from_columns_like_self(
                 [
                     ColumnBase.create(col, dtype)
                     for col, dtype in zip(
@@ -4743,6 +4759,17 @@ class IndexedFrame(Frame):
                 column_names=self._column_names,
                 index_names=self.index.names if keep_index else None,
             )
+        if (
+            keep_index
+            and isinstance(self.index, MultiIndex)
+            and self.index._levels is not None
+        ):
+            result.index._levels = self.index._levels
+            result.index._codes = [
+                code.apply_boolean_mask(boolean_mask.column)
+                for code in self.index._codes
+            ]
+        return result
 
     def _pandas_repr_compatible(self, nan_rep=None) -> Self:
         """Return Self but with columns prepared for a pandas-like repr."""

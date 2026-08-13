@@ -54,6 +54,7 @@ __all__ = [
     "DaskContext",
     "DynamicPlanningOptions",
     "InMemoryExecutor",
+    "JoinFilterPushdownOptions",
     "ParquetOptions",
     "RayContext",
     "SPMDContext",
@@ -170,16 +171,6 @@ def _bool_converter(v: str) -> bool:
         raise ValueError(f"Invalid boolean value: '{v}'")
 
 
-def _optional_converter(v: str, parse: Callable[[str], T]) -> T | None:
-    if v.lower() in {"none", "null"}:
-        return None
-    return parse(v)
-
-
-def _optional_int_converter(v: str) -> int | None:
-    return _optional_converter(v, int)
-
-
 def _quent_context_converter(v: str) -> QuentContext | None:
     from cudf_polars.quent._context import QuentContext
 
@@ -228,10 +219,6 @@ class ParquetOptions:
 
         Set to 0 to avoid row-group sampling. Note that row-group sampling
         will also be skipped if ``max_footer_samples`` is 0.
-    use_rapidsmpf_native
-        Whether to use the native rapidsmpf node for parquet reading.
-        This option is only used by the streaming executor.
-        Default is False.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
         `parquet_metadatas` to avoid rereading file footers.
@@ -274,13 +261,6 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    use_rapidsmpf_native: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__USE_RAPIDSMPF_NATIVE",
-            _bool_converter,
-            default=False,
-        )
-    )
     prefetch_file_metadata: bool = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__PREFETCH_FILE_METADATA",
@@ -309,15 +289,8 @@ class ParquetOptions:
             raise TypeError("max_footer_samples must be an int")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.use_rapidsmpf_native, bool):
-            raise TypeError("use_rapidsmpf_native must be a bool")
         if not isinstance(self.prefetch_file_metadata, bool):
             raise TypeError("prefetch_file_metadata must be a bool")
-
-        if self.use_rapidsmpf_native and self.prefetch_file_metadata:
-            raise NotImplementedError(
-                "'use_rapidsmpf_native=True' does not currently support 'prefetch_file_metadata=True'"
-            )
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -361,15 +334,6 @@ class DynamicPlanningOptions:
     sample_chunk_count
         The maximum number of chunks to sample before making
         dynamic-planning decisions. Default is 2.
-    join_prefilter_threshold
-        Row-count ratio (small / large) below which a join key prefilter is
-        applied. Set to 0 to disable join prefiltering. Default is 0.5.
-    join_prefilter_max_key_columns
-        Maximum number of columns from the join-key prefix to use for the
-        prefilter. Set to ``None`` to use the full join-key list. Default is 1.
-    join_prefilter_trace
-        Whether to collect input/output row counts around applied join
-        prefilters. Default is False.
     """
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
@@ -379,53 +343,65 @@ class DynamicPlanningOptions:
             f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
         )
     )
-    join_prefilter_threshold: float = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_THRESHOLD",
-            float,
-            default=0.5,
-        )
-    )
-    join_prefilter_max_key_columns: int | None = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-            _optional_int_converter,
-            default=1,
-        )
-    )
-    join_prefilter_trace: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_TRACE",
-            _bool_converter,
-            default=False,
-        )
-    )
 
     def __post_init__(self) -> None:  # noqa: D105
         if not isinstance(self.sample_chunk_count, int):
             raise TypeError("sample_chunk_count must be an int")
         if self.sample_chunk_count < 1:
             raise ValueError("sample_chunk_count must be at least 1")
-        join_prefilter_threshold = self.join_prefilter_threshold
-        if isinstance(join_prefilter_threshold, bool) or not isinstance(
-            join_prefilter_threshold, (int, float)
-        ):
-            raise TypeError("join_prefilter_threshold must be a float or int")
-        join_prefilter_threshold = float(join_prefilter_threshold)
-        object.__setattr__(self, "join_prefilter_threshold", join_prefilter_threshold)
-        if not 0.0 <= join_prefilter_threshold <= 1.0:
-            raise ValueError("join_prefilter_threshold must be between 0 and 1")
-        if self.join_prefilter_max_key_columns is not None:
-            if isinstance(self.join_prefilter_max_key_columns, bool) or not isinstance(
-                self.join_prefilter_max_key_columns, int
-            ):
-                raise TypeError("join_prefilter_max_key_columns must be an int or None")
-            if self.join_prefilter_max_key_columns < 1:
-                raise ValueError(
-                    "join_prefilter_max_key_columns must be at least 1 or None"
-                )
-        if not isinstance(self.join_prefilter_trace, bool):
-            raise TypeError("join_prefilter_trace must be a bool")
+
+
+@dataclasses.dataclass(frozen=True)
+class JoinFilterPushdownOptions:
+    """
+    Configuration options for join filter pushdown in the logical plan.
+
+    When performing a join between two tables, it is often favourable
+    to pre-filter one side of the join with the keys (full or partial) of
+    the other side. This can reduce the size of tables that actually
+    participate in the join.
+
+    cudf-polars supports a form of this where we can rewrite inner joins by
+    selecting a side to be filtered by the keys of the other side.
+
+    Pass ``None`` to ``StreamingExecutor(join_filter_pushdown=...)`` to
+    disable the rewrite.
+
+    These options can be configured via environment variables with the prefix
+    ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__``.
+
+    Parameters
+    ----------
+    threshold
+        Row-count ratio (key-provider-rows / to-be-filtered-table-rows) below which a
+        filter on is inserted on the to-be-filtered table. Default is 0.5.
+    trace
+        Whether to emit plan-time trace decisions for filter decisions. Default is False.
+    """
+
+    _env_prefix = "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN"
+
+    threshold: float = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__THRESHOLD", float, default=0.5
+        )
+    )
+    trace: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__TRACE", _bool_converter, default=False
+        )
+    )
+
+    def __post_init__(self) -> None:  # noqa: D105
+        threshold = self.threshold
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+            raise TypeError("threshold must be a float or int")
+        threshold = float(threshold)
+        object.__setattr__(self, "threshold", threshold)
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("threshold must be between 0 and 1")
+        if not isinstance(self.trace, bool):
+            raise TypeError("trace must be a bool")
 
 
 @dataclasses.dataclass(frozen=True, eq=True)
@@ -672,7 +648,7 @@ class StreamingExecutor:
 
         This can be set via
 
-        - keyword argument to ``polars.GPUEngine``
+        - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`` environment variable
 
         By default, cudf-polars uses the minimum of 1.5GB or 2.5% of the minimum
@@ -693,14 +669,19 @@ class StreamingExecutor:
     dynamic_planning
         Options controlling dynamic shuffle planning. See
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
-    max_io_threads
-        Maximum number of IO threads. Default is 4.
-        This controls the parallelism of IO operations when reading data.
-    spill_to_pinned_memory
-        Whether RapidsMPF should spill to pinned host memory when available,
-        or use regular pageable host memory. Pinned host memory offers higher
-        bandwidth and lower latency for device to host transfers compared to
-        regular pageable host memory.
+    join_filter_pushdown
+        Options controlling the logical join-domain prefilter rewrite. See
+        :class:`~cudf_polars.utils.config.JoinFilterPushdownOptions` for more.
+        ``None`` disables the rewrite.
+
+        Enable through environment variables with
+        ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
+    max_concurrent_io_tasks
+        Maximum number of concurrent IO tasks for each scan node. Default is 2.
+        This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment variable
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
@@ -762,14 +743,12 @@ class StreamingExecutor:
     dynamic_planning: DynamicPlanningOptions | None = dataclasses.field(
         default_factory=DynamicPlanningOptions
     )
-    max_io_threads: int = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_IO_THREADS", int, default=4
-        )
+    join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
+        default_factory=JoinFilterPushdownOptions
     )
-    spill_to_pinned_memory: bool = dataclasses.field(
+    max_concurrent_io_tasks: int = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__SPILL_TO_PINNED_MEMORY", bool, default=False
+            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS", int, default=2
         )
     )
     num_py_executors: int = dataclasses.field(
@@ -823,6 +802,20 @@ class StreamingExecutor:
                 DynamicPlanningOptions(**self.dynamic_planning),
             )
 
+        if isinstance(self.join_filter_pushdown, dict):
+            object.__setattr__(
+                self,
+                "join_filter_pushdown",
+                JoinFilterPushdownOptions(**self.join_filter_pushdown),
+            )
+        if self.join_filter_pushdown is not None and not isinstance(
+            self.join_filter_pushdown, JoinFilterPushdownOptions
+        ):
+            raise TypeError(
+                "join_filter_pushdown must be a JoinFilterPushdownOptions "
+                "instance, dict, or None"
+            )
+
         if self.cluster in ("spmd", "ray", "dask"):
             if self.sink_to_directory is False:
                 raise ValueError(
@@ -843,10 +836,8 @@ class StreamingExecutor:
             raise TypeError("sink_to_directory must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
-        if not isinstance(self.max_io_threads, int):
-            raise TypeError("max_io_threads must be an int")
-        if not isinstance(self.spill_to_pinned_memory, bool):
-            raise TypeError("spill_to_pinned_memory must be bool")
+        if not isinstance(self.max_concurrent_io_tasks, int):
+            raise TypeError("max_concurrent_io_tasks must be an int")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
 
@@ -855,6 +846,7 @@ class StreamingExecutor:
         # to json and hash that.
         d = dataclasses.asdict(self)
         d["dynamic_planning"] = json.dumps(d["dynamic_planning"])
+        d["join_filter_pushdown"] = json.dumps(d["join_filter_pushdown"])
 
         # Hash the quent context UUIDs as ints
         quent_context = d["quent_context"]
@@ -1018,6 +1010,17 @@ class ConfigOptions(Generic[ExecutorType]):
                     )
                     if not _bool_converter(env_dynamic_planning):
                         user_executor_options["dynamic_planning"] = None
+
+                # Handle join_filter_pushdown: check user config, then env var
+                user_join_filter_pushdown = user_executor_options.get(
+                    "join_filter_pushdown", None
+                )
+                if user_join_filter_pushdown is None:
+                    env_join_filter_pushdown = os.environ.get(
+                        "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "0"
+                    )
+                    if not _bool_converter(env_join_filter_pushdown):
+                        user_executor_options["join_filter_pushdown"] = None
 
                 executor = StreamingExecutor(**user_executor_options)
             case _:  # pragma: no cover; Unreachable

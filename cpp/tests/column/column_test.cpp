@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,16 +35,16 @@ template <typename T>
 struct TypedColumnTest : public cudf::test::BaseFixture {
   cudf::data_type type() { return cudf::data_type{cudf::type_to_id<T>()}; }
 
-  TypedColumnTest(rmm::cuda_stream_view stream = cudf::get_default_stream())
+  TypedColumnTest(cuda::stream_ref stream = cudf::get_default_stream())
     : data{_num_elements * sizeof(T), stream},
       mask{cudf::bitmask_allocation_size_bytes(_num_elements), stream}
   {
     std::vector<char> h_data(std::max(data.size(), mask.size()));
     std::iota(h_data.begin(), h_data.end(), 0);
     CUDF_CUDA_TRY(
-      cudaMemcpyAsync(data.data(), h_data.data(), data.size(), cudaMemcpyDefault, stream.value()));
+      cudaMemcpyAsync(data.data(), h_data.data(), data.size(), cudaMemcpyDefault, stream.get()));
     CUDF_CUDA_TRY(
-      cudaMemcpyAsync(mask.data(), h_data.data(), mask.size(), cudaMemcpyDefault, stream.value()));
+      cudaMemcpyAsync(mask.data(), h_data.data(), mask.size(), cudaMemcpyDefault, stream.get()));
   }
 
   cudf::size_type num_elements() { return _num_elements; }

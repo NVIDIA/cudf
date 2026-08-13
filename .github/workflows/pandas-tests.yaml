@@ -22,22 +22,22 @@ permissions: {}
 
 jobs:
   pandas-tests:
-      # run the Pandas unit tests
-      permissions:
-        actions: read
-        contents: read
-        id-token: write
-        packages: read
-        pull-requests: read
-      secrets: inherit # zizmor: ignore[secrets-inherit]
-      uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-      with:
-        build_type: nightly
-        branch: ${{ inputs.branch }}
-        date: ${{ inputs.date }}
-        sha: ${{ inputs.sha }}
-        node_type: "gpu-l4-latest-1"
-        container_image: "rapidsai/citestwheel:26.10-latest"
-        script: ci/cudf_pandas_scripts/pandas-tests/run.sh main
-        file_to_upload: ./main-results.json
-        artifact-name: main-results.json
+    # run the Pandas unit tests
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: nightly
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "gpu-l4-latest-1"
+      container_image: "rapidsai/citestwheel:26.10-latest"
+      script: ci/cudf_pandas_scripts/pandas-tests/run.sh main
+      file_to_upload: ./main-results.json
+      artifact-name: main-results.json

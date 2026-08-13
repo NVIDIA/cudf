@@ -197,7 +197,7 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
 }
 
 std::unique_ptr<column> remove_duplicate_keys(dictionary_column_view const& input,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   if (input.size() == 0) { return std::make_unique<column>(input.parent(), stream, mr); }
@@ -235,7 +235,7 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
 }
 
 std::unique_ptr<column> remove_duplicate_keys(dictionary_column_view const& dictionary_column,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

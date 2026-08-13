@@ -63,11 +63,9 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column
 /**
  * @copydoc cudf::dictionary::remove_duplicate_keys(dictionary_column_view
  * const&,rmm::device_async_resource_ref)
- *
- * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> remove_duplicate_keys(dictionary_column_view const& dictionary_column,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr);
 
 /**

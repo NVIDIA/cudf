@@ -169,7 +169,7 @@ std::unique_ptr<column> set_keys(
  */
 std::unique_ptr<column> remove_duplicate_keys(
   dictionary_column_view const& dictionary_column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

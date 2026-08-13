@@ -67,7 +67,7 @@ from .utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 from functools import singledispatch
 from ._interop_helpers import ArrowLike, ColumnMetadata
 

@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing_extensions import Buffer
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.span import is_span
 from pylibcudf.io.parquet_metadata import FileMetaData

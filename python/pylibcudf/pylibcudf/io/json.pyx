@@ -51,7 +51,7 @@ from pylibcudf.utils cimport _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 
 from cython.operator import dereference
 

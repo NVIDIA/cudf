@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Mapping
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
 from libcpp.utility cimport move
@@ -16,7 +15,7 @@ from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -51,7 +50,7 @@ cdef vector[pair[char_utf8, char_utf8]] _table_to_c_table(dict table):
 
 cpdef Column translate(
     Column input,
-    dict chars_table: Mapping[int | str, int | str],
+    dict chars_table: dict[int | str, int | str],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -95,7 +94,7 @@ cpdef Column translate(
 
 cpdef Column filter_characters(
     Column input,
-    dict characters_to_filter: Mapping[int | str, int | str],
+    dict characters_to_filter: dict[int | str, int | str],
     filter_type keep_characters,
     Scalar replacement,
     object stream: CudaStreamLike | None = None,

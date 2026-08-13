@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pylibcudf.replace import ReplacePolicy
     from pylibcudf.scalar import Scalar
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 
 
 __all__ = ["GroupBy", "GroupByRequest"]

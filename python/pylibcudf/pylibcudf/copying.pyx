@@ -43,7 +43,7 @@ from .utils cimport _as_vector, _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 

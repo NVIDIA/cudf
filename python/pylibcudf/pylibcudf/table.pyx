@@ -38,7 +38,7 @@ from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 from pylibcudf._interop_helpers cimport (
     _release_schema,
     _release_array,

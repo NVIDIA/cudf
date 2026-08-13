@@ -59,7 +59,7 @@ from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 
 
 __all__ = [
@@ -730,7 +730,10 @@ cdef class OrcChunkedWriter:
             self.c_obj.get()[0].write(c_table)
 
     @staticmethod
-    def from_options(ChunkedOrcWriterOptions options, object stream: CudaStreamLike | None = None):
+    def from_options(
+        ChunkedOrcWriterOptions options,
+        object stream: CudaStreamLike | None = None,
+    ) -> OrcChunkedWriter:
         """
         Creates a chunked ORC writer from options
 

@@ -59,16 +59,20 @@ from .traits cimport (
 from .types cimport DataType, size_of, type_id
 from pylibcudf.types import TypeId
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.typing import (
+    ArrayInterfaceBase,
+    SupportsArrayInterface,
+    SupportsCudaArrayInterface,
+)
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 
 from .gpumemoryview import _datatype_from_dtype_desc
 from ._interop_helpers import ArrowLike, ColumnMetadata, _ObjectWithArrowMetadata
 
 from itertools import accumulate
-from typing import Iterable, Protocol, TypedDict
 import array
 import functools
 import operator
@@ -82,24 +86,15 @@ except ImportError as e:
     pa_err = e
 
 
-__all__ = ["Column", "ListsColumnView", "StructsColumnView", "is_c_contiguous"]
-
-
-class ArrayInterfaceBase(TypedDict):
-    data: tuple[int, bool]
-    shape: tuple[int, ...]
-    typestr: str
-    version: int
-
-
-class SupportsCudaArrayInterface(Protocol):
-    @property
-    def __cuda_array_interface__(self) -> ArrayInterfaceBase: ...
-
-
-class SupportsArrayInterface(Protocol):
-    @property
-    def __array_interface__(self) -> ArrayInterfaceBase: ...
+__all__ = [
+    "ArrayInterfaceBase",
+    "Column",
+    "ListsColumnView",
+    "StructsColumnView",
+    "SupportsArrayInterface",
+    "SupportsCudaArrayInterface",
+    "is_c_contiguous",
+]
 
 
 cdef is_iterable(obj):

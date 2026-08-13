@@ -20,14 +20,7 @@ from rmm.pylibrmm.stream import DEFAULT_STREAM, PER_THREAD_DEFAULT_STREAM, Strea
 
 
 import os
-from typing import Protocol
-
-
-class HasCudaStream(Protocol):
-    def __cuda_stream__(self) -> object: ...
-
-
-CudaStreamLike = Stream | HasCudaStream
+from pylibcudf.typing import CudaStreamLike
 
 
 # Check the environment for the variable CUDF_PER_THREAD_STREAM. If it is set,

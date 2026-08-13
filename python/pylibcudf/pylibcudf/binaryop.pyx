@@ -25,7 +25,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 
 __all__ = ["BinaryOperator", "binary_operation", "is_supported_operation"]
 

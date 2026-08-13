@@ -54,7 +54,7 @@ from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pylibcudf.utils import CudaStreamLike
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -686,7 +686,7 @@ cdef class ChunkedParquetReader:
         return TableWithMetadata.from_libcudf(c_result, self._stream, mr)
 
 
-cpdef read_parquet(
+cpdef TableWithMetadata read_parquet(
     ParquetReaderOptions options,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -789,7 +789,10 @@ cdef class ChunkedParquetWriter:
             self.c_obj.get()[0].write(c_table, partitions)
 
     @staticmethod
-    def from_options(ChunkedParquetWriterOptions options, object stream: CudaStreamLike | None = None):
+    def from_options(
+        ChunkedParquetWriterOptions options,
+        object stream: CudaStreamLike | None = None,
+    ) -> ChunkedParquetWriter:
         """
         Creates a chunked Parquet writer from options
 

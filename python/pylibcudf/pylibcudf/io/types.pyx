@@ -688,9 +688,9 @@ cdef class SinkInfo:
     def __init__(
         self,
         list sinks: (
-            Sequence[str]
-            | Sequence[os.PathLike[Any]]
-            | Sequence[io.IOBase]
+            list[str]
+            | list[os.PathLike[Any]]
+            | list[io.IOBase]
         ),
     ):
         cdef vector[data_sink *] data_sinks

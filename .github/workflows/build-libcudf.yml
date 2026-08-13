@@ -1,0 +1,223 @@
+name: build-libcudf
+
+on:
+  pull_request: # build + test, no upload
+  push:
+    branches:
+      - main
+      - "release/**" # build + test + upload
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'SHA or tag to build (leave empty for branch HEAD)'
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # cancel existing runs on PRs but run on all `dev` and merge queue commits
+
+jobs:
+  setup:
+    runs-on: ubuntu-slim
+    outputs:
+      cuda-matrix: ${{ steps.set.outputs.cuda-matrix }}
+    steps:
+      - id: set
+        run: |
+          # CUDA versions should match the major.minor versions used in RAPIDS releases
+          # check https://github.com/rapidsai/cudf/actions/workflows/build.yaml find a release then see the values
+          # of the matrix under `cpp-build`
+          # if gpu-t4 runners are only registered with one runner_os, adjust runner_os values to match
+          echo 'cuda-matrix=[
+            {"version":"13.1","runner_os":"ubuntu-24.04"},
+            {"version":"12.9","runner_os":"ubuntu-22.04"}
+          ]' >> $GITHUB_OUTPUT
+
+  build:
+    name: build / cuda${{ matrix.cuda.version }} / ${{ matrix.arch.platform }}
+    needs: [setup]
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ${{ fromJSON(needs.setup.outputs.cuda-matrix) }}
+        arch:
+          - platform: linux-64
+            runner_label: cpu-xl
+          - platform: linux-aarch64
+            runner_label: arm-xl
+
+    runs-on: ${{ fromJSON(format('["self-hosted", "{0}", "{1}"]', matrix.cuda.runner_os, matrix.arch.runner_label)) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: latest
+          auth-host: prefix.dev
+          auth-token: "${{ secrets.PREFIX_DEV_TOKEN }}"
+          run-install: false
+
+      - name: Install rattler-build
+        run: pixi global install 'rattler-build>=0.55.0,<0.58' # rattler-build version matches RAPIDS - https://github.com/rapidsai/ci-imgs/blob/main/ci-conda.Dockerfile#L240
+
+      - name: Set PARALLEL_LEVEL
+        run: echo "PARALLEL_LEVEL=$(python3 -c 'import os; print(max(1, int(os.cpu_count() * 0.9)))')" >> $GITHUB_ENV
+
+      - name: Set RAPIDS_PACKAGE_VERSION and RAPIDS_DATE_STRING
+        run: |
+          echo "RAPIDS_PACKAGE_VERSION=$(cat VERSION | sed 's/\.00$/.0/')" >> $GITHUB_ENV
+          echo "RAPIDS_DATE_STRING=$(date +%y%m%d)" >> $GITHUB_ENV
+
+      - name: Configure sccache backend
+        run: |
+          if [[ -n "${SCCACHE_BUCKET}" ]]; then
+            echo "SCCACHE_BUCKET DEFINED -> Self Hosted Runner, Disable GHA sccache"
+            echo "SCCACHE_GHA_ENABLED=false" >> $GITHUB_ENV
+          else
+            echo "SCCACHE_BUCKET UNDEFINED -> GitHub Runner, Enable GHA sccache"
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          fi
+          # set prefix to not clobber sirius-db/sirius cache
+          echo "SCCACHE_S3_KEY_PREFIX=libcudf" >> $GITHUB_ENV
+
+      - name: Start sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Build libcudf
+        env:
+          # env vars from https://github.com/rapidsai/cudf/blob/main/conda/recipes/libcudf/recipe.yaml
+          CMAKE_C_COMPILER_LAUNCHER: "sccache"
+          CMAKE_CUDA_COMPILER_LAUNCHER: "sccache"
+          CMAKE_CXX_COMPILER_LAUNCHER: "sccache"
+          CMAKE_GENERATOR: "Ninja"
+          CONDA_OVERRIDE_CUDA: "${{ matrix.cuda.version }}"
+          PARALLEL_LEVEL: "${{ env.PARALLEL_LEVEL }}"
+          RAPIDS_CONDA_ARCH: "${{ matrix.arch.platform == 'linux-64' && 'linux_64' || 'linux_aarch64' }}"
+          RAPIDS_CUDA_VERSION: "${{ matrix.cuda.version }}"
+          RAPIDS_DATE_STRING: "${{ env.RAPIDS_DATE_STRING }}"
+          RAPIDS_PACKAGE_VERSION: "${{ env.RAPIDS_PACKAGE_VERSION }}"
+        run: |
+          # flags from https://github.com/rapidsai/gha-tools/blob/main/tools/rapids-rattler-channel-string
+          rattler-build build \
+            --recipe conda/recipes/libcudf/recipe.yaml \
+            --target-platform ${{ matrix.arch.platform }} \
+            --experimental \
+            --no-build-id \
+            --channel-priority strict \
+            -c rapidsai \
+            -c conda-forge \
+            --output-dir output/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcudf-${{ matrix.arch.platform }}-cuda${{ matrix.cuda.version }}
+          path: output/
+          if-no-files-found: error
+          retention-days: 3
+
+  test:
+    name: test / cuda${{ matrix.cuda.version }} / linux-64
+    needs: [build, setup]
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ${{ fromJSON(needs.setup.outputs.cuda-matrix) }} # gpu-t4 is amd64-only; aarch64 builds ship untested
+    runs-on: ${{ fromJSON(format('["self-hosted", "{0}", "gpu-t4"]', matrix.cuda.runner_os)) }}
+    timeout-minutes: 60
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: libcudf-linux-64-cuda${{ matrix.cuda.version }}
+          path: output/
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: latest
+          run-install: false
+
+      - name: Install micromamba
+        run: pixi global install micromamba
+
+      - name: Install libcudf-tests
+        run: |
+          micromamba create -n libcudf-test -y \
+            --channel "file://$(pwd)/output" \
+            --channel rapidsai \
+            --channel conda-forge \
+            libcudf-tests
+
+      - name: Run tests
+        run: |
+          nvidia-smi
+          micromamba run -n libcudf-test bash -c '
+            set -eo pipefail
+            for test_bin in $CONDA_PREFIX/bin/gtests/libcudf/*; do
+              echo "=== $(basename $test_bin) ==="
+              timeout 30m "$test_bin" 2>&1 | tee /tmp/test-$(basename $test_bin).log
+            done
+          '
+
+      - name: Surface test failures
+        if: failure()
+        run: |
+          echo '## Test failures' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -h 'FAILED' /tmp/test-*.log | head -60 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  upload:
+    name: upload / cuda${{ matrix.cuda.version }} / ${{ matrix.arch.platform }}
+    needs: [setup, test]
+    if: |
+      needs.test.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.ref == 'refs/heads/main' ||
+       startsWith(github.ref, 'refs/heads/release/'))
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ${{ fromJSON(needs.setup.outputs.cuda-matrix) }}
+        arch:
+          - platform: linux-64
+          - platform: linux-aarch64
+    runs-on: ubuntu-slim
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: libcudf-${{ matrix.arch.platform }}-cuda${{ matrix.cuda.version }}
+          path: output/
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: latest
+          auth-host: prefix.dev
+          auth-token: "${{ secrets.PREFIX_DEV_TOKEN }}"
+          run-install: false
+
+      - name: Install rattler-build
+        run: pixi global install 'rattler-build>=0.55.0,<0.58'
+
+      - name: Upload to prefix.dev
+        run: |
+          rattler-build upload prefix \
+            --channel sirius-db/libcudf \
+            output/
+
+  libcudf:
+    runs-on: ubuntu-slim
+    needs: [setup, build, test]
+    if: always()
+    steps:
+      - name: Check build matrix status
+        if: needs.setup.result != 'success' || needs.build.result != 'success' || needs.test.result != 'success'
+        run: exit 1

@@ -59,11 +59,7 @@ from .traits cimport (
 from .types cimport DataType, size_of, type_id
 from pylibcudf.types import TypeId
 from .utils cimport _get_stream, _get_memory_resource
-from pylibcudf.typing import (
-    ArrayInterfaceBase,
-    SupportsArrayInterface,
-    SupportsCudaArrayInterface,
-)
+from pylibcudf.typing import SupportsArrayInterface, SupportsCudaArrayInterface
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -87,12 +83,9 @@ except ImportError as e:
 
 
 __all__ = [
-    "ArrayInterfaceBase",
     "Column",
     "ListsColumnView",
     "StructsColumnView",
-    "SupportsArrayInterface",
-    "SupportsCudaArrayInterface",
     "is_c_contiguous",
 ]
 

@@ -4,6 +4,7 @@
 from libc.stddef cimport size_t
 from libc.stdint cimport uintptr_t, uint64_t
 from collections.abc import Mapping
+import cython
 import functools
 import operator
 from typing import Any
@@ -100,6 +101,7 @@ cdef class gpumemoryview:
     def __len__(self) -> int:
         return self.cai["shape"][0]
 
+    @cython.annotation_typing(False)
     def byte_slice(self, s: slice) -> gpumemoryview:
         """Return a byte-range sub-view of this buffer.
 

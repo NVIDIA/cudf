@@ -121,7 +121,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _nulls_equal{compare_nulls},
     _impl{std::make_unique<impl>(impl{typename impl::hash_table_t{
       cuco::extent{static_cast<size_t>(right.num_rows())},
-      load_factor,
+      checked_load_factor(load_factor),
       cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(), cudf::JoinNoMatch}},
       {},
       {},
@@ -134,10 +134,6 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
-  CUDF_EXPECTS(load_factor > 0 && load_factor <= 1,
-               "Invalid load factor: must be greater than 0 and less than or equal to 1.",
-               std::invalid_argument);
-
   if (_is_empty) { return; }
 
   auto const row_bitmask =

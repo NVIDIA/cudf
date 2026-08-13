@@ -301,7 +301,7 @@ repos:
           )
       - id: verify-alpha-spec
       - id: verify-codeowners
-        args: [--fix, --project-prefix=cudf]
+        args: [--fix, --org=NVIDIA, --project-prefix=cudf]
       - id: verify-hardcoded-version
         exclude: |
           (?x)
@@ -331,6 +331,18 @@ repos:
     hooks:
       - id: shellcheck
         args: ["--severity=warning"]
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        additional_dependencies: [pyyaml]
+        exclude: |
+          (?x)^(
+            [.]clang-format$|
+            [.]github/labeler[.]yml$|
+            conda/environments/.*|
+            cpp/[.]clang-tidy$
+          )
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: v1.27.0
     hooks:
@@ -378,4 +390,4 @@ repos:
           ]
 
 default_language_version:
-      python: python3
+  python: python3

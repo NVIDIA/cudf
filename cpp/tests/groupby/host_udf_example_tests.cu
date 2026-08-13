@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,6 @@
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 using doubles_col = cudf::test::fixed_width_column_wrapper<double>;
@@ -104,7 +103,7 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
         rmm::exec_policy_nosync(stream),
         cuda::counting_iterator<cudf::size_type>{0},
         cuda::counting_iterator{num_groups},
-        thrust::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),
+        cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),
         transform_fn{*values_dv_ptr,
                      offsets,
                      group_indices,

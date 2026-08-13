@@ -261,10 +261,8 @@ std::unique_ptr<table> sort_groupby_helper::unique_keys(rmm::cuda_stream_view st
                     gather_map.begin(),
                     [idx_data] __device__(size_type i) -> size_type { return idx_data[i]; });
 
-  auto const gather_map_view =
-    column_view{data_type{type_to_id<size_type>()}, num_unique_keys, gather_map.data(), nullptr, 0};
   return cudf::detail::gather(_keys,
-                              gather_map_view,
+                              gather_map,
                               out_of_bounds_policy::DONT_CHECK,
                               negative_index_policy::NOT_ALLOWED,
                               stream,

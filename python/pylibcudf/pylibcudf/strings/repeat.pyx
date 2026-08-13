@@ -12,6 +12,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from ..utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["repeat_strings"]
@@ -19,7 +23,7 @@ __all__ = ["repeat_strings"]
 cpdef Column repeat_strings(
     Column input,
     ColumnorSizeType repeat_times,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

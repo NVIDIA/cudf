@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,7 +24,6 @@
 #include <cuda/iterator>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/permutation_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -98,7 +97,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
   std::vector<std::unique_ptr<column>> results(groups);
   auto make_strings_lambda = [&](size_type column_index) {
     // this iterator transposes the extract results into column order
-    auto indices_itr = thrust::make_permutation_iterator(
+    auto indices_itr = cuda::make_permutation_iterator(
       indices.begin(),
       cudf::detail::make_counting_transform_iterator(
         0, cuda::proclaim_return_type<size_type>([column_index, groups] __device__(size_type idx) {

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -80,6 +80,25 @@ def test_from_cuda_array_interface(
     res = plc.Column.from_cuda_array_interface(iface_obj)
 
     assert_column_eq(input_column, res)
+
+
+def test_cuda_array_interface_with_mask_raises():
+    class CudaArrayInterfaceWithMask:
+        @property
+        def __cuda_array_interface__(self):
+            return {
+                "data": (0, False),
+                "shape": (1,),
+                "typestr": "<i4",
+                "version": 3,
+                "mask": object(),
+            }
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Masked array-interface inputs are not supported",
+    ):
+        plc.Column.from_cuda_array_interface(CudaArrayInterfaceWithMask())
 
 
 def test_from_rmm_buffer():

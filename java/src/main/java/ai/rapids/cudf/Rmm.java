@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
@@ -693,6 +693,9 @@ public class Rmm {
   private static native void setCurrentDeviceResourceInternal(long newHandle);
 
   public static native long newPinnedPoolMemoryResource(long initSize, long maxSize);
+
+  static native long newParallelPinnedPoolMemoryResource(
+      long poolSize, int initializationThreads);
 
   public static native long setCudfPinnedPoolMemoryResource(long poolPtr);
 

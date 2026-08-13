@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <vector>
 
@@ -130,6 +132,22 @@ std::vector<cudf::groupby::streaming_aggregation_request> single_agg_req(
 }  // namespace
 
 struct StreamingGroupbyTest : public cudf::test::BaseFixture {};
+
+TEST_F(StreamingGroupbyTest, MemoryResource)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{1, 2, 3, 1};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{10, 20, 30, 40};
+  cudf::table_view batch{{keys, values}};
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  auto mr   = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+
+  cudf::groupby::streaming_groupby streaming_agg(
+    KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::EXCLUDE, mr);
+  streaming_agg.aggregate(batch);
+
+  EXPECT_GT(mr.get_bytes_counter().peak, 0);
+}
 
 TEST_F(StreamingGroupbyTest, SumTwoBatches)
 {

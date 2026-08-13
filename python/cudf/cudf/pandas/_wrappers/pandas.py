@@ -536,6 +536,7 @@ SparseDtype = make_final_proxy_type(
     pd.SparseDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -606,6 +607,7 @@ CategoricalDtype = make_final_proxy_type(
     pd.CategoricalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -653,6 +655,7 @@ DatetimeTZDtype = make_final_proxy_type(
     pd.DatetimeTZDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
@@ -769,6 +772,7 @@ PeriodDtype = make_final_proxy_type(
     pd.PeriodDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -895,6 +899,7 @@ StringDtype = make_final_proxy_type(
     pd.StringDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "storage": _FastSlowAttribute("storage"),
@@ -1104,6 +1109,7 @@ IntervalDtype = make_final_proxy_type(
     pd.IntervalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         # ``_closed`` is a pandas-private attribute; source it from the slow

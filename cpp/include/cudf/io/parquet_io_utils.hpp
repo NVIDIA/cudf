@@ -17,6 +17,7 @@
 #include <future>
 #include <span>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 /**
@@ -148,6 +149,48 @@ std::tuple<std::vector<rmm::device_buffer>,
 fetch_byte_ranges_to_device_async(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<std::vector<byte_range_info> const> byte_ranges_per_source,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Fetches Parquet bloom filter bitsets from a datasource into device buffers
+ *
+ * @ingroup io_utils
+ *
+ * @param datasource Input datasource
+ * @param bloom_filter_byte_ranges Byte ranges of complete bloom filters to fetch, must span a
+ * complete bloom filter
+ * @param stream CUDA stream
+ * @param mr Device memory resource used to allocate the returned device buffers
+ *
+ * @return A pair containing buffers that own the fetched bitsets and one device span per input byte
+ * range
+ */
+std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
+                              cudf::host_span<byte_range_info const> bloom_filter_byte_ranges,
+                              rmm::cuda_stream_view stream,
+                              rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Fetches Parquet bloom filter bitsets from multiple datasources into device buffers
+ *
+ * @ingroup io_utils
+ *
+ * @param datasources Input datasources
+ * @param bloom_filter_byte_ranges_per_source Byte ranges of complete bloom filters to fetch, one
+ * vector per datasource. Each byte range must span a complete bloom filter.
+ * @param stream CUDA stream
+ * @param mr Device memory resource used to allocate the returned device buffers
+ *
+ * @return A pair containing buffers that own the fetched bitsets and per-source device spans, with
+ * one inner vector per datasource
+ */
+std::pair<std::vector<rmm::device_buffer>,
+          std::vector<std::vector<cudf::device_span<uint8_t const>>>>
+fetch_bloom_filters_to_device(
+  cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
+  cudf::host_span<std::vector<byte_range_info> const> bloom_filter_byte_ranges_per_source,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr);
 

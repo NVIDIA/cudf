@@ -256,8 +256,8 @@ int main(int argc, char** argv)
   int device;
   RAPIDSMPF_CUDA_TRY(cudaGetDevice(&device));
   RAPIDSMPF_CUDA_TRY(cudaDeviceGetAttribute(&l2size, cudaDevAttrL2CacheSize, device));
-  auto const num_filter_blocks =
-    cudf_streaming::bloom_filter::fitting_num_blocks(static_cast<std::size_t>(l2size));
+  auto const filter_size =
+    cudf_streaming::bloom_filter::aligned_size(static_cast<std::size_t>(l2size) * 2 / 3);
 
   for (int i = 0; i < arguments.num_iterations; i++) {
     rapidsmpf::OpID op_id{0};
@@ -302,7 +302,7 @@ int main(int argc, char** argv)
       // Build bloom filter from filtered orders' o_orderkey
       auto bloom_filter_output = ctx->create_channel();
       auto bloom_filter =
-        cudf_streaming::bloom_filter(ctx, comm, cudf::DEFAULT_HASH_SEED, num_filter_blocks);
+        cudf_streaming::bloom_filter(ctx, comm, cudf::DEFAULT_HASH_SEED, filter_size);
       actors.push_back(bloom_filter.build(
         bloom_filter_input, bloom_filter_output, static_cast<rapidsmpf::OpID>(10 * i + op_id++)));
 

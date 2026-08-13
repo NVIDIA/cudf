@@ -85,7 +85,7 @@ cdef class ChunkedParquetReader:
     cpdef TableWithMetadata read_chunk(self, DeviceMemoryResource mr=*)
 
 
-cpdef read_parquet(
+cpdef TableWithMetadata read_parquet(
     ParquetReaderOptions options,
     object stream = *,
     DeviceMemoryResource mr=*,

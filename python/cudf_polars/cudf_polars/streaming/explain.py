@@ -112,7 +112,9 @@ def explain_query(
     cm: contextlib.AbstractContextManager[concurrent.futures.Executor]
 
     if executor is None:
-        cm = executor = concurrent.futures.ThreadPoolExecutor()
+        cm = executor = concurrent.futures.ThreadPoolExecutor(
+            thread_name_prefix="cudf-polars-explain"
+        )
     else:
         # we only shut down the executor if we created it.
         cm = contextlib.nullcontext(executor)
@@ -150,7 +152,9 @@ def collect_partition_plan(
     config = ConfigOptions.from_polars_engine(engine)
     ir = Translator(q._ldf.visit(), engine).translate_ir()
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        thread_name_prefix="cudf-polars-explain"
+    ) as executor:
         stats = collect_statistics(ir, config, executor)
     lowered = lower_ir_graph(ir, config, stats)
     lowered_ir = lowered.lowered
@@ -752,7 +756,9 @@ class SerializablePlan:
         cm: contextlib.AbstractContextManager[concurrent.futures.Executor]
 
         if executor is None:
-            cm = executor = concurrent.futures.ThreadPoolExecutor()
+            cm = executor = concurrent.futures.ThreadPoolExecutor(
+                thread_name_prefix="cudf-polars-explain"
+            )
         else:
             cm = contextlib.nullcontext(executor)
 

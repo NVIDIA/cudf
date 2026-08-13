@@ -31,7 +31,6 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <jit/cache.hpp>
 #include <jit/helpers.hpp>
@@ -215,8 +214,8 @@ apply_join_semantics(cudf::table_view const& left,
     auto [filtered_left_indices, filtered_right_indices] = make_result_vectors(num_valid);
 
     auto input_iter =
-      thrust::make_zip_iterator(cuda::std::tuple{left_indices.begin(), right_indices.begin()});
-    auto output_iter = thrust::make_zip_iterator(
+      cuda::make_zip_iterator(cuda::std::tuple{left_indices.begin(), right_indices.begin()});
+    auto output_iter = cuda::make_zip_iterator(
       cuda::std::tuple{filtered_left_indices->begin(), filtered_right_indices->begin()});
 
     cudf::detail::copy_if(
@@ -272,8 +271,8 @@ apply_join_semantics(cudf::table_view const& left,
     auto [filtered_left_indices, filtered_right_indices] = make_result_vectors(output_size);
     if (num_valid > 0) {
       auto input_iter =
-        thrust::make_zip_iterator(cuda::std::tuple{left_indices.begin(), right_indices.begin()});
-      auto output_iter = thrust::make_zip_iterator(
+        cuda::make_zip_iterator(cuda::std::tuple{left_indices.begin(), right_indices.begin()});
+      auto output_iter = cuda::make_zip_iterator(
         cuda::std::tuple{filtered_left_indices->begin(), filtered_right_indices->begin()});
       auto valid_predicate = [predicate_results_ptr] __device__(auto i) -> bool {
         return predicate_results_ptr[i];
@@ -324,8 +323,8 @@ apply_join_semantics(cudf::table_view const& left,
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
-                      thrust::make_zip_iterator(cuda::std::tuple{filtered_left_indices->begin(),
-                                                                 filtered_right_indices->begin()}),
+                      cuda::make_zip_iterator(cuda::std::tuple{filtered_left_indices->begin(),
+                                                               filtered_right_indices->begin()}),
                       [=] __device__(size_type i) -> cuda::std::tuple<size_type, size_type> {
                         auto const left_idx  = left_ptr[i];
                         auto const right_idx = right_ptr[i];
@@ -336,7 +335,7 @@ apply_join_semantics(cudf::table_view const& left,
                       });
 
     if (failed_matched_count > 0) {
-      auto secondary_iter = thrust::make_zip_iterator(
+      auto secondary_iter = cuda::make_zip_iterator(
         cuda::std::tuple{filtered_left_indices->begin() + left_indices.size(),
                          filtered_right_indices->begin() + left_indices.size()});
 

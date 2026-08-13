@@ -1092,16 +1092,16 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
 
 }  // namespace
 
-std::unique_ptr<table> multi_transform(std::string const& udf,
-                                       udf_source_type source_type,
-                                       null_aware is_null_aware,
-                                       std::optional<void*> user_data,
-                                       std::span<transform_input const> inputs,
-                                       std::span<transform_output const> outputs,
-                                       std::vector<std::unique_ptr<column>>&& string_offsets,
-                                       std::optional<size_type> row_size,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+std::unique_ptr<table> transform(std::string const& udf,
+                                 udf_source_type source_type,
+                                 null_aware is_null_aware,
+                                 std::optional<void*> user_data,
+                                 std::span<transform_input const> inputs,
+                                 std::span<transform_output const> outputs,
+                                 std::vector<std::unique_ptr<column>>&& string_offsets,
+                                 std::optional<size_type> row_size,
+                                 rmm::cuda_stream_view stream,
+                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   perform_checks(source_type, is_null_aware, row_size, inputs, outputs, string_offsets);
@@ -1117,6 +1117,29 @@ std::unique_ptr<table> multi_transform(std::string const& udf,
                            mr);
 }
 
+std::unique_ptr<table> multi_transform(std::string const& udf,
+                                       udf_source_type source_type,
+                                       null_aware is_null_aware,
+                                       std::optional<void*> user_data,
+                                       std::span<transform_input const> inputs,
+                                       std::span<transform_output const> outputs,
+                                       std::vector<std::unique_ptr<column>>&& string_offsets,
+                                       std::optional<size_type> row_size,
+                                       rmm::cuda_stream_view stream,
+                                       rmm::device_async_resource_ref mr)
+{
+  return transform(udf,
+                   source_type,
+                   is_null_aware,
+                   user_data,
+                   inputs,
+                   outputs,
+                   std::move(string_offsets),
+                   row_size,
+                   stream,
+                   mr);
+}
+
 std::unique_ptr<column> transform_extended(std::span<transform_input const> inputs,
                                            std::string const& udf,
                                            data_type output_type,
@@ -1130,48 +1153,10 @@ std::unique_ptr<column> transform_extended(std::span<transform_input const> inpu
 {
   transform_output outputs[] = {{.type = output_type, .nullability = null_policy}};
 
-  auto table = multi_transform(
+  auto result = transform(
     udf, source_type, is_null_aware, user_data, inputs, outputs, {}, row_size, stream, mr);
-
-  auto cols = table->release();
-  return std::move(cols[0]);
-}
-
-std::unique_ptr<column> transform(std::vector<column_view> const& columns,
-                                  std::string const& transform_udf,
-                                  data_type output_type,
-                                  bool is_ptx,
-                                  std::optional<void*> user_data,
-                                  null_aware is_null_aware,
-                                  output_nullability null_policy,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
-{
-  // legacy behavior was to detect which column were scalars based on their sizes
-  std::vector<transform_input> inputs;
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-  auto base_column = jit::get_transform_base_column(columns);
-  for (auto const& col : columns) {
-    if (jit::is_scalar(base_column->size(), col.size())) {
-#pragma GCC diagnostic pop
-      inputs.emplace_back(scalar_column_view{col});
-    } else {
-      inputs.emplace_back(col);
-    }
-  }
-
-  return transform_extended(inputs,
-                            transform_udf,
-                            output_type,
-                            is_ptx ? udf_source_type::PTX : udf_source_type::CUDA,
-                            user_data,
-                            is_null_aware,
-                            base_column->size(),
-                            null_policy,
-                            stream,
-                            mr);
+  auto columns = result->release();
+  return std::move(columns.front());
 }
 
 std::unique_ptr<column> compute_column_jit(table_view const& table,
@@ -1181,16 +1166,16 @@ std::unique_ptr<column> compute_column_jit(table_view const& table,
 {
   auto args = detail::row_ir::ast_converter::compute_column(
     detail::row_ir::target::CUDA, expr, table, {}, "compute_operation", stream, mr);
-  auto result = multi_transform(args.udf,
-                                args.source_type,
-                                args.is_null_aware,
-                                args.user_data,
-                                args.inputs,
-                                args.outputs,
-                                std::move(args.string_offsets),
-                                args.row_size,
-                                stream,
-                                mr);
+  auto result = transform(args.udf,
+                          args.source_type,
+                          args.is_null_aware,
+                          args.user_data,
+                          args.inputs,
+                          args.outputs,
+                          std::move(args.string_offsets),
+                          args.row_size,
+                          stream,
+                          mr);
   auto cols   = result->release();
   return std::move(cols[0]);
 }

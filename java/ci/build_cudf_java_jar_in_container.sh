@@ -6,9 +6,10 @@
 #
 # This script runs inside the rapidsai/ci-conda container launched by
 # java/ci/build_cudf_java_jar.sh. It generates the build_java conda toolchain
-# environment, compiles the JNI layer against a prebuilt static libcudf
-# (mounted at /libcudf), and packages the cuDF Java JAR. The resulting
-# classifier JAR and its POM are copied to /output. /output and
+# environment, installs a JDK 17 side-prefix for the javadoc-jdk17 profile,
+# compiles the JNI layer against a prebuilt static libcudf (mounted at
+# /libcudf), and packages the cuDF Java JAR. The resulting classifier JAR,
+# sources JAR, javadoc JAR, and POM are copied to /output. /output and
 # /repo/java/target are chowned to HOST_UID:HOST_GID on exit so the host user
 # owns the outputs.
 #
@@ -63,6 +64,15 @@ conda activate build_java
 
 rapids-print-env
 
+# The `javadoc-jdk17` profile in java/pom.xml points
+# <javadocExecutable> at ${env.JDK17_HOME}/bin/javadoc. The build_java env
+# above provides only JDK 8 (mvn's own JVM), so install JDK 17 into a
+# dedicated prefix that JDK17_HOME can point to. The primary mvn JVM stays
+# on JDK 8; only the javadoc binary is invoked from this prefix.
+rapids-logger "Installing JDK 17 into /opt/jdk17 for javadoc-jdk17 profile"
+rapids-mamba-retry create --yes --prefix /opt/jdk17 openjdk=17.*
+export JDK17_HOME=/opt/jdk17
+
 if [[ -z ${CUDACXX} ]]; then
   export CUDACXX="${CONDA_PREFIX}/bin/nvcc"
 fi
@@ -72,12 +82,22 @@ fi
 
 BUILD_ARG=(
   -B
+  # Prefix every log line with HH:mm:ss.SSS so the elapsed time of individual
+  # plugin executions is recorded.
+  "-Dorg.slf4j.simpleLogger.showDateTime=true"
+  "-Dorg.slf4j.simpleLogger.dateTimeFormat=HH:mm:ss.SSS"
   "-Dmaven.repo.local=/tmp/.m2"
   "-Dparallel.level=${PARALLEL_LEVEL}"
   "-DskipTests=true"
   "-DCUDF_USE_PER_THREAD_DEFAULT_STREAM=ON"
   "-DCUDF_JNI_LIBCUDF_STATIC=ON"
   "-DUSE_GDS=OFF"
+  # -Prelease produces the sources.jar file via maven-source-plugin;
+  # -Pjavadoc-jdk17 produces the javadoc.jar file via maven-javadoc-plugin
+  # running against ${env.JDK17_HOME}/bin/javadoc. Both are required by
+  # Maven Central for every published release.
+  "-Prelease"
+  "-Pjavadoc-jdk17"
 )
 
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then
@@ -95,27 +115,51 @@ rapids-logger "Packaging cuDF Java JAR version ${CUDF_VERSION} (libcudf: ${CUDF_
 # the scratch dir before each container launch to guarantee target/ starts empty.
 CUDF_INSTALL_DIR="${CUDF_INSTALL_DIR}" mvn package "${BUILD_ARG[@]}"
 
+mkdir -p "${OUTPUT_DIR}"
+
+# Order matters: *-test-sources.jar must precede *-sources.jar because
+# bash's case picks the first matching pattern, and *-sources.jar would
+# also match *-test-sources.jar.
 MAIN_JAR=""
 for candidate in target/cudf-"${CUDF_VERSION}"-*.jar; do
   case "${candidate}" in
-    *-tests.jar|*-sources.jar|*-javadoc.jar)
+    *-tests.jar|*-test-sources.jar)
       continue
       ;;
+    *-sources.jar|*-javadoc.jar)
+      cp -f "${candidate}" "${OUTPUT_DIR}/"
+      ;;
+    *)
+      if [[ -f ${candidate} ]]; then
+        if [[ -n ${MAIN_JAR} ]]; then
+          echo "Error: multiple main classifier JARs matched under target/" >&2
+          ls -l target/ >&2 || true
+          exit 1
+        fi
+        MAIN_JAR=${candidate}
+      fi
+      ;;
   esac
-  if [[ -f ${candidate} ]]; then
-    MAIN_JAR=${candidate}
-    break
-  fi
 done
 
 if [[ -z ${MAIN_JAR} ]]; then
-  echo "Error: no cuDF classifier JAR produced under target/"
-  ls -l target/ || true
+  echo "Error: no cuDF classifier JAR produced under target/" >&2
+  ls -l target/ >&2 || true
   exit 1
 fi
 
-mkdir -p "${OUTPUT_DIR}"
+# Assert the release-profile artifacts landed. A missing file here means
+# -Prelease or -Pjavadoc-jdk17 did not activate, or JDK17_HOME did not
+# resolve to a usable javadoc binary.
+for required in "${OUTPUT_DIR}/cudf-${CUDF_VERSION}-sources.jar" \
+                "${OUTPUT_DIR}/cudf-${CUDF_VERSION}-javadoc.jar"; do
+  if [[ ! -f ${required} ]]; then
+    echo "Error: expected ${required} not found (mvn -Prelease -Pjavadoc-jdk17 did not produce it)" >&2
+    exit 1
+  fi
+done
+
 cp -f "${MAIN_JAR}" "${OUTPUT_DIR}/"
 cp -f pom.xml "${OUTPUT_DIR}/cudf-${CUDF_VERSION}.pom"
 
-rapids-logger "Emitted $(basename "${MAIN_JAR}") + cudf-${CUDF_VERSION}.pom to ${OUTPUT_DIR}"
+rapids-logger "Emitted $(basename "${MAIN_JAR}"), cudf-${CUDF_VERSION}-sources.jar, cudf-${CUDF_VERSION}-javadoc.jar, and cudf-${CUDF_VERSION}.pom to ${OUTPUT_DIR}"

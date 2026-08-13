@@ -35,6 +35,7 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     ParquetOptions,
     StreamingExecutor,
+    Unspecified,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -502,9 +503,17 @@ def test_validate_parquet_options(option: str) -> None:
 
 def test_prefetch_file_metadata_default() -> None:
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
-    assert config.parquet_options.prefetch_file_metadata is True
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="in-memory"))
     assert config.parquet_options.prefetch_file_metadata is False
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming", parquet_options={"prefetch_file_metadata": True}
+        )
+    )
+    assert config.parquet_options.prefetch_file_metadata is True
 
 
 def test_parquet_options_object_passthrough() -> None:

@@ -1431,7 +1431,7 @@ template <std::size_t M, std::size_t V>
  * are null at the list level (not an encoded Variant null — those are valid rows with a NULLVAL
  * blob).
  */
-[[nodiscard]] std::unique_ptr<cudf::column> make_list_u8_nullable(
+[[nodiscard]] std::unique_ptr<cudf::column> make_nullable_list_u8(
   cudf::host_span<std::vector<uint8_t> const> blobs, std::vector<bool> const& valid)
 {
   auto const num_rows = static_cast<cudf::size_type>(blobs.size());

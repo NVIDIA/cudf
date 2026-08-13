@@ -6,12 +6,17 @@
 # Maven-repository-layout directory.
 #
 # Input: --jars-dir contains one subdirectory per classifier, each holding
-# exactly one cudf-<version>-<classifier>.jar and a cudf-<version>.pom. Subdir
-# names ARE the classifier names, and the artifact version is derived from
-# the JAR filenames (all subdirs must agree).
+#   - exactly one cudf-<version>-<classifier>.jar
+#   - one cudf-<version>-sources.jar
+#   - one cudf-<version>-javadoc.jar
+#   - one cudf-<version>.pom
+# Subdir names ARE the classifier names, and the artifact version is derived
+# from the JAR filenames (all subdirs must agree).
 #
 # Output layout:
 #     <output-dir>/ai/rapids/cudf/<version>/cudf-<version>-<classifier>.jar
+#     <output-dir>/ai/rapids/cudf/<version>/cudf-<version>-sources.jar
+#     <output-dir>/ai/rapids/cudf/<version>/cudf-<version>-javadoc.jar
 #     <output-dir>/ai/rapids/cudf/<version>/cudf-<version>.pom
 
 set -e
@@ -36,8 +41,12 @@ Gathers per-classifier cuDF Java JARs into a single Maven-repository-layout tree
 
 REQUIRED:
     -j, --jars-dir       Parent directory containing one subdirectory per
-                         classifier (each holding cudf-<version>-<classifier>.jar
-                         and cudf-<version>.pom). Subdir name is the classifier.
+                         classifier. Each subdir must hold:
+                             cudf-<version>-<classifier>.jar
+                             cudf-<version>-sources.jar
+                             cudf-<version>-javadoc.jar
+                             cudf-<version>.pom
+                         Subdir name is the classifier.
     -o, --output-dir     Directory to receive the combined Maven-repository layout.
 
 OPTIONS:
@@ -48,6 +57,8 @@ EXAMPLE:
     # given /tmp/jars/{cuda12,cuda13}/ inputs, produces:
     #   /tmp/maven-repo/ai/rapids/cudf/<version>/cudf-<version>-cuda12.jar
     #   /tmp/maven-repo/ai/rapids/cudf/<version>/cudf-<version>-cuda13.jar
+    #   /tmp/maven-repo/ai/rapids/cudf/<version>/cudf-<version>-sources.jar
+    #   /tmp/maven-repo/ai/rapids/cudf/<version>/cudf-<version>-javadoc.jar
     #   /tmp/maven-repo/ai/rapids/cudf/<version>/cudf-<version>.pom
 
 EOF
@@ -154,6 +165,32 @@ if [[ -z "${FIRST_VERSION}" ]]; then
   echo "Error: no classifier subdirs found under ${JARS_DIR}" >&2
   exit 1
 fi
+
+# Sources and javadoc jars are classifier-independent (pure Java, no arch or
+# cuda variation). Every classifier subdir produces byte-equivalent copies;
+# pick the lexicographically first subdir's copy as canonical. Fail fast if
+# any subdir is missing either file - that indicates -Prelease or
+# -Pjavadoc-jdk17 did not activate for that classifier's build.
+DEST_DIR="${OUTPUT_DIR}/${GROUP_PATH}/${ARTIFACT_ID}/${FIRST_VERSION}"
+FIRST_CLASSIFIER_SUBDIR=""
+for subdir in "${JARS_DIR}"/*/; do
+  if [[ -z ${FIRST_CLASSIFIER_SUBDIR} ]]; then
+    FIRST_CLASSIFIER_SUBDIR=${subdir}
+  fi
+  for required in "cudf-${FIRST_VERSION}-sources.jar" \
+                  "cudf-${FIRST_VERSION}-javadoc.jar"; do
+    if [[ ! -f ${subdir}${required} ]]; then
+      echo "Error: ${required} missing from ${subdir} (expected in every classifier subdir)" >&2
+      exit 1
+    fi
+  done
+done
+
+for shared in "cudf-${FIRST_VERSION}-sources.jar" \
+              "cudf-${FIRST_VERSION}-javadoc.jar"; do
+  cp -f "${FIRST_CLASSIFIER_SUBDIR}${shared}" "${DEST_DIR}/"
+  echo "  + ${shared}"
+done
 
 # POM is identical across subdirs; copy the first one found.
 POM_SRC=""

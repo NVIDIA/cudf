@@ -23,7 +23,6 @@
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <functional>
 
@@ -312,13 +311,13 @@ dremel_data get_encoding(column_view h_col,
 
     // Zip the input and output value iterators so that merge operation is done only once
     auto input_parent_zip_it =
-      thrust::make_zip_iterator(cuda::std::make_tuple(input_parent_rep_it, input_parent_def_it));
+      cuda::make_zip_iterator(cuda::std::make_tuple(input_parent_rep_it, input_parent_def_it));
 
     auto input_child_zip_it =
-      thrust::make_zip_iterator(cuda::std::make_tuple(input_child_rep_it, input_child_def_it));
+      cuda::make_zip_iterator(cuda::std::make_tuple(input_child_rep_it, input_child_def_it));
 
     auto output_zip_it =
-      thrust::make_zip_iterator(cuda::std::make_tuple(rep_level.begin(), def_level.begin()));
+      cuda::make_zip_iterator(cuda::std::make_tuple(rep_level.begin(), def_level.begin()));
 
     auto ends =
       thrust::merge_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -402,13 +401,13 @@ dremel_data get_encoding(column_view h_col,
 
     // Zip the input and output value iterators so that merge operation is done only once
     auto input_parent_zip_it =
-      thrust::make_zip_iterator(cuda::std::make_tuple(input_parent_rep_it, input_parent_def_it));
+      cuda::make_zip_iterator(cuda::std::make_tuple(input_parent_rep_it, input_parent_def_it));
 
-    auto input_child_zip_it = thrust::make_zip_iterator(
-      cuda::std::make_tuple(temp_rep_vals.begin(), temp_def_vals.begin()));
+    auto input_child_zip_it =
+      cuda::make_zip_iterator(cuda::std::make_tuple(temp_rep_vals.begin(), temp_def_vals.begin()));
 
     auto output_zip_it =
-      thrust::make_zip_iterator(cuda::std::make_tuple(rep_level.begin(), def_level.begin()));
+      cuda::make_zip_iterator(cuda::std::make_tuple(rep_level.begin(), def_level.begin()));
 
     auto ends =
       thrust::merge_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

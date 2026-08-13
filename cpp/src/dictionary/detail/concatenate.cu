@@ -21,7 +21,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -30,6 +29,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream_ref>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/gather.h>
@@ -105,7 +105,7 @@ struct compute_children_offsets_fn {
    * @param stream Stream used for allocating the output rmm::device_uvector.
    * @return Vector of offsets_pair objects for keys and indices.
    */
-  rmm::device_uvector<offsets_pair> create_children_offsets(rmm::cuda_stream_view stream)
+  rmm::device_uvector<offsets_pair> create_children_offsets(cuda::stream_ref stream)
   {
     auto offsets = cudf::detail::make_host_vector<offsets_pair>(columns_ptrs.size(), stream);
     thrust::transform_exclusive_scan(
@@ -154,7 +154,7 @@ struct map_indices_fn {
 }  // namespace
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   // exception here is the same behavior as in cudf::concatenate
@@ -175,6 +175,9 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     return keys;
   });
 
+  // TODO: Overload function to accept multiple vectors to do the concatenate at once, with a 2D
+  // kernel. The keys concatenate below and the indices concatenate further down are two separate
+  // launches over the same set of input columns and could be fused into a single batched call.
   // first, concatenate all the keys
   auto all_keys =
     cudf::detail::concatenate(keys_views, stream, cudf::get_current_device_resource_ref());
@@ -193,7 +196,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto probe           = encode_probe_t{row_hash.device_hasher(cudf::nullate::NO{})};
   auto allocator = rmm::mr::polymorphic_allocator<char>(cudf::get_current_device_resource_ref());
   auto set       = cuco::static_set{
-    all_keys->size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.value()};
+    all_keys->size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
   auto set_ref    = set.ref(cuco::insert_and_find);
   using set_ref_t = decltype(set_ref);
 
@@ -207,7 +210,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     policy, iota, iota + all_keys->size(), d_indices.begin(), insert_keys_fn{set_ref, *d_all_keys});
   auto keys_indices = rmm::device_uvector<size_type>(
     all_keys->size(), stream, cudf::get_current_device_resource_ref());
-  auto keys_end = set.retrieve_all(keys_indices.begin(), stream.value());
+  auto keys_end = set.retrieve_all(keys_indices.begin(), stream.get());
   keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 
   // use keys_indices to retrieve the keys (gather)

@@ -80,6 +80,8 @@ class filtered_join {
    * The right table is used as the filter applied to multiple left tables in subsequent
    * `semi_join` or `anti_join` calls.
    *
+   * @throws std::invalid_argument if `load_factor` is not in (0, 1]
+   *
    * @param right The right (filter) table used to build the hash table
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param load_factor The desired ratio of filled slots to total slots in the hash table, must be

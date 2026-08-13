@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -51,7 +52,14 @@ inline bool is_treat_fixed_length_as_string(cuda::std::optional<LogicalType> con
 }
 
 struct set_str_bytes_all {
-  __device__ void operator()(PageInfo& p) { p.str_bytes_all = p.str_bytes; }
+  device_span<PageInfo> pages;
+  device_span<bool const> page_mask;
+
+  __device__ void operator()(size_type index) const
+  {
+    pages[index].str_bytes_all =
+      page_mask.empty() or page_mask[index] ? pages[index].str_bytes : int32_t{0};
+  }
 };
 
 }  // namespace
@@ -562,8 +570,8 @@ void reader_impl::read_compressed_data()
   read_chunks_tasks.get();
 
   // Process dataset chunk pages into output columns
-  auto const total_pages = _has_page_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                           : count_page_headers(chunks, _stream);
+  auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
+                                             : count_page_headers(chunks, _stream);
   if (total_pages <= 0) { return; }
 
   // Zero out the vector before `decode_page_headers` as it may not write every byte of the buffer,
@@ -572,7 +580,7 @@ void reader_impl::read_compressed_data()
     total_pages, _stream, cudf::get_current_device_resource_ref());
 
   // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_page_index, _stream);
+  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -624,10 +632,8 @@ void reader_impl::preprocess_file(read_mode mode)
                            _file_itm_data.exclusive_sum_num_rows_per_source.begin());
   }
 
-  // check for page indexes
-  _has_page_index = std::all_of(_file_itm_data.row_groups.cbegin(),
-                                _file_itm_data.row_groups.cend(),
-                                [](auto const& row_group) { return row_group.has_page_index(); });
+  // Check for offset indexes.
+  _has_offset_index = _metadata->has_offset_index(_file_itm_data.row_groups, _input_columns);
 
   if (_file_itm_data.global_num_rows > 0 && not _file_itm_data.row_groups.empty() &&
       not _input_columns.empty()) {
@@ -833,7 +839,15 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
                is_treat_fixed_length_as_string(chunk.logical_type);
       });
 
-    if (!_has_page_index || has_flba) {
+    // String pages with missing value info do not have the value counts or string byte sizes needed
+    // for chunking. Scan them so chunk boundaries and output allocations use their actual sizes.
+    auto const has_string_page_without_info =
+      std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](auto const& page) {
+        return (static_cast<uint32_t>(page.kernel_mask) & STRINGS_MASK) != 0 and
+               (page.flags & PAGEINFO_FLAGS_DICTIONARY) == 0 and not page.has_value_info;
+      });
+
+    if (has_string_page_without_info || has_flba) {
       constexpr bool compute_all_string_sizes = true;
       compute_page_string_sizes_pass1(subpass.pages,
                                       pass.chunks,
@@ -848,9 +862,9 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     }
     // set str_bytes_all
     thrust::for_each(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
-                     subpass.pages.device_begin(),
-                     subpass.pages.device_end(),
-                     set_str_bytes_all{});
+                     cuda::counting_iterator<size_type>(0),
+                     cuda::counting_iterator<size_type>(subpass.pages.size()),
+                     set_str_bytes_all{subpass.pages, subpass_page_mask_span()});
   }
 
   // retrieve pages back
@@ -883,7 +897,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     // corner case: only decode up to the second-to-last row, except if this is the last page in the
     // entire pass or if we have the page index. this handles the case where we only have 1 chunk, 1
     // page, and potentially even just 1 row.
-    if (is_list and std::cmp_less(max_col_row, last_pass_row) and not _has_page_index) {
+    if (is_list and std::cmp_less(max_col_row, last_pass_row) and not _has_offset_index) {
       // compute min row for this column in the subpass
       auto const& first_page  = subpass.pages[first_page_index];
       auto const& first_chunk = pass.chunks[first_page.chunk_idx];
@@ -1090,6 +1104,29 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
     cudf::host_span<cudf::device_span<cudf::bitmask_type> const>{nullmask_bufs}, _stream);
   cudf::detail::batched_memset<cudf::bitmask_type>(
     pinned_nullmask_bufs, std::numeric_limits<cudf::bitmask_type>::max(), _stream);
+}
+
+void reader_impl::fill_pruned_offsets(size_t skip_rows,
+                                      size_t num_rows,
+                                      cudf::device_span<size_t> initial_str_offsets)
+{
+  // Return early if there are no pruned pages
+  auto const page_mask = subpass_page_mask_span();
+  if (page_mask.is_empty() or
+      std::all_of(page_mask.host_begin(), page_mask.host_end(), cuda::std::identity{})) {
+    return;
+  }
+
+  auto const& pass    = *_pass_itm_data;
+  auto const& subpass = *pass.subpass;
+  auto const pages    = device_span<PageInfo>{subpass.pages.device_ptr(), subpass.pages.size()};
+  auto const chunks =
+    device_span<ColumnChunkDesc const>{pass.chunks.device_ptr(), pass.chunks.size()};
+  auto const device_page_mask = static_cast<device_span<bool const>>(page_mask);
+
+  // Set offsets for pruned string and list pages.
+  parquet::detail::fill_pruned_offsets(
+    pages, chunks, device_page_mask, initial_str_offsets, skip_rows, num_rows, _stream);
 }
 
 cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()

@@ -9,6 +9,10 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport wrap as cpp_wrap
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -16,7 +20,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["wrap"]
 
 cpdef Column wrap(
-    Column input, size_type width, object stream=None, DeviceMemoryResource mr=None
+    Column input, size_type width, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Wraps strings onto multiple lines shorter than `width` by

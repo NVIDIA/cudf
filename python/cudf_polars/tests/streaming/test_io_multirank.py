@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """IO tests for the streaming engines."""
 
@@ -68,6 +68,17 @@ def test_sink_parquet_empty_rank(engine: StreamingEngine, tmp_path: Path) -> Non
 
     gpu_path = path.with_name(f"{path.stem}_gpu{path.suffix}")
     assert gpu_path.is_dir()
+
+
+def test_sink_parquet_duplicated(engine: StreamingEngine, tmp_path: Path) -> None:
+    """Duplicated input should only be written once."""
+    lazydf = (
+        pl.LazyFrame({"x": [1] * 4, "y": [1, 2, 3, 4]})
+        .group_by("x")
+        .agg(pl.col("y").sum())
+    )
+    path = tmp_path / "duplicated.parquet"
+    assert_sink_result_equal(lazydf, path, engine=engine)
 
 
 @pytest.mark.parametrize(

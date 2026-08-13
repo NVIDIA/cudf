@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "nvcomp_adapter.cuh"
@@ -10,8 +10,8 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf::io::detail::nvcomp {
@@ -27,7 +27,7 @@ batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> c
   rmm::device_uvector<size_t> output_data_sizes(num_comp_chunks, stream);
 
   // Prepare the input vectors
-  auto ins_it = thrust::make_zip_iterator(input_data_ptrs.begin(), input_data_sizes.begin());
+  auto ins_it = cuda::make_zip_iterator(input_data_ptrs.begin(), input_data_sizes.begin());
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     inputs.begin(),
@@ -36,7 +36,7 @@ batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> c
     [] __device__(auto const& in) { return cuda::std::make_tuple(in.data(), in.size()); });
 
   // Prepare the output vectors
-  auto outs_it = thrust::make_zip_iterator(output_data_ptrs.begin(), output_data_sizes.begin());
+  auto outs_it = cuda::make_zip_iterator(output_data_ptrs.begin(), output_data_sizes.begin());
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     outputs.begin(),
@@ -56,7 +56,7 @@ std::pair<rmm::device_uvector<void const*>, rmm::device_uvector<size_t>> create_
   rmm::device_uvector<void const*> input_data_ptrs(inputs.size(), stream);
   rmm::device_uvector<size_t> input_data_sizes(inputs.size(), stream);
 
-  auto ins_it = thrust::make_zip_iterator(input_data_ptrs.begin(), input_data_sizes.begin());
+  auto ins_it = cuda::make_zip_iterator(input_data_ptrs.begin(), input_data_sizes.begin());
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     inputs.begin(),
@@ -108,7 +108,7 @@ void skip_unsupported_inputs(device_span<size_t> input_sizes,
                              rmm::cuda_stream_view stream)
 {
   if (max_valid_input_size.has_value()) {
-    auto status_size_it = thrust::make_zip_iterator(input_sizes.begin(), results.begin());
+    auto status_size_it = cuda::make_zip_iterator(input_sizes.begin(), results.begin());
     thrust::transform_if(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       results.begin(),

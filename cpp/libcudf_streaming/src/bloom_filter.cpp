@@ -21,6 +21,24 @@
 
 namespace cudf_streaming {
 
+std::size_t bloom_filter::aligned_size(std::size_t size) noexcept
+{
+  return detail::device_bloom_filter::aligned_size(size);
+}
+
+bloom_filter::bloom_filter(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
+                           std::shared_ptr<rapidsmpf::Communicator> comm,
+                           std::uint64_t seed,
+                           std::size_t filter_size)
+  : ctx_{std::move(ctx)}, comm_{std::move(comm)}, seed_{seed}, filter_size_{filter_size}
+{
+  RAPIDSMPF_EXPECTS(filter_size_ > 0, "Bloom filter storage size must be positive");
+  RAPIDSMPF_EXPECTS(filter_size_ == aligned_size(filter_size_),
+                    "Bloom filter storage size must be a multiple of the filter block size");
+  RAPIDSMPF_EXPECTS(filter_size_ <= detail::device_bloom_filter::max_size(),
+                    "Bloom filter storage exceeds the maximum size supported by its policy");
+}
+
 rapidsmpf::streaming::Actor bloom_filter::build(
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
@@ -35,10 +53,9 @@ rapidsmpf::streaming::Actor bloom_filter::build(
   auto filter_stream = br->stream_pool()->get_stream();
   rapidsmpf::CudaEvent event;
   auto storage =
-    cudf_streaming::detail::device_bloom_filter::storage(num_filter_blocks_, filter_stream, mr);
+    cudf_streaming::detail::device_bloom_filter::storage(filter_size_, filter_stream, mr);
   RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream));
-  auto filter =
-    cudf_streaming::detail::device_bloom_filter(num_filter_blocks_, seed_, storage->data());
+  auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage->data());
   rapidsmpf::CudaEvent build_event;
   build_event.record(filter_stream);
   while (!ch_out->is_shutdown()) {
@@ -69,15 +86,15 @@ rapidsmpf::streaming::Actor bloom_filter::build(
       comm_,
       br->move(std::move(storage), filter_stream),
       br->move(
-        cudf_streaming::detail::device_bloom_filter::storage(num_filter_blocks_, filter_stream, mr),
+        cudf_streaming::detail::device_bloom_filter::storage(filter_size_, filter_stream, mr),
         filter_stream),
       tag,
-      [num_blocks = num_filter_blocks_, seed = seed_](rapidsmpf::Buffer const* left,
-                                                      rapidsmpf::Buffer* right) {
+      [filter_size = filter_size_, seed = seed_](rapidsmpf::Buffer const* left,
+                                                 rapidsmpf::Buffer* right) {
         right->write_access([&](std::byte* out_bytes, rmm::cuda_stream_view stream) {
           auto const in =
-            cudf_streaming::detail::device_bloom_filter::view(num_blocks, seed, left->data());
-          cudf_streaming::detail::device_bloom_filter(num_blocks, seed, out_bytes)
+            cudf_streaming::detail::device_bloom_filter::view(filter_size, seed, left->data());
+          cudf_streaming::detail::device_bloom_filter(filter_size, seed, out_bytes)
             .merge(in, stream);
         });
       });
@@ -102,9 +119,8 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
                     "Bloom filter channel contained more than one message");
   auto stream = storage.stream();
   rapidsmpf::CudaEvent event;
-  auto filter =
-    cudf_streaming::detail::device_bloom_filter(num_filter_blocks_, seed_, storage.data());
-  auto meta = co_await ch_in->receive_metadata();
+  auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage.data());
+  auto meta   = co_await ch_in->receive_metadata();
   if (!meta.empty()) { co_await ch_out->send_metadata(std::move(meta)); }
   while (!ch_out->is_shutdown()) {
     auto msg = co_await ch_in->receive();

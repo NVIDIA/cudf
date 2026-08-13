@@ -14,7 +14,9 @@
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
+#include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/logger.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -262,6 +264,11 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     decode_data(decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
   }
 
+  // launch dict-index-as-int32 decoder for flat columns
+  if (BitAnd(kernel_mask, decode_kernel_mask::DICT_INT32) != 0) {
+    decode_data(decode_kernel_mask::DICT_INT32);
+  }
+
   // launch delta byte array decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
     decode_delta_byte_array(subpass.pages,
@@ -397,6 +404,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // Invalidate output buffer nullmasks at row indices spanned by pruned pages
   update_output_nullmasks_for_pruned_pages(subpass_page_mask_span(), skip_rows, num_rows);
 
+  // Fill output offsets for pruned pages before retrieving large string initial offsets.
+  fill_pruned_offsets(skip_rows, num_rows, initial_str_offsets);
+
   // Copy over initial string offsets from device
   auto h_initial_str_offsets = cudf::detail::make_pinned_vector_async(initial_str_offsets, _stream);
 
@@ -439,9 +449,15 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
         }
         // Nested large strings column
         else if (input_col.nesting_depth() > 0) {
-          CUDF_EXPECTS(h_initial_str_offsets[idx] != std::numeric_limits<size_t>::max(),
-                       "Encountered invalid initial offset for large string column");
-          out_buf.set_initial_string_offset(h_initial_str_offsets[idx]);
+          // A fully pruned list may have no string child values and therefore no page from which
+          // to record an initial offset.
+          if (out_buf.size == 0) {
+            out_buf.set_initial_string_offset(0);
+          } else {
+            CUDF_EXPECTS(h_initial_str_offsets[idx] != std::numeric_limits<size_t>::max(),
+                         "Encountered invalid initial offset for large string column");
+            out_buf.set_initial_string_offset(h_initial_str_offsets[idx]);
+          }
         }
       }
     }
@@ -515,11 +531,21 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
              options.is_enabled_use_jit_filter(),
              options.is_enabled_case_sensitive_names(),
              options.is_enabled_prepend_source_index_column(),
-             options.is_enabled_prepend_row_index_column()},
+             options.is_enabled_prepend_row_index_column(),
+             options.is_enabled_output_dict_columns()},
     _sources{std::move(sources)},
     _output_chunk_read_limit{chunk_read_limit},
     _input_pass_read_limit{pass_read_limit}
 {
+  // The direct parquet-dict → DICTIONARY32 transcode fast path only supports single-pass,
+  // non-chunked reads.
+  if (_options.output_dict_columns and (chunk_read_limit != 0 or pass_read_limit != 0)) {
+    CUDF_LOG_WARN(
+      "output_dict_columns: the direct parquet-dict transcode fast path is disabled for chunked / "
+      "multi-pass reads (non-zero chunk_read_limit or pass_read_limit); falling back to encoding "
+      "DICTIONARY32 columns at the output.");
+  }
+
   // Open and parse the source dataset metadata
   CUDF_EXPECTS(file_metadatas.empty() or file_metadatas.size() == _sources.size(),
                "Encountered a mismatch in the number of provided data sources and metadatas");
@@ -686,6 +712,12 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   auto& subpass         = *pass.subpass;
   auto const& read_info = subpass.output_chunk_read_info[subpass.current_output_chunk];
 
+  // If the caller asked for direct parquet-dict → DICTIONARY32 transcode, detect per-column
+  // eligibility and mutate `_output_buffers` / `subpass.pages` before we allocate column buffers
+  // or dispatch decode kernels. This has to happen before `preprocess_chunk_strings` /
+  // `allocate_columns` because those branch on `subpass.kernel_mask` and on `out_buf.type`.
+  prepare_dict_transcode(mode);
+
   // computes:
   // PageNestingInfo::batch_size for each level of nesting, for each page, taking row bounds into
   // account. PageInfo::skipped_values, which tells us where to start decoding in the input to
@@ -734,6 +766,12 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
       out_columns.emplace_back(make_column(_output_buffers[i], nullptr, metadata, _stream));
     }
   }
+
+  // For any columns that were selected for direct parquet-dict → DICTIONARY32 transcode in
+  // `prepare_dict_transcode`, the entries in `out_columns` are currently INT32 indices columns.
+  // Assemble them into DICTIONARY32 columns here by attaching per-chunk keys; concatenate
+  // remaps indices to the unified keys child.
+  assemble_dict_transcoded_columns(out_columns);
 
   out_columns =
     cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);
@@ -908,6 +946,24 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
   apply_decimal_width_cast(out_columns);
 
+  // Encode any remaining flat STRING columns to DICTIONARY32 via a post-hoc
+  // `dictionary::detail::encode`: columns not produced by the direct transcode fast path, or all of
+  // them when the fast path was disabled (e.g. under a filter). This is applied to the FINAL output
+  // table below -- after any filter is evaluated -- so the filter still operates on STRING columns
+  // and the dictionary is built over only the surviving rows.
+  auto const encode_output_dict_columns =
+    [&](std::unique_ptr<table> tbl) -> std::unique_ptr<table> {
+    if (not _options.output_dict_columns) { return tbl; }
+    auto columns = tbl->release();
+    for (auto& col : columns) {
+      if (col and col->type().id() == type_id::STRING) {
+        col =
+          cudf::dictionary::detail::encode(col->view(), data_type{type_id::INT32}, _stream, _mr);
+      }
+    }
+    return std::make_unique<table>(std::move(columns));
+  };
+
   if (!_output_metadata) {
     populate_metadata(out_metadata);
     // Finally, save the output table metadata into `_output_metadata` for reuse next time.
@@ -975,15 +1031,16 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
       // Exclude columns present in filter only in output
       auto output_table = cudf::detail::apply_mask(
         only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-      return {std::move(output_table), std::move(out_metadata)};
+      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     } else {
       auto output_table = cudf::filter(
         read_table->view(), final_filter_expr.value().get(), only_output, _stream, _mr);
 
-      return {std::move(output_table), std::move(out_metadata)};
+      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     }
   }
-  return {std::make_unique<table>(std::move(out_columns)), std::move(out_metadata)};
+  return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
+          std::move(out_metadata)};
 }
 
 table_with_metadata reader_impl::read()
@@ -1042,7 +1099,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   }
 
   auto page_and_mask_begin =
-    thrust::make_zip_iterator(cuda::std::make_tuple(pages.host_begin(), page_mask.begin()));
+    cuda::make_zip_iterator(cuda::std::make_tuple(pages.host_begin(), page_mask.begin()));
 
   auto null_masks = std::vector<bitmask_type*>{};
   auto begin_bits = std::vector<cudf::size_type>{};
@@ -1128,7 +1185,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   }
   // Otherwise, update the nullmasks in a loop
   else {
-    auto nullmask_iter = thrust::make_zip_iterator(cuda::std::make_tuple(
+    auto nullmask_iter = cuda::make_zip_iterator(cuda::std::make_tuple(
       pinned_null_masks.begin(), pinned_begin_bits.begin(), pinned_end_bits.begin()));
     std::for_each(
       nullmask_iter, nullmask_iter + pinned_null_masks.size(), [&](auto const& nullmask_tuple) {

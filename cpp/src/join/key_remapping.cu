@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,7 +35,6 @@
 #include <cuda/std/atomic>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/replace.h>
 
@@ -280,7 +279,8 @@ class key_remap_table : public key_remap_table_interface {
     RowHasher const& row_hasher,
     cudf::null_equality compare_nulls,
     bool compute_metrics,
-    rmm::cuda_stream_view stream)
+    rmm::cuda_stream_view stream,
+    cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _right_has_nested_columns{cudf::has_nested_columns(right)},
       _compare_nulls{compare_nulls},
       _right{right},
@@ -293,7 +293,7 @@ class key_remap_table : public key_remap_table_interface {
                   {},
                   cuco::thread_scope_device,
                   cuco_storage_type{},
-                  rmm::mr::polymorphic_allocator<char>{},
+                  rmm::mr::polymorphic_allocator<char>{std::move(mr)},
                   stream.value()},
       _has_metrics{compute_metrics},
       _distinct_count{0},
@@ -392,7 +392,7 @@ class key_remap_table : public key_remap_table_interface {
 
     auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(left_num_rows, stream, mr);
     auto const output_begin =
-      thrust::make_transform_output_iterator(result->begin(), extract_index{});
+      cuda::make_transform_output_iterator(result->begin(), extract_index{});
 
     auto preprocessed_left =
       cudf::detail::row::equality::preprocessed_table::create(left_keys, stream);
@@ -489,10 +489,12 @@ class key_remap_table : public key_remap_table_interface {
 /**
  * @brief Factory function to create a key remap hash table.
  */
-std::unique_ptr<key_remap_table_interface> create_key_remap_table(cudf::table_view const& right,
-                                                                  cudf::null_equality compare_nulls,
-                                                                  bool compute_metrics,
-                                                                  rmm::cuda_stream_view stream)
+std::unique_ptr<key_remap_table_interface> create_key_remap_table(
+  cudf::table_view const& right,
+  cudf::null_equality compare_nulls,
+  bool compute_metrics,
+  rmm::cuda_stream_view stream,
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -513,7 +515,8 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(cudf::table_vi
                                                               d_hasher,
                                                               compare_nulls,
                                                               compute_metrics,
-                                                              stream);
+                                                              stream,
+                                                              std::move(mr));
   }
 
   auto const has_nested = cudf::has_nested_columns(right);
@@ -532,7 +535,8 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(cudf::table_vi
                                                               d_hasher,
                                                               compare_nulls,
                                                               compute_metrics,
-                                                              stream);
+                                                              stream,
+                                                              std::move(mr));
   } else {
     auto const d_equal =
       self_equal.equal_to<false>(cudf::nullate::DYNAMIC{HAS_NULLS}, compare_nulls);
@@ -544,7 +548,8 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(cudf::table_vi
                                                               d_hasher,
                                                               compare_nulls,
                                                               compute_metrics,
-                                                              stream);
+                                                              stream,
+                                                              std::move(mr));
   }
 }
 
@@ -560,11 +565,12 @@ class key_remapping_impl {
   key_remapping_impl(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
                      bool compute_metrics,
-                     rmm::cuda_stream_view stream)
+                     rmm::cuda_stream_view stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _right{right},
       _compare_nulls{compare_nulls},
       _compute_metrics{compute_metrics},
-      _table{create_key_remap_table(right, compare_nulls, compute_metrics, stream)}
+      _table{create_key_remap_table(right, compare_nulls, compute_metrics, stream, std::move(mr))}
   {
   }
 
@@ -631,9 +637,10 @@ class key_remapping_impl {
 key_remapping::key_remapping(cudf::table_view const& right,
                              null_equality compare_nulls,
                              cudf::compute_metrics metrics,
-                             rmm::cuda_stream_view stream)
+                             rmm::cuda_stream_view stream,
+                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<detail::key_remapping_impl>(
-      right, compare_nulls, static_cast<bool>(metrics), stream)}
+      right, compare_nulls, static_cast<bool>(metrics), stream, std::move(mr))}
 {
   CUDF_EXPECTS(right.num_columns() > 0, "Right table must have at least one column");
 }

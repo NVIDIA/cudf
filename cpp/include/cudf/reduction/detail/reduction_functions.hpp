@@ -107,11 +107,14 @@ std::unique_ptr<scalar> max(column_view const& col,
  * If all elements in input column are null, output scalar is null.
  *
  * @param col input column to compute reduction
+ * @param dispatch_type The type to dispatch on. For dictionary columns this must be the keys type;
+ *                      for all other columns it must equal `col.type()`.
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Index of the minimum element as scalar of type `output_dtype`
  */
 std::unique_ptr<scalar> argmin(column_view const& col,
+                               data_type dispatch_type,
                                rmm::cuda_stream_view stream,
                                rmm::device_async_resource_ref mr);
 
@@ -121,11 +124,14 @@ std::unique_ptr<scalar> argmin(column_view const& col,
  * If all elements in input column are null, output scalar is null.
  *
  * @param col input column to compute reduction
+ * @param dispatch_type The type to dispatch on. For dictionary columns this must be the keys type;
+ *                      for all other columns it must equal `col.type()`.
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Index of the maximum element as scalar of type `output_dtype`
  */
 std::unique_ptr<scalar> argmax(column_view const& col,
+                               data_type dispatch_type,
                                rmm::cuda_stream_view stream,
                                rmm::device_async_resource_ref mr);
 

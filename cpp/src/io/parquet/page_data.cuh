@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -21,10 +21,10 @@ namespace cudf::io::parquet::detail {
  * @param[in] dstv Pointer to row output data (string descriptor or 32-bit hash)
  */
 template <typename state_buf>
-inline __device__ void gpuOutputString(page_state_s* s, state_buf* sb, int src_pos, void* dstv)
+inline __device__ void gpuOutputString(auto* s, state_buf* sb, int src_pos, void* dstv)
 {
   auto [ptr, len] = gpuGetStringData(s, sb, src_pos);
-  if (s->col.is_strings_to_cat and s->col.physical_type == Type::BYTE_ARRAY) {
+  if (s->setup.col.is_strings_to_cat and s->setup.col.physical_type == Type::BYTE_ARRAY) {
     // Output hash. This hash value is used if the option to convert strings to
     // categoricals is enabled. The seed value is chosen arbitrarily.
     uint32_t constexpr hash_seed = 33;
@@ -112,27 +112,25 @@ inline __device__ void gpuStoreOutput(uint2* dst,
  * @param[out] dst Pointer to row output data
  */
 template <typename state_buf>
-inline __device__ void read_int96_timestamp(page_state_s* s,
-                                            state_buf* sb,
-                                            int src_pos,
-                                            int64_t* dst)
+inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
   using cuda::std::chrono::duration_cast;
 
   uint8_t const* src8;
-  uint32_t dict_pos, dict_size = s->dict_size, ofs;
+  uint32_t dict_pos, dict_size = s->stream.dict_size, ofs;
 
-  if (s->dict_base) {
+  if (s->stream.dict_base) {
     // Dictionary
-    dict_pos =
-      (s->dict_bits > 0) ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)] : 0;
-    src8 = s->dict_base;
+    dict_pos = (s->stream.dict_bits > 0)
+                 ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)]
+                 : 0;
+    src8     = s->stream.dict_base;
   } else {
     // Plain
     dict_pos = src_pos;
-    src8     = s->data_start;
+    src8     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   ofs = 3 & reinterpret_cast<size_t>(src8);
   src8 -= ofs;  // align to 32-bit boundary
   ofs <<= 3;    // bytes -> bits
@@ -162,7 +160,7 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
     days - 2440588};  // TBD: Should be noon instead of midnight, but this matches pyarrow
 
   *dst = [&]() {
-    switch (s->col.ts_clock_rate) {
+    switch (s->setup.col.ts_clock_rate) {
       case 1:  // seconds
         return duration_cast<duration_s>(d_d).count() +
                duration_cast<duration_s>(duration_ns{nanos}).count();
@@ -187,26 +185,24 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
  * @param[in] dst Pointer to row output data
  */
 template <typename state_buf>
-inline __device__ void read_int64_timestamp(page_state_s* s,
-                                            state_buf* sb,
-                                            int src_pos,
-                                            int64_t* dst)
+inline __device__ void read_int64_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
   uint8_t const* src8;
-  uint32_t dict_pos, dict_size = s->dict_size, ofs;
+  uint32_t dict_pos, dict_size = s->stream.dict_size, ofs;
   int64_t ts;
 
-  if (s->dict_base) {
+  if (s->stream.dict_base) {
     // Dictionary
-    dict_pos =
-      (s->dict_bits > 0) ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)] : 0;
-    src8 = s->dict_base;
+    dict_pos = (s->stream.dict_bits > 0)
+                 ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)]
+                 : 0;
+    src8     = s->stream.dict_base;
   } else {
     // Plain
     dict_pos = src_pos;
-    src8     = s->data_start;
+    src8     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   ofs = 3 & reinterpret_cast<size_t>(src8);
   src8 -= ofs;  // align to 32-bit boundary
   ofs <<= 3;    // bytes -> bits
@@ -224,7 +220,7 @@ inline __device__ void read_int64_timestamp(page_state_s* s,
     val <<= 32;
     val |= v.x;
     // Output to desired clock rate
-    ts = apply_ts_scale(val, s->ts_scale);
+    ts = apply_ts_scale(val, s->output_cvt.ts_scale);
   } else {
     ts = 0;
   }
@@ -262,19 +258,17 @@ __device__ void gpuOutputByteArrayAsInt(char const* ptr, int32_t len, T* dst)
  * @param[in] dst Pointer to row output data
  */
 template <typename T, typename state_buf>
-__device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
-                                                   state_buf* sb,
-                                                   int src_pos,
-                                                   T* dst)
+__device__ void read_fixed_width_byte_array_as_int(auto* s, state_buf* sb, int src_pos, T* dst)
 {
-  uint32_t const dtype_len_in = s->dtype_len_in;
-  uint8_t const* data         = s->dict_base ? s->dict_base : s->data_start;
+  uint32_t const dtype_len_in = s->output_cvt.dtype_len_in;
+  uint8_t const* data         = s->stream.dict_base ? s->stream.dict_base : s->stream.data_start;
   uint32_t const pos =
-    (s->dict_base
-       ? ((s->dict_bits > 0) ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)] : 0)
+    (s->stream.dict_base
+       ? ((s->stream.dict_bits > 0) ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)]
+                                    : 0)
        : src_pos) *
     dtype_len_in;
-  uint32_t const dict_size = s->dict_size;
+  uint32_t const dict_size = s->stream.dict_size;
 
   T unscaled = 0;
   for (unsigned int i = 0; i < dtype_len_in; i++) {
@@ -299,25 +293,23 @@ __device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
  * @param[in] dst Pointer to row output data
  */
 template <typename T, typename state_buf>
-inline __device__ void read_fixed_width_value_fast(page_state_s* s,
-                                                   state_buf* sb,
-                                                   int src_pos,
-                                                   T* dst)
+inline __device__ void read_fixed_width_value_fast(auto* s, state_buf* sb, int src_pos, T* dst)
 {
   uint8_t const* dict;
-  uint32_t dict_pos, dict_size = s->dict_size;
+  uint32_t dict_pos, dict_size = s->stream.dict_size;
 
-  if (s->dict_base) {
+  if (s->stream.dict_base) {
     // Dictionary
-    dict_pos =
-      (s->dict_bits > 0) ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)] : 0;
-    dict = s->dict_base;
+    dict_pos = (s->stream.dict_bits > 0)
+                 ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)]
+                 : 0;
+    dict     = s->stream.dict_base;
   } else {
     // Plain
     dict_pos = src_pos;
-    dict     = s->data_start;
+    dict     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   gpuStoreOutput(dst, dict, dict_pos, dict_size);
 }
 
@@ -332,22 +324,23 @@ inline __device__ void read_fixed_width_value_fast(page_state_s* s,
  */
 template <typename state_buf>
 inline __device__ void read_nbyte_fixed_width_value(
-  page_state_s* s, state_buf* sb, int src_pos, uint8_t* dst8, int len)
+  auto* s, state_buf* sb, int src_pos, uint8_t* dst8, int len)
 {
   uint8_t const* dict;
-  uint32_t dict_pos, dict_size = s->dict_size;
+  uint32_t dict_pos, dict_size = s->stream.dict_size;
 
-  if (s->dict_base) {
+  if (s->stream.dict_base) {
     // Dictionary
-    dict_pos =
-      (s->dict_bits > 0) ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)] : 0;
-    dict = s->dict_base;
+    dict_pos = (s->stream.dict_bits > 0)
+                 ? sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)]
+                 : 0;
+    dict     = s->stream.dict_base;
   } else {
     // Plain
     dict_pos = src_pos;
-    dict     = s->data_start;
+    dict     = s->stream.data_start;
   }
-  dict_pos *= (uint32_t)s->dtype_len_in;
+  dict_pos *= (uint32_t)s->output_cvt.dtype_len_in;
   if (len & 3) {
     // Generic slow path
     for (unsigned int i = 0; i < len; i++) {

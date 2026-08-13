@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Traversal and visitor utilities for nodes."""
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from typing import TYPE_CHECKING, Generic
 
 from cudf_polars.typing import (
@@ -15,17 +15,38 @@ from cudf_polars.typing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, MutableMapping, Sequence
+    from collections.abc import Callable, Generator, Mapping, MutableMapping, Sequence
 
     from cudf_polars.typing import GenericTransformer, NodeT
 
 
 __all__: list[str] = [
     "CachingVisitor",
+    "collect_refcount",
     "make_recursive",
+    "post_traversal",
     "reuse_if_unchanged",
     "traversal",
 ]
+
+
+def collect_refcount(nodes: Sequence[NodeT]) -> Mapping[NodeT, int]:
+    """
+    Determine reference counts of all nodes in a DAG.
+
+    Parameters
+    ----------
+    nodes
+         Sequence of root nodes
+
+    Returns
+    -------
+    Mapping from nodes to frequency of occurrence in the DAG.
+    """
+    refcount = Counter(nodes)
+    for node in traversal(nodes):
+        refcount.update(node.children)
+    return refcount
 
 
 def traversal(nodes: Sequence[NodeT]) -> Generator[NodeT, None, None]:

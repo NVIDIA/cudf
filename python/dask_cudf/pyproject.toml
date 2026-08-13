@@ -64,7 +64,7 @@ Homepage = "https://github.com/rapidsai/cudf"
 [tool.rapids-build-backend]
 build-backend = "setuptools.build_meta"
 dependencies-file = "../../dependencies.yaml"
-matrix-entry = "cuda_suffixed=true"
+matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 
 [tool.setuptools.dynamic]
 version = {file = "dask_cudf/VERSION"}

@@ -129,7 +129,8 @@ def _unsupported_fill_over_window(value: expr.Expr) -> bool:
     windowed = [
         node
         for node in traversal([value])
-        if isinstance(node, expr.UnaryFunction) and node.name in {"rank", "cum_sum"}
+        if isinstance(node, expr.UnaryFunction)
+        and node.name in {"rank", "cum_sum", "shift", "shift_and_fill"}
     ]
     if not windowed:
         return False
@@ -1229,7 +1230,14 @@ def _(
             if isinstance(v, expr.Agg)
             or (
                 isinstance(v, expr.UnaryFunction)
-                and v.name in {"rank", "fill_null_with_strategy", "cum_sum"}
+                and v.name
+                in {
+                    "rank",
+                    "fill_null_with_strategy",
+                    "cum_sum",
+                    "shift",
+                    "shift_and_fill",
+                }
             )
         ]
         children = (*by_exprs, *((order_by_expr,) if has_order_by else ()), *child_deps)

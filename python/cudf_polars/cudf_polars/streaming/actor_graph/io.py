@@ -8,36 +8,22 @@ import asyncio
 import functools
 import io
 import math
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
 
-import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
-from rapidsmpf.streaming.core.memory_reserve_or_wait import (
-    reserve_memory,
-)
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.ir import (
-    IR,
-    DataFrameScan,
-    PythonScan,
-    Sink,
-    _prepare_parquet_predicate,
-)
-from cudf_polars.dsl.to_ast import to_parquet_filter
-from cudf_polars.streaming.actor_graph.dispatch import (
-    generate_ir_sub_network,
-)
-from cudf_polars.streaming.actor_graph.nodes import (
-    define_actor,
-    metadata_feeder_node,
-    shutdown_on_error,
-)
+from cudf_polars.dsl.ir import IR, DataFrameScan, PythonScan, Sink
+from cudf_polars.dsl.tracing import Scope, log
+from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.nodes import define_actor, shutdown_on_error
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
@@ -53,7 +39,6 @@ from cudf_polars.streaming.io import (
     StreamingSink,
     _prepare_sink_directory,
     _sink_to_file,
-    can_use_native_parquet_node,
 )
 from cudf_polars.streaming.rank_aware_source import RankAwareSource
 
@@ -64,16 +49,14 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
-    from cudf_polars.dsl.ir import IR, IRExecutionContext, Scan
+    from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.core import SubNetGenerator
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.streaming.base import (
         IOPartitionPlan,
         PartitionInfo,
-        StatsCollector,
     )
     from cudf_polars.streaming.io import FusedScan, SplitScan
-    from cudf_polars.utils.config import ParquetOptions
 
 
 class Lineariser:
@@ -297,7 +280,7 @@ def _(
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
     config_options = rec.state["config_options"]
     rows_per_partition = config_options.executor.max_rows_per_partition
-    num_producers = rec.state["max_io_threads"]
+    num_producers = rec.state["max_concurrent_io_tasks"]
     # Use target_partition_size as the estimated chunk size
     estimated_chunk_bytes = config_options.executor.target_partition_size
 
@@ -539,26 +522,47 @@ async def read_chunk(
     ir_context
         The execution context for the IR node.
     estimated_chunk_bytes
-        Estimated size of the chunk in bytes. Used for memory reservation
-        with block spilling to avoid thrashing.
+        Estimated retained output size in bytes. Used to estimate peak memory
+        for admission before launching the read.
     tracer
         The actor tracer for collecting runtime statistics.
     """
-    with opaque_memory_usage(
-        await reserve_memory(
-            context, size=estimated_chunk_bytes, net_memory_delta=estimated_chunk_bytes
-        )
-    ):
+    reservation_bytes = (
+        estimated_chunk_bytes
+        if isinstance(scan, DataFrameScan)
+        else 2 * estimated_chunk_bytes
+    )
+    start = time.monotonic_ns()
+    reservation = await reserve_memory(
+        context,
+        size=reservation_bytes,
+        net_memory_delta=estimated_chunk_bytes,
+    )
+    admitted = time.monotonic_ns()
+    with opaque_memory_usage(reservation):
         df = await ir_context.to_thread(
             scan.do_evaluate,
             *scan._non_child_args,
             context=ir_context,
         )
-    chunk = TableChunk.from_pylibcudf_table(
-        df.table,
-        df.stream,
-        exclusive_view=True,
-        br=context.br(),
+        chunk = TableChunk.from_pylibcudf_table(
+            df.table,
+            df.stream,
+            exclusive_view=True,
+            br=context.br(),
+        )
+    stop = time.monotonic_ns()
+    log(
+        "IO Task",
+        scope=Scope.IO_TASK.value,
+        start=start,
+        admitted=admitted,
+        stop=stop,
+        ir_id=scan.get_stable_id(),
+        ir_type=type(scan).__name__,
+        sequence_number=seq_num,
+        estimated_output_bytes=estimated_chunk_bytes,
+        reservation_bytes=reservation_bytes,
     )
     await send_chunk(context, ch_out, chunk, seq_num, tracer=tracer)
 
@@ -589,8 +593,8 @@ async def scan_node(
     num_producers
         The number of producers to use for the scan node.
     estimated_chunk_bytes
-        Estimated size of each chunk in bytes. Used for memory reservation
-        with block spilling to avoid thrashing.
+        Estimated retained output size of each chunk in bytes. Used to estimate
+        peak memory for admission before launching each read.
     """
     scans: Sequence[SplitScan] | Sequence[FusedScan] = ir.scans
 
@@ -663,184 +667,34 @@ async def scan_node(
             )
 
 
-def make_rapidsmpf_read_parquet_node(
-    context: Context,
-    comm: Communicator,
-    ir: Scan,
-    num_producers: int,
-    ch_out: Channel[TableChunk],
-    stats: StatsCollector,
-    partition_info: PartitionInfo,
-    parquet_options: ParquetOptions,
-) -> Any | None:
-    """
-    Make a RapidsMPF read parquet node.
-
-    Parameters
-    ----------
-    context
-        The rapidsmpf context.
-    comm
-        The communicator.
-    ir
-        The Scan node.
-    num_producers
-        The number of producers to use for the scan node.
-    ch_out
-        The output Channel[TableChunk].
-    stats
-        The statistics collector.
-    partition_info
-        The partition information.
-    parquet_options
-        The Parquet options.
-
-    Returns
-    -------
-    The RapidsMPF read parquet node, or None if the predicate cannot be
-    converted to a parquet filter (caller should fall back to scan_node).
-    """
-    from cudf_streaming.parquet import Filter, read_parquet
-
-    # Build ParquetReaderOptions
-    try:
-        stream = context.br().stream_pool.get_stream()
-        builder = plc.io.parquet.ParquetReaderOptions.builder(
-            plc.io.SourceInfo(ir.paths)
-        )
-        if (
-            ir.predicate is not None and parquet_options.use_jit_filter
-        ):  # pragma: no cover; no test yet
-            builder.use_jit_filter(use_jit_filter=True)
-        parquet_reader_options = builder.decimal_width(plc.TypeId.DECIMAL128).build()
-
-        if ir.with_columns is not None:
-            parquet_reader_options.set_column_names(ir.with_columns)
-
-        # Build predicate filter if present (passed separately to read_parquet)
-        filter_obj = None
-        if ir.predicate is not None:
-            filter_expr = to_parquet_filter(
-                _prepare_parquet_predicate(
-                    ir.predicate.value, ir.paths, ir.schema, ir.with_columns
-                ),
-                stream=stream,
-            )
-            if filter_expr is None:
-                # Predicate cannot be converted to parquet filter
-                # Return None to signal fallback to scan_node
-                return None
-            filter_obj = Filter(stream, filter_expr)
-    except Exception as e:
-        raise ValueError(f"Failed to build ParquetReaderOptions: {e}") from e
-
-    # Calculate num_rows_per_chunk from statistics
-    # Default to a reasonable chunk size if statistics are unavailable
-    source = stats.scan_stats.get(ir)
-    estimated_row_count = source.row_count if source is not None else None
-    if estimated_row_count is not None:
-        num_rows_per_chunk = int(max(1, estimated_row_count // partition_info.count))
-    else:
-        # Fallback: use a default chunk size if statistics are not available
-        num_rows_per_chunk = 1_000_000  # 1 million rows as default
-
-    # Validate inputs
-    if num_rows_per_chunk <= 0:
-        raise ValueError(f"Invalid num_rows_per_chunk: {num_rows_per_chunk}")
-    if num_producers <= 0:
-        raise ValueError(f"Invalid num_producers: {num_producers}")
-
-    try:
-        return read_parquet(
-            context,
-            comm,
-            ch_out,
-            num_producers,
-            parquet_reader_options,
-            num_rows_per_chunk,
-            filter=filter_obj,
-        )
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to create read_parquet node: {e}\n"
-            f"  paths: {ir.paths}\n"
-            f"  num_producers: {num_producers}\n"
-            f"  num_rows_per_chunk: {num_rows_per_chunk}\n"
-            f"  partition_count: {partition_info.count}\n"
-            f"  filter: {filter_obj}"
-        ) from e
-
-
 @generate_ir_sub_network.register(StreamingScan)
 def _(
     ir: StreamingScan, rec: SubNetGenerator
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
     config_options = rec.state["config_options"]
     executor = config_options.executor
-    parquet_options = config_options.parquet_options
     partition_info = rec.state["partition_info"][ir]
-    num_producers = rec.state["max_io_threads"]
+    num_producers = rec.state["max_concurrent_io_tasks"]
     channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
 
     assert partition_info.io_plan is not None, "Scan node must have a partition plan"
     plan: IOPartitionPlan = partition_info.io_plan
 
-    # Use rapidsmpf native read_parquet node if possible
-    ch_in: Channel[TableChunk] | None = None
     ch_out = channels[ir].reserve_input_slot()
     nodes: dict[IR, list[Any]] = {}
-    native_node: Any = None
 
-    use_native = can_use_native_parquet_node(
-        ir.base_scan,
-        plan=plan,
-        count=partition_info.count,
-        nranks=rec.state["comm"].nranks,
-        parquet_options=parquet_options,
-        config_options=config_options,
-    )
-    if use_native:
-        # Create new channel to so ch_out can be used to add metadata
-        ch_in = rec.state["context"].create_channel()
-        native_node = make_rapidsmpf_read_parquet_node(
-            rec.state["context"],
-            rec.state["comm"],
-            ir.base_scan,
-            num_producers,
-            ch_in,
-            rec.state["stats"],
-            partition_info,
-            parquet_options,
-        )
-
-        # Need metadata node, because the native read_parquet
-        # node does not send metadata.
-        metadata_node = metadata_feeder_node(
+    nodes[ir] = [
+        scan_node(
             rec.state["context"],
             ir,
-            ch_in,
-            ch_out,
-            ChannelMetadata(
-                # partition_info.count is the estimated "global" count.
-                # Just estimate the local count as well.
-                local_count=math.ceil(partition_info.count / rec.state["comm"].nranks),
-            ),
             rec.state["ir_context"],
+            ch_out,
+            num_producers=num_producers,
+            estimated_chunk_bytes=(
+                plan.estimated_chunk_bytes or executor.target_partition_size
+            ),
         )
-        nodes[ir] = [native_node, metadata_node]
-    else:
-        nodes[ir] = [
-            scan_node(
-                rec.state["context"],
-                ir,
-                rec.state["ir_context"],
-                ch_out,
-                num_producers=num_producers,
-                estimated_chunk_bytes=(
-                    plan.estimated_chunk_bytes or executor.target_partition_size
-                ),
-            )
-        ]
+    ]
     return nodes, channels
 
 
@@ -891,60 +745,65 @@ async def sink_node(
         await send_metadata(
             ch_out, context, ChannelMetadata(local_count=1, duplicated=True)
         )
+        skip_write = metadata.duplicated and comm.rank != 0
 
-        path_root = f"{ir.sink.path}/part"
-        if comm.nranks > 1:
-            rank_width = math.ceil(math.log10(comm.nranks))
-            rank_str = str(comm.rank).zfill(rank_width)
-            path_root = f"{path_root}.{rank_str}"
-        # local_count may be 0 when a rank receives no partitions
-        # (e.g. more ranks than input files); log10(0) is undefined.
-        count_width = math.ceil(math.log10(max(metadata.local_count, 1)))
-        count_width = max(count_width, 6)
-
-        if ir.sink_to_directory:
-            _prepare_sink_directory(ir.sink.path)
-            i = 0
-            while (msg := await ch_in.recv(context)) is not None:
-                chunk = TableChunk.from_message(
-                    msg, br=context.br()
-                ).make_available_and_spill(context.br(), allow_overbooking=True)
-                df = chunk_to_frame(chunk, child_ir)
-                part_path = f"{path_root}.{str(i).zfill(count_width)}.{suffix}"
-                await ir_context.to_thread(
-                    Sink.do_evaluate,
-                    ir.sink.schema,
-                    ir.sink.kind,
-                    part_path,
-                    ir.sink.parquet_options,
-                    ir.sink.options,
-                    df,
-                    context=ir_context,
-                )
-                i += 1
+        if skip_write:
+            while await ch_in.recv(context) is not None:
+                pass
         else:
-            # Write chunks to a single file
-            writer_state = None
-            while (msg := await ch_in.recv(context)) is not None:
-                chunk = TableChunk.from_message(
-                    msg, br=context.br()
-                ).make_available_and_spill(context.br(), allow_overbooking=True)
-                # Multiple chunks - use chunked writer
-                df = chunk_to_frame(chunk, child_ir)
-                writer_state = await ir_context.to_thread(
-                    _sink_to_file,  # type: ignore[arg-type]  # (to_thread accepts this keyword-only sink helper)
-                    ir.sink.kind,
-                    ir.sink.path,
-                    ir.sink.options,
-                    writer_state=writer_state,
-                    df=df,
-                )
+            path_root = f"{ir.sink.path}/part"
+            if comm.nranks > 1:
+                rank_width = math.ceil(math.log10(comm.nranks))
+                rank_str = str(comm.rank).zfill(rank_width)
+                path_root = f"{path_root}.{rank_str}"
+            # local_count may be 0 when a rank receives no partitions
+            # (e.g. more ranks than input files); log10(0) is undefined.
+            count_width = math.ceil(math.log10(max(metadata.local_count, 1)))
+            count_width = max(count_width, 6)
 
-            # Finalize the writer after all chunks are processed
-            if writer_state and ir.sink.kind == "Parquet":
-                # We know that with ir.sink.kind == "Parquet", writer_state being truthy
-                # means that it's a ChunkedParquetWriter.
-                await ir_context.to_thread(writer_state.close, [])  # type: ignore[attr-defined]
+            if ir.sink_to_directory:
+                _prepare_sink_directory(ir.sink.path)
+                i = 0
+                while (msg := await ch_in.recv(context)) is not None:
+                    chunk = TableChunk.from_message(
+                        msg, br=context.br()
+                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    df = chunk_to_frame(chunk, child_ir)
+                    part_path = f"{path_root}.{str(i).zfill(count_width)}.{suffix}"
+                    await ir_context.to_thread(
+                        Sink.do_evaluate,
+                        ir.sink.schema,
+                        ir.sink.kind,
+                        part_path,
+                        ir.sink.parquet_options,
+                        ir.sink.options,
+                        df,
+                        context=ir_context,
+                    )
+                    i += 1
+            else:
+                # Write chunks to a single file
+                writer_state = None
+                while (msg := await ch_in.recv(context)) is not None:
+                    chunk = TableChunk.from_message(
+                        msg, br=context.br()
+                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    # Multiple chunks - use chunked writer
+                    df = chunk_to_frame(chunk, child_ir)
+                    writer_state = await ir_context.to_thread(
+                        _sink_to_file,  # type: ignore[arg-type]  # (to_thread accepts this keyword-only sink helper)
+                        ir.sink.kind,
+                        ir.sink.path,
+                        ir.sink.options,
+                        writer_state=writer_state,
+                        df=df,
+                    )
+
+                # Finalize the writer after all chunks are processed
+                if writer_state and ir.sink.kind == "Parquet":
+                    # We know that with ir.sink.kind == "Parquet", writer_state being truthy
+                    # means that it's a ChunkedParquetWriter.
+                    await ir_context.to_thread(writer_state.close, [])  # type: ignore[attr-defined]
 
         # Signal completion on the metadata and data channels with empty results
         stream = ir_context.get_cuda_stream()

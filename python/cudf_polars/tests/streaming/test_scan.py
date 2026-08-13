@@ -126,6 +126,27 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
     assert result == {}
 
 
+def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    scan = _make_parquet_scan([local_path])
+    fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, [])
+    streaming_scan = StreamingScan([fused], scan, "fused")
+
+    # Local paths are skipped entirely when remote_only=True.
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None, remote_only=True
+    )
+    assert result == {}
+
+    # The same local path is prefetched when remote_only=False (the default).
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None
+    )
+    assert set(result) == {local_path}
+
+
 def test_prefetch_file_metadata_select_fast_count(
     df: pl.DataFrame,
     streaming_engine_factory: Callable[..., StreamingEngine],

@@ -20,7 +20,10 @@ from rmm.pylibrmm.stream import DEFAULT_STREAM, PER_THREAD_DEFAULT_STREAM, Strea
 
 
 import os
-from pylibcudf.typing import CudaStreamLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 
 # Check the environment for the variable CUDF_PER_THREAD_STREAM. If it is set,

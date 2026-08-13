@@ -25,6 +25,7 @@ jobs:
       - conda-python-cudf-tests
       - conda-python-other-tests
       - conda-java-tests
+      - java-build-matrix
       - java-build
       - java-tests
       - conda-notebook-tests

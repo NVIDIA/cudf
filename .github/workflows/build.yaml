@@ -535,7 +535,7 @@ jobs:
       arch: ${{ matrix.ARCH }}
       node_type: cpu16
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
-      script: "RAPIDS_CUDA_VERSION=${{ matrix.CUDA_VER }} ci/build_java.sh"
+      script: "env RAPIDS_CUDA_VERSION=${{ matrix.CUDA_VER }} ci/build_java.sh"
       file_to_upload: output_jars
       artifact-name: java_pkg_${{ matrix.CUDA_VER }}_${{ matrix.ARCH }}
   # Assemble the per-classifier JARs into one Maven-repository layout.

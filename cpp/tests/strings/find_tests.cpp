@@ -9,12 +9,14 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
+#include <numeric>
 #include <vector>
 
 struct StringsFindTest : public cudf::test::BaseFixture {};
@@ -259,6 +261,67 @@ TEST_F(StringsFindTest, ContainsHeterogeneousMixedWidth)
   auto results = cudf::strings::contains(strings_view, target);
   cudf::test::fixed_width_column_wrapper<bool> expected(
     {0, 0, 1, 0, 1, 0, 0, 1}, {false, true, true, true, true, false, true, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // Repeat against a non-zero-offset slice (rows 2-7) to make sure contains() dispatches using
+  // the sliced row window rather than the full underlying buffer. Note that
+  // `strings_column_view::chars_size()` does not account for a view's offset (it reports the
+  // full underlying buffer's char count), so the average below is computed from the individual
+  // row lengths instead of relying on chars_size().
+  auto const sliced      = cudf::slice(strings, {2, 8}).front();
+  auto const sliced_view = cudf::strings_column_view(sliced);
+  std::vector<cudf::size_type> const sliced_row_lengths{static_cast<cudf::size_type>(row2.size()),
+                                                        static_cast<cudf::size_type>(row3.size()),
+                                                        static_cast<cudf::size_type>(row4.size()),
+                                                        0,  // row5 is null
+                                                        static_cast<cudf::size_type>(row6.size()),
+                                                        static_cast<cudf::size_type>(row7.size())};
+  auto const sliced_avg_bytes =
+    std::accumulate(sliced_row_lengths.begin(), sliced_row_lengths.end(), 0) /
+    static_cast<cudf::size_type>(sliced_row_lengths.size());
+  EXPECT_GT(sliced_avg_bytes, 64);
+  EXPECT_LT(sliced_avg_bytes, 96);
+
+  auto sliced_results = cudf::strings::contains(sliced_view, target);
+  cudf::test::fixed_width_column_wrapper<bool> sliced_expected(
+    {1, 0, 1, 0, 0, 1}, {true, true, true, false, true, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*sliced_results, sliced_expected);
+}
+
+TEST_F(StringsFindTest, ContainsHeterogeneousMultiBlock)
+{
+  // contains_heterogeneous dispatches its first (thread-per-row) pass over blocks of 256 rows and
+  // its second (warp-per-row) pass as a grid-stride loop over deferred long rows. A column with
+  // more than 256 rows forces both passes to span multiple blocks, exercising the atomicAdd-based
+  // long-row index aggregation and the second pass's cross-block grid-stride loop.
+  auto constexpr num_rows = 300;
+  auto const target       = cudf::string_scalar("Q");
+
+  std::vector<std::string> data;
+  data.reserve(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    bool const is_long   = (i % 5 == 0);  // mix of short (<=96) and long (>96) rows
+    bool const has_match = (i % 7 == 0);  // matches scattered across block boundaries
+    std::string row(is_long ? 150 : 50, 'x');
+    if (has_match) { row.back() = 'Q'; }  // match near the end of the row
+    data.push_back(std::move(row));
+  }
+
+  cudf::test::strings_column_wrapper strings(data.begin(), data.end());
+  auto strings_view = cudf::strings_column_view(strings);
+
+  // Sanity check that this column lands in the heterogeneous dispatch range.
+  auto const avg_bytes = strings_view.chars_size(cudf::get_default_stream()) / strings_view.size();
+  EXPECT_GT(avg_bytes, 64);
+  EXPECT_LT(avg_bytes, 96);
+
+  auto results = cudf::strings::contains(strings_view, target);
+
+  std::vector<bool> expected_data(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    expected_data[i] = (i % 7 == 0);
+  }
+  cudf::test::fixed_width_column_wrapper<bool> expected(expected_data.begin(), expected_data.end());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 

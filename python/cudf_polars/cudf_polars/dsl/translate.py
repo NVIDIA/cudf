@@ -1206,6 +1206,10 @@ def _(
         named_aggs = [agg for agg, _ in aggs]
 
         for named_agg in named_aggs:
+            if has_order_by and isinstance(named_agg.value, expr.RollingWindow):
+                raise NotImplementedError(
+                    "rolling(...).over(..., order_by=...) is not supported"
+                )
             if _unsupported_fill_over_window(named_agg.value):
                 raise NotImplementedError(
                     "fill_null with strategy over a window is only supported when "
@@ -1229,7 +1233,7 @@ def _(
             elif isinstance(v, expr.RollingWindow):
                 child_deps.append(v.children[0])
                 child_deps.append(expr.Col(schema[v.orderby], v.orderby))
-            elif isinstance(v, expr.Agg) or (
+            elif isinstance(v, (expr.FixedSizeRollingWindow, expr.Agg)) or (
                 isinstance(v, expr.UnaryFunction)
                 and v.name
                 in {

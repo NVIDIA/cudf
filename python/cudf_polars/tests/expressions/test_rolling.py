@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
@@ -227,7 +228,39 @@ def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
         "notional_before",
         "volume_after",
     )
-    assert_gpu_result_equal(q, engine=engine)
+    expected = pl.DataFrame(
+        {
+            "ric": ["A", "A", "A", "B", "B", "B"],
+            "ts": [
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 1),
+                dt.datetime(2025, 1, 1, 9, 3),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 2),
+                dt.datetime(2025, 1, 1, 9, 3),
+            ],
+            "volume_before": [0, 100, 200, 0, 400, 500],
+            "notional_before": [0.0, 1000.0, 2200.0, 0.0, 8000.0, 10500.0],
+            "volume_after": [100, 300, 300, 400, 500, 1100],
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_over_with_order_by_raises(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A"],
+            "seq": [1, 2, 3],
+            "ts": [1, 2, 3],
+            "x": [10, 20, 30],
+        }
+    )
+    q = df.select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g", order_by="seq")
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @skip_rolling_expr_136_to_138
@@ -247,7 +280,39 @@ def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
         pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
         pl.len().rolling("ts", period="2i").over("g").alias("len"),
     )
-    assert_gpu_result_equal(q, engine=engine)
+    expected = pl.DataFrame(
+        {
+            "sum": [100, 300, 300, 400, 500, 1100],
+            "min": [100, 100, 300, 400, 500, 500],
+            "max": [100, 200, 300, 400, 500, 600],
+            "mean": [100.0, 150.0, 300.0, 400.0, 500.0, 550.0],
+            "count": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+            "len": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+def test_range_rolling_nested_under_range_rolling_over_raises(
+    engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A"],
+            "ts": [1, 2, 3],
+            "x": [10, 20, 30],
+        }
+    )
+    q = df.select(
+        pl.col("x")
+        .sum()
+        .rolling("ts", period="2i")
+        .sum()
+        .rolling("ts", period="2i")
+        .over("g")
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(

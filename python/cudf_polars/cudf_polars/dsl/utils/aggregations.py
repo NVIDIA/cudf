@@ -38,6 +38,10 @@ def _contains_fixed_size_rolling_window(value: expr.Expr) -> bool:
     )
 
 
+def _contains_range_rolling_window(value: expr.Expr) -> bool:
+    return any(isinstance(node, expr.RollingWindow) for node in traversal([value]))
+
+
 def _contains_window_only_unary(value: expr.Expr) -> bool:
     return any(
         isinstance(node, expr.UnaryFunction)
@@ -170,6 +174,7 @@ def decompose_single_agg(
             )
         if _contains_window_only_unary(agg.children[0]) or (
             _contains_fixed_size_rolling_window(agg.children[0])
+            or _contains_range_rolling_window(agg.children[0])
         ):
             raise NotImplementedError(
                 "Range rolling over a window does not support nested window expressions"

@@ -170,10 +170,9 @@ class column_view_base {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    * @return The count of null elements in the given range
    */
-  [[nodiscard]] size_type null_count(
-    size_type begin,
-    size_type end,
-    rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] size_type null_count(size_type begin,
+                                     size_type end,
+                                     cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Indicates if the column contains null elements,
@@ -199,7 +198,7 @@ class column_view_base {
    */
   [[nodiscard]] bool has_nulls(size_type begin,
                                size_type end,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream()) const
+                               cuda::stream_ref stream = cudf::get_default_stream()) const
   {
     return null_count(begin, end, stream) > 0;
   }

@@ -59,6 +59,10 @@ from .column cimport Column, ListsColumnView
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -88,7 +92,7 @@ __all__ = [
 cpdef Table explode_outer(
     Table input,
     size_type explode_column_idx,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Explode a column of lists into rows.
@@ -126,7 +130,7 @@ cpdef Table explode_outer(
 
 cpdef Column concatenate_rows(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Concatenate multiple lists columns into a single lists column row-wise.
@@ -163,7 +167,7 @@ cpdef Column concatenate_rows(
 cpdef Column concatenate_list_elements(
     Column input,
     concatenate_null_policy null_policy,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Concatenate multiple lists on the same row into a single list.
@@ -200,7 +204,7 @@ cpdef Column concatenate_list_elements(
 cpdef Column contains(
     Column input,
     ColumnOrScalar search_key,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of bool values indicating whether
@@ -257,7 +261,7 @@ cpdef Column contains(
 
 cpdef Column contains_nulls(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of bool values indicating whether
@@ -297,7 +301,7 @@ cpdef Column index_of(
     Column input,
     ColumnOrScalar search_key,
     duplicate_find_option find_option,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of index values indicating the position of a search
@@ -352,7 +356,7 @@ cpdef Column index_of(
 
 cpdef Column reverse(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Reverse the element order within each list of the input column.
@@ -388,7 +392,7 @@ cpdef Column segmented_gather(
     Column input,
     Column gather_map_list,
     out_of_bounds_policy bounds_policy=out_of_bounds_policy.DONT_CHECK,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column with elements gathered based on the indices in gather_map_list
@@ -443,7 +447,7 @@ cpdef Column segmented_gather(
 cpdef Column extract_list_element(
     Column input,
     ColumnOrSizeType index,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of extracted list elements.
@@ -486,7 +490,7 @@ cpdef Column extract_list_element(
 
 cpdef Column count_elements(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Count the number of rows in each
@@ -525,7 +529,7 @@ cpdef Column sequences(
     Column starts,
     Column sizes,
     Column steps = None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a lists column in which each row contains a sequence of
@@ -583,7 +587,7 @@ cpdef Column sort_lists(
     order sort_order,
     null_order na_position,
     bool stable = False,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sort the elements within a list in each row of a list column.
@@ -641,7 +645,7 @@ cpdef Column difference_distinct(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of index values indicating the position of a search
@@ -692,7 +696,7 @@ cpdef Column have_overlap(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Check if lists at each row of the given lists columns overlap.
@@ -742,7 +746,7 @@ cpdef Column intersect_distinct(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a lists column of distinct elements common to two input lists columns.
@@ -792,7 +796,7 @@ cpdef Column union_distinct(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a lists column of distinct elements found in
@@ -841,7 +845,7 @@ cpdef Column union_distinct(
 cpdef Column apply_boolean_mask(
     Column input,
     Column boolean_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters elements in each row of the input lists column using a boolean mask
@@ -885,7 +889,7 @@ cpdef Column apply_boolean_mask(
 cpdef Column apply_deletion_mask(
     Column input,
     Column deletion_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters elements in each row of the input lists column using a deletion mask.
@@ -928,7 +932,7 @@ cpdef Column distinct(
     Column input,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a new list column without duplicate elements in each list.

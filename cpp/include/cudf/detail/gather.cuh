@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/binary/binary_column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/null_mask.hpp>
@@ -28,6 +29,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
@@ -261,6 +263,48 @@ struct column_gatherer_impl<string_view> {
       return cudf::strings::detail::gather<false>(
         strings_column_view(source_column), gather_map_begin, gather_map_end, stream, mr);
     }
+  }
+};
+
+/**
+ * @brief Column gather specialization for BINARY columns.
+ */
+template <>
+struct column_gatherer_impl<binary_view> {
+  template <typename MapIterator>
+  std::unique_ptr<column> operator()(column_view const& source_column,
+                                     MapIterator gather_map_begin,
+                                     MapIterator gather_map_end,
+                                     bool nullify_out_of_bounds,
+                                     rmm::cuda_stream_view stream,
+                                     rmm::device_async_resource_ref mr)
+  {
+    auto const row_count =
+      static_cast<size_type>(cudf::distance(gather_map_begin, gather_map_end));
+    if (row_count == 0) { return make_empty_binary_column(); }
+
+    using map_type = typename std::iterator_traits<MapIterator>::value_type;
+    auto source = column_device_view::create(source_column, stream);
+    auto values = rmm::device_uvector<binary_view>(row_count, stream, mr);
+    thrust::transform(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      gather_map_begin,
+      gather_map_end,
+      values.begin(),
+      [source = *source, nullify_out_of_bounds] __device__(auto index) {
+        if (nullify_out_of_bounds &&
+            !bounds_checker<map_type>{0, source.size()}(static_cast<map_type>(index))) {
+          return binary_view{};
+        }
+        if (source.is_null(index)) { return binary_view{}; }
+        auto const value = source.element<binary_view>(index);
+        auto const data  = value.data() == nullptr && value.empty()
+                             ? reinterpret_cast<uint8_t const*>(1)
+                             : value.data();
+        return binary_view{data, value.size_bytes()};
+      });
+    return make_binary_column(
+      device_span<binary_view const>{values}, binary_view{}, stream, mr);
   }
 };
 

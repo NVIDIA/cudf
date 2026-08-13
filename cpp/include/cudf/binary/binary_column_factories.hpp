@@ -4,8 +4,12 @@
  */
 #pragma once
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/column/column.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/device_buffer.hpp>
 
@@ -17,6 +21,23 @@
  */
 
 namespace CUDF_EXPORT cudf {
+
+/**
+ * @brief Constructs a `BINARY` column by copying device-resident binary views.
+ *
+ * A view whose data pointer equals `null_placeholder.data()` becomes null.
+ *
+ * @param binary_views Device span of binary values
+ * @param null_placeholder View whose data pointer marks null values
+ * @param stream CUDA stream used for device operations
+ * @param mr Device memory resource used for output allocations
+ * @return Newly constructed `BINARY` column
+ */
+std::unique_ptr<column> make_binary_column(
+  device_span<binary_view const> binary_views,
+  binary_view null_placeholder,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Constructs a `BINARY` column from offsets and a contiguous byte buffer.

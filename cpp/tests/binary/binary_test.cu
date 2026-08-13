@@ -12,6 +12,7 @@
 #include <cudf/binary/binary_column_view.hpp>
 #include <cudf/binary/binary_view.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -195,6 +196,69 @@ TEST_F(BinaryTest, OwningCopyNormalizesSlicedOffsets)
 
   EXPECT_EQ(host_sizes, (std::vector<cudf::size_type>{0, 3}));
   EXPECT_EQ(host_first, (std::vector<uint8_t>{0x00, 0x61}));
+}
+
+TEST_F(BinaryTest, GatherReordersBinaryRows)
+{
+  auto const stream = cudf::get_default_stream();
+  auto input        = make_test_column<int32_t>(stream);
+  auto gather_map   = cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 0, 1});
+  auto result = cudf::gather(cudf::table_view{{input->view()}},
+                             gather_map,
+                             cudf::out_of_bounds_policy::DONT_CHECK,
+                             stream);
+  auto output = std::move(result->release().front());
+
+  auto device_view = cudf::column_device_view::create(output->view(), stream);
+  rmm::device_uvector<cudf::size_type> sizes(output->size(), stream);
+  rmm::device_uvector<uint8_t> first_bytes(output->size(), stream);
+  inspect_binary<<<1, output->size(), 0, stream.value()>>>(
+    device_view.get(), sizes.data(), first_bytes.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  auto const host_sizes = cudf::detail::make_std_vector_async(sizes, stream);
+  auto const host_first = cudf::detail::make_std_vector_async(first_bytes, stream);
+  stream.synchronize();
+
+  EXPECT_EQ(host_sizes, (std::vector<cudf::size_type>{3, 2, 0}));
+  EXPECT_EQ(host_first, (std::vector<uint8_t>{0x61, 0x00, 0x00}));
+}
+
+TEST_F(BinaryTest, GatherNullifiesOutOfBoundsRows)
+{
+  auto const stream = cudf::get_default_stream();
+  auto input        = make_test_column<int32_t>(stream);
+  auto gather_map   = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 99, 2});
+  auto result = cudf::gather(cudf::table_view{{input->view()}},
+                             gather_map,
+                             cudf::out_of_bounds_policy::NULLIFY,
+                             stream);
+  auto output = std::move(result->release().front());
+
+  EXPECT_EQ(output->null_count(), 1);
+  EXPECT_EQ(cudf::binary_column_view{output->view()}.bytes_size(stream), 5);
+}
+
+TEST_F(BinaryTest, ConcatenateSupportsSlicedColumns)
+{
+  auto const stream = cudf::get_default_stream();
+  auto input        = make_test_column<int32_t>(stream);
+  auto const sliced = cudf::slice(input->view(), {1, 3}, stream).front();
+  auto output =
+    cudf::concatenate(std::vector<cudf::column_view>{sliced, input->view()}, stream);
+
+  auto device_view = cudf::column_device_view::create(output->view(), stream);
+  rmm::device_uvector<cudf::size_type> sizes(output->size(), stream);
+  rmm::device_uvector<uint8_t> first_bytes(output->size(), stream);
+  inspect_binary<<<1, output->size(), 0, stream.value()>>>(
+    device_view.get(), sizes.data(), first_bytes.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  auto const host_sizes = cudf::detail::make_std_vector_async(sizes, stream);
+  stream.synchronize();
+
+  EXPECT_EQ(host_sizes, (std::vector<cudf::size_type>{0, 3, 2, 0, 3}));
+  EXPECT_EQ(cudf::binary_column_view{output->view()}.bytes_size(stream), 8);
 }
 
 }  // namespace

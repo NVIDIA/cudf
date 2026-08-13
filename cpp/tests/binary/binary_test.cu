@@ -17,6 +17,8 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -335,6 +337,23 @@ TEST_F(BinaryTest, DistinctUsesBinaryEquality)
 
   EXPECT_EQ(result->num_rows(), 2);
   EXPECT_EQ(result->get_column(0).type().id(), cudf::type_id::BINARY);
+}
+
+TEST_F(BinaryTest, DictionaryRoundTripPreservesBinary)
+{
+  auto const stream = cudf::get_default_stream();
+  auto offsets      = cudf::test::fixed_width_column_wrapper<int32_t>({0, 2, 4, 4}).release();
+  auto payload      = make_payload({0x00, 0xFF, 0x00, 0xFF}, stream);
+  auto input        = cudf::make_binary_column(
+    3, std::move(offsets), std::move(payload), 0, rmm::device_buffer{});
+
+  auto encoded =
+    cudf::dictionary::encode(input->view(), cudf::data_type{cudf::type_id::INT32}, stream);
+  auto decoded = cudf::dictionary::decode(cudf::dictionary_column_view{encoded->view()}, stream);
+
+  EXPECT_EQ(decoded->type().id(), cudf::type_id::BINARY);
+  EXPECT_EQ(decoded->size(), input->size());
+  EXPECT_EQ(cudf::binary_column_view{decoded->view()}.bytes_size(stream), 4);
 }
 
 }  // namespace

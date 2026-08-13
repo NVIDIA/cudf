@@ -29,8 +29,6 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
-import kvikio.defaults
-
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -165,13 +163,15 @@ def _make_default_factory(
 
 def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
     """Resolve kvikio thread count from executor options with env var fallback."""
-    if "kvikio_nthreads" in executor_options:
-        return int(executor_options["kvikio_nthreads"])
-    cudf_env = os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS")
-    if cudf_env is not None:
-        return int(cudf_env)
-    current = kvikio.defaults.get("num_threads")
-    return current if current > 1 else 256
+    return int(
+        executor_options.get(
+            "kvikio_nthreads",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                os.environ.get("KVIKIO_NTHREADS", "256"),
+            ),
+        )
+    )
 
 
 def _bool_converter(v: str) -> bool:
@@ -699,12 +699,26 @@ class StreamingExecutor:
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
     kvikio_nthreads
-        Number of threads in the kvikio thread pool. Defaults to 256.
-        This can be set via
+        Number of threads in the kvikio thread pool. Defaults to 256, which is
+        tuned for cloud object-store IO. This can be set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable
         - the ``KVIKIO_NTHREADS`` environment variable (lower precedence)
+
+        .. warning::
+
+            kvikio uses a single process-wide thread pool. When a streaming
+            engine is created, it configures that pool to ``kvikio_nthreads``
+            threads. This operation blocks until all in-flight kvikio IO in the
+            process completes and then rebuilds the pool. As a result:
+
+            - Any code in the same process that is using kvikio concurrently at
+              engine creation time will be disrupted.
+            - Any ``kvikio.defaults.set("num_threads", N)`` call made before
+              engine creation will be overridden. Use the ``kvikio_nthreads``
+              executor option or ``KVIKIO_NTHREADS`` environment variable
+              instead.
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.

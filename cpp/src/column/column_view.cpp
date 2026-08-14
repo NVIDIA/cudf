@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -135,7 +135,7 @@ column_view_base::column_view_base(data_type type,
 
 size_type column_view_base::null_count(size_type begin,
                                        size_type end,
-                                       rmm::cuda_stream_view stream) const
+                                       cuda::stream_ref stream) const
 {
   CUDF_EXPECTS((begin >= 0) && (end <= size()) && (begin <= end), "Range is out of bounds.");
   return (null_count() == 0)

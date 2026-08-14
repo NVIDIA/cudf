@@ -23,10 +23,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 #include <thrust/count.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
@@ -58,7 +58,7 @@ template <typename MapIterator>
 auto scatter_to_gather(MapIterator scatter_map_begin,
                        MapIterator scatter_map_end,
                        size_type gather_rows,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   using MapValueType = cuda::std::iter_value_t<MapIterator>;
 
@@ -101,7 +101,7 @@ template <typename MapIterator>
 auto scatter_to_gather_complement(MapIterator scatter_map_begin,
                                   MapIterator scatter_map_end,
                                   size_type gather_rows,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -137,7 +137,7 @@ struct column_scatterer_impl<Element, std::enable_if_t<cudf::is_fixed_width<Elem
                                      MapIterator scatter_map_begin,
                                      MapIterator scatter_map_end,
                                      column_view const& target,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     auto result      = std::make_unique<column>(target, stream, mr);
@@ -162,7 +162,7 @@ struct column_scatterer_impl<string_view> {
                                      MapIterator scatter_map_begin,
                                      MapIterator scatter_map_end,
                                      column_view const& target,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     auto d_column    = column_device_view::create(source, stream);
@@ -179,7 +179,7 @@ struct column_scatterer_impl<list_view> {
                                      MapIterator scatter_map_begin,
                                      MapIterator scatter_map_end,
                                      column_view const& target,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     return cudf::lists::detail::scatter(
@@ -194,7 +194,7 @@ struct column_scatterer_impl<dictionary32> {
                                      MapIterator scatter_map_begin,
                                      MapIterator scatter_map_end,
                                      column_view const& target_in,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     if (target_in.is_empty())  // empty begets empty
@@ -240,7 +240,7 @@ struct column_scatterer {
                                      MapIterator scatter_map_begin,
                                      MapIterator scatter_map_end,
                                      column_view const& target,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     column_scatterer_impl<Element> scatterer{};
@@ -255,7 +255,7 @@ struct column_scatterer_impl<struct_view> {
                                      MapItRoot scatter_map_begin,
                                      MapItRoot scatter_map_end,
                                      column_view const& target,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(source.num_children() == target.num_children(),
@@ -368,7 +368,7 @@ std::unique_ptr<table> scatter(table_view const& source,
                                MapIterator scatter_map_begin,
                                MapIterator scatter_map_end,
                                table_view const& target,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

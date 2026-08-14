@@ -67,6 +67,48 @@ using Executors = cudf::test::Types<executor_ast, executor_jit>;
 
 TYPED_TEST_SUITE(TransformTest, Executors);
 
+struct TransformProgramTest : public cudf::test::BaseFixture {};
+
+TEST_F(TransformProgramTest, ReusesAstWithCompatibleTable)
+{
+  auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};
+  auto construction_table = cudf::table_view{{construction_input}};
+  auto column_ref         = cudf::ast::column_reference{0};
+  auto literal_value      = cudf::numeric_scalar<int32_t>{2};
+  auto literal            = cudf::ast::literal{literal_value};
+  auto expression         = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, literal};
+
+  auto program = cudf::transform_program{construction_table, expression};
+
+  auto construction_expected = column_wrapper<int32_t>{5, 22, 3, 52};
+  auto construction_result   = program.run(construction_table);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(construction_expected, construction_result->view(), verbosity);
+
+  auto input    = column_wrapper<int32_t>{10, 20, 30};
+  auto table    = cudf::table_view{{input}};
+  auto expected = column_wrapper<int32_t>{12, 22, 32};
+  auto result   = program.run(table);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, RejectsIncompatibleTable)
+{
+  auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};
+  auto construction_table = cudf::table_view{{construction_input}};
+  auto column_ref         = cudf::ast::column_reference{0};
+  auto program            = cudf::transform_program{construction_table, column_ref};
+
+  auto input = column_wrapper<int64_t>{10, 20, 30};
+  auto table = cudf::table_view{{input}};
+
+  EXPECT_THROW((void)program.run(table), std::invalid_argument);
+
+  auto nullable_input = column_wrapper<int32_t>{{10, 20, 30}, {1, 1, 1}};
+  auto nullable_table = cudf::table_view{{nullable_input}};
+  EXPECT_THROW((void)program.run(nullable_table), std::invalid_argument);
+}
+
 TYPED_TEST(TransformTest, ColumnReference)
 {
   using Executor = TypeParam;

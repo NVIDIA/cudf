@@ -109,6 +109,60 @@ static void BM_transform(nvbench::state& state)
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
+static void BM_transform_dispatch(nvbench::state& state)
+{
+  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const api      = state.get_string("api");
+  auto source_table =
+    create_sequence_table({cudf::type_id::INT32}, row_count{num_rows}, std::nullopt);
+
+  std::array<cudf::transform_input, 1> inputs{source_table->get_column(0).view()};
+  std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::INT32},
+                                            cudf::output_nullability::ALL_VALID}};
+  std::string const udf = "__device__ void transform(int32_t* out, int32_t in) { *out = in + 1; }";
+
+  std::unique_ptr<cudf::transform_program> program;
+  if (api == "transform_program") {
+    program =
+      std::make_unique<cudf::transform_program>(udf,
+                                                cudf::udf_source_type::CUDA,
+                                                cudf::null_aware::NO,
+                                                std::nullopt,
+                                                inputs,
+                                                outputs,
+                                                std::span<std::unique_ptr<cudf::column> const>{});
+  } else {
+    // Populate the JIT cache before timing, matching transform_program construction.
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    inputs,
+                    outputs,
+                    {},
+                    std::nullopt);
+  }
+
+  state.add_global_memory_reads<int32_t>(num_rows);
+  state.add_global_memory_writes<int32_t>(num_rows);
+
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    if (program) {
+      program->run(inputs, outputs, {}, std::nullopt, launch.get_stream().get_stream());
+    } else {
+      cudf::transform(udf,
+                      cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      inputs,
+                      outputs,
+                      {},
+                      std::nullopt,
+                      launch.get_stream().get_stream());
+    }
+  });
+}
+
 #define AST_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns, nullable) \
   static void name(::nvbench::state& st)                                                   \
   {                                                                                        \
@@ -125,3 +179,8 @@ AST_TRANSFORM_BENCHMARK_DEFINE(
   transform_int32_imbalanced_reuse, int32_t, TreeType::IMBALANCED_LEFT, true, false);
 AST_TRANSFORM_BENCHMARK_DEFINE(
   transform_double_imbalanced_unique, double, TreeType::IMBALANCED_LEFT, false, false);
+
+NVBENCH_BENCH(BM_transform_dispatch)
+  .set_name("transform_dispatch")
+  .add_string_axis("api", {"transform", "transform_program"})
+  .add_int64_axis("num_rows", {1, 1'000, 100'000, 1'000'000});

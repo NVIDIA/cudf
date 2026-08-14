@@ -29,7 +29,7 @@ namespace detail {
  * @see cudf::detail::get_list_child_to_list_row_mapping
  */
 std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view const& offsets,
-                                                           rmm::cuda_stream_view stream)
+                                                           cuda::stream_ref stream)
 {
   // First, scatter the count for each repeated offset (except the first and last),
   // into a column of N `0`s, where N == number of child rows.
@@ -87,7 +87,7 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   auto input_device_view = column_device_view::create(input, stream);
 
@@ -109,7 +109,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& gather_map,
   column_view const& offsets,
   size_type num_child_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto input_device_view = column_device_view::create(input, stream);

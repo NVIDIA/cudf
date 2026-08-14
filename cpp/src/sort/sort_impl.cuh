@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,7 +32,7 @@ template <sort_method method>
 std::unique_ptr<column> sorted_order(table_view input,
                                      std::vector<order> const& column_order,
                                      std::vector<null_order> const& null_precedence,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0) {

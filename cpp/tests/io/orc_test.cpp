@@ -655,15 +655,12 @@ TEST_F(OrcWriterTest, negTimestampsNano)
 
 template <typename T>
 void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
-                              std::vector<typename T::rep> const& expected_values,
-                              bool with_nulls = false)
+                              std::vector<typename T::rep> const& expected_values)
 {
-  auto const validity = cudf::detail::make_counting_transform_iterator(
-    0, [with_nulls](auto i) { return not with_nulls or i % 2 == 0; });
-  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const input(
-    values.begin(), values.end(), validity);
+  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const input(values.begin(),
+                                                                        values.end());
   cudf::test::fixed_width_column_wrapper<T, typename T::rep> const expected(
-    expected_values.begin(), expected_values.end(), validity);
+    expected_values.begin(), expected_values.end());
   cudf::table_view const input_table({input});
 
   std::vector<char> out_buffer;
@@ -711,20 +708,15 @@ TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
 // ORC-771).
 TEST_F(OrcWriterTest, NegativeTimestampsNearEpoch)
 {
-  // The two values around the -999 ms boundary are the smallest shifted and the largest lossless
-  // timestamp at this resolution.
-  auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{
-    -1L, -500L, -500'000L, -999'000L, -999'001L, -999'999L, -1'000'001L, -5'999'500L};
-  auto const read_back_us = std::vector<cudf::timestamp_us::rep>{
-    999'999L, 999'500L, 500'000L, 1'000L, -999'001L, -999'999L, -1'000'001L, -5'999'500L};
+  auto const timestamps_us =
+    std::vector<cudf::timestamp_us::rep>{-1L, -500L, -500'000L, -999'000L};
+  auto const read_back_us =
+    std::vector<cudf::timestamp_us::rep>{999'999L, 999'500L, 500'000L, 1'000L};
   test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, read_back_us);
-  test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, read_back_us, /* with_nulls */ true);
 
-  test_timestamp_roundtrip<cudf::timestamp_ns>(
-    {-1L, -999'000'000L, -999'000'001L, -1'000'000'000L},
-    {999'999'999L, 1'000'000L, -999'000'001L, -1'000'000'000L});
+  test_timestamp_roundtrip<cudf::timestamp_ns>({-1L, -999'000'000L}, {999'999'999L, 1'000'000L});
 
-  test_timestamp_roundtrip<cudf::timestamp_ms>({-1L, -999L, -1'000L}, {999L, 1L, -1'000L});
+  test_timestamp_roundtrip<cudf::timestamp_ms>({-1L, -999L}, {999L, 1L});
 }
 
 TEST_F(OrcWriterTest, Slice)

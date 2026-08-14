@@ -8,6 +8,7 @@ import datetime as dt
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
@@ -146,7 +147,23 @@ def test_rolling_sum_over(engine):
         "notional_before",
         "volume_after",
     )
-    assert_gpu_result_equal(q, engine=engine, check_row_order=True)
+    expected = pl.DataFrame(
+        {
+            "ric": ["A", "A", "A", "B", "B", "B"],
+            "ts": [
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 1),
+                dt.datetime(2025, 1, 1, 9, 3),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 2),
+                dt.datetime(2025, 1, 1, 9, 3),
+            ],
+            "volume_before": [0, 100, 200, 0, 400, 500],
+            "notional_before": [0.0, 1000.0, 2200.0, 0.0, 8000.0, 10500.0],
+            "volume_after": [100, 300, 300, 400, 500, 1100],
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
 
 
 @pytest.mark.skipif(
@@ -169,7 +186,17 @@ def test_rolling_common_aggs_over(engine):
         pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
         pl.len().rolling("ts", period="2i").over("g").alias("len"),
     )
-    assert_gpu_result_equal(q, engine=engine, check_row_order=True)
+    expected = pl.DataFrame(
+        {
+            "sum": [100, 300, 300, 400, 500, 1100],
+            "min": [100, 100, 300, 400, 500, 500],
+            "max": [100, 200, 300, 400, 500, 600],
+            "mean": [100.0, 150.0, 300.0, 400.0, 500.0, 550.0],
+            "count": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+            "len": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
 
 
 @pytest.mark.parametrize("strategy", ["forward", "backward"])

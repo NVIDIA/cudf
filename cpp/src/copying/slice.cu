@@ -13,8 +13,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream_ref>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <algorithm>
@@ -24,10 +23,7 @@ namespace cudf {
 namespace detail {
 
 template <typename ColumnView>
-ColumnView slice(ColumnView const& input,
-                 size_type begin,
-                 size_type end,
-                 rmm::cuda_stream_view stream)
+ColumnView slice(ColumnView const& input, size_type begin, size_type end, cuda::stream_ref stream)
 {
   CUDF_EXPECTS(begin >= 0, "Invalid beginning of range.", std::out_of_range);
   CUDF_EXPECTS(end >= begin, "Invalid end of range.", std::invalid_argument);
@@ -49,18 +45,15 @@ ColumnView slice(ColumnView const& input,
     children);
 }
 
-template column_view slice<column_view>(column_view const&,
-                                        size_type,
-                                        size_type,
-                                        rmm::cuda_stream_view);
+template column_view slice<column_view>(column_view const&, size_type, size_type, cuda::stream_ref);
 template mutable_column_view slice<mutable_column_view>(mutable_column_view const&,
                                                         size_type,
                                                         size_type,
-                                                        rmm::cuda_stream_view);
+                                                        cuda::stream_ref);
 
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_EXPECTS(indices.size() % 2 == 0, "indices size must be even", std::invalid_argument);
 
@@ -96,7 +89,7 @@ std::vector<column_view> slice(column_view const& input,
 
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_EXPECTS(indices.size() % 2 == 0, "indices size must be even", std::invalid_argument);
   if (indices.empty()) { return {}; }
@@ -141,14 +134,14 @@ std::vector<table_view> slice(table_view const& input,
 
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   return detail::slice(input, std::span<size_type const>(indices.begin(), indices.size()), stream);
 }
 
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   return detail::slice(input, std::span<size_type const>(indices.begin(), indices.size()), stream);
 };
@@ -157,7 +150,7 @@ std::vector<table_view> slice(table_view const& input,
 
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::slice(input, indices, stream);
@@ -165,7 +158,7 @@ std::vector<column_view> slice(column_view const& input,
 
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::slice(input, indices, stream);
@@ -173,7 +166,7 @@ std::vector<table_view> slice(table_view const& input,
 
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::slice(input, indices, stream);
@@ -181,7 +174,7 @@ std::vector<column_view> slice(column_view const& input,
 
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::slice(input, indices, stream);

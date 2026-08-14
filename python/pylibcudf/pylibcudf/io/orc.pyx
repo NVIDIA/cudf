@@ -56,6 +56,10 @@ from pylibcudf.types cimport DataType
 from pylibcudf.variant cimport get_if, holds_alternative
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 
 __all__ = [
@@ -324,7 +328,7 @@ cdef class OrcReaderOptions:
         """
         self.c_obj.set_skip_rows(skip_rows)
 
-    cpdef void set_stripes(self, list stripes):
+    cpdef void set_stripes(self, list stripes: list[list[int]]):
         """
         Sets list of stripes to read for each input source.
 
@@ -346,7 +350,7 @@ cdef class OrcReaderOptions:
             vec.clear()
         self.c_obj.set_stripes(c_stripes)
 
-    cpdef void set_decimal128_columns(self, list val):
+    cpdef void set_decimal128_columns(self, list val: list[str]):
         """
         Set columns that should be read as 128-bit Decimal.
 
@@ -382,7 +386,7 @@ cdef class OrcReaderOptions:
         """
         self.c_obj.set_timestamp_type(type_.c_obj)
 
-    cpdef void set_columns(self, list col_names):
+    cpdef void set_columns(self, list col_names: list[str]):
         """
         Sets names of the column to read.
 
@@ -446,7 +450,7 @@ cdef class OrcReaderOptionsBuilder:
 
 
 cpdef TableWithMetadata read_orc(
-    OrcReaderOptions options, object stream = None, DeviceMemoryResource mr=None
+    OrcReaderOptions options, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Read from ORC format.
@@ -477,7 +481,7 @@ cpdef TableWithMetadata read_orc(
 
 cpdef ParsedOrcStatistics read_parsed_orc_statistics(
     SourceInfo source_info,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """
     Read ORC statistics from a source.
@@ -623,7 +627,7 @@ cdef class OrcWriterOptionsBuilder:
         self.c_obj.enable_statistics(val)
         return self
 
-    cpdef OrcWriterOptionsBuilder key_value_metadata(self, dict kvm):
+    cpdef OrcWriterOptionsBuilder key_value_metadata(self, dict kvm: dict[str, str]):
         """
         Sets Key-Value footer metadata.
 
@@ -670,7 +674,7 @@ cdef class OrcWriterOptionsBuilder:
         return orc_options
 
 
-cpdef void write_orc(OrcWriterOptions options, object stream = None):
+cpdef void write_orc(OrcWriterOptions options, object stream: CudaStreamLike | None = None):
     """
     Write to ORC format.
 
@@ -726,7 +730,10 @@ cdef class OrcChunkedWriter:
             self.c_obj.get()[0].write(c_table)
 
     @staticmethod
-    def from_options(ChunkedOrcWriterOptions options, object stream = None):
+    def from_options(
+        ChunkedOrcWriterOptions options,
+        object stream: CudaStreamLike | None = None,
+    ) -> OrcChunkedWriter:
         """
         Creates a chunked ORC writer from options
 
@@ -861,7 +868,7 @@ cdef class ChunkedOrcWriterOptionsBuilder:
 
     cpdef ChunkedOrcWriterOptionsBuilder key_value_metadata(
         self,
-        dict kvm
+        dict kvm: dict[str, str]
     ):
         """
         Sets Key-Value footer metadata.

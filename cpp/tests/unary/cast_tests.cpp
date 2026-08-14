@@ -201,10 +201,13 @@ inline auto make_data_type()
   return cudf::data_type{cudf::type_to_id<T>()};
 }
 
-TEST(IsSupportedCast, StringToInt32IsUnsupported)
+TEST(IsSupportedCast, UnsupportedTypes)
 {
-  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::STRING},
-                                       cudf::data_type{cudf::type_id::INT32}));
+  auto const to_int32 = cudf::data_type{cudf::type_id::INT32};
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::STRING}, to_int32));
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::LIST}, to_int32));
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::STRUCT}, to_int32));
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::DICTIONARY32}, to_int32));
 }
 
 struct CastTimestampsSimple : public cudf::test::BaseFixture {};

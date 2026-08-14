@@ -14,11 +14,12 @@ In other words, it should interoperate fairly transparently with standard Python
 To satisfy the goals of pylibcudf, we impose the following set of design principles:
 - Every public function or method should be `cpdef`ed. This allows it to be used in both Cython and Python code. This incurs some slight overhead over `cdef` functions, but we assume that this is acceptable because 1) the vast majority of users will be using pure Python rather than Cython, and 2) the overhead of a `cpdef` function over a `cdef` function is on the order of a nanosecond, while CUDA kernel launch overhead is on the order of a microsecond, so these function overheads should be washed out by typical usage of pylibcudf.
 - Every variable used should be strongly typed and either be a primitive type (int, float, etc) or a cdef class. Any enums in C++ should be mirrored using `cpdef enum`, which will create both a C-style enum in Cython and a PEP 435-style Python enum that will automatically be used in Python.
-- All typing in code should be written using Cython syntax, not PEP 484 Python typing syntax. Not only does this ensure compatibility with Cython < 3, but even with Cython 3 PEP 484 support remains incomplete as of this writing.
+- Implementation typing should use Cython syntax where it affects compiled code. Python annotations may also be used in `pyx` files to describe the public Python API when Cython cannot otherwise express the typing contract, such as `object stream: CudaStreamLike | None = None`.
 - All cudf code should interact only with pylibcudf, never with libcudf directly. This is not currently the case, but is the direction that the library is moving towards.
 - Ideally, pylibcudf should depend on no RAPIDS component other than rmm, and should in general have minimal runtime dependencies.
-- Type stubs are provided and generated manually. When adding new
-  functionality, ensure that the matching type stub is appropriately updated.
+- Type stubs are generated from the `pyx` sources. When adding new
+  functionality, ensure that the public API is annotated well enough for the
+  generated type stub to expose the intended contract.
 
 ## Relationship to libcudf
 
@@ -272,25 +273,91 @@ Finally, consider making an libcudf issue if you think this inconsistency can be
 ### Type stubs
 
 Since static type checkers like `mypy` and `pyright` cannot parse
-Cython code, we provide type stubs for the pylibcudf package. These
-are currently maintained manually, alongside the matching pylibcudf
-files.
+Cython code, we provide type stubs for the pylibcudf package. The
+`pyi` files are generated with `stubgen-pyx` by the
+`stubgen-pyx-pylibcudf` pre-commit hook, which runs
+`ci/checks/generate_pylibcudf_stubs.py`. Do not hand-edit generated
+`pyi` files for API typing changes. Instead, update the source
+annotations in the matching `pyx` and, for `cpdef` declarations, the
+matching `pxd` declaration when one exists, then rerun the hook.
 
-Every `pyx` file should have a matching `pyi` file that provides the
-type stubs. Most functions can be exposed straightforwardly. Some
-guiding principles:
+The generated stubs are only as precise as the information available
+in the Cython source. Some API contracts are intentionally broader
+than the implementation type that Cython needs at runtime. In those
+cases, keep the Cython runtime type and add a Python annotation that
+describes the public contract:
 
-- For typed integer arguments in libcudf, use `int` as a type
-  annotation.
-- For functions which are annotated as a `list` in Cython, but the
-  function body does more detailed checking, try and encode the
-  detailed information in the type.
-- For Cython fused types there are two options:
-    1. If the fused type appears only once in the function signature,
-       use a `Union` type;
-    2. If the fused type appears more than once (or as both an input
-       and output type), use a `TypeVar` with
-       the variants in the fused type provided as constraints.
+```cython
+cpdef Column copy(
+    self,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+)
+
+cpdef Table read_parquet(
+    SourceInfo source,
+    list columns: list[str] | None = None,
+)
+```
+
+This pattern is preferred for contracts such as streams, array
+interface protocols, `SourceInfo` and `SinkInfo` inputs, concrete
+container element types, and abstract collection inputs. Use shared
+public aliases and protocols such as `CudaStreamLike`,
+`SupportsCudaArrayInterface`, and `SupportsArrayInterface` rather than
+duplicating structural types in every module.
+
+Imports used only for source annotations in `pyx` files generally
+cannot be hidden behind `TYPE_CHECKING`. Cython needs those names to
+build the runtime `__annotations__` metadata that `stubgen-pyx`
+inspects, so hiding them will usually make the generated stubs lose the
+annotation.
+
+Return annotations have a few extra rules:
+
+- Plain Python `def` functions in Cython can use Python return
+  annotations, for example `def from_py(...) -> Scalar`.
+- `cpdef` and `cdef` functions cannot use Python `->` return
+  annotations. Use Cython return syntax instead, for example
+  `cpdef tuple[int, int] shape(self)`.
+- If a public `cpdef` has a declaration in a `pxd` file, the `pyx` and
+  `pxd` return types must match.
+- `stubgen-pyx` currently preserves exact return types for Python
+  `def` functions and for simple builtin container return types such
+  as `tuple[int, int]` and `list[int]`.
+- `stubgen-pyx` currently loses extension-class element types in
+  parameterized `cpdef` container returns, for example
+  `cpdef tuple[Column, Column] ...` may generate
+  `tuple[object, object]`. Leave those as broader Cython return types
+  until the generator can preserve them accurately.
+
+Most functions can be exposed straightforwardly. Some guiding
+principles:
+
+- For typed integer arguments in libcudf, use `int` in the generated
+  Python API type.
+- For functions that are typed as a bare `list` or `dict` in Cython,
+  but whose body validates more detailed element types, encode that
+  detail in the source annotation when the public contract is stable.
+- For fused types, the best type-stub representation depends on how
+  the fused type appears in the signature:
+  1. If the fused type appears only once in the function signature, use
+     a union type.
+  2. If the fused type appears more than once, or as both an input and
+     output type, use a `TypeVar` with the variants in the fused type
+     provided as constraints. If `stubgen-pyx` cannot yet generate that
+     form, record it as a generator gap rather than hand-editing the
+     generated stub.
+
+After changing public annotations, run:
+
+```shell
+pre-commit run stubgen-pyx-pylibcudf --all-files
+```
+
+For broader annotation changes, also build pylibcudf because Cython may
+compile and validate annotations that look purely informational from
+the Python side.
 
 
 As an example, `pylibcudf.copying.split` is typed in Cython as:
@@ -308,9 +375,9 @@ arguments do not specify their values. Here, if we provide a `Column`
 as input, we receive a `list[Column]` as output, and if we provide a
 `Table` we receive `list[Table]` as output.
 
-In the type stub, we can encode this with a `TypeVar`, we can also
-provide typing for the `splits` argument that indicates that the split
-values must be integers:
+The desired generated stub should encode this with a `TypeVar`. It
+should also provide typing for the `splits` argument that indicates
+that the split values must be integers:
 
 ```python
 ColumnOrTable = TypeVar("ColumnOrTable", Column, Table)
@@ -331,7 +398,7 @@ cpdef Table scatter(
 )
 ```
 
-In the type stub, we can use a normal union in this case
+The desired generated stub can use a normal union in this case:
 
 ```python
 def scatter(

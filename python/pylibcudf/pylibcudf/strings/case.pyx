@@ -8,13 +8,17 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport case as cpp_case
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["swapcase", "to_lower", "to_upper"]
 
-cpdef Column to_lower(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column to_lower(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Returns a column of lowercased strings.
 
     For details, see :cpp:func:`to_lower`.
@@ -43,7 +47,7 @@ cpdef Column to_lower(Column input, object stream=None, DeviceMemoryResource mr=
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 
-cpdef Column to_upper(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column to_upper(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Returns a column of uppercased strings.
 
     For details, see :cpp:func:`to_upper`.
@@ -72,7 +76,7 @@ cpdef Column to_upper(Column input, object stream=None, DeviceMemoryResource mr=
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 
-cpdef Column swapcase(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column swapcase(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Returns a column of strings where the lowercase characters
     are converted to uppercase and the uppercase characters
     are converted to lowercase.

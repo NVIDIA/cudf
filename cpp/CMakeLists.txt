@@ -811,6 +811,7 @@ add_library(
   src/io/parquet/reader_impl.cpp
   src/io/parquet/reader_impl_chunking.cu
   src/io/parquet/reader_impl_chunking_utils.cu
+  src/io/parquet/reader_impl_dict_transcode.cu
   src/io/parquet/reader_impl_helpers.cpp
   src/io/parquet/reader_impl_preprocess.cu
   src/io/parquet/reader_impl_preprocess_utils.cu
@@ -818,6 +819,7 @@ add_library(
   src/io/parquet/writer_impl.cu
   src/io/parquet/writer_impl_helpers.cpp
   src/io/parquet/decode_fixed.cu
+  src/io/parquet/decode_pruned_pages.cu
   src/io/statistics/orc_column_statistics.cu
   src/io/statistics/parquet_column_statistics.cu
   src/io/text/byte_range_info.cpp
@@ -854,7 +856,11 @@ add_library(
   src/join/filter_join_indices/filter_join_indices_output_size_kernel_null_complex.cu
   src/join/filter_join_indices/filter_join_indices_output_size_kernel_null_primitive.cu
   src/join/filter_join_indices/filter_join_indices_output_size_kernel_primitive.cu
-  src/join/filtered_join.cu
+  src/join/filtered_join/filtered_join.cu
+  src/join/filtered_join/filtered_join_flat.cu
+  src/join/filtered_join/filtered_join_nested.cu
+  src/join/filtered_join/filtered_join_nested_query.cu
+  src/join/filtered_join/filtered_join_primitive.cu
   src/join/hash_join/finalize_partitioned_full_join.cpp
   src/join/hash_join/full_join_match_context.cpp
   src/join/hash_join/full_join_retrieve.cu
@@ -975,6 +981,11 @@ add_library(
   src/rolling/detail/rolling_variable_window.cu
   src/rolling/grouped_rolling.cu
   src/rolling/range_rolling.cu
+  src/rolling/range_rolling_bounded_closed.cu
+  src/rolling/range_rolling_bounded_open.cu
+  src/rolling/range_rolling_current_row.cu
+  src/rolling/range_rolling_multi_column.cu
+  src/rolling/range_rolling_unbounded.cu
   src/rolling/range_window_bounds.cpp
   src/rolling/rolling.cpp
   src/round/round.cu
@@ -1003,6 +1014,14 @@ add_library(
   src/stream_compaction/apply_boolean_mask.cu
   src/stream_compaction/distinct.cu
   src/stream_compaction/distinct_helpers.cu
+  src/stream_compaction/distinct_helpers_flat_nan_equal_any.cu
+  src/stream_compaction/distinct_helpers_flat_nan_equal_ordered.cu
+  src/stream_compaction/distinct_helpers_flat_nan_unequal_any.cu
+  src/stream_compaction/distinct_helpers_flat_nan_unequal_ordered.cu
+  src/stream_compaction/distinct_helpers_nested_nan_equal_any.cu
+  src/stream_compaction/distinct_helpers_nested_nan_equal_ordered.cu
+  src/stream_compaction/distinct_helpers_nested_nan_unequal_any.cu
+  src/stream_compaction/distinct_helpers_nested_nan_unequal_ordered.cu
   src/stream_compaction/drop_nans.cu
   src/stream_compaction/drop_nulls.cu
   src/stream_compaction/filter/filter.cu
@@ -1165,12 +1184,13 @@ set_target_properties(
 # and use them.
 set_target_properties(
   cudf
-  PROPERTIES EXPORT_PROPERTIES
-             "CUDF_CXX_FLAGS;CUDF_CUDA_FLAGS;CUDF_CXX_DEFINITIONS;CUDF_CUDA_DEFINITIONS"
-             CUDF_CXX_FLAGS "${CUDF_CXX_FLAGS}"
-             CUDF_CUDA_FLAGS "${CUDF_CUDA_FLAGS}"
-             CUDF_CXX_DEFINITIONS "${CUDF_CXX_DEFINITIONS}"
-             CUDF_CUDA_DEFINITIONS "${CUDF_CUDA_DEFINITIONS}"
+  PROPERTIES
+    EXPORT_PROPERTIES
+    "CUDF_CXX_FLAGS;CUDF_CUDA_FLAGS;CUDF_CXX_DEFINITIONS;CUDF_CUDA_DEFINITIONS;CUDF_STATIC_LINKED_PROJECTS"
+    CUDF_CXX_FLAGS "${CUDF_CXX_FLAGS}"
+    CUDF_CUDA_FLAGS "${CUDF_CUDA_FLAGS}"
+    CUDF_CXX_DEFINITIONS "${CUDF_CXX_DEFINITIONS}"
+    CUDF_CUDA_DEFINITIONS "${CUDF_CUDA_DEFINITIONS}"
 )
 
 # Note: This must come before the target_compile_options below so that the function can modify the
@@ -1244,21 +1264,6 @@ target_compile_definitions(cudf PRIVATE $<$<BOOL:${CUDF_KVIKIO_REMOTE_IO}>:CUDF_
 # https://github.com/NVIDIA/cccl/pull/2844
 target_compile_definitions(cudf PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1 CCCL_AVOID_SORT_UNROLL=1)
 
-# Specify the target module library dependencies
-target_link_libraries(
-  cudf
-  PUBLIC CCCL::CCCL $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
-  PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>
-          $<BUILD_LOCAL_INTERFACE:cuco::cuco>
-          ZLIB::ZLIB
-          ${CUDF_nvcomp_TARGET}
-          kvikio::kvikio
-          ${CUDF_nanoarrow_TARGET}
-          zstd
-          $<BUILD_LOCAL_INTERFACE:xxhash>
-          rtcx::rtcx
-)
-
 # When rmm is a static library being absorbed via whole-archive, strip nvtx3 from its public
 # interface. We bundle nvtx3 headers directly into cudf's install tree, so consumers get them from
 # cudf's include path without needing the nvtx3 target or find_dependency(nvtx3).
@@ -1279,8 +1284,12 @@ endif()
 # against them directly. Public absorbed dependencies still promote their public transitive
 # dependencies and export set metadata into cudf's interface.
 set(_absorbed_deps rmm rapids_logger)
+set(_absorbed_nvcomp FALSE)
 foreach(_dep IN LISTS _absorbed_deps)
-  set(_dep_link "${_dep}::${_dep}")
+  if(NOT TARGET "${_dep}::${_dep}")
+    continue()
+  endif()
+  get_target_property(_dep_link "${_dep}::${_dep}" NAME)
   get_target_property(_target_type ${_dep_link} TYPE)
   if(NOT BUILD_SHARED_LIBS OR NOT _target_type STREQUAL "STATIC_LIBRARY")
     # If not building a shared library, or the dependency is not a static library, link normally.
@@ -1312,6 +1321,19 @@ foreach(_dep IN LISTS _absorbed_deps)
   target_link_libraries(
     cudf PRIVATE "$<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,${_dep_link}>>"
   )
+  set_property(
+    TARGET cudf
+    APPEND
+    PROPERTY CUDF_STATIC_LINKED_PROJECTS "${_dep_link}"
+  )
+
+  # nvcomp_static has done a WHOLE_ARCHIVE on rmm and rapids_logger itself. Therefore it needs to
+  # come after our WHOLE_ARCHIVE otherwise we will get duplicate symbols for rmm and/or
+  # rapids_logger
+  if(TARGET nvcomp::nvcomp_static)
+    target_link_libraries(${_dep_link} INTERFACE $<BUILD_LOCAL_INTERFACE:nvcomp::nvcomp_static>)
+    set(_absorbed_nvcomp TRUE)
+  endif()
 
   # Merge the absorbed library's export set metadata into cudf-exports so the installed config has
   # find_dependency() calls for all transitive deps (e.g. nvtx3, CUDAToolkit from rmm).
@@ -1340,6 +1362,43 @@ foreach(_dep IN LISTS _absorbed_deps)
     endforeach()
   endforeach()
 endforeach()
+
+if(TARGET spdlog::spdlog)
+  get_target_property(_spdlog_link spdlog::spdlog NAME)
+  get_target_property(_spdlog_type ${_spdlog_link} TYPE)
+  if(BUILD_SHARED_LIBS AND _spdlog_type STREQUAL "STATIC_LIBRARY")
+    target_link_libraries(
+      cudf PRIVATE "$<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,${_spdlog_link}>>"
+    )
+    set_property(
+      TARGET cudf
+      APPEND
+      PROPERTY CUDF_STATIC_LINKED_PROJECTS "${_spdlog_link}"
+    )
+  else()
+    target_link_libraries(cudf PRIVATE ${_spdlog_link})
+  endif()
+endif()
+
+# Specify the target module library dependencies We do this after all the WHOLE_ARCHIVES to protect
+# against any of these libraries ever adding a rapids_logger / rmm hidden dependency
+target_link_libraries(
+  cudf
+  PUBLIC CCCL::CCCL $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
+  PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco> ZLIB::ZLIB
+          kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd $<BUILD_LOCAL_INTERFACE:xxhash> rtcx::rtcx
+)
+
+if(NOT _absorbed_nvcomp)
+  target_link_libraries(cudf PRIVATE ${CUDF_nvcomp_TARGET})
+  if(CUDF_nvcomp_TARGET STREQUAL "nvcomp::nvcomp_static")
+    set_property(
+      TARGET cudf
+      APPEND
+      PROPERTY CUDF_STATIC_LINKED_PROJECTS "nvcomp"
+    )
+  endif()
+endif()
 
 # Add Conda library, and include paths if specified
 if(TARGET conda_env)
@@ -1416,7 +1475,7 @@ if(CUDF_BUILD_TESTUTIL)
   )
 
   target_link_libraries(
-    cudftestutil INTERFACE $<BUILD_LOCAL_INTERFACE:cuco::cuco> Threads::Threads cudf
+    cudftestutil INTERFACE $<BUILD_LOCAL_INTERFACE:cuco::cuco> Threads::Threads cudf rmm::rmm
                            cudftest_default_stream $<TARGET_NAME_IF_EXISTS:conda_env>
   )
 

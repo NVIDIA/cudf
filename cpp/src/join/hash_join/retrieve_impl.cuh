@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,7 +22,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <thrust/iterator/transform_output_iterator.h>
 
 namespace cudf::detail {
 
@@ -69,9 +68,9 @@ probe_join_hash_table(
 
   auto const left_table_num_rows = left_table.num_rows();
   auto const out_probe_begin =
-    thrust::make_transform_output_iterator(left_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(left_indices->begin(), output_fn{});
   auto const out_build_begin =
-    thrust::make_transform_output_iterator(right_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
   auto retrieve_results = [&](auto equality, auto d_hasher) {
     auto const iter = cudf::detail::make_counting_transform_iterator(0, pair_fn{d_hasher});

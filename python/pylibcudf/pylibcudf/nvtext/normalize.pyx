@@ -10,6 +10,10 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext cimport normalize as cpp_normalize
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -29,7 +33,7 @@ cdef class CharacterNormalizer:
         self,
         bool do_lower_case,
         Column tokens,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         cdef column_view c_tokens = tokens.view()
@@ -49,7 +53,7 @@ cdef class CharacterNormalizer:
     __hash__ = None
 
 cpdef Column normalize_spaces(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new strings column by normalizing the whitespace in
@@ -86,7 +90,7 @@ cpdef Column normalize_spaces(
 cpdef Column normalize_characters(
     Column input,
     CharacterNormalizer normalizer,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

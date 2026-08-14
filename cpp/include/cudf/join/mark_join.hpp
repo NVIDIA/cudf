@@ -88,7 +88,10 @@ class mark_join {
               cudf::get_current_device_resource_ref());
 
   /**
-   * @brief Constructs a mark join object with explicit prefilter selection.
+   * @brief Constructs a mark join object with explicit prefilter selection and the given load
+   * factor.
+   *
+   * @throws std::invalid_argument if `load_factor` is not in (0, 1]
    *
    * @param left The left table; the hash table is built from this table
    * @param load_factor Hash table load factor in range (0,1]

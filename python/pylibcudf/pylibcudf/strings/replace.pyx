@@ -18,6 +18,10 @@ from pylibcudf.libcudf.strings.replace cimport (
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -29,7 +33,7 @@ cpdef Column replace(
     Scalar target,
     Scalar repl,
     size_type maxrepl=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Replaces target string within each string with the specified replacement string.
@@ -84,7 +88,7 @@ cpdef Column replace_multiple(
     Column target,
     Column repl,
     size_type maxrepl=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Replaces target string within each string with the specified replacement string.
@@ -137,7 +141,7 @@ cpdef Column replace_slice(
     Scalar repl=None,
     size_type start=0,
     size_type stop=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Replaces each string in the column with the provided repl string

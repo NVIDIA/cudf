@@ -10,6 +10,10 @@ from pylibcudf.libcudf.strings.convert cimport (
 )
 from pylibcudf.types cimport DataType
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -19,7 +23,7 @@ __all__ = ["from_floats", "is_float", "to_floats"]
 cpdef Column to_floats(
     Column strings,
     DataType output_type,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -62,7 +66,7 @@ cpdef Column to_floats(
 
 
 cpdef Column from_floats(
-    Column floats, object stream=None, DeviceMemoryResource mr=None
+    Column floats, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new strings column converting the float values from the
@@ -97,7 +101,7 @@ cpdef Column from_floats(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Column is_float(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_float(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """
     Returns a boolean column identifying strings in which all
     characters are valid for conversion to floats.

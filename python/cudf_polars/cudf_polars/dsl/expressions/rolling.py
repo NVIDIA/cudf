@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from functools import singledispatchmethod
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import polars as pl
+
 import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataFrame, DataType
@@ -784,23 +786,21 @@ class GroupedWindow(Expr):
 
         orderby_name = self._rolling_orderby_name(op.named_exprs)
         orderby = df.column_map[orderby_name]
+        if orderby.obj.null_count() != 0:
+            raise RuntimeError(
+                f"Index column '{orderby_name}' in rolling may not contain nulls"
+            )
+        if (
+            plc.traits.is_integral(orderby.obj.type())
+            and orderby.obj.type().id() != plc.TypeId.INT64
+        ):
+            orderby = orderby.astype(DataType(pl.Int64()), stream=df.stream)
         sorted_orderby_obj = plc.copying.gather(
             plc.Table([orderby.obj]),
             op.order_index,
             plc.copying.OutOfBoundsPolicy.NULLIFY,
             stream=df.stream,
         ).columns()[0]
-        if (
-            plc.traits.is_integral(sorted_orderby_obj.type())
-            and sorted_orderby_obj.type().id() != plc.TypeId.INT64
-        ):
-            sorted_orderby_obj = plc.unary.cast(
-                sorted_orderby_obj, plc.DataType(plc.TypeId.INT64), stream=df.stream
-            )
-        if sorted_orderby_obj.null_count() != 0:
-            raise RuntimeError(
-                f"Index column '{orderby_name}' in rolling may not contain nulls"
-            )
 
         request_groups: dict[tuple[int, int, Any], list[expr.NamedExpr]] = defaultdict(
             list
@@ -817,7 +817,7 @@ class GroupedWindow(Expr):
             ].append(ne)
 
         group_keys = plc.Table([c.obj for c in op.by_cols_for_scan])
-        results_by_name: dict[str, tuple[DataType, plc.Table]] = {}
+        results_by_name: dict[str, plc.Table] = {}
         for window_exprs in request_groups.values():
             sample = window_exprs[0].value
             assert isinstance(sample, RollingWindow)
@@ -862,14 +862,11 @@ class GroupedWindow(Expr):
                     output_col = plc.unary.cast(
                         result_col, rolling_expr.dtype.plc_type, stream=df.stream
                     )
-                results_by_name[ne.name] = (
-                    rolling_expr.dtype,
-                    plc.Table([output_col]),
-                )
+                results_by_name[ne.name] = plc.Table([output_col])
 
         names = [ne.name for ne in op.named_exprs]
-        dtypes = [results_by_name[name][0] for name in names]
-        tables = [results_by_name[name][1] for name in names]
+        dtypes = [ne.value.dtype for ne in op.named_exprs]
+        tables = [results_by_name[name] for name in names]
         return names, dtypes, tables
 
     def _reorder_to_input(
@@ -970,7 +967,7 @@ class GroupedWindow(Expr):
             raise NotImplementedError(
                 "rolling(...).over(...) only supports one rolling index column"
             )
-        return next(iter(orderby_names))
+        return orderby_names.pop()
 
     def _build_window_order_index(
         self,
@@ -1323,11 +1320,14 @@ class GroupedWindow(Expr):
             plc.Scalar.from_py(1, plc.types.SIZE_TYPE, stream=df.stream),
             stream=df.stream,
         )
-        over_order_by_col = order_by_col if self._order_by_expr is not None else None
-        over_ob_desc = self.options[2] if self._order_by_expr is not None else False
-        over_ob_nulls_last = (
-            self.options[3] if self._order_by_expr is not None else False
-        )
+        if self._order_by_expr is not None:
+            over_order_by_col, over_ob_desc, over_ob_nulls_last = (
+                order_by_col,
+                self.options[2],
+                self.options[3],
+            )
+        else:
+            over_order_by_col, over_ob_desc, over_ob_nulls_last = (None, False, False)
 
         if rank_named := unary_window_ops["rank"]:
             if self._order_by_expr is not None:

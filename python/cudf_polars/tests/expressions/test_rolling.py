@@ -265,7 +265,8 @@ def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
             "volume_after": [100, 300, 300, 400, 500, 1100],
         }
     )
-    assert_frame_equal(q.collect(engine=engine), expected)
+    assert_gpu_result_equal(q, engine=engine)
+    assert_frame_equal(q.collect(), expected)
 
 
 @skip_rolling_expr_136_to_138
@@ -311,7 +312,8 @@ def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
             "len": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
         }
     )
-    assert_frame_equal(q.collect(engine=engine), expected)
+    assert_gpu_result_equal(q, engine=engine)
+    assert_frame_equal(q.collect(), expected)
 
 
 @skip_rolling_expr_136_to_138
@@ -350,7 +352,8 @@ def test_rolling_sum_over_index_types_and_group_sizes(
         pl.col("x").sum().rolling("idx", period=period).over("g").alias("sum")
     )
     expected = pl.DataFrame({"sum": [10, 20, 30, 40, 90, 60, 130]})
-    assert_frame_equal(q.collect(engine=engine), expected)
+    assert_gpu_result_equal(q, engine=engine)
+    assert_frame_equal(q.collect(), expected)
 
 
 @skip_rolling_expr_136_to_138
@@ -505,7 +508,8 @@ def test_rolling_common_aggs_over_edge_cases(
         pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
         pl.len().rolling("ts", period="2i").over("g").alias("len"),
     )
-    assert_frame_equal(q.collect(engine=engine), expected)
+    assert_gpu_result_equal(q, engine=engine)
+    assert_frame_equal(q.collect(), expected)
 
 
 @skip_rolling_expr_136_to_138

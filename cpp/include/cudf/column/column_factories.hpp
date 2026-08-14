@@ -14,7 +14,7 @@
 #include <rmm/cuda_stream_view.hpp>
 
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 /**
  * @file

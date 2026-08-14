@@ -13,7 +13,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <algorithm>

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,8 +18,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <algorithm>
 #include <limits>
@@ -835,7 +835,7 @@ TEST_F(JsonTest, PostProcessTokenStream)
   auto const stream = cudf::get_default_stream();
   std::vector<token_index_t> offsets(input.size());
   std::vector<cuio_json::PdaTokenT> tokens(input.size());
-  auto token_tuples = thrust::make_zip_iterator(offsets.begin(), tokens.begin());
+  auto token_tuples = cuda::make_zip_iterator(offsets.begin(), tokens.begin());
   thrust::copy(input.cbegin(), input.cend(), token_tuples);
 
   // Initialize device-side test data

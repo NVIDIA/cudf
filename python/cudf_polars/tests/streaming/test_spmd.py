@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import uuid
 from itertools import pairwise
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -14,13 +15,14 @@ import pytest
 
 import polars as pl
 from polars import polars as plrs  # type: ignore[attr-defined]
+from polars.testing import assert_frame_equal
 
 import rmm.mr
 from rapidsmpf.bootstrap import is_running_with_rrun
 from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 
 import cudf_polars.quent
-from cudf_polars.engine.core import _find_memory_error
+from cudf_polars.engine.core import _find_memory_error, all_gather_host_data
 from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import (
@@ -29,6 +31,7 @@ from cudf_polars.engine.spmd import (
 )
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import MemoryResourceConfig
 
 if TYPE_CHECKING:
@@ -500,6 +503,7 @@ _CROSS_RANK_KEYS = [
     [
         (pl.col("x").sum().over("g").alias("result"), "sum"),
         (pl.col("x").rank(method="dense").over("g").alias("result"), "rank"),
+        (pl.col("x").diff().over("g", order_by="x").alias("result"), "diff"),
         (pl.col("x").shift(1).over("g", order_by="x").alias("result"), "shift"),
         pytest.param(
             pl.col("x")
@@ -513,7 +517,13 @@ _CROSS_RANK_KEYS = [
             ),
         ),
     ],
-    ids=["scalar_sum", "nonscalar_rank", "nonscalar_shift", "nonscalar_rolling"],
+    ids=[
+        "scalar_sum",
+        "nonscalar_rank",
+        "nonscalar_diff",
+        "nonscalar_shift",
+        "nonscalar_rolling",
+    ],
 )
 @pytest.mark.parametrize(
     "cross_rank",
@@ -572,6 +582,8 @@ def test_over_multirank(
                 assert grp["result"].to_list() == [sum(expected_xs)] * 3
             elif expected == "rank":
                 assert grp["result"].to_list() == [1, 2, 3]
+            elif expected == "diff":
+                assert grp["result"].to_list() == [None, 1, 1]
             elif expected == "shift":
                 assert grp["result"].to_list() == [None, *expected_xs[:-1]]
             else:
@@ -585,6 +597,9 @@ def test_over_multirank(
     "expr,expected",
     [
         (pl.col("x").shift(1).over("g").alias("result"), "shift"),
+        (pl.col("x").diff().over("g").alias("result"), "diff"),
+        (pl.col("x").diff(n=2).over("g").alias("result"), "diff_n2"),
+        (pl.col("x").diff(n=-1).over("g").alias("result"), "diff_nneg1"),
         (pl.col("x").cum_sum().over("g").alias("result"), "cum_sum"),
         pytest.param(
             pl.col("x").rolling_mean(window_size=2).over("g").alias("result"),
@@ -606,7 +621,15 @@ def test_over_multirank(
             ),
         ),
     ],
-    ids=["shift", "cum_sum", "fixed_rolling", "fixed_rolling_ordered"],
+    ids=[
+        "shift",
+        "diff",
+        "diff_n2",
+        "diff_nneg1",
+        "cum_sum",
+        "fixed_rolling",
+        "fixed_rolling_ordered",
+    ],
 )
 def test_over_shared_group_ordering_multirank(
     comm: Communicator,
@@ -648,6 +671,12 @@ def test_over_shared_group_ordering_multirank(
         expected_values: list[float | int | None]
         if expected == "shift":
             expected_values = [None, *xs[:-1]]
+        elif expected == "diff":
+            expected_values = [None, *([1] * (len(xs) - 1))]
+        elif expected == "diff_n2":
+            expected_values = [None, None, *([2] * (len(xs) - 2))]
+        elif expected == "diff_nneg1":
+            expected_values = [*([-1] * (len(xs) - 1)), None]
         elif expected == "cum_sum":
             total = 0
             expected_values = []
@@ -675,6 +704,44 @@ def test_over_shared_group_ordering_multirank(
             expected_values = [None]
             expected_values.extend((left + right) / 2 for left, right in pairwise(xs))
         assert global_result["result"].to_list() == expected_values
+
+
+def test_over_preserves_input_order_within_source_chunk(
+    comm: Communicator, tmp_path: Path
+) -> None:
+    n_rows = 64
+    make_partitioned_source(
+        pl.DataFrame(
+            {
+                "g": [0] * n_rows,
+                "x": list(range(n_rows)),
+            }
+        ),
+        tmp_path,
+        "parquet",
+        row_group_size=2,
+    )
+
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        if engine.nranks != 1:
+            pytest.skip("expected values are defined for exactly 1 rank")
+
+        q = (
+            pl.scan_parquet(tmp_path)
+            .sort("x")
+            .select(
+                "x",
+                pl.col("x").cum_sum().over("g").alias("result"),
+            )
+        )
+        assert_gpu_result_equal(q, engine=engine)
 
 
 def test_over_nonscalar_duplicated_input(
@@ -726,6 +793,64 @@ def test_over_nonscalar_duplicated_input(
                 f"coarse_g={cg}: expected dense ranks [1, 2, 3] "
                 f"but got {grp['rank_x'].to_list()}"
             )
+
+
+def test_groupby_sort_by_first_last_multirank(
+    comm: Communicator, tmp_path: Path
+) -> None:
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        source_path = tmp_path / "groupby-sort-by.parquet"
+        if engine.rank == 0:
+            make_partitioned_source(
+                pl.DataFrame(
+                    {
+                        "g": ["B", "A", "C", "A", "B", "C", "A", "B"],
+                        "idx": [2, 3, 2, 1, 1, 1, 2, 3],
+                        "tie": [1, 1, 1, 1, 1, 1, 1, 1],
+                        "val": [40, 30, 60, 10, 30, 50, 20, 50],
+                    }
+                ),
+                source_path,
+                "parquet",
+                row_group_size=2,
+            )
+            data = str(source_path).encode()
+        else:
+            data = b""
+
+        with reserve_op_id() as op_id:
+            source_paths = all_gather_host_data(
+                engine.comm, engine.context.br(), op_id, data
+            )
+        source_path = Path(source_paths[0].decode())
+
+        q = (
+            pl.scan_parquet(source_path)
+            .group_by("g")
+            .agg(
+                pl.col("val").sum().alias("volume"),
+                pl.col("val").sort_by("idx").first().alias("open"),
+                pl.col("val").sort_by("idx").last().alias("close"),
+                pl.col("val")
+                .sort_by("tie", maintain_order=True)
+                .first()
+                .alias("first_tie"),
+                pl.col("val")
+                .sort_by("tie", maintain_order=True)
+                .last()
+                .alias("last_tie"),
+            )
+        )
+        expected = q.collect()
+        got = q.collect(engine=engine)
+        assert_frame_equal(expected, got, check_row_order=False)
 
 
 def test_find_memory_error() -> None:

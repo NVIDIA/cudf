@@ -7,7 +7,7 @@ context:
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
   cuda_version: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[:2] | join(".") }}
   cuda_major: '${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}'
-  date_string: '${{ env.get("RAPIDS_DATE_STRING") }}'
+  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
   head_rev: '${{ git.head_rev(".")[:8] }}'
   py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
   py_buildstring: ${{ py_abi_min | version_to_buildstring }}
@@ -23,7 +23,7 @@ source:
 build:
   python:
     version_independent: true
-  string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ date_string }}_${{ head_rev }}
+  string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
   script:
     content: |
       ./build.sh cudf

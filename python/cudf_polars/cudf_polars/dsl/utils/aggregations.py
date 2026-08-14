@@ -28,7 +28,7 @@ __all__ = ["apply_pre_evaluation", "decompose_aggs", "decompose_single_agg"]
 
 
 _WINDOW_ONLY_UNARY_FUNCTIONS = frozenset(
-    {"rank", "fill_null_with_strategy", "cum_sum", "shift", "shift_and_fill"}
+    {"rank", "fill_null_with_strategy", "cum_sum", "diff", "shift", "shift_and_fill"}
 )
 
 
@@ -123,10 +123,10 @@ def decompose_single_agg(
             raise NotImplementedError(
                 f"{agg.name} over a window does not support nested fixed-size rolling"
             )
-        if agg.name in {"shift", "shift_and_fill"}:
+        if agg.name in {"diff", "shift", "shift_and_fill"}:
             if not isinstance(agg.children[1], expr.Literal):
                 raise NotImplementedError(
-                    "shift over a window only supports a literal offset"
+                    f"{agg.name} over a window only supports a literal offset"
                 )
             if agg.name == "shift_and_fill" and not isinstance(
                 agg.children[2], expr.Literal
@@ -134,6 +134,10 @@ def decompose_single_agg(
                 raise NotImplementedError(
                     "shift over a window only supports a literal fill_value"
                 )
+        if agg.name == "diff" and agg.options[0] != "ignore":
+            raise NotImplementedError(
+                "diff over a window only supports null_behavior='ignore'"
+            )
         if agg.name == "fill_null_with_strategy" and (
             strategy := agg.options[0]
         ) not in {"forward", "backward"}:
@@ -214,6 +218,32 @@ def decompose_single_agg(
             child = agg.children[0]
         else:
             (child,) = agg.children
+        if (
+            context == ExecutionContext.GROUPBY
+            and agg.name in {"first", "last"}
+            and isinstance(child, expr.SortBy)
+        ):
+            for sort_child in child.children:
+                child_aggs, _ = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), sort_child),
+                    name_generator,
+                    is_top=False,
+                    context=context,
+                )
+                if any(nested_agg for _, nested_agg in child_aggs):
+                    raise NotImplementedError(
+                        "Nested aggs in sorted groupby aggregation not supported"
+                    )
+            return [
+                (
+                    named_expr.reconstruct(
+                        expr.SortedAgg(
+                            agg.dtype, agg.name, child.options, *child.children
+                        )
+                    ),
+                    True,
+                )
+            ], named_expr.reconstruct(expr.Col(agg.dtype, name))
         # Fuse drop_nulls().n_unique() into nunique(null_handling=EXCLUDE)
         # rather than materializing a filtered intermediate column.
         if (

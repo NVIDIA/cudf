@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -183,6 +183,39 @@ std::unique_ptr<table> split_fn(strings_column_view const& input,
   return std::make_unique<table>(std::move(results));
 }
 
+// Build an output table from a (offsets, tokens) pair produced by split_per_row_helper.
+std::unique_ptr<table> build_table_from_tokens(strings_column_view const& input,
+                                               column_view offsets,
+                                               rmm::device_uvector<string_index_pair> const& tokens,
+                                               rmm::cuda_stream_view stream,
+                                               rmm::device_async_resource_ref mr)
+{
+  auto const d_offsets     = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
+  auto const d_tokens      = tokens.data();
+  auto const columns_count = thrust::transform_reduce(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
+    cuda::counting_iterator<size_type>{input.size()},
+    cuda::proclaim_return_type<size_type>([d_offsets] __device__(auto idx) -> size_type {
+      return static_cast<size_type>(d_offsets[idx + 1] - d_offsets[idx]);
+    }),
+    0,
+    cuda::maximum{});
+  std::vector<std::unique_ptr<column>> results;
+  for (size_type col = 0; col < columns_count; ++col) {
+    auto itr = cudf::detail::make_counting_transform_iterator(
+      0,
+      cuda::proclaim_return_type<string_index_pair>(
+        [d_tokens, d_offsets, col] __device__(size_type idx) {
+          auto const offset      = d_offsets[idx];
+          auto const token_count = static_cast<size_type>(d_offsets[idx + 1] - offset);
+          return (col < token_count) ? d_tokens[offset + col] : string_index_pair{nullptr, 0};
+        }));
+    results.emplace_back(make_strings_column(itr, itr + input.size(), stream, mr));
+  }
+  return std::make_unique<table>(std::move(results));
+}
+
 // Create a table with a single strings column with all nulls
 std::unique_ptr<table> make_all_null_table(size_type size,
                                            rmm::cuda_stream_view stream,
@@ -217,6 +250,15 @@ std::unique_ptr<table> split(strings_column_view const& input,
                                          : std::move(results);
   }
 
+  auto const non_null_count = input.size() - input.null_count();
+  if (non_null_count > 0 &&
+      (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
+    auto tmp_mr = cudf::get_current_device_resource_ref();
+    auto [offsets, tokens] =
+      split_per_row_helper<true>(*d_strings, delimiter.value(stream), max_tokens, stream, tmp_mr);
+    return build_table_from_tokens(input, offsets->view(), tokens, stream, mr);
+  }
+
   auto tokenizer    = split_tokenizer_fn{*d_strings, delimiter.size(), max_tokens};
   auto delimiter_fn = string_delimiter_fn{delimiter.value(stream)};
   return split_fn(input, tokenizer, delimiter_fn, stream, mr);
@@ -240,6 +282,15 @@ std::unique_ptr<table> rsplit(strings_column_view const& input,
     // boundary case: if no columns, return one null column (issue #119)
     return (results->num_columns() == 0) ? make_all_null_table(input.size(), stream, mr)
                                          : std::move(results);
+  }
+
+  auto const non_null_count = input.size() - input.null_count();
+  if (non_null_count > 0 &&
+      (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
+    auto tmp_mr = cudf::get_current_device_resource_ref();
+    auto [offsets, tokens] =
+      split_per_row_helper<false>(*d_strings, delimiter.value(stream), max_tokens, stream, tmp_mr);
+    return build_table_from_tokens(input, offsets->view(), tokens, stream, mr);
   }
 
   auto tokenizer    = rsplit_tokenizer_fn{*d_strings, delimiter.size(), max_tokens};

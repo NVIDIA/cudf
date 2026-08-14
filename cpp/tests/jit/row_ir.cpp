@@ -394,14 +394,14 @@ return cudf::errc::SUCCESS;
 
   EXPECT_EQ(transform_args.udf, expected_udf);
 
-  auto result = cudf::multi_transform(transform_args.udf,
-                                      transform_args.source_type,
-                                      transform_args.is_null_aware,
-                                      transform_args.user_data,
-                                      transform_args.inputs,
-                                      transform_args.outputs,
-                                      std::move(transform_args.string_offsets),
-                                      transform_args.row_size);
+  auto result = cudf::transform(transform_args.udf,
+                                transform_args.source_type,
+                                transform_args.is_null_aware,
+                                transform_args.user_data,
+                                transform_args.inputs,
+                                transform_args.outputs,
+                                std::move(transform_args.string_offsets),
+                                transform_args.row_size);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0).view());
 }

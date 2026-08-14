@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -32,6 +32,59 @@ class PinnedMemoryPoolTest extends CudfTestBase {
     assertTrue(PinnedMemoryPool.isInitialized());
     PinnedMemoryPool.shutdown();
     assertFalse(PinnedMemoryPool.isInitialized());
+  }
+
+  @Test
+  void initWithParallelFirstTouch() {
+    final long poolSize = 16L * 1024 * 1024;
+    assertFalse(PinnedMemoryPool.isInitialized());
+    PinnedMemoryPool.initialize(poolSize, 0, true, 4);
+    assertTrue(PinnedMemoryPool.isInitialized());
+    assertEquals(poolSize, PinnedMemoryPool.getTotalPoolSizeBytes());
+
+    try (HostMemoryBuffer buffer = PinnedMemoryPool.tryAllocate(poolSize)) {
+      assertNotNull(buffer);
+      buffer.setByte(0, (byte) 0x5a);
+      assertEquals((byte) 0x5a, buffer.getByte(0));
+      assertNull(PinnedMemoryPool.tryAllocate(1));
+    }
+
+    long fallbackPtr = Rmm.allocFromFallbackPinnedPool(1024);
+    Rmm.freeFromFallbackPinnedPool(fallbackPtr, 1024);
+  }
+
+  @Test
+  void initParallelPoolWithNonPageAlignedSize() {
+    final long poolSize = 16L * 1024 * 1024 + 256;
+    PinnedMemoryPool.initialize(poolSize, 0, true, 4);
+    assertEquals(poolSize, PinnedMemoryPool.getTotalPoolSizeBytes());
+
+    try (HostMemoryBuffer buffer = PinnedMemoryPool.tryAllocate(poolSize)) {
+      assertNotNull(buffer);
+      buffer.setByte(poolSize - 1, (byte) 0x5a);
+      assertEquals((byte) 0x5a, buffer.getByte(poolSize - 1));
+      assertNull(PinnedMemoryPool.tryAllocate(1));
+    }
+  }
+
+  @Test
+  void validateInitializationArguments() {
+    assertThrows(IllegalArgumentException.class,
+        () -> PinnedMemoryPool.initialize(16L * 1024 * 1024, 0, false, 0));
+    assertFalse(PinnedMemoryPool.isInitialized());
+  }
+
+  @Test
+  void failedInitFallsBackAndCanRetry() {
+    // Negative pool size to intentionally fail initialization.
+    PinnedMemoryPool.initialize(-1, 0, false, 2);
+    try (HostMemoryBuffer buffer = PinnedMemoryPool.allocate(1024)) {
+      assertNotNull(buffer);  // this falls back
+    }
+    assertFalse(PinnedMemoryPool.isInitialized());
+    // Initialization can be retried.
+    PinnedMemoryPool.initialize(16L * 1024 * 1024, 0, false, 2);
+    assertTrue(PinnedMemoryPool.isInitialized());
   }
 
   @Test

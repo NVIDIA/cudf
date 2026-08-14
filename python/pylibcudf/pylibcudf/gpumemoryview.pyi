@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Mapping
@@ -9,6 +9,7 @@ class gpumemoryview:
     @property
     def __cuda_array_interface__(self) -> Mapping[str, Any]: ...
     def __len__(self) -> int: ...
+    def byte_slice(self, s: slice) -> gpumemoryview: ...
     @property
     def ptr(self) -> int: ...
     @property

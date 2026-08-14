@@ -787,13 +787,13 @@ struct row_group_pass_data {
  * @brief Partition row groups into passes based on compressed size, leaf value count,
  * and row count thresholds.
  *
- * @param row_groups_info Span of row group metadata
+ * @param row_group_sizes Span of row group size information
  * @param comp_read_limit Maximum compressed bytes per pass
  * @param skip_rows Number of leading rows to skip (affects the effective size of the first row
  * group)
  * @return A row_group_pass_data containing pass boundary offsets and cumulative row counts
  */
-row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info const> row_groups_info,
+row_group_pass_data compute_row_group_passes(std::span<row_group_size_info const> row_group_sizes,
                                              std::size_t comp_read_limit,
                                              int64_t skip_rows);
 

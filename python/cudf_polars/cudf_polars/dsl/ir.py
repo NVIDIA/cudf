@@ -55,7 +55,7 @@ from cudf_polars.dsl.utils.windows import (
     offsets_to_windows,
     range_window_bounds,
 )
-from cudf_polars.utils import dtypes
+from cudf_polars.utils import dtypes, sorting
 from cudf_polars.utils.cuda_stream import (
     get_cuda_stream,
     stream_ordered_after,
@@ -3399,10 +3399,14 @@ class MapFunction(IR):
             raise NotImplementedError(
                 "Fast count unsupported for CSV scans"
             )  # pragma: no cover
-        elif (
-            self.name == "hint_sorted"
-        ):  # pragma: no cover; polars prunes hints in some cases
-            raise NotImplementedError("Hint sorted unsupported")
+        elif self.name == "hint_sorted":
+            (sorted_info,) = options
+            self.options = (
+                tuple(
+                    (name, bool(descending), bool(nulls_last))
+                    for name, descending, nulls_last in sorted_info
+                ),
+            )
         self._non_child_args = (schema, name, self.options)
 
     def get_hashable(self) -> Hashable:
@@ -3512,6 +3516,24 @@ class MapFunction(IR):
                 dtype=dtype,
             )
             return DataFrame([index_col, *df.columns], stream=df.stream)
+        elif name == "hint_sorted":
+            (sorted_info,) = options
+            column_names, descending, nulls_last = zip(*sorted_info, strict=True)
+            orders, null_orders = sorting.sort_order(
+                descending,
+                nulls_last=nulls_last,
+                num_keys=len(column_names),
+            )
+            result = DataFrame([col.copy() for col in df.columns], stream=df.stream)
+            for column_name, order, null_order in zip(
+                column_names, orders, null_orders, strict=True
+            ):
+                result.column_map[column_name].set_sorted(
+                    is_sorted=plc.types.Sorted.YES,
+                    order=order,
+                    null_order=null_order,
+                )
+            return result
         else:
             raise AssertionError("Should never be reached")  # pragma: no cover
 

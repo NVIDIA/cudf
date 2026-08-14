@@ -302,6 +302,11 @@ def _(
 def _(
     ir: MapFunction, rec: LowerIRTransformer
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if ir.name == "hint_sorted":
+        raise NotImplementedError(
+            "hint_sorted is not supported by the streaming executor."
+        )
+
     # Allow pointwise operations
     if ir.name in ("rename", "explode"):
         return _lower_ir_pwise(ir, rec)

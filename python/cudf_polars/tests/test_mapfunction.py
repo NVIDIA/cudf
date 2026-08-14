@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -6,8 +6,10 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
 from cudf_polars.containers import DataType
-from cudf_polars.dsl.ir import DataFrameScan, MapFunction
+from cudf_polars.dsl.ir import DataFrameScan, IRExecutionContext, MapFunction
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
@@ -110,14 +112,52 @@ def test_unique_hash():
     assert hash(ir_a) != hash(ir_b)
 
 
-@pytest.mark.xfail(reason="HintIR not supported")
-def test_set_sorted_then_inner_join(engine: pl.GPUEngine):
+def test_set_sorted_then_inner_join(
+    engine: pl.GPUEngine, request: pytest.FixtureRequest
+):
+    if engine.config.get("executor") != "in-memory":
+        request.applymarker(
+            pytest.mark.xfail(reason="Streaming hint_sorted unsupported")
+        )
     df = pl.LazyFrame({"a": [1, 2, 3, 4, 5]})
 
     q = df.set_sorted("a").join(
         pl.LazyFrame({"a": [2, 4], "b": [20, 40]}), on="a", how="inner"
     )
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_hint_sorted_marks_column_metadata(descending, nulls_last) -> None:
+    schema = {
+        "a": DataType(pl.Int64()),
+        "b": DataType(pl.Int64()),
+    }
+    child = DataFrameScan(
+        schema,
+        pl.DataFrame({"a": [1, 2, 3], "b": [3, 2, 1]})._df,
+        None,
+    )
+    node = MapFunction(
+        schema,
+        "hint_sorted",
+        [[("a", descending, nulls_last)]],
+        child,
+    )
+
+    result = node.evaluate(cache={}, timer=None, context=IRExecutionContext())
+
+    order = plc.types.Order.DESCENDING if descending else plc.types.Order.ASCENDING
+    null_order = (
+        plc.types.NullOrder.AFTER
+        if descending != nulls_last
+        else plc.types.NullOrder.BEFORE
+    )
+    assert result.column_map["a"].is_sorted == plc.types.Sorted.YES
+    assert result.column_map["a"].order == order
+    assert result.column_map["a"].null_order == null_order
+    assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
 
 
 def test_explode_single_legacy_options():

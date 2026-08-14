@@ -117,7 +117,7 @@ std::unique_ptr<cudf::column> is_valid(
  * @param mr Device memory resource used to allocate the returned column's device memory
  *
  * @returns Column of same size as `input` containing result of the cast operation
- * @throw cudf::logic_error if `out_type` is not a fixed-width type
+ * @throw cudf::logic_error if `input` or `out_type` is not a fixed-width type
  */
 std::unique_ptr<column> cast(
   column_view const& input,

@@ -37,7 +37,6 @@ using cudf::io::parquet::experimental::variant_primitive_type;
 // The leaf value type exercised by a benchmark row, selected via the nvbench "type" string axis.
 enum class bench_variant_type : uint8_t { INT32, FLOAT, BOOL, STRING, ARRAY };
 
-// Parse the nvbench "type" string axis value into a bench_variant_type.
 bench_variant_type parse_bench_variant_type(std::string const& type_str)
 {
   if (type_str == "int32_t") { return bench_variant_type::INT32; }
@@ -55,7 +54,6 @@ constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_he
   return static_cast<uint8_t>(static_cast<uint8_t>(basic) | (value_header << 2));
 }
 
-// Header byte for a primitive value of the given physical type.
 constexpr uint8_t make_variant_primitive_header(variant_primitive_type type)
 {
   return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));

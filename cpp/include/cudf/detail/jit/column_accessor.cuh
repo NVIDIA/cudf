@@ -13,8 +13,7 @@
 #include <cuda/std/span>
 #include <cuda/std/type_traits>
 
-namespace cudf {
-namespace jit {
+namespace cudf::detail::jit {
 
 template <int32_t Index, typename Column, typename Element, bool AsScalar, int32_t TableIndex>
 struct column_accessor {
@@ -105,5 +104,4 @@ struct column_accessor {
   }
 };
 
-}  // namespace jit
-}  // namespace cudf
+}  // namespace cudf::detail::jit

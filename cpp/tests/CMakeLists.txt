@@ -287,6 +287,7 @@ ConfigureTest(
 ConfigureTest(
   TRANSFORM_TEST
   transform/integration/unary_transform_test.cpp
+  transform/cuda_transform_test.cu
   transform/nans_to_null_test.cpp
   transform/mask_to_bools_test.cpp
   transform/bools_to_mask_test.cpp

@@ -12,12 +12,10 @@
 #include <cuda/std/optional>
 #include <cuda/std/span>
 
-namespace cudf {
-namespace jit {
+namespace cudf::detail::jit {
 
 /**
  * @brief A column wrapper type that treats a column as a vector of elements.
- *
  */
 struct mutable_vector_device_view : private mutable_column_device_view_core {
   using base = mutable_column_device_view_core;
@@ -67,7 +65,8 @@ struct mutable_vector_device_view : private mutable_column_device_view_core {
 
 /**
  * @brief A column wrapper type that treats a column as a column of mutable strings.
- * The offsets will have been pre-initialized and the chars will have been pre-allocated.
+ *
+ * The offsets have been initialized and the character buffer has been allocated.
  */
 struct mutable_strings_column_device_view : private mutable_column_device_view_core {
   using base = mutable_column_device_view_core;
@@ -113,14 +112,11 @@ struct mutable_strings_column_device_view : private mutable_column_device_view_c
   }
 
   template <typename T = cuda::std::span<char>>
-  __device__ void assign(size_type row, cuda::std::span<char> value) const noexcept
+  __device__ void assign(size_type, cuda::std::span<char>) const noexcept
     requires(cuda::std::is_same_v<T, cuda::std::span<char>>)
   {
-    // no-op since we assume the chars have already been pre-allocated and they are mutated
-    // in-place
-    return;
+    // The preallocated character buffer is mutated in-place.
   }
 };
 
-}  // namespace jit
-}  // namespace cudf
+}  // namespace cudf::detail::jit

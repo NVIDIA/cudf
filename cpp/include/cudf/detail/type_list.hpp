@@ -1,18 +1,19 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
 #pragma once
+
+#include <cudf/utilities/export.hpp>
 
 #include <cuda/std/tuple>
 #include <cuda/std/utility>
 
-namespace cudf {
-namespace jit {
+namespace cudf::detail {
 
 /**
- * @brief A list of types with some helper functions to operate on them.
- *
+ * @brief A list of types with helpers for operating on the contained types.
  */
 template <typename... T>
 struct type_list {
@@ -26,11 +27,10 @@ struct type_list {
   static constexpr cuda::std::make_integer_sequence<int, size> indexed{};
 
   template <typename Fn>
-  static constexpr __device__ decltype(auto) map(Fn&& fn)
+  static CUDF_HOST_DEVICE constexpr decltype(auto) map(Fn&& fn)
   {
     return fn.template operator()<T...>();
   }
 };
 
-}  // namespace jit
-}  // namespace cudf
+}  // namespace cudf::detail

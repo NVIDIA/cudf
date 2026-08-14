@@ -509,7 +509,7 @@ foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
   )
   set(VARIANT_NAME transform_kernel_${FILE_INDEX})
   set(INSTANCE
-      "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+      "cudf::jit::transform_kernel<false, false, cudf::detail::type_list<cudf::detail::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::detail::type_list<cudf::detail::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
   )
   add_fragment(
     cudf_fragments
@@ -542,7 +542,7 @@ foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
     )
     set(VARIANT_NAME transform_kernel_${FILE_INDEX})
     set(INSTANCE
-        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::jit::column_accessor<1ULL, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+        "cudf::jit::transform_kernel<false, false, cudf::detail::type_list<cudf::detail::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::detail::jit::column_accessor<1ULL, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::detail::type_list<cudf::detail::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
     )
     add_fragment(
       cudf_fragments

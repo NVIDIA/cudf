@@ -61,7 +61,7 @@ std::vector<std::string> build_join_filter_template_params(
   for (size_t i = 0; i < inputs.size(); ++i) {
     auto const& input = inputs[i];
     if (auto* col = std::get_if<column_view>(&input)) {
-      accessors.emplace_back(rtcx::reflect_template("cudf::jit::column_accessor",
+      accessors.emplace_back(rtcx::reflect_template("cudf::detail::jit::column_accessor",
                                                     rtcx::reflect(i),
                                                     "cudf::column_device_view_core",
                                                     cudf::type_to_name(col->type()),
@@ -70,7 +70,7 @@ std::vector<std::string> build_join_filter_template_params(
     } else {
       auto& scalar = std::get<scalar_column_view>(input);
       accessors.emplace_back(rtcx::reflect_template(
-        "cudf::jit::column_accessor",
+        "cudf::detail::jit::column_accessor",
         rtcx::reflect(i),
         "cudf::column_device_view_core",
         cudf::type_to_name(scalar.as_column_view().type()),
@@ -80,7 +80,7 @@ std::vector<std::string> build_join_filter_template_params(
     }
   }
 
-  template_params.push_back(rtcx::reflect_template("cudf::jit::type_list", accessors));
+  template_params.push_back(rtcx::reflect_template("cudf::detail::type_list", accessors));
 
   return template_params;
 }

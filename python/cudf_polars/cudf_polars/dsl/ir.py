@@ -3603,11 +3603,17 @@ class MapFunction(IR):
             )  # pragma: no cover
         elif self.name == "hint_sorted":
             (sorted_info,) = options
+            column_names = []
+            descending = []
+            nulls_last = []
+            for column_name, is_descending, is_nulls_last in sorted_info:
+                column_names.append(column_name)
+                descending.append(bool(is_descending))
+                nulls_last.append(bool(is_nulls_last))
             self.options = (
-                tuple(
-                    (name, bool(descending), bool(nulls_last))
-                    for name, descending, nulls_last in sorted_info
-                ),
+                tuple(column_names),
+                tuple(descending),
+                tuple(nulls_last),
             )
         self._non_child_args = (schema, name, self.options)
 
@@ -3719,8 +3725,7 @@ class MapFunction(IR):
             )
             return DataFrame([index_col, *df.columns], stream=df.stream)
         elif name == "hint_sorted":
-            (sorted_info,) = options
-            column_names, descending, nulls_last = zip(*sorted_info, strict=True)
+            column_names, descending, nulls_last = options
             orders, null_orders = sorting.sort_order(
                 descending,
                 nulls_last=nulls_last,

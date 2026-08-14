@@ -15,6 +15,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
 def test_explode_multiple_raises(engine: pl.GPUEngine):
@@ -115,7 +116,7 @@ def test_unique_hash():
 def test_set_sorted_then_inner_join(
     engine: pl.GPUEngine, request: pytest.FixtureRequest
 ):
-    if engine.config.get("executor") != "in-memory":
+    if is_streaming_engine(engine):
         request.applymarker(
             pytest.mark.xfail(reason="Streaming hint_sorted unsupported")
         )
@@ -136,7 +137,12 @@ def test_hint_sorted_marks_column_metadata(descending, nulls_last) -> None:
     }
     child = DataFrameScan(
         schema,
-        pl.DataFrame({"a": [1, 2, 3], "b": [3, 2, 1]})._df,
+        pl.DataFrame(
+            {
+                "a": [2, None, 1],
+                "b": [3, 1, 2],
+            }
+        )._df,
         None,
     )
     node = MapFunction(
@@ -154,10 +160,49 @@ def test_hint_sorted_marks_column_metadata(descending, nulls_last) -> None:
         if descending != nulls_last
         else plc.types.NullOrder.BEFORE
     )
-    assert result.column_map["a"].is_sorted == plc.types.Sorted.YES
-    assert result.column_map["a"].order == order
-    assert result.column_map["a"].null_order == null_order
+    assert result.column_map["a"].check_sorted(
+        order=order, null_order=null_order, stream=result.stream
+    )
     assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
+
+
+def test_hint_sorted_marks_multiple_column_metadata() -> None:
+    schema = {
+        "a": DataType(pl.Int64()),
+        "b": DataType(pl.Int64()),
+        "c": DataType(pl.Int64()),
+    }
+    child = DataFrameScan(
+        schema,
+        pl.DataFrame(
+            {
+                "a": [2, None, 1],
+                "b": [2, None, 3],
+                "c": [3, 1, 2],
+            }
+        )._df,
+        None,
+    )
+    node = MapFunction(
+        schema,
+        "hint_sorted",
+        [[("a", False, False), ("b", True, False)]],
+        child,
+    )
+
+    result = node.evaluate(cache={}, timer=None, context=IRExecutionContext())
+
+    assert result.column_map["a"].check_sorted(
+        order=plc.types.Order.ASCENDING,
+        null_order=plc.types.NullOrder.BEFORE,
+        stream=result.stream,
+    )
+    assert result.column_map["b"].check_sorted(
+        order=plc.types.Order.DESCENDING,
+        null_order=plc.types.NullOrder.AFTER,
+        stream=result.stream,
+    )
+    assert result.column_map["c"].is_sorted == plc.types.Sorted.NO
 
 
 def test_explode_single_legacy_options():

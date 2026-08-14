@@ -14,8 +14,10 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
+    POLARS_VERSION_LT_140,
 )
 
 
@@ -56,11 +58,15 @@ def is_sorted(request):
 
 
 @pytest.fixture
-def xfail_if_sorted(is_sorted, request):
+def xfail_if_sorted(engine, is_sorted, request):
     # See https://github.com/rapidsai/cudf/pull/20791#issuecomment-3750528419
-    if is_sorted:
+    if is_sorted and POLARS_VERSION_LT_136:
         request.applymarker(
             pytest.mark.xfail(reason="See https://github.com/pola-rs/polars/pull/24981")
+        )
+    elif is_sorted and not POLARS_VERSION_LT_140 and is_streaming_engine(engine):
+        request.applymarker(
+            pytest.mark.xfail(reason="Streaming hint_sorted unsupported")
         )
 
 

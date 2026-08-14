@@ -31,7 +31,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                              cudf::join_partition_context const& context,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -179,7 +179,7 @@ template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<hash_join_hasher>::partitioned_join_retrieve(join_kind,
                                                        cudf::join_partition_context const&,
-                                                       rmm::cuda_stream_view,
+                                                       cuda::stream_ref,
                                                        rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

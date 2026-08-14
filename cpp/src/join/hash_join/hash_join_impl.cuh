@@ -20,7 +20,7 @@ template <typename Hasher>
 struct hash_join<Hasher>::impl {
   impl(std::uint32_t capacity,
        size_type rows,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _mr{std::move(mr)},
       entries(capacity, stream, _mr),

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -26,13 +26,10 @@ from pylibcudf.libcudf.types import order as Order  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import sorted as Sorted  # no-cython-lint, isort:skip
 
 from functools import cache
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING:
     import pyarrow as pa
-    pa_err = None
-except ImportError as e:
-    pa = None
-    pa_err = e
 
 try:
     import pyarrow as pa
@@ -197,7 +194,7 @@ cdef class DataType:
         ret.c_obj = dt
         return ret
 
-    def to_arrow(self, **kwargs):
+    def to_arrow(self, **kwargs) -> pa.DataType:
         """
         Convert a datatype to arrow.
 
@@ -252,7 +249,7 @@ cdef class DataType:
                 )
 
     @staticmethod
-    def from_arrow(pa_typ) -> DataType:
+    def from_arrow(pa_typ: pa.DataType) -> DataType:
         """
         Construct a DataType from a Python type.
 

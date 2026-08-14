@@ -16,6 +16,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/std/algorithm>
+#include <cuda/stream_ref>
 
 #include <cstdint>
 
@@ -121,14 +122,11 @@ void launch_hash_csr_build_count(size_type num_rows,
                                  hash_csr_map_view map,
                                  Equal equal,
                                  Hasher hasher,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
-  hash_csr_build_count_kernel<<<config.num_blocks,
-                                config.num_threads_per_block,
-                                0,
-                                stream.value()>>>(
+  hash_csr_build_count_kernel<<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
     num_rows, valid_rows, build_positions, slot_counts, map, equal, hasher);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -138,14 +136,11 @@ void launch_hash_csr_build_count(size_type num_rows,
   hash_csr_build_position_type const* build_positions,
   size_type const* cumulative_ends,
   size_type* values,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
-  hash_csr_build_fill_kernel<<<config.num_blocks,
-                               config.num_threads_per_block,
-                               0,
-                               stream.value()>>>(
+  hash_csr_build_fill_kernel<<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
     num_rows, build_positions, cumulative_ends, values);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -161,21 +156,21 @@ void launch_hash_csr_probe_count(size_type num_rows,
                                  hash_csr_view csr,
                                  Equal equal,
                                  Hasher hasher,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
   hash_csr_probe_count_kernel<IsOuter>
-    <<<config.num_blocks, config.num_threads_per_block, 0, stream.value()>>>(num_rows,
-                                                                             valid_rows,
-                                                                             probe_slots,
-                                                                             match_counts,
-                                                                             matched_slots,
-                                                                             matched_build_rows,
-                                                                             map,
-                                                                             csr,
-                                                                             equal,
-                                                                             hasher);
+    <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(num_rows,
+                                                                           valid_rows,
+                                                                           probe_slots,
+                                                                           match_counts,
+                                                                           matched_slots,
+                                                                           matched_build_rows,
+                                                                           map,
+                                                                           csr,
+                                                                           equal,
+                                                                           hasher);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -243,7 +238,7 @@ void launch_hash_csr_retrieve(std::int64_t output_size,
                               size_type left_index_offset,
                               size_type* left_indices,
                               size_type* right_indices,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   if (output_size == 0) { return; }
   auto const min_blocks = size_type{2} * cudf::detail::num_multiprocessors();
@@ -257,15 +252,15 @@ void launch_hash_csr_retrieve(std::int64_t output_size,
   auto const outputs_per_warp = cudf::util::div_rounding_up_safe(output_size, num_warps);
 
   hash_csr_retrieve_kernel<IsOuter>
-    <<<num_blocks, hash_csr_block_size, 0, stream.value()>>>(output_size,
-                                                             num_probe_rows,
-                                                             outputs_per_warp,
-                                                             offsets,
-                                                             probe_slots,
-                                                             csr,
-                                                             left_index_offset,
-                                                             left_indices,
-                                                             right_indices);
+    <<<num_blocks, hash_csr_block_size, 0, stream.get()>>>(output_size,
+                                                           num_probe_rows,
+                                                           outputs_per_warp,
+                                                           offsets,
+                                                           probe_slots,
+                                                           csr,
+                                                           left_index_offset,
+                                                           left_indices,
+                                                           right_indices);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

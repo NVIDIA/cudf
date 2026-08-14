@@ -20,7 +20,7 @@ namespace cudf::detail {
 template <typename Hasher>
 template <join_kind Join>
 std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
-                                         rmm::cuda_stream_view stream) const
+                                         cuda::stream_ref stream) const
 {
   static_assert(Join == join_kind::INNER_JOIN || Join == join_kind::LEFT_JOIN);
 
@@ -71,7 +71,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
 template <typename Hasher>
 template <join_kind Join>
 std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr) const
 {
   static_assert(Join == join_kind::FULL_JOIN);

@@ -11,10 +11,15 @@ import pytest
 import polars as pl
 from polars.testing import assert_frame_equal
 
+from cudf_polars.containers import DataType
+from cudf_polars.dsl import expr
+from cudf_polars.dsl.expressions.base import ExecutionContext
+from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.typing import Duration
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 if TYPE_CHECKING:
@@ -40,6 +45,22 @@ def df():
             "g2": ["a", "a", "b", "a", "a"],
             "g_null": [1, None, 1, None, 2],
         }
+    )
+
+
+def _range_rolling_sum(
+    dtype: DataType, orderby: str, child: expr.Expr
+) -> expr.RollingWindow:
+    offset = Duration((0, 0, 0, 0, True, False))
+    period = Duration((0, 0, 0, 2, True, False))
+    return expr.RollingWindow(
+        dtype,
+        dtype.plc_type,
+        offset,
+        period,
+        "right",
+        orderby,
+        expr.Agg(dtype, "sum", (), ExecutionContext.WINDOW, child),
     )
 
 
@@ -297,7 +318,7 @@ def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
 @pytest.mark.parametrize(
     "idx,period",
     [
-        ([1, 1, 3, 1, 2, 4, 5], "2i"),
+        (pl.Series("idx", [1, 1, 3, 1, 2, 4, 5], dtype=pl.Int32), "2i"),
         (
             [
                 dt.datetime(2025, 1, 1, 9, 0),
@@ -315,7 +336,7 @@ def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
 )
 def test_rolling_sum_over_index_types_and_group_sizes(
     engine: pl.GPUEngine,
-    idx: list[int] | list[dt.datetime],
+    idx: pl.Series | list[dt.datetime],
     period: str,
 ) -> None:
     df = pl.LazyFrame(
@@ -330,6 +351,38 @@ def test_rolling_sum_over_index_types_and_group_sizes(
     )
     expected = pl.DataFrame({"sum": [10, 20, 30, 40, 90, 60, 130]})
     assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_sum_over_null_index_raises(
+    engine_raise_on_fail: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A"],
+            "idx": pl.Series([1, None, 3], dtype=pl.Int64),
+            "x": [10, 20, 30],
+        }
+    )
+    q = df.select(pl.col("x").sum().rolling("idx", period="2i").over("g").alias("sum"))
+    with pytest.raises(
+        RuntimeError, match="Index column 'idx' in rolling may not contain nulls"
+    ):
+        q.collect(engine=engine_raise_on_fail)
+
+
+def test_rolling_orderby_name_multiple_index_columns_raises() -> None:
+    dtype = DataType(pl.Int64())
+    col = expr.Col(dtype, "x")
+    named_exprs = [
+        expr.NamedExpr("x_sum", _range_rolling_sum(dtype, "t1", col)),
+        expr.NamedExpr("y_sum", _range_rolling_sum(dtype, "t2", col)),
+    ]
+    with pytest.raises(
+        NotImplementedError,
+        match=r"rolling\(\.\.\.\)\.over\(\.\.\.\) only supports one rolling index column",
+    ):
+        expr.GroupedWindow._rolling_orderby_name(named_exprs)
 
 
 @skip_rolling_expr_136_to_138
@@ -475,6 +528,24 @@ def test_range_rolling_nested_under_range_rolling_over_raises(
         .over("g")
     )
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_range_rolling_nested_window_decomposition_raises() -> None:
+    dtype = DataType(pl.Int64())
+    child = expr.Col(dtype, "x")
+    inner_rolling = _range_rolling_sum(dtype, "ts", child)
+    outer_rolling = _range_rolling_sum(dtype, "ts", inner_rolling)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Range rolling over a window does not support nested window expressions",
+    ):
+        decompose_single_agg(
+            expr.NamedExpr("out", outer_rolling),
+            (f"__{i}" for i in range(1)),
+            is_top=True,
+            context=ExecutionContext.WINDOW,
+        )
 
 
 @pytest.mark.parametrize(

@@ -538,6 +538,7 @@ jobs:
     with:
       build_type: pull-request
       matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
     needs: [build-details, java-build-matrix, changed-files]
     permissions:
@@ -558,9 +559,9 @@ jobs:
       arch: ${{ matrix.ARCH }}
       node_type: cpu16
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
-      script: "env RAPIDS_CUDA_VERSION=${{ matrix.CUDA_VER }} ci/build_java.sh"
+      script: "ci/build_java.sh"
       file_to_upload: output_jars
-      artifact-name: java_pkg_${{ matrix.CUDA_VER }}_${{ matrix.ARCH }}
+      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   java-tests:
     needs: [java-build, java-build-matrix]
     if: ${{ !cancelled() && needs.java-build.result == 'success' }}
@@ -587,11 +588,10 @@ jobs:
       - name: Download java-build artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: java_pkg_${{ matrix.CUDA_VER }}_${{ matrix.ARCH }}
+          name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
           path: java_pkg
       - name: Run Java tests
         env:
-          RAPIDS_CUDA_VERSION: ${{ matrix.CUDA_VER }}
           LIBCUDF_LARGE_STRINGS_ENABLED: "0"
         run: |
           . java/ci/java_classifier.sh

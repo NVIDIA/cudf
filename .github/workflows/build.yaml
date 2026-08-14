@@ -513,6 +513,7 @@ jobs:
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
     needs: [build-details, telemetry-setup, java-build-matrix]
     permissions:
@@ -535,9 +536,9 @@ jobs:
       arch: ${{ matrix.ARCH }}
       node_type: cpu16
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
-      script: "env RAPIDS_CUDA_VERSION=${{ matrix.CUDA_VER }} ci/build_java.sh"
+      script: "ci/build_java.sh"
       file_to_upload: output_jars
-      artifact-name: java_pkg_${{ matrix.CUDA_VER }}_${{ matrix.ARCH }}
+      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.
   java-gather:
     needs: [java-build]
@@ -553,7 +554,7 @@ jobs:
       - name: Download per-entry JAR artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: java_pkg_*
+          pattern: cudf_java_*
           path: ${{ runner.temp }}/jars
           merge-multiple: true
       - name: Assemble Maven repository layout

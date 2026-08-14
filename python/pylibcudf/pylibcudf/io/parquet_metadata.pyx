@@ -335,22 +335,26 @@ cdef class ColumnChunkStatistics:
         return result
 
     @property
-    def min(self) -> bytes | None:
-        """Deprecated raw minimum value in signed comparison order."""
-        return _optional_bytes(self.c_obj.min)
-
-    @property
-    def max(self) -> bytes | None:
-        """Deprecated raw maximum value in signed comparison order."""
-        return _optional_bytes(self.c_obj.max)
-
-    @property
     def has_min_max(self) -> bool:
-        """Whether this column chunk has raw minimum and maximum values."""
+        """Whether this column chunk has encoded minimum and maximum values."""
         return (
             (self.c_obj.min_value.has_value() or self.c_obj.min.has_value())
             and (self.c_obj.max_value.has_value() or self.c_obj.max.has_value())
         )
+
+    @property
+    def min_encoded(self) -> bytes | None:
+        """Encoded minimum value, preferring ``min_value`` over deprecated ``min``."""
+        if self.c_obj.min_value.has_value():
+            return _optional_bytes(self.c_obj.min_value)
+        return _optional_bytes(self.c_obj.min)
+
+    @property
+    def max_encoded(self) -> bytes | None:
+        """Encoded maximum value, preferring ``max_value`` over deprecated ``max``."""
+        if self.c_obj.max_value.has_value():
+            return _optional_bytes(self.c_obj.max_value)
+        return _optional_bytes(self.c_obj.max)
 
     @property
     def null_count(self) -> int | None:
@@ -365,16 +369,6 @@ cdef class ColumnChunkStatistics:
         if not self.c_obj.distinct_count.has_value():
             return None
         return self.c_obj.distinct_count.value()
-
-    @property
-    def min_value(self) -> bytes | None:
-        """Raw minimum value ordered according to the column order."""
-        return _optional_bytes(self.c_obj.min_value)
-
-    @property
-    def max_value(self) -> bytes | None:
-        """Raw maximum value ordered according to the column order."""
-        return _optional_bytes(self.c_obj.max_value)
 
     @property
     def is_min_value_exact(self) -> bool | None:

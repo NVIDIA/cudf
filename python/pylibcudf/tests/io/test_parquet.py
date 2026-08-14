@@ -496,12 +496,6 @@ def test_file_metadata_row_groups_and_column_chunks() -> None:
 
 
 def test_file_metadata_columnchunk_statistics() -> None:
-    def min_stat(stats):
-        return stats.min_value if stats.min_value is not None else stats.min
-
-    def max_stat(stats):
-        return stats.max_value if stats.max_value is not None else stats.max
-
     table = pa.table(
         {
             "a": pa.array([1, 2, 3, None], type=pa.int64()),
@@ -535,15 +529,15 @@ def test_file_metadata_columnchunk_statistics() -> None:
 
         a_stats = stats_by_name["a"]
         assert a_stats.has_min_max
-        assert min_stat(a_stats) == struct.pack("<q", min_a)
-        assert max_stat(a_stats) == struct.pack("<q", max_a)
+        assert a_stats.min_encoded == struct.pack("<q", min_a)
+        assert a_stats.max_encoded == struct.pack("<q", max_a)
         assert a_stats.null_count == null_count
         assert a_stats.distinct_count is None
 
         s_stats = stats_by_name["s"]
         assert s_stats.has_min_max
-        assert min_stat(s_stats) == min_s
-        assert max_stat(s_stats) == max_s
+        assert s_stats.min_encoded == min_s
+        assert s_stats.max_encoded == max_s
         assert s_stats.null_count == null_count
         assert s_stats.distinct_count is None
 
@@ -561,10 +555,8 @@ def test_file_metadata_columnchunk_statistics_without_minmax() -> None:
     statistics = file_metadata.row_groups[0].columns[0].meta_data.statistics
 
     assert not statistics.has_min_max
-    assert statistics.min is None
-    assert statistics.max is None
-    assert statistics.min_value is None
-    assert statistics.max_value is None
+    assert statistics.min_encoded is None
+    assert statistics.max_encoded is None
     assert statistics.is_min_value_exact is None
     assert statistics.is_max_value_exact is None
 

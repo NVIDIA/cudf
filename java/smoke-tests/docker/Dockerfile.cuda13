@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-License-Identifier: Apache-2.0
+FROM nvidia/cuda:13.0.1-runtime-ubuntu24.04
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      openjdk-17-jdk-headless \
+      maven \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sfn "$(dirname $(dirname $(readlink -f $(which javac))))" /usr/lib/jvm/cudf-smoke-jdk
+
+ENV JAVA_HOME=/usr/lib/jvm/cudf-smoke-jdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"

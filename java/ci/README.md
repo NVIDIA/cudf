@@ -90,6 +90,15 @@ per-entry artifact. The separate `java-gather` job downloads them (with
 `merge-multiple: true`, so all subdirs land in a single parent dir), runs
 Step 3, and uploads the combined `cudf_java_maven_repo` artifact.
 
+### Step 4 - Smoke tests (optional, local)
+
+After assembling a Maven-repo tree, run the packaging smoke suite under
+[`java/smoke-tests/`](../smoke-tests/README.md):
+
+```bash
+./java/smoke-tests/bin/run.sh --maven-repo-dir /tmp/maven-repo
+```
+
 ## Legacy: manual Dockerfile.rocky build (obsolete)
 
 > The `java/ci/Dockerfile.rocky` + `java/ci/build-in-docker.sh` flow below is the

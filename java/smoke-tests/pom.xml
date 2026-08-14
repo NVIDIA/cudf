@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+  SPDX-License-Identifier: Apache-2.0
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>ai.rapids</groupId>
+    <artifactId>cudf-java-smoke-tests</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>cudf-java-smoke-tests</name>
+    <description>
+        Smoke tests for published cuDF Java classifier JARs.
+        Resolves ai.rapids:cudf from a local Maven-repo tree (file://) or
+        Maven Central and runs SanityCudf with only cudf + slf4j on the classpath.
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>17</maven.compiler.release>
+        <cudf.version>26.10.0-SNAPSHOT</cudf.version>
+        <cudf.maven.repo>${user.home}/.unused-do-not-use</cudf.maven.repo>
+        <cuda.classifier>cuda12</cuda.classifier>
+        <slf4j.version>1.7.30</slf4j.version>
+        <main.class>ai.rapids.cudf.smoke.SanityCudf</main.class>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+    </dependencies>
+
+    <profiles>
+        <!-- Local/artifact/home tree: -Dcudf.maven.repo=/path (default when not Central). -->
+        <profile>
+            <id>local-maven-repo</id>
+            <activation>
+                <property>
+                    <name>!cudf.smoke.central</name>
+                </property>
+            </activation>
+            <repositories>
+                <repository>
+                    <id>cudf-under-test</id>
+                    <url>file://${cudf.maven.repo}</url>
+                </repository>
+            </repositories>
+        </profile>
+        <!-- Classified JAR: -Dcuda.classifier=cuda12 -->
+        <profile>
+            <id>classified</id>
+            <activation>
+                <property>
+                    <name>!cudf.unclassified</name>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>ai.rapids</groupId>
+                    <artifactId>cudf</artifactId>
+                    <version>${cudf.version}</version>
+                    <classifier>${cuda.classifier}</classifier>
+                </dependency>
+            </dependencies>
+        </profile>
+        <!-- Unclassified primary JAR: -Dcudf.unclassified=true -->
+        <profile>
+            <id>unclassified</id>
+            <activation>
+                <property>
+                    <name>cudf.unclassified</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>ai.rapids</groupId>
+                    <artifactId>cudf</artifactId>
+                    <version>${cudf.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>${main.class}</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

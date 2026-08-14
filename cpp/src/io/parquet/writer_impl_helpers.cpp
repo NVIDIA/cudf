@@ -10,6 +10,7 @@
 
 #include "writer_impl_helpers.hpp"
 
+#include <cudf/binary/binary_column_view.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -43,11 +44,13 @@ void fill_table_meta(table_input_metadata& table_meta)
 
   if (is_fixed_width(column.type())) {
     return size_of(column.type()) * column.size();
-  } else if (column.type().id() == type_id::STRING) {
-    auto const scol = strings_column_view(column);
+  } else if (column.type().id() == type_id::STRING or column.type().id() == type_id::BINARY) {
+    auto const offsets = column.type().id() == type_id::STRING
+                           ? strings_column_view(column).offsets()
+                           : binary_column_view(column).offsets();
     return cudf::strings::detail::get_offset_value(
-             scol.offsets(), column.size() + column.offset(), stream) -
-           cudf::strings::detail::get_offset_value(scol.offsets(), column.offset(), stream);
+             offsets, column.size() + column.offset(), stream) -
+           cudf::strings::detail::get_offset_value(offsets, column.offset(), stream);
   } else if (column.type().id() == type_id::STRUCT) {
     auto const scol = structs_column_view(column);
     size_t ret      = 0;

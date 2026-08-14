@@ -21,6 +21,7 @@
 #include "writer_impl.hpp"
 #include "writer_impl_helpers.hpp"
 
+#include <cudf/binary/binary_column_view.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
@@ -271,11 +272,13 @@ size_t column_size(column_view const& column, rmm::cuda_stream_view stream)
 
   if (is_fixed_width(column.type())) {
     return size_of(column.type()) * column.size();
-  } else if (column.type().id() == type_id::STRING) {
-    auto const scol = strings_column_view(column);
+  } else if (column.type().id() == type_id::STRING or column.type().id() == type_id::BINARY) {
+    auto const offsets = column.type().id() == type_id::STRING
+                           ? strings_column_view(column).offsets()
+                           : binary_column_view(column).offsets();
     return cudf::strings::detail::get_offset_value(
-             scol.offsets(), column.size() + column.offset(), stream) -
-           cudf::strings::detail::get_offset_value(scol.offsets(), column.offset(), stream);
+             offsets, column.size() + column.offset(), stream) -
+           cudf::strings::detail::get_offset_value(offsets, column.offset(), stream);
   } else if (column.type().id() == type_id::STRUCT) {
     auto const scol = structs_column_view(column);
     size_t ret      = 0;
@@ -906,13 +909,13 @@ std::vector<schema_tree_node> construct_parquet_schema_tree(
 
       } else {
         // if leaf, add current
-        if (col->type().id() == type_id::STRING) {
-          if (col_meta.is_enabled_output_as_binary()) {
+        if (col->type().id() == type_id::STRING or col->type().id() == type_id::BINARY) {
+          if (col->type().id() == type_id::STRING and col_meta.is_enabled_output_as_binary()) {
             CUDF_EXPECTS(col_meta.num_children() == 2 or col_meta.num_children() == 0,
                          "Binary column's corresponding metadata should have zero or two children");
           } else {
             CUDF_EXPECTS(col_meta.num_children() == 1 or col_meta.num_children() == 0,
-                         "String column's corresponding metadata should have zero or one children");
+                         "Variable-width leaf column metadata should have zero or one children");
           }
         } else {
           CUDF_EXPECTS(col_meta.num_children() == 0,

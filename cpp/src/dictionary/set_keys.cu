@@ -128,7 +128,7 @@ struct remap_indices_dispatch_fn {
   template <typename T>
   remap_result operator()(cudf::dictionary_column_view const&,
                           cudf::column_view const&,
-                          rmm::cuda_stream_view,
+                          cuda::stream_ref,
                           rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
   {
@@ -140,7 +140,7 @@ struct set_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
                                            cudf::column_view const& new_keys,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
     requires(cudf::is_dictionary_key<T>())
   {
@@ -165,7 +165,7 @@ struct set_keys_dispatch_fn {
 
 std::unique_ptr<column> remap_indices(dictionary_column_view const& input,
                                       column_view const& new_keys,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);

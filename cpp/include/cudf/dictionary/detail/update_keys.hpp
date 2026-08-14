@@ -67,6 +67,9 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column
  * Like set_keys() but does not copy the key set or build a dictionary column.
  * Rows whose key value is not found in new_keys are mapped to null.
  *
+ * @throws std::invalid_argument if new_keys is empty or contains nulls
+ * @throws cudf::data_type_error if new_keys and input.keys() data_types do not match
+ *
  * @param input Dictionary column whose indices are to be remapped.
  * @param new_keys Key column to remap indices into. Must be non-empty, null-free,
  *        and the same type as input's keys.
@@ -76,14 +79,12 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column
  */
 std::unique_ptr<column> remap_indices(dictionary_column_view const& input,
                                       column_view const& new_keys,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc
  * cudf::dictionary::match_dictionaries(std::vector<cudf::dictionary_column_view>,rmm::device_async_resource_ref)
- *
- * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::vector<std::unique_ptr<column>> match_dictionaries(
   std::span<dictionary_column_view const> input,
@@ -123,6 +124,8 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
  * This is more efficient than match_dictionaries() when the caller only needs
  * to compare values by index and does not need the actual keys.
  *
+ * @throws std::invalid_argument if input is empty
+ *
  * @param input Span of dictionary column views to match
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned columns' device memory
@@ -130,7 +133,7 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
  */
 std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
   std::span<dictionary_column_view const> input,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -142,6 +145,8 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
  * reference these index columns (and the originals for non-dictionary columns).
  * The merged keys are not returned.
  *
+ * @throws std::invalid_argument if tables is empty
+ *
  * @param tables Vector of table_views containing dictionary columns to be matched
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned columns' device memory
@@ -149,7 +154,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
  */
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
 match_dictionaries_to_indices(std::vector<table_view> tables,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 }  // namespace dictionary::detail

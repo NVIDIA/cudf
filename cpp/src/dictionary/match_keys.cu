@@ -160,7 +160,7 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
 
 std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
   std::span<dictionary_column_view const> input,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
@@ -183,7 +183,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
 
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
 match_dictionaries_to_indices(std::vector<table_view> tables,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not tables.empty(), "expect at least one table", std::invalid_argument);

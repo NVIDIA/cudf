@@ -60,8 +60,12 @@ fi
 
 # Static libcudf needs Boost.Filesystem / Boost.System. ci-wheel does not ship
 # those static archives, so build them from source into BOOST_PREFIX when missing.
-if [[ ! -f "${BOOST_PREFIX}/lib/libboost_filesystem.a" && \
-      ! -f "${BOOST_PREFIX}/lib64/libboost_filesystem.a" ]]; then
+has_boost_static_lib() {
+  local name=$1
+  [[ -f "${BOOST_PREFIX}/lib/${name}" || -f "${BOOST_PREFIX}/lib64/${name}" ]]
+}
+
+if ! has_boost_static_lib libboost_filesystem.a || ! has_boost_static_lib libboost_system.a; then
   BOOST_DIR="boost_${BOOST_VERSION//./_}"
   wget -q -O /tmp/boost.tgz \
     "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz"

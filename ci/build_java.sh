@@ -37,7 +37,12 @@ LIBCUDF_DIR="${WORK_DIR}/libcudf"
 CLASSIFIER_OUT="${REPO_ROOT}/output_jars/${CLASSIFIER}"
 
 cleanup_scratch() {
-  rm -rf "${WORK_DIR}"
+  # Do not delete a caller-provided JAVA_WORK_DIR.
+  if [[ -z ${JAVA_WORK_DIR:-} ]]; then
+    rm -rf "${WORK_DIR}"
+  else
+    rm -rf "${LIBCUDF_DIR}" "${BUILD_DIR}"
+  fi
 }
 trap cleanup_scratch EXIT
 

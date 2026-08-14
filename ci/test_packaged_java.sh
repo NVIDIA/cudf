@@ -33,6 +33,9 @@ export LIBCUDF_LARGE_STRINGS_ENABLED="${LIBCUDF_LARGE_STRINGS_ENABLED:-0}"
 PRODUCT_JAR="$(cd "$(dirname "${JAVA_JAR}")" && pwd)/$(basename "${JAVA_JAR}")"
 rapids-logger "Product JAR: ${PRODUCT_JAR}"
 
+rapids-logger "Check GPU usage"
+nvidia-smi
+
 rm -rf "${REPO_ROOT}/java/target"
 
 pushd "${REPO_ROOT}/java" >/dev/null

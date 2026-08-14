@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -11,6 +11,10 @@ from pylibcudf.libcudf.io.timezone cimport (
 from pylibcudf.libcudf.table.table cimport table
 
 from ..utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from ..table cimport Table
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -19,7 +23,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["make_timezone_transition_table"]
 
 cpdef Table make_timezone_transition_table(
-    str tzif_dir, str timezone_name, object stream=None, DeviceMemoryResource mr=None,
+    str tzif_dir, str timezone_name, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None,
 ):
     """
     Creates a transition table to convert ORC timestamps to UTC.

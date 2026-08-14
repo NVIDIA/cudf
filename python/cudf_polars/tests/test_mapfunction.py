@@ -16,6 +16,7 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.utils.versions import POLARS_VERSION_LT_140
 
 
 def test_explode_multiple_raises(engine: pl.GPUEngine):
@@ -116,7 +117,11 @@ def test_unique_hash():
 def test_set_sorted_then_inner_join(
     engine: pl.GPUEngine, request: pytest.FixtureRequest
 ):
-    if is_streaming_engine(engine):
+    if POLARS_VERSION_LT_140:
+        request.applymarker(
+            pytest.mark.xfail(reason="set_sorted lowers to unsupported hint ir")
+        )
+    elif is_streaming_engine(engine):
         request.applymarker(
             pytest.mark.xfail(reason="Streaming hint_sorted unsupported")
         )

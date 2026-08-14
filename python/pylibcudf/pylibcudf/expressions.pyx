@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import ast
 import functools
@@ -476,7 +476,7 @@ class ExpressionTransformer(ast.NodeVisitor):
 
 
 @functools.lru_cache(256)
-def to_expression(str expr, tuple column_names):
+def to_expression(str expr, tuple column_names: tuple[str, ...]):
     """
     Create an expression for `pylibcudf.transform.compute_column`.
 

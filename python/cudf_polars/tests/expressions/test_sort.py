@@ -11,7 +11,7 @@ import polars as pl
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
+from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_140
 
 
 @pytest.mark.parametrize("descending", [False, True])
@@ -69,7 +69,7 @@ def test_setsorted(engine: pl.GPUEngine, request, descending, nulls_last, with_n
                 "fixed in https://github.com/pola-rs/polars/pull/25250"
             )
         )
-    elif engine.config.get("executor") != "in-memory":
+    elif not POLARS_VERSION_LT_140 and engine.config.get("executor") != "in-memory":
         request.applymarker(
             pytest.mark.xfail(reason="Streaming hint_sorted unsupported")
         )

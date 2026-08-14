@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -179,7 +179,7 @@ void nvbench_join_on_int32(nvbench::state& state,
       auto result = cudf::inner_join(left, right, cudf::null_equality::EQUAL);
     } else {
       auto smj    = cudf::sort_merge_join(right, cudf::sorted::NO, cudf::null_equality::EQUAL);
-      auto result = smj.inner_join(left, cudf::sorted::NO);
+      auto result = smj.inner_join(left);
     }
   });
 }

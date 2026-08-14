@@ -101,7 +101,7 @@ cache:
       - dlpack ${{ dlpack_version }}
       - librdkafka
       - flatbuffers =${{ flatbuffers_version }}
-      - rapids-logger =0.2
+      - rapids-logger =0.3
       - zlib ${{ zlib_version }}
 
 outputs:
@@ -134,7 +134,7 @@ outputs:
         - librmm =${{ minor_version }}
         - libnvcomp-dev ${{ nvcomp_version }}
         - libnvjitlink-dev
-        - rapids-logger =0.2
+        - rapids-logger =0.3
         - zlib ${{ zlib_version }}
         - cuda-cudart-dev
       run:
@@ -152,7 +152,7 @@ outputs:
         # See https://github.com/rapidsai/build-planning/issues/46
         - libnvcomp-dev ${{ nvcomp_version }}
         - dlpack ${{ dlpack_version }}
-        - rapids-logger =0.2
+        - rapids-logger =0.3
       run_exports:
         - ${{ pin_subpackage("libcudf", upper_bound="x.x") }}
       ignore_run_exports:

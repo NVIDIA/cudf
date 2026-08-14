@@ -1461,7 +1461,8 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
   row_group_stats_caster const stats_col{
     .total_row_groups     = total_row_groups,
     .per_file_metadata    = per_file_metadata,
-    .row_group_indices    = host_span<std::vector<size_type> const>(input_row_group_indices),
+    .row_group_indices    = host_span<std::vector<size_type> const>{input_row_group_indices.data(),
+                                                                    input_row_group_indices.size()},
     .has_is_null_operator = false};
 
   for (auto const& column_name : column_names) {
@@ -1487,7 +1488,12 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
     }
 
     auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, host_span<int const>(per_source_schema_indices), dtype, stream, mr);
+      dtype,
+      stats_col,
+      host_span<int const>{per_source_schema_indices.data(), per_source_schema_indices.size()},
+      dtype,
+      stream,
+      mr);
     std::vector<std::unique_ptr<column>> columns;
     columns.reserve(2);
     columns.push_back(std::move(min_col));

@@ -36,11 +36,11 @@ enum class bench_variant_type : uint8_t { INT32, FLOAT, BOOL, STRING, ARRAY };
 // Parse the nvbench "type" string axis value into a bench_variant_type.
 bench_variant_type parse_bench_variant_type(std::string const& type_str)
 {
-  if (type_str == "int32_t") return bench_variant_type::INT32;
-  if (type_str == "float") return bench_variant_type::FLOAT;
-  if (type_str == "bool") return bench_variant_type::BOOL;
-  if (type_str == "string") return bench_variant_type::STRING;
-  if (type_str == "array") return bench_variant_type::ARRAY;
+  if (type_str == "int32_t") { return bench_variant_type::INT32; }
+  if (type_str == "float") { return bench_variant_type::FLOAT; }
+  if (type_str == "bool") { return bench_variant_type::BOOL; }
+  if (type_str == "string") { return bench_variant_type::STRING; }
+  if (type_str == "array") { return bench_variant_type::ARRAY; }
   CUDF_FAIL("Unrecognized benchmark type: " + type_str);
 }
 
@@ -88,15 +88,17 @@ void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
 std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
 {
   uint32_t total = 0;
-  for (auto const& k : keys)
+  for (auto const& k : keys) {
     total += static_cast<uint32_t>(k.size());
+  }
 
   int const offset_size = (total > 255u) ? 2 : 1;
   std::vector<uint8_t> out{static_cast<uint8_t>(0x01 | ((offset_size - 1) << 6))};
 
   auto write_le = [&](uint32_t v) {
-    for (int i = 0; i < offset_size; ++i)
+    for (int i = 0; i < offset_size; ++i) {
       out.push_back(static_cast<uint8_t>(v >> (8 * i)));
+    }
   };
   write_le(static_cast<uint32_t>(keys.size()));
 
@@ -308,10 +310,10 @@ std::string get_path(int nesting, bool is_array)
 {
   std::string path;
   for (int i = 0; i < nesting; ++i) {
-    if (i > 0) path += '.';
+    if (i > 0) { path += '.'; }
     path += static_cast<char>('a' + i);
   }
-  if (is_array) path += "[1]";
+  if (is_array) { path += "[1]"; }
   return path;
 }
 

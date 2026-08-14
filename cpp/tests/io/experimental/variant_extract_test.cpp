@@ -545,16 +545,18 @@ inline std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
   constexpr uint32_t kMaxSingleByteOffsetSum = 255u;
 
   uint32_t total_key_bytes = 0;
-  for (auto const& key : keys)
+  for (auto const& key : keys) {
     total_key_bytes += static_cast<uint32_t>(key.size());
+  }
 
   int const offset_size = (total_key_bytes > kMaxSingleByteOffsetSum) ? 2 : 1;
   std::vector<uint8_t> out{static_cast<uint8_t>(kVariantMetadataVersion |
                                                 ((offset_size - 1) << kMetadataOffsetSizeShift))};
 
   auto write_little_endian_offset = [&](uint32_t value) {
-    for (int byte_index = 0; byte_index < offset_size; ++byte_index)
+    for (int byte_index = 0; byte_index < offset_size; ++byte_index) {
       out.push_back(static_cast<uint8_t>(value >> (8 * byte_index)));
+    }
   };
   write_little_endian_offset(static_cast<uint32_t>(keys.size()));
 
@@ -799,8 +801,9 @@ TEST_F(ExtractVariantFieldTest, LargeDictionary100FieldsExtractLast)
   auto const target_val     = enc_int32(target_fid);
 
   std::vector<uint8_t> val{make_variant_object_header(), static_cast<uint8_t>(field_count)};
-  for (int fid = 0; fid < field_count; ++fid)
+  for (int fid = 0; fid < field_count; ++fid) {
     val.push_back(static_cast<uint8_t>(fid));
+  }
   uint8_t field_offset = 0;
   for (int fid = 0; fid < field_count; ++fid) {
     val.push_back(field_offset);
@@ -837,8 +840,9 @@ TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeThresholdBoundary)
   auto build_flat = [&](int field_count, int target_fid) {
     auto const payload = enc_int32(kExpected);
     std::vector<uint8_t> val{make_variant_object_header(), static_cast<uint8_t>(field_count)};
-    for (int fid = 0; fid < field_count; ++fid)
+    for (int fid = 0; fid < field_count; ++fid) {
       val.push_back(static_cast<uint8_t>(fid));
+    }
     uint8_t field_offset = 0;
     for (int fid = 0; fid < field_count; ++fid) {
       val.push_back(field_offset);

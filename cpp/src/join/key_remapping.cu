@@ -35,7 +35,6 @@
 #include <cuda/std/atomic>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/replace.h>
 
@@ -393,7 +392,7 @@ class key_remap_table : public key_remap_table_interface {
 
     auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(left_num_rows, stream, mr);
     auto const output_begin =
-      thrust::make_transform_output_iterator(result->begin(), extract_index{});
+      cuda::make_transform_output_iterator(result->begin(), extract_index{});
 
     auto preprocessed_left =
       cudf::detail::row::equality::preprocessed_table::create(left_keys, stream);

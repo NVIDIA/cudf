@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -136,6 +137,37 @@ TYPED_TEST(FixedPointScalarFactory, ValueProvided)
   EXPECT_EQ(fp_s->value(), rep_value);
   EXPECT_TRUE(fp_s->is_valid());
   EXPECT_TRUE(s->is_valid());
+}
+
+TYPED_TEST(FixedPointScalarFactory, MakeFixedWidthScalarPreservesScale)
+{
+  using decimalXX           = TypeParam;
+  auto const expected_dtype = cudf::data_type{cudf::type_to_id<decimalXX>(), -3};
+  auto const s              = cudf::make_fixed_width_scalar(expected_dtype);
+
+  EXPECT_EQ(s->type(), expected_dtype);
+  EXPECT_FALSE(s->is_valid());
+}
+
+TYPED_TEST(FixedPointScalarFactory, MakeDefaultConstructedScalarPreservesScale)
+{
+  using decimalXX           = TypeParam;
+  auto const expected_dtype = cudf::data_type{cudf::type_to_id<decimalXX>(), -3};
+  auto const s              = cudf::make_default_constructed_scalar(expected_dtype);
+
+  EXPECT_EQ(s->type(), expected_dtype);
+  EXPECT_FALSE(s->is_valid());
+}
+
+TYPED_TEST(FixedPointScalarFactory, MakeEmptyScalarLikePreservesScale)
+{
+  using decimalXX           = TypeParam;
+  auto const expected_dtype = cudf::data_type{cudf::type_to_id<decimalXX>(), -3};
+  auto const col            = cudf::make_empty_column(expected_dtype);
+  auto const s              = cudf::make_empty_scalar_like(col->view());
+
+  EXPECT_EQ(s->type(), expected_dtype);
+  EXPECT_FALSE(s->is_valid());
 }
 
 struct StructScalarFactory : public ScalarFactoryTest {};

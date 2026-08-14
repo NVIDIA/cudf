@@ -13,7 +13,7 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <initializer_list>
 #include <span>
@@ -39,10 +39,7 @@ namespace detail {
  * @return ColumnView View of the elements `[begin,end)` from `input`.
  */
 template <typename ColumnView>
-ColumnView slice(ColumnView const& input,
-                 size_type begin,
-                 size_type end,
-                 rmm::cuda_stream_view stream);
+ColumnView slice(ColumnView const& input, size_type begin, size_type end, cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::slice(column_view const&, std::span<size_type const>)
@@ -51,7 +48,7 @@ ColumnView slice(ColumnView const& input,
  */
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               rmm::cuda_stream_view stream);
+                               cuda::stream_ref stream);
 /**
  * @copydoc cudf::slice(column_view const&, std::initializer_list<size_type>)
  *
@@ -59,7 +56,7 @@ std::vector<column_view> slice(column_view const& input,
  */
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               rmm::cuda_stream_view stream);
+                               cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::slice(table_view const&, std::span<size_type const>)
@@ -68,7 +65,7 @@ std::vector<column_view> slice(column_view const& input,
  */
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 /**
  * @copydoc cudf::slice(table_view const&, std::initializer_list<size_type>)
  *
@@ -76,7 +73,7 @@ std::vector<table_view> slice(table_view const& input,
  */
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::split(column_view const&, std::span<size_type const>)
@@ -85,7 +82,7 @@ std::vector<table_view> slice(table_view const& input,
  */
 std::vector<column_view> split(column_view const& input,
                                std::span<size_type const> splits,
-                               rmm::cuda_stream_view stream);
+                               cuda::stream_ref stream);
 /**
  * @copydoc cudf::split(column_view const&, std::initializer_list<size_type>)
  *
@@ -93,7 +90,7 @@ std::vector<column_view> split(column_view const& input,
  */
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               rmm::cuda_stream_view stream);
+                               cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::split(table_view const&, std::span<size_type const>)
@@ -102,7 +99,7 @@ std::vector<column_view> split(column_view const& input,
  */
 std::vector<table_view> split(table_view const& input,
                               std::span<size_type const> splits,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 /**
  * @copydoc cudf::split(table_view const&, std::initializer_list<size_type>)
  *
@@ -110,7 +107,7 @@ std::vector<table_view> split(table_view const& input,
  */
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::shift(column_view const&,size_type,scalar const&,
@@ -121,7 +118,7 @@ std::vector<table_view> split(table_view const& input,
 std::unique_ptr<column> shift(column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 /**
@@ -161,7 +158,7 @@ std::unique_ptr<column> segmented_shift(column_view const& segmented_values,
                                         device_span<size_type const> segment_offsets,
                                         size_type offset,
                                         scalar const& fill_value,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr);
 
 /**
@@ -173,7 +170,7 @@ std::unique_ptr<column> segmented_shift(column_view const& segmented_values,
 std::unique_ptr<column> allocate_like(column_view const& input,
                                       size_type size,
                                       mask_allocation_policy mask_alloc,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -185,7 +182,7 @@ std::unique_ptr<column> allocate_like(column_view const& input,
 std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -197,7 +194,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
 std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -209,7 +206,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
 std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -221,7 +218,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
 std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -233,7 +230,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               size_type const n,
                               sample_with_replacement replacement,
                               int64_t const seed,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 /**
@@ -243,7 +240,7 @@ std::unique_ptr<table> sample(table_view const& input,
  */
 std::unique_ptr<scalar> get_element(column_view const& input,
                                     size_type index,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -251,14 +248,14 @@ std::unique_ptr<scalar> get_element(column_view const& input,
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream);
+bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::may_have_nonempty_nulls
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-bool may_have_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream);
+bool may_have_nonempty_nulls(column_view const& input, cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::purge_nonempty_nulls
@@ -266,7 +263,7 @@ bool may_have_nonempty_nulls(column_view const& input, rmm::cuda_stream_view str
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr);
 
 }  // namespace detail

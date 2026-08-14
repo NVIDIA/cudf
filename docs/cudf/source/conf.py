@@ -232,6 +232,10 @@ html_theme_options = {
     "navbar_align": "content",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
+    "switcher": {
+        "json_url": "https://docs.nvidia.com/cudf/versions.json",
+        "version_match": version,
+    },
 }
 include_pandas_compat = True
 
@@ -648,6 +652,13 @@ nitpick_ignore = [
     ("py:class", "Value"),
     ("py:class", "polars.lazyframe.frame.LazyFrame"),
     ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
+    # pylibcudf typing aliases rendered as bare names in autodoc signatures.
+    ("py:class", "ColumnNameSpec"),
+    ("py:class", "CudaStreamLike"),
+    ("py:class", "Datasource"),
+    ("py:class", "Span"),
+    ("py:class", "SupportsArrayInterface"),
+    ("py:class", "SupportsCudaArrayInterface"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [

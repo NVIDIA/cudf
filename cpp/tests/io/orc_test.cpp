@@ -219,6 +219,40 @@ struct SkipRowTest {
   }
 };
 
+void expect_selected_nested_empty_struct_table(cudf::table_view expected, cudf::table_view actual)
+{
+  ASSERT_EQ(1, actual.num_columns());
+  ASSERT_EQ(1, actual.column(0).num_children());
+  ASSERT_EQ(cudf::type_id::STRUCT, actual.column(0).child(0).type().id());
+  ASSERT_EQ(0, actual.column(0).child(0).num_children());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, actual);
+}
+
+void expect_selected_nested_empty_struct_round_trip(std::unique_ptr<cudf::column> input_column,
+                                                    std::string const& filename)
+{
+  std::vector<std::unique_ptr<cudf::column>> input_columns;
+  input_columns.emplace_back(std::move(input_column));
+
+  auto expected = std::make_unique<cudf::table>(std::move(input_columns));
+  cudf::io::table_input_metadata metadata(expected->view());
+  metadata.column_metadata[0].set_name("name");
+  metadata.column_metadata[0].child(0).set_name("empty");
+
+  auto const filepath = temp_env->get_temp_filepath(filename);
+  auto const write_opts =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, *expected)
+      .metadata(std::move(metadata))
+      .build();
+  cudf::io::write_orc(write_opts);
+
+  auto const read_opts = cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath})
+                           .columns({"name"})
+                           .build();
+  auto result = cudf::io::read_orc(read_opts);
+  expect_selected_nested_empty_struct_table(expected->view(), result.tbl->view());
+}
+
 }  // namespace
 
 TYPED_TEST(OrcWriterNumericTypeTest, SingleColumn)
@@ -1252,12 +1286,13 @@ TEST_F(OrcReaderTest, MultipleInputs)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *full_table);
 }
 
-struct OrcWriterTestDecimal : public OrcWriterTest,
-                              public ::testing::WithParamInterface<std::tuple<int, int>> {};
+struct OrcWriterTestDecimal
+  : public OrcWriterTest,
+    public ::testing::WithParamInterface<std::tuple<int, int, cudf::io::compression_type>> {};
 
 TEST_P(OrcWriterTestDecimal, Decimal64)
 {
-  auto const [num_rows, scale] = GetParam();
+  auto const [num_rows, scale, compression] = GetParam();
 
   // Using int16_t because scale causes values to overflow if they already require 32 bits
   auto const vals = random_values<int32_t>(num_rows);
@@ -1267,7 +1302,8 @@ TEST_P(OrcWriterTestDecimal, Decimal64)
 
   auto filepath = temp_env->get_temp_filepath("Decimal64.orc");
   cudf::io::orc_writer_options out_opts =
-    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl);
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl)
+      .compression(compression);
 
   cudf::io::write_orc(out_opts);
 
@@ -1278,10 +1314,16 @@ TEST_P(OrcWriterTestDecimal, Decimal64)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(tbl.column(0), result.tbl->view().column(0));
 }
 
+// The cases with more than 10000 rows and no compression test the writer's non-compaction path,
+// where encoded streams are written straight from the encoder output, because decimal data stream
+// sizes are known exactly up front and uncompressed streams get no alignment padding, which leaves
+// the chunks of a multi-rowgroup stripe already contiguous.
 INSTANTIATE_TEST_CASE_P(OrcWriterTest,
                         OrcWriterTestDecimal,
                         ::testing::Combine(::testing::Values(1, 10000, 10001, 34567),
-                                           ::testing::Values(-2, 0, 2)));
+                                           ::testing::Values(-2, 0, 2),
+                                           ::testing::Values(cudf::io::compression_type::AUTO,
+                                                             cudf::io::compression_type::NONE)));
 
 TEST_F(OrcWriterTest, Decimal32)
 {
@@ -1566,6 +1608,46 @@ TEST_F(OrcReaderTest, NestedColumnSelection)
   int64_col expected_col{child_col2_data.begin(), child_col2_data.end(), validity};
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_col, result.tbl->view().column(0).child(0));
   ASSERT_EQ("field_b", result.metadata.schema_info[0].children[0].name);
+}
+
+TEST_F(OrcReaderTest, NestedEmptyStructColumnSelection)
+{
+  auto const validity = std::vector<bool>{true, false};
+  auto const num_rows = static_cast<cudf::size_type>(validity.size());
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
+  auto input_column = cudf::make_structs_column(
+    num_rows, std::move(struct_children), null_count, std::move(null_mask));
+  ASSERT_TRUE(input_column->nullable());
+  ASSERT_EQ(null_count, input_column->null_count());
+  // Struct parent nulls are superimposed on their children by make_structs_column.
+  ASSERT_TRUE(input_column->child(0).nullable());
+  ASSERT_EQ(null_count, input_column->child(0).null_count());
+
+  expect_selected_nested_empty_struct_round_trip(std::move(input_column),
+                                                 "reader_nested_empty_struct_outer_nullable.orc");
+}
+
+TEST_F(OrcReaderTest, NullableEmptyStructChildColumnSelection)
+{
+  auto const validity = std::vector<bool>{true, false};
+  auto const num_rows = static_cast<cudf::size_type>(validity.size());
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.emplace_back(
+    cudf::make_structs_column(num_rows, {}, null_count, std::move(null_mask)));
+  auto input_column = cudf::make_structs_column(num_rows, std::move(struct_children), 0, {});
+  ASSERT_FALSE(input_column->nullable());
+  ASSERT_TRUE(input_column->child(0).nullable());
+  ASSERT_EQ(null_count, input_column->child(0).null_count());
+
+  expect_selected_nested_empty_struct_round_trip(std::move(input_column),
+                                                 "reader_nested_empty_struct_inner_nullable.orc");
 }
 
 TEST_F(OrcReaderTest, DecimalOptions)

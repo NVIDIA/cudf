@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/variant.hpp>
+#include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -19,11 +20,60 @@
 #include <cstring>
 #include <memory>
 #include <random>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
 
 namespace {
+
+using cudf::io::parquet::experimental::variant_basic_type;
+using cudf::io::parquet::experimental::variant_primitive_type;
+
+// The leaf value type exercised by a benchmark row, selected via the nvbench "type" string axis.
+enum class bench_variant_type : uint8_t { INT32, FLOAT, BOOL, STRING, ARRAY };
+
+// Parse the nvbench "type" string axis value into a bench_variant_type.
+bench_variant_type parse_bench_variant_type(std::string const& type_str)
+{
+  if (type_str == "int32_t") return bench_variant_type::INT32;
+  if (type_str == "float") return bench_variant_type::FLOAT;
+  if (type_str == "bool") return bench_variant_type::BOOL;
+  if (type_str == "string") return bench_variant_type::STRING;
+  if (type_str == "array") return bench_variant_type::ARRAY;
+  CUDF_FAIL("Unrecognized benchmark type: " + type_str);
+}
+
+// Compose a value-metadata header byte from a basic type and its 6-bit value_header.
+// See cpp/tests/io/experimental/variant_extract_test.cpp for the header byte layout.
+constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_header)
+{
+  return static_cast<uint8_t>(static_cast<uint8_t>(basic) | (value_header << 2));
+}
+
+// Header byte for a primitive value of the given physical type.
+constexpr uint8_t make_variant_primitive(variant_primitive_type type)
+{
+  return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));
+}
+
+// Header byte for a short string of the given length (must fit in 6 bits: 0..63).
+constexpr uint8_t make_variant_short_string_header(std::size_t length)
+{
+  return make_variant_header(variant_basic_type::SHORT_STRING, static_cast<uint8_t>(length));
+}
+
+// Header byte for an object value with 1-byte field ids and 1-byte offsets (value_header == 0).
+constexpr uint8_t make_variant_object_header()
+{
+  return make_variant_header(variant_basic_type::OBJECT, 0);
+}
+
+// Header byte for an array value with 1-byte count and 1-byte offsets (value_header == 0).
+constexpr uint8_t make_variant_array_header()
+{
+  return make_variant_header(variant_basic_type::ARRAY, 0);
+}
 
 void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
 {
@@ -64,65 +114,62 @@ std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
 }
 
 // Wrap `inner` as the sole field (field id `fid`) of a 1-field VARIANT object.
-// Uses 1-byte field_id_size and 1-byte field_offset_size (value_header=0 → header=0x02).
-std::vector<uint8_t> wrap_in_object(uint8_t fid, std::vector<uint8_t> const& inner)
+// Uses 1-byte field_id_size and 1-byte field_offset_size (value_header=0).
+std::vector<uint8_t> wrap_in_object(uint8_t fid, std::span<uint8_t const> inner)
 {
   // Format: object_header(1) + num_fields(1) + fid(1) + offset[0]=0(1) + offset[1]=size(1) + data
-  std::vector<uint8_t> out{0x02, 0x01, fid, 0x00, static_cast<uint8_t>(inner.size())};
+  std::vector<uint8_t> out{
+    make_variant_object_header(), 0x01, fid, 0x00, static_cast<uint8_t>(inner.size())};
   out.insert(out.end(), inner.begin(), inner.end());
   return out;
 }
 
 // Build the leaf VARIANT value blob for the requested type.
-//
-// Header byte composition: (physical_type_id << 2) | basic_type
-//   PRIMITIVE basic_type = 0, so header = physical_type_id << 2
-//   SHORT_STRING basic_type = 1, so header = (length << 2) | 1
-//   ARRAY basic_type = 3, so header = (value_header << 2) | 3
-//
-// Physical type IDs used:
-//   INT32    = 5  → header 0x14
-//   FLOAT32  = 14 → header 0x38
-//   BOOL_TRUE= 1  → header 0x04
-std::vector<uint8_t> build_leaf_value(std::string const& type_str)
+std::vector<uint8_t> build_leaf_value(bench_variant_type type)
 {
-  if (type_str == "int32_t") {
-    std::vector<uint8_t> out{0x14};
-    append_le(out, 42u, 4);
-    return out;
+  switch (type) {
+    case bench_variant_type::INT32: {
+      std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::INT32)};
+      append_le(out, 42u, 4);
+      return out;
+    }
+    case bench_variant_type::FLOAT: {
+      std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::FLOAT32)};
+      float const f = 1.0f;
+      uint32_t u;
+      std::memcpy(&u, &f, 4);
+      append_le(out, u, 4);
+      return out;
+    }
+    case bench_variant_type::BOOL:
+      return {make_variant_primitive(variant_primitive_type::BOOLEAN_TRUE)};
+    case bench_variant_type::STRING: {
+      // Short string "hello" (5 bytes).
+      auto const s = std::string{"hello"};
+      std::vector<uint8_t> out{make_variant_short_string_header(s.size())};
+      out.insert(out.end(), s.begin(), s.end());
+      return out;
+    }
+    case bench_variant_type::ARRAY: {
+      // VARIANT array of two INT32 values [42, 99]; element [1] is accessed in the benchmark.
+      // 2 elements, offsets [0, 5, 10], then INT32(42) and INT32(99) (5 bytes each).
+      std::vector<uint8_t> out{make_variant_array_header(), 0x02, 0x00, 0x05, 0x0a};
+      out.push_back(make_variant_primitive(variant_primitive_type::INT32));
+      append_le(out, 42u, 4);
+      out.push_back(make_variant_primitive(variant_primitive_type::INT32));
+      append_le(out, 99u, 4);
+      return out;
+    }
+    default: CUDF_FAIL("Unsupported benchmark leaf type");
   }
-  if (type_str == "float") {
-    std::vector<uint8_t> out{0x38};
-    float const f = 1.0f;
-    uint32_t u;
-    std::memcpy(&u, &f, 4);
-    append_le(out, u, 4);
-    return out;
-  }
-  if (type_str == "bool") {
-    return {0x04};  // BOOLEAN_TRUE
-  }
-  if (type_str == "string") {
-    // Short string "hello" (5 bytes): (5 << 2) | 1 = 0x15
-    return {0x15, 'h', 'e', 'l', 'l', 'o'};
-  }
-  // "array": VARIANT array of two INT32 values [42, 99]; element [1] is accessed in the benchmark.
-  // Array header 0x03: basic_type=ARRAY(3), value_header=0 (1-byte count, 1-byte offsets).
-  // 2 elements, offsets [0, 5, 10], then INT32(42) and INT32(99) (5 bytes each).
-  std::vector<uint8_t> out{0x03, 0x02, 0x00, 0x05, 0x0a};
-  out.push_back(0x14);
-  append_le(out, 42u, 4);
-  out.push_back(0x14);
-  append_le(out, 99u, 4);
-  return out;
 }
 
 // Build the full hit-row value blob by wrapping the leaf in `nesting` object levels.
 // Keys a,b,c,d,e map to field IDs 0,1,2,3,4 in the shared dictionary.
 // For path a.b.c.d.e the outermost object uses fid=0 ("a").
-std::vector<uint8_t> build_hit_value(std::string const& type_str, int nesting)
+std::vector<uint8_t> build_hit_value(bench_variant_type type, int nesting)
 {
-  auto val = build_leaf_value(type_str);
+  auto val = build_leaf_value(type);
   for (int i = nesting - 1; i >= 0; --i) {
     val = wrap_in_object(static_cast<uint8_t>(i), val);
   }
@@ -134,32 +181,44 @@ std::vector<uint8_t> build_hit_value(std::string const& type_str, int nesting)
 // dictionary), so traversal fails at the first key lookup while the row remains non-null.
 // For cast_variant rows (nesting=0, non-array): a different primitive type so the cast returns
 // null.
-std::vector<uint8_t> build_miss_value(int nesting, bool is_array, std::string const& type_str)
+std::vector<uint8_t> build_miss_value(int nesting, bool is_array, bench_variant_type type)
 {
   if (nesting == 0 && !is_array) {
     // Wrong-type primitive for the cast path.
-    if (type_str == "bool") {
-      std::vector<uint8_t> out{0x14};
-      append_le(out, 0u, 4);
-      return out;
+    switch (type) {
+      case bench_variant_type::BOOL: {
+        std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::INT32)};
+        append_le(out, 0u, 4);
+        return out;
+      }
+      default: return {make_variant_primitive(variant_primitive_type::BOOLEAN_TRUE)};
     }
-    return {0x04};  // BOOLEAN_TRUE
   }
   // "z" is always the last key in the dictionary, at field ID = nesting.
-  return wrap_in_object(static_cast<uint8_t>(nesting), build_leaf_value(type_str));
+  return wrap_in_object(static_cast<uint8_t>(nesting), build_leaf_value(type));
 }
 
-// Build a VARIANT struct column (STRUCT<list<uint8>, list<uint8>>) from per-row byte vectors.
-std::unique_ptr<cudf::column> build_variant_column(
-  std::vector<std::vector<uint8_t>> const& meta_rows,
-  std::vector<std::vector<uint8_t>> const& val_rows,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+// Build a std::span view over each row of a vector-of-byte-vectors, without copying row data.
+std::vector<std::span<uint8_t const>> to_spans(std::vector<std::vector<uint8_t>> const& rows)
+{
+  std::vector<std::span<uint8_t const>> spans;
+  spans.reserve(rows.size());
+  for (auto const& row : rows) {
+    spans.emplace_back(row);
+  }
+  return spans;
+}
+
+// Build a VARIANT struct column (STRUCT<list<uint8>, list<uint8>>) from per-row byte spans.
+std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t const>> meta_rows,
+                                                   std::span<std::span<uint8_t const>> val_rows,
+                                                   rmm::cuda_stream_view stream,
+                                                   rmm::device_async_resource_ref mr)
 {
   auto const n = static_cast<cudf::size_type>(meta_rows.size());
 
   auto build_list_col =
-    [&](std::vector<std::vector<uint8_t>> const& rows) -> std::unique_ptr<cudf::column> {
+    [&](std::span<std::span<uint8_t const>> rows) -> std::unique_ptr<cudf::column> {
     std::vector<int32_t> offsets(n + 1, 0);
     std::vector<uint8_t> flat;
     for (cudf::size_type i = 0; i < n; ++i) {
@@ -215,13 +274,13 @@ std::vector<std::string> get_dict_keys_for_fields(int num_fields)
 }
 
 // Build a flat object with `num_fields` fields using 1-byte field IDs and 1-byte offsets.
-// Field `target_fid` holds `inner`; all other fields hold a dummy BOOLEAN_TRUE (0x04).
+// Field `target_fid` holds `inner`; all other fields hold a dummy BOOLEAN_TRUE.
 std::vector<uint8_t> build_flat_object(int num_fields,
                                        int target_fid,
-                                       std::vector<uint8_t> const& inner)
+                                       std::span<uint8_t const> inner)
 {
   // object_header(1) + num_fields(1) + field_ids(num_fields) + offsets(num_fields+1) + data
-  std::vector<uint8_t> out{0x02, static_cast<uint8_t>(num_fields)};
+  std::vector<uint8_t> out{make_variant_object_header(), static_cast<uint8_t>(num_fields)};
   for (int i = 0; i < num_fields; ++i) {
     out.push_back(static_cast<uint8_t>(i));
   }
@@ -235,7 +294,7 @@ std::vector<uint8_t> build_flat_object(int num_fields,
     if (i == target_fid) {
       out.insert(out.end(), inner.begin(), inner.end());
     } else {
-      out.push_back(0x04);  // BOOLEAN_TRUE dummy
+      out.push_back(make_variant_primitive(variant_primitive_type::BOOLEAN_TRUE));  // dummy
     }
   }
   return out;
@@ -256,13 +315,17 @@ std::string get_path(int nesting, bool is_array)
   return path;
 }
 
-cudf::data_type get_target_type(std::string const& type_str)
+cudf::data_type get_target_type(bench_variant_type type)
 {
-  if (type_str == "float") return cudf::data_type{cudf::type_id::FLOAT32};
-  if (type_str == "bool") return cudf::data_type{cudf::type_id::BOOL8};
-  if (type_str == "string") return cudf::data_type{cudf::type_id::STRING};
-  // "int32_t" and "array" (element access yields INT32)
-  return cudf::data_type{cudf::type_id::INT32};
+  switch (type) {
+    case bench_variant_type::FLOAT: return cudf::data_type{cudf::type_id::FLOAT32};
+    case bench_variant_type::BOOL: return cudf::data_type{cudf::type_id::BOOL8};
+    case bench_variant_type::STRING: return cudf::data_type{cudf::type_id::STRING};
+    // "array": element access yields INT32.
+    case bench_variant_type::INT32:
+    case bench_variant_type::ARRAY: return cudf::data_type{cudf::type_id::INT32};
+    default: CUDF_FAIL("Unsupported benchmark target type");
+  }
 }
 
 }  // namespace
@@ -270,14 +333,15 @@ cudf::data_type get_target_type(std::string const& type_str)
 // Assign each row randomly as a hit or miss rather than using contiguous strided ranges,
 // so the memory access pattern doesn't accidentally favour cache locality.
 void fill_val_rows(std::vector<std::vector<uint8_t>>& val_rows,
-                   std::vector<uint8_t> const& hit_val,
-                   std::vector<uint8_t> const& miss_val,
+                   std::span<uint8_t const> hit_val,
+                   std::span<uint8_t const> miss_val,
                    int hit_rate)
 {
   std::mt19937 rng{42};
   std::uniform_int_distribution<int> dist{0, 99};
   for (auto& row : val_rows) {
-    row = (dist(rng) < hit_rate) ? hit_val : miss_val;
+    auto const& src = (dist(rng) < hit_rate) ? hit_val : miss_val;
+    row.assign(src.begin(), src.end());
   }
 }
 
@@ -288,21 +352,23 @@ static void bench_variant_cast(nvbench::state& state)
   auto mr     = cudf::get_current_device_resource_ref();
 
   auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const type_str = state.get_string("type");
+  auto const type     = parse_bench_variant_type(state.get_string("type"));
   auto const hit_rate = static_cast<int>(state.get_int64("hit_rate"));
 
   auto const meta_blob = build_metadata(get_dict_keys(0));
-  auto const hit_val   = build_leaf_value(type_str);
-  auto const miss_val  = build_miss_value(0, /*is_array=*/false, type_str);
+  auto const hit_val   = build_leaf_value(type);
+  auto const miss_val  = build_miss_value(0, /*is_array=*/false, type);
 
   std::vector<std::vector<uint8_t>> meta_rows(num_rows, meta_blob);
   std::vector<std::vector<uint8_t>> val_rows(num_rows);
   fill_val_rows(val_rows, hit_val, miss_val, hit_rate);
 
-  auto col = build_variant_column(meta_rows, val_rows, stream, mr);
+  auto meta_spans = to_spans(meta_rows);
+  auto val_spans  = to_spans(val_rows);
+  auto col        = build_variant_column(meta_spans, val_spans, stream, mr);
   CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
 
-  auto const target_type = get_target_type(type_str);
+  auto const target_type = get_target_type(type);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
@@ -324,24 +390,26 @@ static void bench_variant_extract_nesting(nvbench::state& state)
   auto mr     = cudf::get_current_device_resource_ref();
 
   auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const type_str = state.get_string("type");
+  auto const type     = parse_bench_variant_type(state.get_string("type"));
   auto const nesting  = static_cast<int>(state.get_int64("nesting"));
   auto const hit_rate = static_cast<int>(state.get_int64("hit_rate"));
 
-  bool const is_array = (type_str == "array");
+  bool const is_array = (type == bench_variant_type::ARRAY);
 
   auto const meta_blob = build_metadata(get_dict_keys(nesting));
-  auto const hit_val   = build_hit_value(type_str, nesting);
-  auto const miss_val  = build_miss_value(nesting, is_array, type_str);
+  auto const hit_val   = build_hit_value(type, nesting);
+  auto const miss_val  = build_miss_value(nesting, is_array, type);
 
   std::vector<std::vector<uint8_t>> meta_rows(num_rows, meta_blob);
   std::vector<std::vector<uint8_t>> val_rows(num_rows);
   fill_val_rows(val_rows, hit_val, miss_val, hit_rate);
 
-  auto col = build_variant_column(meta_rows, val_rows, stream, mr);
+  auto meta_spans = to_spans(meta_rows);
+  auto val_spans  = to_spans(val_rows);
+  auto col        = build_variant_column(meta_spans, val_spans, stream, mr);
   CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
 
-  auto const target_type = get_target_type(type_str);
+  auto const target_type = get_target_type(type);
   auto const path        = get_path(nesting, is_array);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
@@ -374,7 +442,7 @@ static void bench_variant_extract_fields(nvbench::state& state)
   int const target_fid = (field_pos_str == "last") ? (num_fields - 1) : 0;
 
   auto const meta_blob = build_metadata(get_dict_keys_for_fields(num_fields));
-  auto const leaf      = build_leaf_value("int32_t");
+  auto const leaf      = build_leaf_value(bench_variant_type::INT32);
   auto const hit_val   = build_flat_object(num_fields, target_fid, leaf);
   // Miss: object keyed on "z" (field ID = num_fields), so the lookup fails.
   auto const miss_val = wrap_in_object(static_cast<uint8_t>(num_fields), leaf);
@@ -383,7 +451,9 @@ static void bench_variant_extract_fields(nvbench::state& state)
   std::vector<std::vector<uint8_t>> val_rows(num_rows);
   fill_val_rows(val_rows, hit_val, miss_val, hit_rate);
 
-  auto col = build_variant_column(meta_rows, val_rows, stream, mr);
+  auto meta_spans = to_spans(meta_rows);
+  auto val_spans  = to_spans(val_rows);
+  auto col        = build_variant_column(meta_spans, val_spans, stream, mr);
   CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
 
   std::string const path =

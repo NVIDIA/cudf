@@ -2322,7 +2322,7 @@ class GroupBy(IR):
             cast_to_schema.append(should_cast)
 
         if not requests:
-            # Defer empty requests in case we have sorted aggregations
+            # Defer empty requests in case we have sorted aggs
             return None, []
 
         group_keys, raw_tables = grouper.aggregate(requests, stream=df.stream)

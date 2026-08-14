@@ -10,7 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <cstdint>
 #include <optional>
@@ -23,14 +23,14 @@ namespace detail {
  **/
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::vector<size_type> const& splits,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::pack
  **/
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
 
 // opaque implementation of `metadata_builder` since it needs to use

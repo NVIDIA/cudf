@@ -7,7 +7,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <algorithm>
 #include <stdexcept>
@@ -19,7 +19,7 @@ template <typename T>
 std::vector<T> split(T const& input,
                      size_type column_size,
                      std::span<size_type const> splits,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   if (splits.empty() or column_size == 0) { return std::vector<T>{input}; }
   CUDF_EXPECTS(
@@ -41,14 +41,14 @@ std::vector<T> split(T const& input,
 
 std::vector<cudf::column_view> split(cudf::column_view const& input,
                                      std::span<size_type const> splits,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   return split(input, input.size(), splits, stream);
 }
 
 std::vector<cudf::table_view> split(cudf::table_view const& input,
                                     std::span<size_type const> splits,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   // A genuinely empty table (no columns and no rows) has nothing to split.
   if (input.num_columns() == 0 && input.num_rows() == 0) { return {}; }
@@ -57,14 +57,14 @@ std::vector<cudf::table_view> split(cudf::table_view const& input,
 
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream);
 }
 
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream);
 }
@@ -73,7 +73,7 @@ std::vector<table_view> split(table_view const& input,
 
 std::vector<cudf::column_view> split(cudf::column_view const& input,
                                      std::span<size_type const> splits,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::split(input, splits, stream);
@@ -81,7 +81,7 @@ std::vector<cudf::column_view> split(cudf::column_view const& input,
 
 std::vector<cudf::table_view> split(cudf::table_view const& input,
                                     std::span<size_type const> splits,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::split(input, splits, stream);
@@ -89,7 +89,7 @@ std::vector<cudf::table_view> split(cudf::table_view const& input,
 
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::split(input, splits, stream);
@@ -97,7 +97,7 @@ std::vector<column_view> split(column_view const& input,
 
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::split(input, splits, stream);

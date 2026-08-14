@@ -12,9 +12,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 #include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
@@ -39,7 +38,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& values,
   column_view const& offsets,
   size_type num_groups,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto values_device_view = column_device_view::create(values, stream);
@@ -80,7 +79,7 @@ std::unique_ptr<column> group_collect(column_view const& values,
                                       cudf::device_span<size_type const> group_offsets,
                                       size_type num_groups,
                                       null_policy null_handling,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto [child_column,

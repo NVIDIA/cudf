@@ -9,6 +9,7 @@
 #include "detail/rolling_udf.cuh"
 #include "detail/rolling_utils.cuh"
 
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/groupby/sort_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -24,7 +25,6 @@
 #include <rmm/cuda_stream_view.hpp>
 
 #include <cuda/functional>
-#include <cuda/std/functional>
 
 #include <concepts>
 #include <span>
@@ -385,12 +385,11 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
           return nulls_per_group[i] < (d_offsets[i + 1] - d_offsets[i]) &&
                  d_orderby.is_null_nocheck(d_offsets[i]);
         }));
-    auto is_before =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     it,
-                     it + offsets.size() - 1,
-                     false,
-                     cuda::std::logical_or<>{});
+    auto is_before = cudf::detail::any_of(
+      it,
+      it + offsets.size() - 1,
+      [] __device__(bool has_boundary_null) -> bool { return has_boundary_null; },
+      stream);
     return is_before ? null_order::BEFORE : null_order::AFTER;
   } else {
     // Sort order is DESCENDING
@@ -407,12 +406,11 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
           return nulls_per_group[i] < (d_offsets[i + 1] - d_offsets[i]) &&
                  d_orderby.is_null_nocheck(d_offsets[i + 1] - 1);
         }));
-    auto is_before =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     it,
-                     it + offsets.size() - 1,
-                     false,
-                     cuda::std::logical_or<>{});
+    auto is_before = cudf::detail::any_of(
+      it,
+      it + offsets.size() - 1,
+      [] __device__(bool has_boundary_null) -> bool { return has_boundary_null; },
+      stream);
     return is_before ? null_order::BEFORE : null_order::AFTER;
   }
 }

@@ -7,6 +7,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/interop.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
@@ -433,25 +434,25 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
   auto d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(col.offsets(), col.offset());
 
-  // count the number of long-ish strings -- ones that cannot be inlined
-  auto const num_longer_strings = thrust::count_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  // Check whether all strings are long-ish -- ones that cannot be inlined.
+  auto const all_strings_longer = cudf::detail::all_of(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{col.size()},
-    [d_offsets] __device__(auto idx) {
+    [d_offsets] __device__(auto idx) -> bool {
       return d_offsets[idx + 1] - d_offsets[idx] > NANOARROW_BINARY_VIEW_INLINE_SIZE;
-    });
+    },
+    stream);
 
   // gather all the long-ish strings into a single strings column
   auto [unused_col, longer_strings] = [&] {
-    if (num_longer_strings == col.size()) {
+    if (all_strings_longer) {
       // we can use the input column as is for the remainder of this function
       return std::pair{cudf::make_empty_column(cudf::type_id::STRING), col};
     }
     auto indices = make_counting_transform_iterator(
       0,
       cuda::proclaim_return_type<cudf::strings::detail::string_index_pair>(
-        [d_strings = *d_strings] __device__(auto idx) {
+        [d_strings = *d_strings] __device__(auto idx) -> cudf::strings::detail::string_index_pair {
           if (d_strings.is_null(idx)) {
             return cudf::strings::detail::string_index_pair{nullptr, 0};
           }
@@ -481,7 +482,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
     // compute buffer boundaries (less than 2GB per buffer)
     auto buffer_indices  = rmm::device_uvector<int64_t>(num_buffers, stream);
     auto const bound_itr = make_counting_transform_iterator(
-      0, cuda::proclaim_return_type<int64_t>([] __device__(auto idx) {
+      0, cuda::proclaim_return_type<int64_t>([] __device__(auto idx) -> int64_t {
         return (idx + 1) * max_size;
       }));
     thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -494,7 +495,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
                       buffer_indices.begin(),
                       buffer_indices.end(),
                       buffer_offsets.begin(),
-                      [d_offsets] __device__(auto idx) { return d_offsets[idx]; });
+                      [d_offsets] __device__(auto idx) -> int64_t { return d_offsets[idx]; });
     auto h_offsets = make_std_vector(buffer_offsets, stream);
 
     // build up the variadic buffers needed

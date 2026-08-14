@@ -39,13 +39,14 @@ bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref str
                               : lists_column_view{input}.offsets(),
     input.offset());
   auto const d_input      = cudf::column_device_view::create(input, stream);
-  auto const is_dirty_row = [d_input = *d_input, offsets] __device__(size_type const& row_idx) {
+  auto const is_dirty_row = [d_input = *d_input,
+                             offsets] __device__(size_type const& row_idx) -> bool {
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
 
   auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
   auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
+  return cudf::detail::any_of(row_begin, row_end, is_dirty_row, stream);
 }
 
 }  // namespace

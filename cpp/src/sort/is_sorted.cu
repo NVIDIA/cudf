@@ -1,8 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -17,7 +18,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <thrust/count.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
 
@@ -47,10 +47,11 @@ bool is_sorted(cudf::table_view const& in,
                         return (idx == 0) || device_comparator(idx - 1, idx);
                       });
 
-    return thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         d_results.begin(),
-                         d_results.end(),
-                         false) == 0;
+    return cudf::detail::all_of(
+      d_results.begin(),
+      d_results.end(),
+      [] __device__(bool result) -> bool { return result; },
+      stream);
   } else {
     auto const device_comparator = comparator.less<false>(has_nested_nulls(in));
 

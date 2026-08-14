@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -194,7 +194,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
     0,
     cuda::proclaim_return_type<std::ptrdiff_t>(
       [offsets_begin = offsets.begin<size_type>(),
-       offsets_end   = offsets.end<size_type>()] __device__(size_type i) {
+       offsets_end   = offsets.end<size_type>()] __device__(size_type i) -> std::ptrdiff_t {
         return cuda::std::distance(
           offsets_begin,
           cuda::std::prev(thrust::upper_bound(thrust::seq, offsets_begin, offsets_end, i)));
@@ -217,7 +217,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
              ? cudf::detail::valid_if(
                  cuda::counting_iterator<size_type>{0},
                  cuda::counting_iterator<size_type>{0} + num_output_values,
-                 [percentiles = *percentiles_cdv] __device__(size_type i) {
+                 [percentiles = *percentiles_cdv] __device__(size_type i) -> bool {
                    return percentiles.is_valid(i % percentiles.size());
                  },
                  stream,
@@ -350,11 +350,11 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
   // output is a list column with each row containing percentiles.size() percentile values
   auto offsets = cudf::make_fixed_width_column(
     data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream, mr);
-  auto const all_empty_rows = cudf::detail::count_if(
-                                detail::size_begin(input),
-                                detail::size_begin(input) + input.size(),
-                                [] __device__(auto const x) { return x == 0; },
-                                stream) == static_cast<std::size_t>(input.size());
+  auto const all_empty_rows = cudf::detail::all_of(
+    detail::size_begin(input),
+    detail::size_begin(input) + input.size(),
+    [] __device__(auto const x) -> bool { return x == 0; },
+    stream);
   auto row_size_iter = cuda::make_constant_iterator(all_empty_rows ? 0 : percentiles.size());
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          row_size_iter,

@@ -698,12 +698,12 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
     }
 
     // all non-zero row counts must be the same
-    auto const chk =
-      cudf::detail::count_if(compacted_row_counts_begin,
-                             compacted_row_counts_end,
-                             row_counts_different{static_cast<size_type>(found_row_count)},
-                             stream);
-    CUDF_EXPECTS(chk == 0,
+    auto const row_counts_match =
+      cudf::detail::none_of(compacted_row_counts_begin,
+                            compacted_row_counts_end,
+                            row_counts_different{static_cast<size_type>(found_row_count)},
+                            stream);
+    CUDF_EXPECTS(row_counts_match,
                  "Encountered malformed parquet page data (row count mismatch in page data)");
   }
 }

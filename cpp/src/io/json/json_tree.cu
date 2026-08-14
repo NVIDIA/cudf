@@ -268,17 +268,12 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   };
 
   // Look for ErrorBegin and report the point of error.
-  if (auto const error_count =
-        thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      tokens.begin(),
-                      tokens.end(),
-                      token_t::ErrorBegin);
-      error_count > 0) {
-    auto const error_location =
-      thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   tokens.begin(),
-                   tokens.end(),
-                   token_t::ErrorBegin);
+  auto const error_location =
+    thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                 tokens.begin(),
+                 tokens.end(),
+                 token_t::ErrorBegin);
+  if (error_location != tokens.end()) {
     auto error_index = cudf::detail::make_host_vector<SymbolOffsetT>(
       device_span<SymbolOffsetT const>{
         token_indices.data() + cuda::std::distance(tokens.begin(), error_location), 1},

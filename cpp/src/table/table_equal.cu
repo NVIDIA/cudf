@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,6 @@
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
-#include <cuda/std/functional>
 
 namespace cudf {
 namespace detail {
@@ -44,8 +43,11 @@ template <bool has_nested_columns>
       return rows_equal(detail::row::lhs_index_type{i}, detail::row::rhs_index_type{i});
     },
     stream.value()));
-  return cudf::detail::reduce(
-    eq_rows.begin(), eq_rows.end(), true, cuda::std::logical_and<bool>{}, stream);
+  return cudf::detail::all_of(
+    eq_rows.begin(),
+    eq_rows.end(),
+    [] __device__(bool row_equal) -> bool { return row_equal; },
+    stream);
 }
 
 }  // namespace

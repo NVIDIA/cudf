@@ -13,7 +13,7 @@ In particular, the interpretation of the expression language in a
 
 from __future__ import annotations
 
-from cudf_polars.dsl.expressions.aggregation import Agg, Item
+from cudf_polars.dsl.expressions.aggregation import Agg, Item, SortedAgg
 from cudf_polars.dsl.expressions.base import (
     Col,
     ColRef,
@@ -60,6 +60,7 @@ __all__ = [
     "Slice",
     "Sort",
     "SortBy",
+    "SortedAgg",
     "StringFunction",
     "StructFunction",
     "TemporalFunction",

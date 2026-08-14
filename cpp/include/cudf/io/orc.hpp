@@ -1070,6 +1070,9 @@ class orc_writer_options_builder {
  *
  * @note If an exception is thrown during encoding or compression, no data is written to the sink.
  *
+ * @note Timestamps in the last 999 milliseconds before the UNIX epoch are not representable in ORC;
+ * they are read back one second later, as with the Apache ORC writer (ORC-763, ORC-771).
+ *
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
@@ -1487,6 +1490,9 @@ class chunked_orc_writer_options_builder {
  *    ...
  *  writer.close();
  * @endcode
+ *
+ * @note Timestamps in the last 999 milliseconds before the UNIX epoch are not representable in ORC;
+ * see `write_orc()` for details.
  */
 class orc_chunked_writer {
  public:

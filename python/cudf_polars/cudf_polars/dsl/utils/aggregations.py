@@ -218,6 +218,32 @@ def decompose_single_agg(
             child = agg.children[0]
         else:
             (child,) = agg.children
+        if (
+            context == ExecutionContext.GROUPBY
+            and agg.name in {"first", "last"}
+            and isinstance(child, expr.SortBy)
+        ):
+            for sort_child in child.children:
+                child_aggs, _ = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), sort_child),
+                    name_generator,
+                    is_top=False,
+                    context=context,
+                )
+                if any(nested_agg for _, nested_agg in child_aggs):
+                    raise NotImplementedError(
+                        "Nested aggs in sorted groupby aggregation not supported"
+                    )
+            return [
+                (
+                    named_expr.reconstruct(
+                        expr.SortedAgg(
+                            agg.dtype, agg.name, child.options, *child.children
+                        )
+                    ),
+                    True,
+                )
+            ], named_expr.reconstruct(expr.Col(agg.dtype, name))
         # Fuse drop_nulls().n_unique() into nunique(null_handling=EXCLUDE)
         # rather than materializing a filtered intermediate column.
         if (

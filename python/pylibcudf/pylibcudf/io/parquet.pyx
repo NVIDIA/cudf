@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Mapping, Sequence
 from cython.operator cimport dereference
 import warnings
 
@@ -50,6 +51,10 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type, type_id
 from pylibcudf.table cimport Table
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -140,7 +145,7 @@ cdef class ParquetReaderOptions:
         parquet_builder.source = source
         return parquet_builder
 
-    cpdef void set_row_groups(self, list row_groups):
+    cpdef void set_row_groups(self, list row_groups: list[list[int]]):
         """
         Sets list of individual row groups to read.
 
@@ -210,7 +215,7 @@ cdef class ParquetReaderOptions:
         """
         self.c_obj.set_skip_rows(skip_rows)
 
-    cpdef void set_columns(self, list col_names):
+    cpdef void set_columns(self, list col_names: list[str]):
         """
         Sets names of the columns to be read. Deprecated and will be
         removed in a future version. Use set_column_names instead.
@@ -227,7 +232,7 @@ cdef class ParquetReaderOptions:
         _warn_deprecated("set_columns", "set_column_names")
         self.set_column_names(col_names)
 
-    cpdef void set_column_names(self, list col_names):
+    cpdef void set_column_names(self, list col_names: list[str]):
         """
         Sets names of the columns to be read.
 
@@ -245,7 +250,7 @@ cdef class ParquetReaderOptions:
             vec.push_back(<string>str(name).encode())
         self.c_obj.set_column_names(vec)
 
-    cpdef void set_column_indices(self, list col_indices):
+    cpdef void set_column_indices(self, list col_indices: list[int]):
         """
         Sets indices of the top-level columns to be read.
 
@@ -263,7 +268,7 @@ cdef class ParquetReaderOptions:
             vec.push_back(idx)
         self.c_obj.set_column_indices(vec)
 
-    cpdef void set_column_field_ids(self, list column_field_ids):
+    cpdef void set_column_field_ids(self, list column_field_ids: list[int]):
         """
         Sets Parquet field IDs of the columns/fields to be read.
 
@@ -441,7 +446,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.filter(<expression &>dereference(filter.c_obj))
         return self
 
-    cpdef ParquetReaderOptionsBuilder columns(self, list col_names):
+    cpdef ParquetReaderOptionsBuilder columns(self, list col_names: list[str]):
         """
         Sets names of the columns to be read. Deprecated and will be
         removed in a future version. Use column_names instead.
@@ -458,7 +463,7 @@ cdef class ParquetReaderOptionsBuilder:
         _warn_deprecated("columns", "column_names")
         return self.column_names(col_names)
 
-    cpdef ParquetReaderOptionsBuilder column_names(self, list col_names):
+    cpdef ParquetReaderOptionsBuilder column_names(self, list col_names: list[str]):
         """
         Sets names of the columns to be read.
 
@@ -477,7 +482,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.column_names(vec)
         return self
 
-    cpdef ParquetReaderOptionsBuilder column_indices(self, list col_indices):
+    cpdef ParquetReaderOptionsBuilder column_indices(self, list col_indices: list[int]):
         """
         Sets indices of the top-level columns to be read.
 
@@ -496,7 +501,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.column_indices(vec)
         return self
 
-    cpdef ParquetReaderOptionsBuilder column_field_ids(self, list column_field_ids):
+    cpdef ParquetReaderOptionsBuilder column_field_ids(self, list column_field_ids: list[int]):
         """
         Sets Parquet field IDs of the columns/fields to be read.
 
@@ -602,11 +607,11 @@ cdef class ChunkedParquetReader:
     def __init__(
         self,
         ParquetReaderOptions options,
-        object stream = None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr = None,
         size_t chunk_read_limit=0,
         size_t pass_read_limit=1024000000,
-        object parquet_metadatas=None,
+        object parquet_metadatas: Sequence[FileMetaData] | None = None,
     ):
         self._stream = _get_stream(stream)
         self.mr = _get_memory_resource(mr)
@@ -681,11 +686,11 @@ cdef class ChunkedParquetReader:
         return TableWithMetadata.from_libcudf(c_result, self._stream, mr)
 
 
-cpdef read_parquet(
+cpdef TableWithMetadata read_parquet(
     ParquetReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
-    object parquet_metadatas=None,
+    object parquet_metadatas: Sequence[FileMetaData] | None = None,
 ):
     """
     Read from Parquet format.
@@ -784,7 +789,10 @@ cdef class ChunkedParquetWriter:
             self.c_obj.get()[0].write(c_table, partitions)
 
     @staticmethod
-    def from_options(ChunkedParquetWriterOptions options, object stream = None):
+    def from_options(
+        ChunkedParquetWriterOptions options,
+        object stream: CudaStreamLike | None = None,
+    ) -> ChunkedParquetWriter:
         """
         Creates a chunked Parquet writer from options
 
@@ -858,7 +866,9 @@ cdef class ChunkedParquetWriterOptionsBuilder:
         self.c_obj.metadata(metadata.c_obj)
         return self
 
-    cpdef ChunkedParquetWriterOptionsBuilder key_value_metadata(self, metadata):
+    cpdef ChunkedParquetWriterOptionsBuilder key_value_metadata(
+        self, metadata: Sequence[Mapping[str, str]]
+    ):
         """
         Sets Key-Value footer metadata.
 
@@ -1047,7 +1057,7 @@ cdef class ParquetWriterOptions:
         bldr.sink_ref = sink
         return bldr
 
-    cpdef void set_partitions(self, list partitions):
+    cpdef void set_partitions(self, list partitions: list[PartitionInfo]):
         """
         Sets partitions.
 
@@ -1069,7 +1079,7 @@ cdef class ParquetWriterOptions:
 
         self.c_obj.set_partitions(c_partions)
 
-    cpdef void set_column_chunks_file_paths(self, file_paths):
+    cpdef void set_column_chunks_file_paths(self, file_paths: Sequence[str]):
         """
         Sets column chunks file path to be set in the raw output metadata.
 
@@ -1178,7 +1188,9 @@ cdef class ParquetWriterOptionsBuilder:
         self.c_obj.metadata(metadata.c_obj)
         return self
 
-    cpdef ParquetWriterOptionsBuilder key_value_metadata(self, metadata):
+    cpdef ParquetWriterOptionsBuilder key_value_metadata(
+        self, metadata: Sequence[Mapping[str, str]]
+    ):
         """
         Sets Key-Value footer metadata.
 
@@ -1380,7 +1392,7 @@ cdef class ParquetWriterOptionsBuilder:
         return parquet_options
 
 
-cpdef memoryview write_parquet(ParquetWriterOptions options, object stream = None):
+cpdef memoryview write_parquet(ParquetWriterOptions options, object stream: CudaStreamLike | None = None):
     """
     Writes a set of columns to parquet format.
 

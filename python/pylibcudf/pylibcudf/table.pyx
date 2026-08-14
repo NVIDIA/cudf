@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from cython.operator cimport dereference
 
 from cpython.pycapsule cimport (
@@ -34,6 +35,10 @@ from pylibcudf.libcudf.types cimport size_type
 from .column cimport Column
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from pylibcudf._interop_helpers cimport (
     _release_schema,
     _release_array,
@@ -76,7 +81,7 @@ cdef class Table:
     """
     __hash__ = None
 
-    def __init__(self, columns, num_rows=None):
+    def __init__(self, columns: Sequence[Column], num_rows=None):
         columns = tuple(columns)
         if not all(isinstance(c, Column) for c in columns):
             raise ValueError("All columns must be pylibcudf Column objects")
@@ -127,7 +132,7 @@ cdef class Table:
     def from_arrow(
         obj: ArrowLike,
         dtype: DataType | None = None,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ) -> Table:
         """
@@ -359,7 +364,7 @@ cdef class Table:
         """The shape of this table"""
         return (self.num_rows(), self.num_columns())
 
-    cpdef Table copy(self, object stream=None, DeviceMemoryResource mr=None):
+    cpdef Table copy(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """Create a deep copy of the table.
 
         Parameters
@@ -404,7 +409,7 @@ cdef class Table:
 
         return PyCapsule_New(<void*>raw_schema_ptr, "arrow_schema", _release_schema)
 
-    def _to_host_array(self, object stream):
+    def _to_host_array(self, object stream: CudaStreamLike):
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()

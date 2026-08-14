@@ -67,7 +67,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
   if (q.empty()) { return empty_like(input); }
 
   CUDF_EXPECTS(interp == interpolation::HIGHER || interp == interpolation::LOWER ||
-                 interp == interpolation::NEAREST,
+                 interp == interpolation::NEAREST || interp == interpolation::NEAREST_HALF_UP,
                "multi-column quantiles require a non-arithmetic interpolation strategy.",
                std::invalid_argument);
 

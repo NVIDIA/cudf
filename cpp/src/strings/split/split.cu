@@ -240,19 +240,18 @@ std::unique_ptr<table> split_impl(strings_column_view const& input,
   size_type const max_tokens = maxsplit > 0 ? maxsplit + 1 : std::numeric_limits<size_type>::max();
 
   auto d_strings            = column_device_view::create(input.parent(), stream);
+  auto temp_mr              = cudf::get_current_device_resource_ref();
   auto const non_null_count = input.size() - input.null_count();
   if (delimiter.size() == 0) {
     if (non_null_count > 0 &&
         (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
-      auto [offsets, tokens] = split_per_row_impl(
-        *d_strings,
-        ws_token_count_fn{*d_strings, max_tokens},
-        [d_str = *d_strings, max_tokens](auto d_offsets, auto* d_tokens) {
-          using fn_t = std::conditional_t<Forward, split_ws_extract_fn, rsplit_ws_extract_fn>;
-          return fn_t{d_str, d_offsets, d_tokens, max_tokens};
-        },
-        stream,
-        mr);
+      auto extractor_fn = [d_str = *d_strings, max_tokens](auto d_offsets, auto* d_tokens) {
+        using fn_t = std::conditional_t<Forward, split_ws_extract_fn, rsplit_ws_extract_fn>;
+        return fn_t{d_str, d_offsets, d_tokens, max_tokens};
+      };
+      auto counter_fn = ws_token_count_fn{*d_strings, max_tokens};
+      auto [offsets, tokens] =
+        split_per_row_impl(*d_strings, counter_fn, extractor_fn, stream, temp_mr);
       auto results = build_table_from_tokens(input, offsets->view(), tokens, stream, mr);
       return (results->num_columns() == 0) ? make_all_null_table(input.size(), stream, mr)
                                            : std::move(results);
@@ -268,16 +267,14 @@ std::unique_ptr<table> split_impl(strings_column_view const& input,
 
   if (non_null_count > 0 &&
       (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
-    auto const d_delim     = delimiter.value(stream);
-    auto [offsets, tokens] = split_per_row_impl(
-      *d_strings,
-      token_count_fn{*d_strings, d_delim, max_tokens},
-      [d_str = *d_strings, d_delim](auto d_offsets, auto* d_tokens) {
-        using fn_t = std::conditional_t<Forward, split_extract_fn, rsplit_extract_fn>;
-        return fn_t{d_str, d_delim, d_offsets, d_tokens};
-      },
-      stream,
-      cudf::get_current_device_resource_ref());
+    auto const d_delim = delimiter.value(stream);
+    auto extractor_fn  = [d_str = *d_strings, d_delim](auto d_offsets, auto* d_tokens) {
+      using fn_t = std::conditional_t<Forward, split_extract_fn, rsplit_extract_fn>;
+      return fn_t{d_str, d_delim, d_offsets, d_tokens};
+    };
+    auto counter_fn = token_count_fn{*d_strings, d_delim, max_tokens};
+    auto [offsets, tokens] =
+      split_per_row_impl(*d_strings, counter_fn, extractor_fn, stream, temp_mr);
     return build_table_from_tokens(input, offsets->view(), tokens, stream, mr);
   }
 

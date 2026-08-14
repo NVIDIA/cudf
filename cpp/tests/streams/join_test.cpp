@@ -60,7 +60,7 @@ TEST_F(JoinTest, SortMergeInnerJoin)
 {
   cudf::sort_merge_join obj(
     table1, cudf::sorted::NO, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
-  obj.inner_join(table0, cudf::sorted::NO, cudf::test::get_default_stream());
+  obj.inner_join(table0, cudf::test::get_default_stream());
 }
 
 TEST_F(JoinTest, LeftJoin)

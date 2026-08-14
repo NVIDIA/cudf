@@ -10,6 +10,10 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport contains as cpp_contains
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -19,7 +23,7 @@ __all__ = ["contains_re", "count_re", "like", "matches_re"]
 cpdef Column contains_re(
     Column input,
     RegexProgram prog,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Returns a boolean column identifying rows which match the given
@@ -61,7 +65,7 @@ cpdef Column contains_re(
 cpdef Column count_re(
     Column input,
     RegexProgram prog,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Returns the number of times the given regex_program's pattern
@@ -101,7 +105,7 @@ cpdef Column count_re(
 cpdef Column matches_re(
     Column input,
     RegexProgram prog,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Returns a boolean column identifying rows which
@@ -143,7 +147,7 @@ cpdef Column like(
     Column input,
     str pattern,
     str escape_character=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

@@ -19,12 +19,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/transform_iterator.h>
@@ -72,7 +72,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
   cudf::table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto nrows = input.num_rows();
@@ -152,7 +152,7 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
   table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto nrows = input.num_rows();
@@ -269,7 +269,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> round_robi
   table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

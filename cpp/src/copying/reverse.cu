@@ -12,17 +12,17 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/stream_ref>
 #include <thrust/scan.h>
 
 namespace cudf {
 namespace detail {
 std::unique_ptr<table> reverse(table_view const& source_table,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   size_type num_rows = source_table.num_rows();
@@ -36,7 +36,7 @@ std::unique_ptr<table> reverse(table_view const& source_table,
 }
 
 std::unique_ptr<column> reverse(column_view const& source_column,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   return std::move(
@@ -45,7 +45,7 @@ std::unique_ptr<column> reverse(column_view const& source_column,
 }  // namespace detail
 
 std::unique_ptr<table> reverse(table_view const& source_table,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -53,7 +53,7 @@ std::unique_ptr<table> reverse(table_view const& source_table,
 }
 
 std::unique_ptr<column> reverse(column_view const& source_column,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

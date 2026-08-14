@@ -158,9 +158,23 @@ def test_unsupported_stringfunction(engine: pl.GPUEngine, ldf):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_contains_re_non_strict_raises(engine: pl.GPUEngine, ldf):
+def test_contains_re_non_strict(engine: pl.GPUEngine, ldf):
     q = ldf.select(pl.col("a").str.contains(".", strict=False))
+    assert_gpu_result_equal(q, engine=engine)
 
+
+def test_contains_re_non_strict_invalid(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.contains("[", strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_contains_empty_regex_with_null(engine: pl.GPUEngine):
+    q = pl.LazyFrame({"a": ["abc", None, ""]}).select(pl.col("a").str.contains(""))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_contains_re_non_strict_libcudf_unsupported(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.contains("a{1000}", strict=False))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -231,6 +245,15 @@ def test_slice_column(engine: pl.GPUEngine, slice_column_data):
     else:
         q = slice_column_data.select(pl.col("a").str.slice(pl.col("start")))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("name", ["head", "tail"])
+def test_head_tail_expr_n(engine: pl.GPUEngine, name):
+    df = pl.LazyFrame(
+        {"a": ["abcdef", "hello", None, "xy", "abcd"], "n": [2, 0, 3, None, -1]}
+    )
+    q = df.select(getattr(pl.col("a").str, name)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.fixture
@@ -466,7 +489,10 @@ def test_unsupported_regex_raises(engine: pl.GPUEngine, pattern):
     df = pl.LazyFrame({"a": ["abc"]})
 
     q = df.select(pl.col("a").str.contains(pattern, strict=True))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    if pattern == "":
+        assert_gpu_result_equal(q, engine=engine)
+    else:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
 
     q = df.select(pl.col("a").str.count_matches(pattern))
     assert_ir_translation_raises(q, engine, NotImplementedError)
@@ -758,6 +784,43 @@ def test_string_head(engine: pl.GPUEngine, ldf, head):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("operation", ["head", "tail"])
+@pytest.mark.parametrize("integer_type", [pl.Int32, pl.Int64])
+def test_string_head_tail_by_column(engine: pl.GPUEngine, operation, integer_type):
+    ldf = pl.LazyFrame(
+        {
+            "a": ["AbC", "de", "FGHI", None, "", "Wïth ünicode"],
+            "n": pl.Series([1, -1, 0, 2, None, 999], dtype=integer_type),
+        }
+    )
+    q = ldf.select(getattr(pl.col("a").str, operation)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("operation", ["head", "tail"])
+@pytest.mark.parametrize(
+    "a,n",
+    [
+        (
+            pl.Series([], dtype=pl.String),
+            pl.Series([], dtype=pl.Int64),
+        ),
+        (
+            pl.Series([None, None], dtype=pl.String),
+            pl.Series([1, -1], dtype=pl.Int64),
+        ),
+        (
+            pl.Series(["abc", None], dtype=pl.String),
+            pl.Series([None, None], dtype=pl.Int64),
+        ),
+    ],
+)
+def test_string_head_tail_by_column_shortcuts(engine: pl.GPUEngine, operation, a, n):
+    ldf = pl.LazyFrame({"a": a, "n": n})
+    q = ldf.select(getattr(pl.col("a").str, operation)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("ignore_nulls", [True, False])
 @pytest.mark.parametrize("separator", ["*", ""])
 def test_concat_horizontal(engine: pl.GPUEngine, ldf, ignore_nulls, separator):
@@ -874,8 +937,16 @@ def ldf_find():
     )
 
 
-def test_find_literal_false_strict_false_unsupported(engine: pl.GPUEngine, ldf_find):
-    q = ldf_find.select(pl.col("a").str.find("a", literal=False, strict=False))
+@pytest.mark.parametrize("pattern", ["a", "[", ""])
+def test_find_literal_false_strict_false(engine: pl.GPUEngine, ldf_find, pattern):
+    q = ldf_find.select(pl.col("a").str.find(pattern, literal=False, strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_find_literal_false_strict_false_libcudf_unsupported(
+    engine: pl.GPUEngine, ldf_find
+):
+    q = ldf_find.select(pl.col("a").str.find("a{1000}", literal=False, strict=False))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 

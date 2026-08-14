@@ -200,11 +200,12 @@ struct write_decomp_tokens_fn {
  */
 struct build_comp_table_fn {
   cudf::column_device_view decomp_map;
-  cuda::std::span<uint32_t const> d_codepoints;  // parsed codepoint per row
-  cuda::std::span<int32_t const> d_counts;       // token count per row
-  cuda::std::span<uint8_t const> ccc_table;      // CCC indexed by codepoint
-  cuda::std::span<uint64_t> d_comp_keys;         // output: composition key
-  cuda::std::span<uint32_t> d_comp_values;       // output: composed codepoint
+  cuda::std::span<uint32_t const> d_codepoints;      // parsed codepoint per row
+  cuda::std::span<int32_t const> d_counts;           // token count per row
+  cuda::std::span<uint8_t const> ccc_table;          // CCC indexed by codepoint
+  cuda::std::span<cudf::bitmask_type> compat_flags;  // NFC/NFKC quick-check bitset
+  cuda::std::span<uint64_t> d_comp_keys;             // output: composition key
+  cuda::std::span<uint32_t> d_comp_values;           // output: composed codepoint
 
   __device__ void operator()(cudf::size_type idx) const
   {
@@ -226,11 +227,17 @@ struct build_comp_table_fn {
     auto const combining = tokens[1];
     if (thrust::binary_search(
           thrust::seq, COMPOSITION_EXCLUSIONS.begin(), COMPOSITION_EXCLUSIONS.end(), composed)) {
+      // Script/explicit exclusion: NFC_QC=No, flag it so quick check catches it
+      cudf::set_bit(compat_flags.data(), static_cast<cudf::size_type>(composed));
       return;
     }
 
     if (starter > MAX_CODEPOINT || combining > MAX_CODEPOINT) { return; }
-    if (ccc_table[starter] != 0) { return; }  // non-starter decomposition — excluded
+    if (ccc_table[starter] != 0) {
+      // Non-starter decomposition: NFC_QC=No, flag it so quick check catches it
+      cudf::set_bit(compat_flags.data(), static_cast<cudf::size_type>(composed));
+      return;
+    }
     d_comp_keys[idx]   = (static_cast<uint64_t>(starter) << 32) | combining;
     d_comp_values[idx] = composed;
   }
@@ -362,8 +369,13 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   // Build composition table (NFC/NFKC only)
   auto d_comp_keys    = rmm::device_uvector<uint64_t>(num_rows, stream, mr);
   auto d_comp_values  = rmm::device_uvector<uint32_t>(num_rows, stream, mr);
-  auto build_table_fn = detail::build_comp_table_fn{
-    *d_decomp_map, d_codepoints, d_counts, ccc_table, d_comp_keys, d_comp_values};
+  auto build_table_fn = detail::build_comp_table_fn{*d_decomp_map,
+                                                    d_codepoints,
+                                                    d_counts,
+                                                    ccc_table,
+                                                    compat_decomp_flags,
+                                                    d_comp_keys,
+                                                    d_comp_values};
   thrust::for_each_n(policy, row_iter, num_rows, build_table_fn);
 
   auto zero_fn = detail::is_zero_comp_key{};
@@ -607,7 +619,7 @@ struct compose_fn {
 struct nfc_quick_check_fn {
   cuda::std::span<char const> chars;
   cuda::std::span<uint8_t const> ccc_table;
-  cuda::std::span<cudf::bitmask_type const> compat_flags;  // empty → NFC (skip compat check)
+  cuda::std::span<cudf::bitmask_type const> compat_flags;
 
   __device__ bool operator()(int64_t idx) const
   {
@@ -676,9 +688,9 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   auto const d_raw_chars = input.chars_begin(stream) + first_offset;
   auto const chars_span  = cuda::std::span<char const>(d_raw_chars, chars_size);
 
-  // NFC/NFKC quick check: if no codepoint in the input has CCC > 0 (no combining
-  // marks anywhere), every codepoint is already a canonical starter and the column
-  // is already in NFC/NFKC form — return a copy without running the full pipeline.
+  // NFC/NFKC quick check: scan for any codepoint that is NFC_QC=No or NFC_QC=Maybe
+  // (non-zero CCC, Hangul V/T jamo, compat decomp, singleton canonical, script exclusion,
+  // or non-starter decomposition).  If none found the column is already normalized.
   if (p.form == unicode_normalization_form::NFC || p.form == unicode_normalization_form::NFKC) {
     auto nfc_qc_fn = detail::nfc_quick_check_fn{chars_span, p.ccc_table, p.compat_decomp_flags};
     if (!cudf::detail::any_of(byte_iter, byte_iter + chars_size, nfc_qc_fn, stream)) {

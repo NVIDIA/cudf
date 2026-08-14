@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/cudf_gtest.hpp>
 
 #include <cudf/column/column.hpp>
 #include <cudf/copying.hpp>
@@ -559,4 +560,57 @@ TEST_F(TextUnicodeNormalizeTest, ErrorNullsInColumns)
   cudf::test::strings_column_wrapper col2({"0065 0301"});
   EXPECT_THROW(nvtext::create_unicode_normalizer(cudf::table_view({col0, col1, col2}), form),
                std::invalid_argument);
+}
+
+TEST_F(TextUnicodeNormalizeTest, NFC_ScriptExclusion)
+{
+  // U+0958 DEVANAGARI LETTER QA is a composition exclusion (Unicode SpecialCasing /
+  // CompositionExclusions.txt).  It has a canonical decomposition to U+0915 + U+093C
+  // but must never recompose.  Before the fix the NFC quick check skipped U+0958
+  // (CCC=0, no compat tag, not a singleton), so NFC returned the undecomposed form.
+  //
+  // Input : U+0958  (\xE0\xA5\x98)
+  // NFC   : U+0915 U+093C  (\xE0\xA4\x95\xE0\xA4\xBC)  — decomposed, not recomposed
+  cudf::test::strings_column_wrapper input_strings({"\xE0\xA5\x98"});
+  cudf::strings_column_view input(input_strings);
+
+  cudf::test::strings_column_wrapper codepoints({"0958", "0915", "093C"});
+  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({0, 0, 7});
+  cudf::test::strings_column_wrapper decomp_mappings({"0915 093C", "", ""});
+  auto unicode_data = cudf::table_view({codepoints, ccc_values, decomp_mappings});
+
+  for (auto form :
+       {nvtext::unicode_normalization_form::NFD, nvtext::unicode_normalization_form::NFC}) {
+    auto normalizer = nvtext::create_unicode_normalizer(unicode_data, form);
+    auto result     = nvtext::normalize_unicode(input, *normalizer);
+    cudf::test::strings_column_wrapper expected({"\xE0\xA4\x95\xE0\xA4\xBC"});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+  }
+}
+
+TEST_F(TextUnicodeNormalizeTest, NFC_NonStarterDecomposition)
+{
+  // U+0F73 TIBETAN VOWEL SIGN II has a canonical decomposition to U+0F71 (CCC=129)
+  // followed by U+0F72 (CCC=130).  Because the first token has CCC != 0, this is a
+  // non-starter decomposition and U+0F73 is excluded from recomposition (NFC_QC=No).
+  // Before the fix the quick check did not flag U+0F73, so NFC silently returned the
+  // undecomposed form.
+  //
+  // Input : U+0F73  (\xE0\xBD\xB3)
+  // NFC   : U+0F71 U+0F72  (\xE0\xBD\xB1\xE0\xBD\xB2)  — decomposed, not recomposed
+  cudf::test::strings_column_wrapper input_strings({"\xE0\xBD\xB3"});
+  cudf::strings_column_view input(input_strings);
+
+  cudf::test::strings_column_wrapper codepoints({"0F73", "0F71", "0F72"});
+  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({0, 129, 130});
+  cudf::test::strings_column_wrapper decomp_mappings({"0F71 0F72", "", ""});
+  auto unicode_data = cudf::table_view({codepoints, ccc_values, decomp_mappings});
+
+  for (auto form :
+       {nvtext::unicode_normalization_form::NFD, nvtext::unicode_normalization_form::NFC}) {
+    auto normalizer = nvtext::create_unicode_normalizer(unicode_data, form);
+    auto result     = nvtext::normalize_unicode(input, *normalizer);
+    cudf::test::strings_column_wrapper expected({"\xE0\xBD\xB1\xE0\xBD\xB2"});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+  }
 }

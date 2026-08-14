@@ -56,7 +56,7 @@ constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_he
 }
 
 // Header byte for a primitive value of the given physical type.
-constexpr uint8_t make_variant_primitive(variant_primitive_type type)
+constexpr uint8_t make_variant_primitive_header(variant_primitive_type type)
 {
   return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));
 }
@@ -144,12 +144,12 @@ std::vector<uint8_t> build_leaf_value(bench_variant_type type)
 {
   switch (type) {
     case bench_variant_type::INT32: {
-      std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::INT32)};
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::INT32)};
       append_le(out, 42u, 4);
       return out;
     }
     case bench_variant_type::FLOAT: {
-      std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::FLOAT32)};
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::FLOAT32)};
       float const f = 1.0f;
       uint32_t u;
       std::memcpy(&u, &f, 4);
@@ -157,7 +157,7 @@ std::vector<uint8_t> build_leaf_value(bench_variant_type type)
       return out;
     }
     case bench_variant_type::BOOL:
-      return {make_variant_primitive(variant_primitive_type::BOOLEAN_TRUE)};
+      return {make_variant_primitive_header(variant_primitive_type::BOOLEAN_TRUE)};
     case bench_variant_type::STRING: {
       // Short string "hello" (5 bytes).
       auto const s = std::string{"hello"};
@@ -169,9 +169,9 @@ std::vector<uint8_t> build_leaf_value(bench_variant_type type)
       // VARIANT array of two INT32 values [42, 99]; element [1] is accessed in the benchmark.
       // 2 elements, offsets [0, 5, 10], then INT32(42) and INT32(99) (5 bytes each).
       std::vector<uint8_t> out{make_variant_array_header(), 0x02, 0x00, 0x05, 0x0a};
-      out.push_back(make_variant_primitive(variant_primitive_type::INT32));
+      out.push_back(make_variant_primitive_header(variant_primitive_type::INT32));
       append_le(out, 42u, 4);
-      out.push_back(make_variant_primitive(variant_primitive_type::INT32));
+      out.push_back(make_variant_primitive_header(variant_primitive_type::INT32));
       append_le(out, 99u, 4);
       return out;
     }
@@ -202,11 +202,11 @@ std::vector<uint8_t> build_miss_value(int nesting, bool is_array, bench_variant_
     // Wrong-type primitive for the cast path.
     switch (type) {
       case bench_variant_type::BOOL: {
-        std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::INT32)};
+        std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::INT32)};
         append_le(out, 0u, 4);
         return out;
       }
-      default: return {make_variant_primitive(variant_primitive_type::BOOLEAN_TRUE)};
+      default: return {make_variant_primitive_header(variant_primitive_type::BOOLEAN_TRUE)};
     }
   }
   // "z" is always the last key in the dictionary, at field ID = nesting.
@@ -314,7 +314,7 @@ std::vector<uint8_t> build_flat_object(int num_fields,
     if (i == target_fid) {
       out.insert(out.end(), inner.begin(), inner.end());
     } else {
-      out.push_back(make_variant_primitive(variant_primitive_type::BOOLEAN_TRUE));  // dummy
+      out.push_back(make_variant_primitive_header(variant_primitive_type::BOOLEAN_TRUE));  // dummy
     }
   }
   return out;

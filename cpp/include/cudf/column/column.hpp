@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,9 +10,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream_ref>
 
 #include <memory>
 #include <type_traits>
@@ -52,7 +53,7 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   column(column const& other,
-         rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+         cuda::stream_ref stream           = cudf::get_default_stream(),
          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -130,7 +131,7 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   explicit column(column_view view,
-                  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                  cuda::stream_ref stream           = cudf::get_default_stream(),
                   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -181,7 +182,7 @@ class column {
    */
   void set_null_mask(rmm::device_buffer const& new_null_mask,
                      size_type new_null_count,
-                     rmm::cuda_stream_view stream = cudf::get_default_stream());
+                     cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Updates the count of null elements.

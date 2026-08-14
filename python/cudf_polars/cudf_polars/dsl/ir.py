@@ -3602,19 +3602,27 @@ class MapFunction(IR):
                 "Fast count unsupported for CSV scans"
             )  # pragma: no cover
         elif self.name == "hint_sorted":
-            (sorted_info,) = options
-            column_names = []
-            descending = []
-            nulls_last = []
-            for column_name, is_descending, is_nulls_last in sorted_info:
-                column_names.append(column_name)
-                descending.append(bool(is_descending))
-                nulls_last.append(bool(is_nulls_last))
-            self.options = (
-                tuple(column_names),
-                tuple(descending),
-                tuple(nulls_last),
-            )
+            if len(options) == 3:
+                column_names, descending, nulls_last = options
+                self.options = (
+                    tuple(column_names),
+                    tuple(bool(value) for value in descending),
+                    tuple(bool(value) for value in nulls_last),
+                )
+            else:
+                (sorted_info,) = options
+                column_names = []
+                descending = []
+                nulls_last = []
+                for column_name, is_descending, is_nulls_last in sorted_info:
+                    column_names.append(column_name)
+                    descending.append(bool(is_descending))
+                    nulls_last.append(bool(is_nulls_last))
+                self.options = (
+                    tuple(column_names),
+                    tuple(descending),
+                    tuple(nulls_last),
+                )
         self._non_child_args = (schema, name, self.options)
 
     def get_hashable(self) -> Hashable:

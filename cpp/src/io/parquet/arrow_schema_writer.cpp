@@ -166,7 +166,8 @@ struct dispatch_to_flatbuf {
   void operator()()
     requires(std::is_same_v<T, cudf::binary_view>)
   {
-    CUDF_FAIL("BINARY is not yet supported by the Parquet Arrow schema writer");
+    field_type_id = flatbuf::Type_BinaryView;
+    field_offset  = flatbuf::CreateBinaryView(fbb).Union();
   }
 
   template <typename T>

@@ -1615,9 +1615,11 @@ TEST_F(ParquetReaderTest, BinaryAsStrings)
 
   auto native_binary_filepath = temp_env->get_temp_filepath("NativeBinaryWrite.parquet");
   cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(
-    cudf::io::sink_info{native_binary_filepath}, result.tbl->view()));
+                            cudf::io::sink_info{native_binary_filepath}, result.tbl->view())
+                            .write_arrow_schema(true));
   auto native_binary_result = cudf::io::read_parquet(
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{native_binary_filepath}));
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{native_binary_filepath})
+      .use_arrow_schema(true));
   CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), native_binary_result.tbl->view());
   EXPECT_EQ(native_binary_result.tbl->view().column(3).type().id(), cudf::type_id::BINARY);
   EXPECT_EQ(native_binary_result.tbl->view().column(4).type().id(), cudf::type_id::BINARY);

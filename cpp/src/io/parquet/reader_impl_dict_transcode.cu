@@ -247,23 +247,6 @@ void reader_impl::assemble_dict_transcoded_columns(
 
   auto const& pass = *_pass_itm_data;
 
-  // Batched keys: every string chunk's dictionary entries live contiguously in
-  // `pass.str_dict_index` (each `chunk.str_dict_index` is a pointer into that one buffer). So all
-  // per-chunk keys can be materialized by a single `make_strings_column` instead of one launch per
-  // chunk. Build that column lazily on first multi-row-group use -- columns that all take the
-  // single-row-group fast path never need it -- and hand out zero-copy slices below.
-  std::unique_ptr<column> all_keys;
-  auto ensure_all_keys = [&]() -> column_view {
-    if (all_keys == nullptr) {
-      all_keys =
-        make_keys_column_from_index_pairs(pass.str_dict_index.data(),
-                                          static_cast<size_type>(pass.str_dict_index.size()),
-                                          _stream,
-                                          get_current_device_resource_ref());
-    }
-    return all_keys->view();
-  };
-
   // For each eligible input column, collect its chunks in row-group order, build a per-chunk
   // DICTIONARY32 segment (local 0-based indices + per-chunk keys column), and concatenate.
   //
@@ -372,16 +355,13 @@ void reader_impl::assemble_dict_transcoded_columns(
       }
 
       // Build a per-chunk DICTIONARY32 *view* that aliases the shared decoded INT32 buffer (no
-      // copy). Per-chunk keys are zero-copy slices of the single batched `all_keys` column: chunk
-      // `k`'s entries occupy `[key_offset, key_offset + chunk_key_counts[k])` in
-      // `pass.str_dict_index`, where `key_offset` is recovered from the chunk's stored pointer into
-      // that buffer. The row range, null mask, and null count must all live on the *parent* view
-      // (via offset/size), not the indices child, because `get_indices_annotated()` rebuilds the
-      // indices from the child's `head()` plus the parent's offset/size/null_mask. A wrong null
-      // count would silently turn nulls into a valid index once `cudf::detail::concatenate` remaps
-      // the indices against the unified keys. `all_keys` owns the key data and outlives the
-      // concatenate below, so the slices stay valid.
-      auto const keys_base = ensure_all_keys();
+      // copy): keys = this chunk's STRING column, indices = `indices_view`. The row range, null
+      // mask, and null count must all live on the *parent* view (via offset/size), not the indices
+      // child, because `get_indices_annotated()` rebuilds the indices from the child's `head()`
+      // plus the parent's offset/size/null_mask -- anything set on the child is ignored. A wrong
+      // null count (e.g. a hardcoded 0) would silently turn nulls into a valid index once
+      // `cudf::detail::concatenate` remaps the indices against the unified keys.
+      std::vector<std::unique_ptr<column>> seg_keys_owners(chunk_indices.size());
       std::vector<column_view> dict_segment_views(chunk_indices.size());
       std::transform(
         cuda::counting_iterator<size_t>{0},
@@ -391,10 +371,8 @@ void reader_impl::assemble_dict_transcoded_columns(
           auto const chunk_idx = chunk_indices[k];
           auto const& chunk    = pass.chunks[chunk_idx];
 
-          auto const key_offset =
-            static_cast<size_type>(chunk.str_dict_index - pass.str_dict_index.data());
-          auto const seg_keys =
-            cudf::detail::slice(keys_base, key_offset, key_offset + chunk_key_counts[k], _stream);
+          seg_keys_owners[k] = make_keys_column_from_index_pairs(
+            chunk.str_dict_index, chunk_key_counts[k], _stream, get_current_device_resource_ref());
 
           auto const seg_begin = chunk_row_offsets[k];
           auto const seg_end   = chunk_row_offsets[k + 1];
@@ -405,10 +383,10 @@ void reader_impl::assemble_dict_transcoded_columns(
                              indices_view.null_mask(),  // shared with indices_view
                              seg_null_counts[k],
                              seg_begin,  // reslices shared indices child + null mask
-                             {indices_view, seg_keys}};
+                             {indices_view, seg_keys_owners[k]->view()}};
         });
 
-      // `cudf::detail::concatenate` deduplicates keys and recomputes indices.
+      // `cudf::detail::concatenate` deduplicates + sorts keys and recomputes indices.
       out_columns[out_idx] = cudf::detail::concatenate(dict_segment_views, _stream, _mr);
     });
 }

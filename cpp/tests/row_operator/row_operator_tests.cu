@@ -64,7 +64,6 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorTwoTables)
   using T = TypeParam;
 
   // TODO: lexicographic row operators still allocate from the current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -102,7 +101,6 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
   using T = TypeParam;
 
   // TODO: lexicographic row operators still allocate from the current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -136,7 +134,6 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
   using int32s_col = cudf::test::fixed_width_column_wrapper<int32_t>;
 
   // TODO: lexicographic row operators still allocate from the current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -203,7 +200,6 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
   using structs_col = cudf::test::structs_column_wrapper;
 
   // TODO: lexicographic row operators still allocate from the current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -292,7 +288,6 @@ TYPED_TEST(NaNTableViewTest, TestLexicographicalComparatorTwoTableNaNCase)
   using T = TypeParam;
 
   // TODO: lexicographic row operators still allocate from the current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -491,7 +486,6 @@ TEST_F(RowOperatorTest, TestRowHasherDictionaryColumn)
 {
   // TODO: dictionary encoding gathers the keys, and gather still allocates temporaries from the
   // current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -537,7 +531,6 @@ TEST_F(RowOperatorTest, TestRowHasherDictionaryColumnWithNulls)
 {
   // TODO: dictionary encoding gathers the keys, and gather still allocates temporaries from the
   // current device resource.
-  this->enable_current_device_resource_use();
 
   auto const stream = this->stream();
   auto const mr     = this->resources();

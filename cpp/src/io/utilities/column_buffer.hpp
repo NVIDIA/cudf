@@ -161,8 +161,8 @@ class column_buffer_base {
   bool is_nullable{false};
   size_type size{0};
   uint32_t user_data{0};  // arbitrary user data
-  // Materialize a STRING/BYTE_ARRAY-backed buffer as a `list<uint8>` column
-  bool string_as_binary{false};
+  // Output representation for a STRING-layout Parquet byte-array buffer.
+  byte_array_output_type byte_array_output{byte_array_output_type::DEFAULT};
   std::string name;
 
   std::vector<string_policy> children;

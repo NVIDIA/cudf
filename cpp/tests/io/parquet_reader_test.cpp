@@ -1593,7 +1593,14 @@ TEST_F(ParquetReaderTest, BinaryAsStrings)
 
   cudf::io::parquet_reader_options in_opts =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-      .set_column_schema({{}, {}, {}, {}, {}});
+      .set_column_schema(
+        {{},
+         {},
+         {},
+         cudf::io::reader_column_schema().set_byte_array_output(
+           cudf::io::byte_array_output_type::STRING),
+         cudf::io::reader_column_schema().set_byte_array_output(
+           cudf::io::byte_array_output_type::STRING)});
   auto result = cudf::io::read_parquet(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_string, result.tbl->view());
@@ -1602,7 +1609,22 @@ TEST_F(ParquetReaderTest, BinaryAsStrings)
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
   result = cudf::io::read_parquet(default_in_opts);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_string, result.tbl->view());
+  EXPECT_EQ(result.tbl->view().column(1).type().id(), cudf::type_id::STRING);
+  EXPECT_EQ(result.tbl->view().column(3).type().id(), cudf::type_id::BINARY);
+  EXPECT_EQ(result.tbl->view().column(4).type().id(), cudf::type_id::BINARY);
+
+  auto binary_override = cudf::io::parquet_reader_options::builder(
+                           cudf::io::source_info{filepath})
+                           .set_column_schema(
+                             {{},
+                              cudf::io::reader_column_schema().set_byte_array_output(
+                                cudf::io::byte_array_output_type::BINARY),
+                              {},
+                              {},
+                              {}})
+                           .build();
+  result = cudf::io::read_parquet(binary_override);
+  EXPECT_EQ(result.tbl->view().column(1).type().id(), cudf::type_id::BINARY);
 
   std::vector<cudf::io::reader_column_schema> md{
     {},
@@ -1682,6 +1704,10 @@ TEST_F(ParquetReaderTest, NestedByteArray)
   auto result = cudf::io::read_parquet(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+
+  auto default_result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}));
+  EXPECT_EQ(default_result.tbl->view().column(2).child(1).type().id(), cudf::type_id::BINARY);
 }
 
 TEST_F(ParquetReaderTest, StructByteArray)
@@ -1720,6 +1746,10 @@ TEST_F(ParquetReaderTest, StructByteArray)
   auto result = cudf::io::read_parquet(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+
+  auto default_result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}));
+  EXPECT_EQ(default_result.tbl->view().column(0).child(0).type().id(), cudf::type_id::BINARY);
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)

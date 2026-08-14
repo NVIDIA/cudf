@@ -2389,7 +2389,10 @@ TEST_F(ParquetWriterTest, WriteFixedLenByteArray)
   cudf::io::write_parquet(out_opts);
 
   cudf::io::parquet_reader_options in_opts =
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .set_column_schema(
+        std::vector<cudf::io::reader_column_schema>(
+          4, cudf::io::reader_column_schema().set_convert_binary_to_strings(false)));
   auto result = cudf::io::read_parquet(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());

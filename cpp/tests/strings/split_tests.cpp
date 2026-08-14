@@ -227,6 +227,43 @@ TEST_F(StringsSplitTest, RSplitWhitespaceWithMax)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, *expected);
 }
 
+TEST_F(StringsSplitTest, SplitWhitespaceCapNotReached)
+{
+  // maxsplit=2 (max_tokens=3): "a  b  " and " a " have only 2 and 1 natural tokens respectively
+  // and must not retain trailing whitespace; "a  b  c  d" hits the cap and retains "c  d".
+  auto const input = cudf::test::strings_column_wrapper({"a  b  ", " a ", "a  b  c  d"});
+  auto const sv    = cudf::strings_column_view(input);
+
+  auto const split_result = cudf::strings::split(sv, cudf::string_scalar(""), 2);
+  auto c0                 = cudf::test::strings_column_wrapper({"a", "a", "a"});
+  auto c1                 = cudf::test::strings_column_wrapper({"b", "", "b"}, {true, false, true});
+  auto c2 = cudf::test::strings_column_wrapper({"", "", "c  d"}, {false, false, true});
+  std::vector<std::unique_ptr<cudf::column>> split_cols;
+  split_cols.push_back(c0.release());
+  split_cols.push_back(c1.release());
+  split_cols.push_back(c2.release());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*split_result,
+                                     *std::make_unique<cudf::table>(std::move(split_cols)));
+
+  // Same for rsplit: " a  b  " and " a " must not retain leading whitespace on the first slot.
+  auto const rinput = cudf::test::strings_column_wrapper({"  b  a", " a ", "d  c  b  a"});
+  auto const rsv    = cudf::strings_column_view(rinput);
+
+  auto const rsplit_result = cudf::strings::rsplit(rsv, cudf::string_scalar(""), 2);
+  // "  b  a"  → token_count=2, cap not reached → col0="b", col1="a",   col2=null
+  // " a "     → token_count=1, cap not reached → col0="a", col1=null,  col2=null
+  // "d  c  b  a" → token_count=3, cap reached  → col0="d  c", col1="b", col2="a"
+  auto r0 = cudf::test::strings_column_wrapper({"b", "a", "d  c"});
+  auto r1 = cudf::test::strings_column_wrapper({"a", "", "b"}, {true, false, true});
+  auto r2 = cudf::test::strings_column_wrapper({"", "", "a"}, {false, false, true});
+  std::vector<std::unique_ptr<cudf::column>> rsplit_cols;
+  rsplit_cols.push_back(r0.release());
+  rsplit_cols.push_back(r1.release());
+  rsplit_cols.push_back(r2.release());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*rsplit_result,
+                                     *std::make_unique<cudf::table>(std::move(rsplit_cols)));
+}
+
 TEST_F(StringsSplitTest, SplitRecord)
 {
   auto const validity = cudf::test::iterators::null_at(1);

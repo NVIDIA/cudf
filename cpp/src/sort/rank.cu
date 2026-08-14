@@ -61,7 +61,8 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
                                                  rmm::cuda_stream_view stream)
 {
   auto const t_input    = table_view{{input_col}};
-  auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream};
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream, temp_mr};
 
   auto const sorted_index_order = cuda::make_permutation_iterator(
     sorted_order_view.begin<size_type>(), cuda::counting_iterator<size_type>{0});
@@ -70,7 +71,7 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
   rmm::device_uvector<size_type> dense_rank_sorted(input_size, stream);
 
   auto const comparator_helper = [&](auto const device_comparator) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{input_size},
                       dense_rank_sorted.data(),
@@ -88,7 +89,7 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
     comparator_helper(device_comparator);
   }
 
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          dense_rank_sorted.begin(),
                          dense_rank_sorted.end(),
                          dense_rank_sorted.data());

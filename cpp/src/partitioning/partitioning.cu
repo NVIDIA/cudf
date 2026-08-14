@@ -575,8 +575,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   rmm::device_async_resource_ref mr)
 {
   auto const num_rows = table_to_hash.num_rows();
+  auto const temp_mr  = cudf::get_current_device_resource_ref();
 
-  auto const row_hasher = detail::row::hash::row_hasher(table_to_hash, stream);
+  auto const row_hasher = detail::row::hash::row_hasher(table_to_hash, stream, temp_mr);
   auto const hasher =
     row_hasher.device_hasher<hash_function>(nullate::DYNAMIC{hash_has_nulls}, seed);
 
@@ -600,7 +601,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   std::size_t const grid_size = util::div_rounding_up_safe(num_rows, rows_per_block);
 
   // Allocate array to hold which partition each row belongs to
-  auto row_partition_numbers = rmm::device_uvector<size_type>(num_rows, stream);
+  auto row_partition_numbers = rmm::device_uvector<size_type>(num_rows, stream, temp_mr);
 
   // Array to hold the size of each partition computed by each block
   //  i.e., { {block0 partition0 size, block1 partition0 size, ...},
@@ -608,17 +609,18 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   //          ...
   //          {block0 partition(num_partitions-1) size, block1
   //          partition(num_partitions -1) size, ...} }
-  auto block_partition_sizes = rmm::device_uvector<size_type>(grid_size * num_partitions, stream);
+  auto block_partition_sizes =
+    rmm::device_uvector<size_type>(grid_size * num_partitions, stream, temp_mr);
 
   auto scanned_block_partition_sizes =
-    rmm::device_uvector<size_type>(grid_size * num_partitions, stream);
+    rmm::device_uvector<size_type>(grid_size * num_partitions, stream, temp_mr);
 
   // Holds the total number of rows in each partition
-  auto global_partition_sizes = cudf::detail::make_zeroed_device_uvector_async<size_type>(
-    num_partitions, stream, cudf::get_current_device_resource_ref());
+  auto global_partition_sizes =
+    cudf::detail::make_zeroed_device_uvector_async<size_type>(num_partitions, stream, temp_mr);
 
-  auto row_partition_offset = cudf::detail::make_zeroed_device_uvector_async<size_type>(
-    num_rows, stream, cudf::get_current_device_resource_ref());
+  auto row_partition_offset =
+    cudf::detail::make_zeroed_device_uvector_async<size_type>(num_rows, stream, temp_mr);
 
   // If the number of partitions is a power of two, we can compute the partition
   // number of each row more efficiently with bitwise operations
@@ -668,7 +670,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
 
   // Compute exclusive scan of all blocks' partition sizes in-place to determine
   // the starting point for each blocks portion of each partition in the output
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          block_partition_sizes.begin(),
                          block_partition_sizes.end(),
                          scanned_block_partition_sizes.data());
@@ -676,7 +678,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   // Compute exclusive scan of size of each partition to determine offset
   // location of each partition in final output.
   // TODO This can be done independently on a separate stream
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          global_partition_sizes.begin(),
                          global_partition_sizes.end(),
                          global_partition_sizes.begin());

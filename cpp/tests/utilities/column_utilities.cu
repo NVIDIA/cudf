@@ -542,8 +542,8 @@ struct column_comparator_impl {
     auto lhs_tview = table_view{{lhs}};
     auto rhs_tview = table_view{{rhs}};
 
-    auto const comparator =
-      cudf::detail::row::equality::two_table_comparator{lhs_tview, rhs_tview, stream};
+    auto const comparator = cudf::detail::row::equality::two_table_comparator{
+      lhs_tview, rhs_tview, stream, mr.get_temporary_mr()};
     auto const has_nulls = cudf::has_nulls(lhs_tview) or cudf::has_nulls(rhs_tview);
 
     auto const device_comparator = comparator.equal_to<false>(cudf::nullate::DYNAMIC{has_nulls});

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -79,7 +79,8 @@ std::unique_ptr<column> group_nunique(column_view const& values,
   if (num_groups == 0) { return result; }
 
   auto const values_view = table_view{{values}};
-  auto const comparator  = cudf::detail::row::equality::self_comparator{values_view, stream};
+  auto const comparator  = cudf::detail::row::equality::self_comparator{
+    values_view, stream, cudf::get_current_device_resource_ref()};
 
   auto const d_values_view = column_device_view::create(values, stream);
 

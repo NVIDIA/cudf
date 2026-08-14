@@ -180,7 +180,11 @@ TYPED_TEST(FixedWidthColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                                                   p{5, odd_valid[4]}});
   cudf::column_view view = col;
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view, match_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
+                                 match_view,
+                                 cudf::test::debug_output_level::FIRST_ERROR,
+                                 this->stream(),
+                                 this->resources());
 }
 
 TYPED_TEST(FixedWidthColumnWrapperTest, ReleaseWrapperAllValid)
@@ -268,5 +272,12 @@ TYPED_TEST(StringsColumnWrapperTest, NullablePairListConstructorAllNullMatch)
                                           p{"nulls", odd_valid[5]}});
   cudf::column_view view = col;
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view, match_view);
+  // TODO: has_nonempty_nulls (via count_if/transform_reduce) still allocates temporaries from the
+  // current device resource for strings columns.
+  this->enable_current_device_resource_use();
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view,
+                                 match_view,
+                                 cudf::test::debug_output_level::FIRST_ERROR,
+                                 this->stream(),
+                                 this->resources());
 }

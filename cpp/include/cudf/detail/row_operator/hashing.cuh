@@ -240,9 +240,12 @@ class row_hasher {
    * @param t The table containing rows to hash
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
-  row_hasher(table_view const& t, rmm::cuda_stream_view stream)
-    : d_t(preprocessed_table::create(t, stream))
+  row_hasher(table_view const& t,
+             rmm::cuda_stream_view stream,
+             rmm::device_async_resource_ref temp_mr)
+    : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
   }
 

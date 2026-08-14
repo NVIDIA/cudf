@@ -50,8 +50,9 @@ struct unique_keys_dispatch_fn {
 
     auto const has_nulls  = nullate::DYNAMIC{false};
     auto const keys_tv    = table_view({all_keys});
-    auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream);
-    auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream);
+    auto const temp_mr    = cudf::get_current_device_resource_ref();
+    auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream, temp_mr);
+    auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream, temp_mr);
     auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
     auto const d_equal    = row_equal.equal_to<false>(has_nulls, null_equality::EQUAL, comparator);
     auto const empty_key  = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};

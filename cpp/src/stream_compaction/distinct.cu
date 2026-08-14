@@ -86,8 +86,8 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
     return rmm::device_uvector<size_type>(0, stream, mr);
   }
 
-  auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+  auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(
+    input, stream, cudf::get_current_device_resource_ref());
   auto const has_nulls          = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
 

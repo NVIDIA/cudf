@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -146,7 +146,8 @@ void apply_struct_equality_op(mutable_column_view& out,
 
   auto tlhs             = table_view{{lhs}};
   auto trhs             = table_view{{rhs}};
-  auto table_comparator = cudf::detail::row::equality::two_table_comparator{tlhs, trhs, stream};
+  auto table_comparator = cudf::detail::row::equality::two_table_comparator{
+    tlhs, trhs, stream, cudf::get_current_device_resource_ref()};
 
   auto outd = column_device_view::create(out, stream);
   auto optional_iter =

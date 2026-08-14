@@ -20,7 +20,7 @@ namespace cudf::detail {
  * @return A pair of pointer to the output bitmask and the buffer containing the bitmask
  */
 std::pair<rmm::device_buffer, bitmask_type const*> build_row_bitmask(table_view const& input,
-                                                                     rmm::cuda_stream_view stream)
+                                                                     cuda::stream_ref stream)
 {
   auto const nullable_columns = get_nullable_columns(input);
   CUDF_EXPECTS(nullable_columns.size() > 0,

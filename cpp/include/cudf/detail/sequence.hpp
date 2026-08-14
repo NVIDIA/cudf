@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,27 +10,27 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace detail {
 /**
- * @copydoc cudf::sequence(size_type, scalar const&, scalar const&,rmm::cuda_stream_view
+ * @copydoc cudf::sequence(size_type, scalar const&, scalar const&,cuda::stream_ref
  * stream,rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
- * @copydoc cudf::sequence(size_type, scalar const&, rmm::cuda_stream_view,
+ * @copydoc cudf::sequence(size_type, scalar const&, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
@@ -42,7 +42,7 @@ std::unique_ptr<column> sequence(size_type size,
 std::unique_ptr<cudf::column> calendrical_month_sequence(size_type size,
                                                          scalar const& init,
                                                          size_type months,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr);
 
 }  // namespace detail

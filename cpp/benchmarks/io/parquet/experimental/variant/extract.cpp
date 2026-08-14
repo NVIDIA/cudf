@@ -54,7 +54,6 @@ constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_he
   return static_cast<uint8_t>(static_cast<uint8_t>(basic) | (value_header << 2));
 }
 
-// Header byte for a primitive value of the given physical type.
 constexpr uint8_t make_variant_primitive(variant_primitive_type type)
 {
   return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));

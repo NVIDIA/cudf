@@ -531,12 +531,12 @@ def test_diff_over_unsupported_args_raises(
 
 @pytest.mark.parametrize("n", [1, -1])
 def test_shift_over_without_order_by(
-    engine_raise_on_fail: pl.GPUEngine,
+    engine: pl.GPUEngine,
     df: pl.LazyFrame,
     n: int,
 ) -> None:
     q = df.select(pl.col("x").shift(n).over("g"))
-    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(

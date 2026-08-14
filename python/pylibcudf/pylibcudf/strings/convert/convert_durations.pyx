@@ -10,6 +10,10 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_durations as cpp_convert_durations,
 )
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -22,7 +26,7 @@ cpdef Column to_durations(
     Column input,
     DataType duration_type,
     str format,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """
@@ -71,7 +75,7 @@ cpdef Column to_durations(
 cpdef Column from_durations(
     Column durations,
     str format=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """

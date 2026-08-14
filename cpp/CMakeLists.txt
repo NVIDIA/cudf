@@ -662,6 +662,12 @@ add_library(
   src/groupby/groupby.cu
   src/groupby/hash/compute_global_memory_aggs.cu
   src/groupby/hash/compute_global_memory_aggs_null.cu
+  src/groupby/hash/compute_global_memory_aggs_null_dense.cu
+  src/groupby/hash/compute_global_memory_aggs_null_dense_dictionary.cu
+  src/groupby/hash/compute_global_memory_aggs_null_dense_non_dictionary.cu
+  src/groupby/hash/compute_global_memory_aggs_null_sparse.cu
+  src/groupby/hash/compute_global_memory_aggs_null_sparse_dictionary.cu
+  src/groupby/hash/compute_global_memory_aggs_null_sparse_non_dictionary.cu
   src/groupby/hash/compute_groupby.cu
   src/groupby/hash/compute_mapping_indices.cu
   src/groupby/hash/compute_mapping_indices_null.cu

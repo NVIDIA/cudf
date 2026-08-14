@@ -5,11 +5,13 @@
 #pragma once
 
 #include <cudf/aggregation.hpp>
-#include <cudf/table/table_device_view.cuh>
+#include <cudf/table/table.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cstdint>

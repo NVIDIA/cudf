@@ -13,11 +13,14 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/concatenate.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/stream_compaction.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -436,6 +439,110 @@ TEST_F(HybridScanTest, MaterializeListsOfStrings)
   auto col4 = make_list_str_column(gen, true, true);
 
   test_hybrid_scan({col0, *col1, *col2, *col3, *col4}, false);
+}
+
+TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
+{
+  std::mt19937 gen(0x5ca1e);
+  auto constexpr num_rows = num_ordered_rows;
+
+  auto col0 = testdata::ascending<uint32_t>();
+  auto col1 = testdata::ascending<cudf::string_view>();
+  auto col2 = make_parquet_list_col<int32_t>(gen, num_rows, 3, true);
+  col2      = cudf::purge_nonempty_nulls(col2->view());
+  auto col3 = make_parquet_list_list_col<int32_t>(0, num_rows, 2, 3, true);
+  col3      = cudf::purge_nonempty_nulls(col3->view());
+  auto col4 = make_list_str_column(gen, true, true);
+  col4      = cudf::purge_nonempty_nulls(col4->view());
+
+  auto const input = cudf::table_view{{col0, col1, *col2, *col3, *col4}};
+
+  std::string filepath = "ConsecutivePrunedPageOffsets.parquet";
+  {
+    auto metadata = cudf::io::table_input_metadata(input);
+    metadata.column_metadata[0].set_name("col0");
+
+    auto const write_options =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+        .metadata(std::move(metadata))
+        .row_group_size_rows(num_rows)
+        .max_page_size_rows(page_size_for_ordered_tests)
+        .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+        .build();
+    cudf::io::write_parquet(write_options);
+  }
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+  auto aligned_mr   = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
+
+  // Helper to validate monotonic string and list offsets
+  auto const expect_monotonic_offsets = [](auto& self, cudf::column_view const& column) -> void {
+    EXPECT_FALSE(cudf::has_nonempty_nulls(column));
+
+    if (column.type().id() == cudf::type_id::STRING) {
+      auto const offsets      = cudf::strings_column_view{column}.offsets();
+      auto const host_offsets = cudf::test::to_host<cudf::size_type>(offsets).first;
+      EXPECT_TRUE(std::is_sorted(host_offsets.begin(), host_offsets.end()));
+      return;
+    }
+
+    if (column.type().id() == cudf::type_id::LIST) {
+      auto const lists        = cudf::lists_column_view{column};
+      auto const host_offsets = cudf::test::to_host<cudf::size_type>(lists.offsets()).first;
+      EXPECT_TRUE(std::is_sorted(host_offsets.begin(), host_offsets.end()));
+      self(self, lists.child());
+      return;
+    }
+
+    for (auto index = cudf::size_type{0}; index < column.num_children(); ++index) {
+      self(self, column.child(index));
+    }
+  };
+
+  // Helper to validate the `offsets` children of string and list column
+  auto const validate = [&](cudf::ast::operation const& filter,
+                            std::vector<cudf::size_type> const& expected_slices) {
+    auto datasource = cudf::io::datasource::create({filepath});
+
+    auto const expected = cudf::concatenate(cudf::slice(input, expected_slices));
+    std::unique_ptr<cudf::table> filter_table;
+    std::unique_ptr<cudf::table> payload_table;
+    ASSERT_NO_THROW(std::tie(filter_table, payload_table) =
+                      hybrid_scan(*datasource, filter, {}, true, stream, mr, aligned_mr));
+
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({0}), filter_table->view());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({1, 2, 3, 4}),
+                                       payload_table->view());
+    for (auto const& column : payload_table->view()) {
+      expect_monotonic_offsets(expect_monotonic_offsets, column);
+    }
+  };
+
+  auto const col_ref = cudf::ast::column_name_reference{"col0"};
+
+  // Prune two leading pages.
+  auto middle_value = cudf::numeric_scalar<uint32_t>{2 * page_size_for_ordered_tests / 100};
+  auto middle       = cudf::ast::literal{middle_value};
+  auto const keep_trailing =
+    cudf::ast::operation{cudf::ast::ast_operator::GREATER_EQUAL, col_ref, middle};
+  validate(keep_trailing, {2 * page_size_for_ordered_tests, num_rows});
+
+  // Prune two trailing pages.
+  auto const keep_leading = cudf::ast::operation{cudf::ast::ast_operator::LESS, col_ref, middle};
+  validate(keep_leading, {0, 2 * page_size_for_ordered_tests});
+
+  // Prune two middle pages.
+  auto lower_value      = cudf::numeric_scalar<uint32_t>{page_size_for_ordered_tests / 100};
+  auto upper_value      = cudf::numeric_scalar<uint32_t>{3 * page_size_for_ordered_tests / 100};
+  auto lower            = cudf::ast::literal{lower_value};
+  auto upper            = cudf::ast::literal{upper_value};
+  auto const keep_first = cudf::ast::operation{cudf::ast::ast_operator::LESS, col_ref, lower};
+  auto const keep_last =
+    cudf::ast::operation{cudf::ast::ast_operator::GREATER_EQUAL, col_ref, upper};
+  auto const keep_outer =
+    cudf::ast::operation{cudf::ast::ast_operator::LOGICAL_OR, keep_first, keep_last};
+  validate(keep_outer, {0, page_size_for_ordered_tests, 3 * page_size_for_ordered_tests, num_rows});
 }
 
 TEST_F(HybridScanTest, MaterializeStructs)

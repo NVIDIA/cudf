@@ -41,8 +41,8 @@ import java.util.Arrays;
  * <p>The filter and payload materialization paths accept a boolean that toggles
  * page-level pruning: skips decode of pages the filter (or row mask) proves empty, in
  * exchange for a per-page stats scan and a carried row-mask column. Enable when the
- * workload prunes many pages; on the filter path this requires prior
- * {@link #setupPageIndex(HostMemoryBuffer)}.
+ * workload prunes many pages; requires prior {@link #setupPageIndex(HostMemoryBuffer)} to
+ * prune filter column pages using page-level statistics.
  *
  * <p>The reader is created with no filter expression installed. Filter-related APIs
  * behave as though nothing has been filtered out unless a filter is first supplied via
@@ -197,7 +197,7 @@ public class HybridScanReader implements AutoCloseable {
 
   /**
    * Materialize the {@code ColumnIndex} / {@code OffsetIndex} structs (collectively, the page
-   * index) from the supplied bytes. Required before any filter or payload materialization
+   * index) from the supplied bytes. Required before any filter or payload column materialization
    * call with {@code usePageLevelPruning == true}.
    *
    * @param pageIndexBuffer host-resident page index bytes
@@ -383,7 +383,7 @@ public class HybridScanReader implements AutoCloseable {
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
    *                             mask proves empty; requires prior
-   *                             {@link #setupPageIndex(HostMemoryBuffer)}
+   *                             {@link #setupPageIndex(HostMemoryBuffer)} to avoid fall back path
    * @return the materialized payload column table
    */
   public Table materializePayloadColumns(int[] rowGroupIndices,
@@ -530,7 +530,7 @@ public class HybridScanReader implements AutoCloseable {
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
    *                             mask proves empty; requires prior
-   *                             {@link #setupPageIndex(HostMemoryBuffer)}
+   *                             {@link #setupPageIndex(HostMemoryBuffer)} to avoid fall back path
    * @param columnChunkData  device buffers holding the payload column chunks, in the order
    *                         returned by {@link #payloadColumnChunksByteRanges(int[])}
    */

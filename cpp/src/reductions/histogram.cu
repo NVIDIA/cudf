@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,7 +23,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/uninitialized_fill.h>
 
 #include <optional>
@@ -181,9 +180,9 @@ compute_row_frequencies(table_view const& input,
     data_type{type_to_id<histogram_count_type>()}, set_size, mask_state::UNALLOCATED, stream, mr);
 
   // Copy row indices and counts to the output if counts are non-zero
-  auto const input_it = thrust::make_zip_iterator(
+  auto const input_it = cuda::make_zip_iterator(
     cuda::std::make_tuple(cuda::counting_iterator<cudf::size_type>{0}, reduction_results.begin()));
-  auto const output_it = thrust::make_zip_iterator(cuda::std::make_tuple(
+  auto const output_it = cuda::make_zip_iterator(cuda::std::make_tuple(
     distinct_indices->begin(), distinct_counts->mutable_view().begin<histogram_count_type>()));
 
   // Reduction results above are either group sizes of equal rows, or `0`.

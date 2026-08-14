@@ -15,6 +15,7 @@ import pylibcudf as plc
 from cudf_polars.containers import Column, DataType
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
+from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import dtypes, sorting
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
@@ -121,6 +122,7 @@ class UnaryFunction(Expr):
             "fill_null",
             "fill_null_with_strategy",
             "gather_every",
+            "hash",
             "index_of",
             "mask_nans",
             "mode",
@@ -138,6 +140,7 @@ class UnaryFunction(Expr):
             "set_sorted",
             "shift",
             "shift_and_fill",
+            "to_physical",
             "top_k",
             "top_k_by",
             "truncate",
@@ -155,6 +158,10 @@ class UnaryFunction(Expr):
             "cum_sum",
         }
     )
+    _horizontal_fold_ops: ClassVar[dict[str, plc.binaryop.BinaryOperator]] = {
+        "max_horizontal": plc.binaryop.BinaryOperator.NULL_MAX,
+    }
+    _supported_horizontal_fns = frozenset({"max_horizontal"})
     _supported_math_fns = frozenset(
         {
             "cot",
@@ -168,6 +175,7 @@ class UnaryFunction(Expr):
         _supported_misc_fns,
         _supported_cum_aggs,
         _supported_math_fns,
+        _supported_horizontal_fns,
         _OP_MAPPING.keys(),
     )
     _pointwise_fns = frozenset(
@@ -175,6 +183,7 @@ class UnaryFunction(Expr):
             "clip",
             "fill_null",
             "fill_null_with_strategy",
+            "hash",
             "mask_nans",
             "reinterpret",
             "replace",
@@ -182,9 +191,10 @@ class UnaryFunction(Expr):
             "round",
             "round_sig_figs",
             "set_sorted",
+            "to_physical",
             "truncate",
         }
-    ).union(_supported_math_fns, _OP_MAPPING.keys())
+    ).union(_supported_horizontal_fns, _supported_math_fns, _OP_MAPPING.keys())
 
     def __init__(
         self, dtype: DataType, name: str, options: tuple[Any, ...], *children: Expr
@@ -209,6 +219,17 @@ class UnaryFunction(Expr):
             raise NotImplementedError(
                 "Filling null values with limit specified is not yet supported."
             )
+        if self.name == "max_horizontal":
+            op = UnaryFunction._horizontal_fold_ops[self.name]
+            if not plc.binaryop.is_supported_operation(
+                self.dtype.plc_type,
+                self.dtype.plc_type,
+                self.dtype.plc_type,
+                op,
+            ):
+                raise NotImplementedError(
+                    f"{self.name} is not supported for dtype {self.dtype.id().name}"
+                )
         if self.name == "mode" and not POLARS_VERSION_LT_136:
             (maintain_order,) = self.options
             if maintain_order:
@@ -257,6 +278,14 @@ class UnaryFunction(Expr):
                     "reinterpret between integer and floating-point types is not "
                     "supported"
                 )
+        if (
+            self.name == "to_physical"
+            and children[0].dtype != self.dtype
+            and plc.traits.is_nested(children[0].dtype.plc_type)
+        ):
+            raise NotImplementedError(
+                "to_physical on nested types with logical inner types is not supported"
+            )
         if self.name == "top_k_by":
             if len(self.children) != 3:
                 raise NotImplementedError(
@@ -502,6 +531,27 @@ class UnaryFunction(Expr):
                 plc.stream_compaction.apply_boolean_mask(
                     plc.Table([indices]), column.obj, stream=df.stream
                 ).columns()[0],
+                dtype=self.dtype,
+            )
+        if self.name == "to_physical":
+            column = self.children[0].evaluate(df, context=context)
+            obj = column.obj
+            if column.dtype != self.dtype:
+                obj = plc.unary.bit_cast(obj, self.dtype.plc_type, stream=df.stream)
+            return Column(
+                obj,
+                dtype=self.dtype,
+                is_sorted=column.is_sorted,
+                order=column.order,
+                null_order=column.null_order,
+                name=column.name,
+            )
+        if self.name == "hash":
+            column = self.children[0].evaluate(df, context=context)
+            # Ensure seed is positive for xxhash_64 by returning the unsigned two's complement of hash
+            seed = hash(tuple(self.options)) & 0xFFFFFFFFFFFFFFFF
+            return Column(
+                plc.hashing.xxhash_64(plc.Table([column.obj]), seed, stream=df.stream),
                 dtype=self.dtype,
             )
         if self.name == "null_count":
@@ -1390,6 +1440,27 @@ class UnaryFunction(Expr):
                     stream=df.stream,
                 )
             return Column(clamped, dtype=self.dtype)
+        elif self.name == "max_horizontal":
+            op = UnaryFunction._horizontal_fold_ops[self.name]
+            columns = [
+                col.obj
+                for col in broadcast(
+                    *(
+                        child.evaluate(df, context=context).astype(
+                            self.dtype, stream=df.stream
+                        )
+                        for child in self.children
+                    ),
+                    target_length=df.num_rows,
+                    stream=df.stream,
+                )
+            ]
+            result = columns[0]
+            for other in columns[1:]:
+                result = plc.binaryop.binary_operation(
+                    result, other, op, self.dtype.plc_type, stream=df.stream
+                )
+            return Column(result, dtype=self.dtype)
         elif self.name == "extend_constant":
             column = self.children[0].evaluate(df, context=context)
             value_expr = self.children[1]

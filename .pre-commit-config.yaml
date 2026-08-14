@@ -7,7 +7,10 @@ ci:
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
   autoupdate_schedule: quarterly
-  skip: ["mypy", "verify-alpha-spec"]
+  # Lychee's hook script runs `git rev-parse` at run time, which exits 128 in
+  # pre-commit.ci's differently-owned clone. Lychee still runs in rapids `checks`
+  # CI via `pre-commit run --all-files` in ci/check_style.sh.
+  skip: ["mypy", "verify-alpha-spec", "lychee"]
   submodules: false
 
 # Agent skill artifacts are validated and signed by the NVIDIA skills pipeline.
@@ -298,7 +301,7 @@ repos:
           )
       - id: verify-alpha-spec
       - id: verify-codeowners
-        args: [--fix, --project-prefix=cudf]
+        args: [--fix, --org=NVIDIA, --project-prefix=cudf]
       - id: verify-hardcoded-version
         exclude: |
           (?x)
@@ -328,10 +331,63 @@ repos:
     hooks:
       - id: shellcheck
         args: ["--severity=warning"]
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        additional_dependencies: [pyyaml]
+        exclude: |
+          (?x)^(
+            [.]clang-format$|
+            [.]github/labeler[.]yml$|
+            conda/environments/.*|
+            cpp/[.]clang-tidy$
+          )
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: v1.27.0
     hooks:
       - id: zizmor
+  # lychee checks local/relative links only (--offline), so checking itself
+  # makes no network requests.
+  # Anchors/fragments after '#' are also not validated.
+  # Notebook link checking would require markdown extraction before lychee.
+  # RST files are not scanned as sources; --fallback-extensions only affects
+  # resolution of extensionless link targets.
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.24.2
+    hooks:
+      - id: lychee
+        alias: lychee-md
+        name: lychee (markdown)
+        files: \.md$
+        # The python READMEs are symlinks to the root README, whose root-relative
+        # links break when resolved from each symlink directory. The Sphinx hook owns
+        # docs/cudf/source.
+        exclude: |
+          (?x)
+            ^docs/cudf/source/|
+            ^python/(cudf|cudf_kafka|cudf_polars|libcudf|pylibcudf)/README[.]md$
+        args:
+          [
+            "--offline",
+            "--no-progress",
+            "--root-dir", ".",
+            "--fallback-extensions", "md,rst,ipynb",
+          ]
+      - id: lychee
+        alias: lychee-sphinx
+        name: lychee (sphinx docs)
+        files: ^docs/cudf/source/.*[.]md$
+        args:
+          [
+            "--offline",
+            "--no-progress",
+            "--root-dir", "docs/cudf/source",
+            "--fallback-extensions", "md,rst,ipynb",
+            # These are MyST cross-reference labels, not files. Add new lychee hits here.
+            "--exclude", "(^|/)cudf-pandas-profiling$",
+            "--exclude", "(^|/)api[.]options$",
+          ]
 
 default_language_version:
-      python: python3
+  python: python3

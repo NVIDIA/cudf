@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,7 +32,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/tabulate.h>
 
 #include <algorithm>
@@ -285,7 +284,7 @@ struct column_to_strings_fn {
     auto column_names_view = column_names->view();
     std::vector<std::unique_ptr<cudf::column>> str_column_vec;
 
-    auto i_col_begin = thrust::make_zip_iterator(cuda::counting_iterator<size_t>(0), column_begin);
+    auto i_col_begin = cuda::make_zip_iterator(cuda::counting_iterator<size_t>(0), column_begin);
     std::transform(i_col_begin,
                    i_col_begin + num_columns,
                    std::back_inserter(str_column_vec),

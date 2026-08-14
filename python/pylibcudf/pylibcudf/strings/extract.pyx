@@ -12,6 +12,10 @@ from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.table cimport Table
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -19,7 +23,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["extract", "extract_all_record", "extract_single"]
 
 cpdef Table extract(
-    Column input, RegexProgram prog, object stream=None, DeviceMemoryResource mr=None
+    Column input, RegexProgram prog, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a table of strings columns where each column
@@ -59,7 +63,7 @@ cpdef Table extract(
 
 
 cpdef Column extract_all_record(
-    Column input, RegexProgram prog, object stream=None, DeviceMemoryResource mr=None
+    Column input, RegexProgram prog, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a lists column of strings where each string column
@@ -102,7 +106,7 @@ cpdef Column extract_single(
     Column input,
     RegexProgram prog,
     size_type group,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

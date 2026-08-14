@@ -54,6 +54,8 @@ jobs:
       date: ${{ inputs.date }}
       script: ci/test_cpp.sh
       sha: ${{ inputs.sha }}
+      # https://github.com/rapidsai/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-cpp-benchmark-tests:
     permissions:
       actions: read
@@ -121,6 +123,8 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_python_cudf.sh"
+      # https://github.com/rapidsai/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-other-tests:
     # Tests for dask_cudf, custreamz, cudf_kafka are separated for CI parallelism
     permissions:
@@ -137,6 +141,8 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_python_other.sh"
+      # https://github.com/rapidsai/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-java-tests:
     permissions:
       actions: read
@@ -218,6 +224,8 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: ci/cudf_pandas_scripts/run_tests.sh
+      # https://github.com/rapidsai/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   third-party-integration-tests-cudf-pandas:
     permissions:
       actions: read
@@ -271,6 +279,8 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_wheel_cudf_polars.sh"
+      # https://github.com/rapidsai/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   cudf-polars-polars-tests:
     permissions:
       actions: read
@@ -286,6 +296,8 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_cudf_polars_polars_tests.sh"
+      # https://github.com/rapidsai/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   narwhals-tests:
     permissions:
       actions: read

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -248,6 +248,7 @@ struct streaming_groupby::impl {
   std::vector<streaming_aggregation_request> _requests_clone;
   size_type _max_distinct_keys;
   null_policy _null_handling;
+  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
 
   bool _initialized{false};
   /// Set true once an `aggregate()` / `merge()` call has thrown after touching the
@@ -305,7 +306,8 @@ struct streaming_groupby::impl {
   impl(host_span<size_type const> key_indices,
        host_span<streaming_aggregation_request const> requests,
        size_type max_distinct_keys,
-       null_policy null_handling);
+       null_policy null_handling,
+       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   void initialize(table_view const& data, rmm::cuda_stream_view stream);
   void create_key_set(rmm::cuda_stream_view stream);

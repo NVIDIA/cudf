@@ -15,10 +15,13 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -64,22 +67,24 @@ struct column_chunk_info {
  * @brief The row_group_info class
  */
 struct row_group_info {
-  size_type index;  // row group index within a file. aggregate_reader_metadata::get_row_group() is
-                    // called with index and source_index
-  size_t start_row;
+  size_type index;   // row group index within a file. aggregate_reader_metadata::get_row_group() is
+                     // called with index and source_index
+  size_t start_row;  // global start row of this row group
   size_t source_start_row;     // file-local start row of this row group within its source file
   size_t unadjusted_num_rows;  // number of unadjusted rows in the row group
   size_type source_index;      // file index.
-  size_t compressed_size;      // compressed size of the row group
-  size_t max_leaf_values;      // maximum number of leaf values in the row group
 
   // Optional metadata pulled from the column and offset indexes, if present.
   std::optional<std::vector<column_chunk_info>> column_chunks;
+};
 
-  /**
-   * @brief Indicates the presence of page-level indexes.
-   */
-  [[nodiscard]] bool has_page_index() const { return column_chunks.has_value(); }
+/**
+ * @brief Row group size information for pass partitioning.
+ */
+struct row_group_size_info {
+  size_t unadjusted_num_rows;  // number of unadjusted rows in this row group
+  size_t compressed_size;      // compressed size of the selected columns in this row group
+  size_t max_leaf_values;      // maximum number of leaf values over the selected columns
 };
 
 /**
@@ -116,9 +121,13 @@ struct row_group_info {
  *
  * @param row_group Row group
  * @param schema_idx Schema index, already mapped to the row group's source
- * @return Offset of the column chunk within the row group's columns
+ * @param cached_offset Offset from a previous lookup
+ * @return Offset of the matching column chunk
  */
-[[nodiscard]] size_type find_colchunk_iter_offset(RowGroup const& row_group, size_type schema_idx);
+[[nodiscard]] size_type find_colchunk_iter_offset(
+  RowGroup const& row_group,
+  size_type schema_idx,
+  std::optional<size_type> cached_offset = std::nullopt);
 
 /**
  * @brief Class for parsing dataset metadata
@@ -184,6 +193,17 @@ struct column_selection_options {
   // Whether column name matching is case sensitive
   bool case_sensitive_names = true;
 };
+
+/**
+ * @brief Parses and validates a Parquet `BloomFilterHeader` from the front of `bytes`
+ *
+ * @param bytes Host bytes starting at the beginning of a bloom filter (header followed by bitset)
+ *
+ * @return A pair of the bloom filter header size and the bitset size in bytes, or `std::nullopt`
+ * if the header is missing or unsupported
+ */
+[[nodiscard]] std::optional<std::pair<int64_t, std::size_t>> parse_bloom_filter_header(
+  host_span<uint8_t const> bytes);
 
 class aggregate_reader_metadata {
  protected:
@@ -257,11 +277,6 @@ class aggregate_reader_metadata {
   void column_info_for_row_group(row_group_info& rg_info, size_t chunk_start_row) const;
 
   /**
-   * @brief Returns the required alignment for bloom filter buffers
-   */
-  [[nodiscard]] size_t get_bloom_filter_alignment() const;
-
-  /**
    * @brief Reads bloom filter bitsets for the specified columns from the given lists of row
    * groups.
    *
@@ -270,18 +285,19 @@ class aggregate_reader_metadata {
    * @param column_schemas Schema indices of columns whose bloom filters will be read
    * @param num_row_groups Number of row groups in the file
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param aligned_mr Aligned device memory resource to allocate bloom filter buffers
+   * @param mr Device memory resource used to allocate bloom filter buffers
    *
-   * @return A flattened list of bloom filter bitset device buffers for each predicate column across
-   * row group
+   * @return A pair of the device buffers backing the bloom filter bitsets and a flattened,
+   * per-chunk list of bitset device spans (empty spans for chunks without a bloom filter)
    */
-  [[nodiscard]] std::vector<rmm::device_buffer> read_bloom_filters(
-    host_span<std::unique_ptr<datasource> const> sources,
-    host_span<std::vector<size_type> const> row_group_indices,
-    host_span<int const> column_schemas,
-    size_type num_row_groups,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref aligned_mr) const;
+  [[nodiscard]] std::pair<std::vector<rmm::device_buffer>,
+                          std::vector<cudf::device_span<cuda::std::byte const>>>
+  read_bloom_filters(host_span<std::unique_ptr<datasource> const> sources,
+                     host_span<std::vector<size_type> const> row_group_indices,
+                     host_span<int const> column_schemas,
+                     size_type num_row_groups,
+                     rmm::cuda_stream_view stream,
+                     rmm::device_async_resource_ref mr) const;
 
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
@@ -417,7 +433,40 @@ class aggregate_reader_metadata {
   aggregate_reader_metadata(aggregate_reader_metadata&&)                 = default;
   aggregate_reader_metadata& operator=(aggregate_reader_metadata&&)      = default;
 
+  /**
+   * @brief Get the row group object
+   *
+   * @param row_group_index Index of the row group
+   * @param src_idx Index of the source to get the row group from
+   * @return Const reference to the row group object
+   */
   [[nodiscard]] RowGroup const& get_row_group(size_type row_group_index, size_type src_idx) const;
+
+  /**
+   * @brief Computes row group size information over selected columns
+   *
+   * When `input_columns` is specified, computes the compressed size and maximum leaf value count
+   * over only those columns. Otherwise, over all columns in the row group.
+   *
+   * @param row_group_index Index of the row group within its source
+   * @param src_idx Index of the input source
+   * @param input_columns Optional selected leaf columns
+   * @return Row group size information
+   */
+  [[nodiscard]] row_group_size_info get_row_group_size_info(
+    size_type row_group_index,
+    size_type src_idx,
+    std::optional<std::span<input_column_info const>> input_columns) const;
+
+  /**
+   * @brief Check if all row groups have an offset index
+   *
+   * @param row_groups Span of row group objects
+   * @param input_columns Span of input column objects
+   * @return True if all row groups have an offset index
+   */
+  [[nodiscard]] bool has_offset_index(std::span<row_group_info const> row_groups,
+                                      std::span<input_column_info const> input_columns) const;
 
   /**
    * @brief Get Parquet file metadatas
@@ -596,18 +645,6 @@ class aggregate_reader_metadata {
    * @param names List of column names to load, where index column name(s) will be added
    */
   [[nodiscard]] std::vector<std::string> get_pandas_index_names() const;
-
-  /**
-   * @brief Computes the compressed and total size, the number of rows, and the maximum number of
-   * leaf values in the specified row group
-   *
-   * @param row_group The row group
-   *
-   * @return A tuple of row group compressed size, total size, number of rows, and maximum leaf
-   * values
-   */
-  [[nodiscard]] std::tuple<size_t, size_t, size_t, size_t> get_row_group_properties(
-    RowGroup const& rg) const;
 
   /**
    * @brief Filters the row groups using stats and bloom filters based on predicate filter

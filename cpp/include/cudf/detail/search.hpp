@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,8 +11,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace detail {
@@ -26,7 +27,7 @@ std::unique_ptr<column> lower_bound(table_view const& haystack,
                                     table_view const& needles,
                                     std::vector<order> const& column_order,
                                     std::vector<null_order> const& null_precedence,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -38,7 +39,7 @@ std::unique_ptr<column> upper_bound(table_view const& haystack,
                                     table_view const& needles,
                                     std::vector<order> const& column_order,
                                     std::vector<null_order> const& null_precedence,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -46,7 +47,7 @@ std::unique_ptr<column> upper_bound(table_view const& haystack,
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-bool contains(column_view const& haystack, scalar const& needle, rmm::cuda_stream_view stream);
+bool contains(column_view const& haystack, scalar const& needle, cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::contains(column_view const&, column_view const&, rmm::device_async_resource_ref)
@@ -55,7 +56,7 @@ bool contains(column_view const& haystack, scalar const& needle, rmm::cuda_strea
  */
 std::unique_ptr<column> contains(column_view const& haystack,
                                  column_view const& needles,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
@@ -88,7 +89,7 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
                                    table_view const& needles,
                                    null_equality compare_nulls,
                                    nan_equality compare_nans,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr);
 
 }  // namespace detail

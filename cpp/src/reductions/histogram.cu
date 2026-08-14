@@ -62,7 +62,7 @@ struct is_not_zero {
 auto gather_histogram(table_view const& input,
                       device_span<size_type const> distinct_indices,
                       std::unique_ptr<column>&& distinct_counts,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       rmm::device_async_resource_ref mr)
 {
   auto distinct_rows = cudf::detail::gather(input,
@@ -100,7 +100,7 @@ std::unique_ptr<column> make_empty_histogram_like(column_view const& values)
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>, std::unique_ptr<column>>
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
@@ -148,7 +148,7 @@ compute_row_frequencies(table_view const& input,
                      {},  // thread scope
                      {},  // storage
                      rmm::mr::polymorphic_allocator<char>{},
-                     stream.value()};
+                     stream.get()};
 
   // Device-accessible reference to the hash set with `insert_and_find` operator
   auto row_set_ref = row_set.ref(cuco::op::insert_and_find);
@@ -193,7 +193,7 @@ compute_row_frequencies(table_view const& input,
 }
 
 std::unique_ptr<cudf::scalar> histogram(column_view const& input,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   // Empty group should be handled before reaching here.
@@ -206,7 +206,7 @@ std::unique_ptr<cudf::scalar> histogram(column_view const& input,
 }
 
 std::unique_ptr<cudf::scalar> merge_histogram(column_view const& input,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   // Empty group should be handled before reaching here.

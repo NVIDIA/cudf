@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,7 +18,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -26,6 +25,7 @@
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace detail {
@@ -41,7 +41,7 @@ struct dispatch_topk_fn {
   column_view input;
   size_type k;
   order topk_order;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename T>
@@ -49,7 +49,7 @@ struct dispatch_topk_fn {
   {
     auto requirements = cuda::execution::require(cuda::execution::determinism::not_guaranteed,
                                                  cuda::execution::output_ordering::unsorted);
-    auto env          = cuda::std::execution::env{cuda::stream_ref{stream.value()}, requirements};
+    auto env          = cuda::std::execution::env{cuda::stream_ref{stream.get()}, requirements};
     auto tmp_size     = std::size_t{0};
     auto const size   = input.size();
 
@@ -104,7 +104,7 @@ struct dispatch_topk_fn {
 std::unique_ptr<column> top_k(column_view const& col,
                               size_type k,
                               order topk_order,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(k >= 0, "k must be non-negative", std::invalid_argument);
@@ -133,7 +133,7 @@ std::unique_ptr<column> top_k(column_view const& col,
 std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(k >= 0, "k must be non-negative", std::invalid_argument);
@@ -163,7 +163,7 @@ std::unique_ptr<column> top_k_order(column_view const& col,
 std::unique_ptr<column> top_k(column_view const& col,
                               size_type k,
                               order topk_order,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -173,7 +173,7 @@ std::unique_ptr<column> top_k(column_view const& col,
 std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

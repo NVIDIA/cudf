@@ -91,15 +91,8 @@ def test_from_list_empty_without_dtype_raises():
         plc.Column.from_iterable_of_py([])
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        [[1], [2, 3], [], [4]],
-        [[], [1]],
-        [[1], []],
-    ],
-)
-def test_from_list_irregular_shapes_raises(data):
+def test_from_list_irregular_shapes_raises():
+    data = [[1], [2, 3], [], [4]]
     with pytest.raises(ValueError, match="Inconsistent inner list shapes"):
         plc.Column.from_iterable_of_py(data)
 

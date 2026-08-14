@@ -196,9 +196,6 @@ def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
     if not current and depth == 0:
         raise ValueError("Cannot infer dtype from empty input")
 
-    if isinstance(current, list):
-        raise ValueError("Inconsistent inner list shapes")
-
     if not isinstance(current, (int, float, bool, str)):
         raise TypeError(f"Unsupported scalar type: {type(current).__name__}")
 

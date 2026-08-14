@@ -490,8 +490,8 @@ std::string stringify_column_differences(cudf::device_span<int const> difference
     buffer << depth_str << "differences:" << std::endl;
 
     auto source_table = cudf::table_view({lhs, rhs});
-    auto diff_column =
-      fixed_width_column_wrapper<int32_t>(h_differences.begin(), h_differences.end());
+    auto diff_column  = fixed_width_column_wrapper<int32_t>(
+      h_differences.begin(), h_differences.end(), stream, mr.get_temporary_mr());
     auto diff_table = cudf::gather(source_table,
                                    diff_column,
                                    cudf::out_of_bounds_policy::DONT_CHECK,
@@ -883,6 +883,9 @@ bool expect_columns_equal(cudf::column_view const& lhs,
                           cuda::stream_ref stream,
                           cudf::memory_resources mr)
 {
+  // TODO: equality row preprocessing (two_table_comparator / preprocessed_table::create) still
+  // allocates from the current device resource; pass `mr` through once that path accepts
+  // memory_resources so callers need not disable failing current-resource scopes.
   check_non_empty_nulls(lhs, rhs, stream);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);

@@ -450,7 +450,9 @@ struct leaf_schema_fn {
   void operator()()
     requires(std::is_same_v<T, cudf::binary_view>)
   {
-    col_schema.type        = Type::BYTE_ARRAY;
+    col_schema.type =
+      col_meta.get_type_length() > 0 ? Type::FIXED_LEN_BYTE_ARRAY : Type::BYTE_ARRAY;
+    col_schema.type_length = col_meta.get_type_length();
     col_schema.stats_dtype = statistics_dtype::dtype_byte_array;
   }
 

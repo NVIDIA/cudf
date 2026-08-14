@@ -1851,8 +1851,15 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
                            dst + pos);
             }
           } else {
-            auto const elem =
-              get_element<statistics::byte_array_view>(*(s->col.leaf_column), val_idx);
+            auto const elem = [&] {
+              if (type_id == type_id::BINARY) {
+                auto const value = s->col.leaf_column->element<binary_view>(val_idx);
+                return statistics::byte_array_view{
+                  reinterpret_cast<std::byte const*>(value.data()),
+                  static_cast<std::size_t>(value.size_bytes())};
+              }
+              return get_element<statistics::byte_array_view>(*(s->col.leaf_column), val_idx);
+            }();
             if (len != 0 and elem.data() != nullptr) {
               if (is_split_stream) {
                 auto const v_char_ptr = reinterpret_cast<uint8_t const*>(elem.data());

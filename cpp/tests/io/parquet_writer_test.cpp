@@ -2397,6 +2397,25 @@ TEST_F(ParquetWriterTest, WriteFixedLenByteArray)
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 
+  auto binary_result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}));
+  for (auto const& column : binary_result.tbl->view()) {
+    EXPECT_EQ(column.type().id(), cudf::type_id::BINARY);
+  }
+
+  cudf::io::table_input_metadata binary_metadata(binary_result.tbl->view());
+  for (auto& column : binary_metadata.column_metadata) {
+    column.set_type_length(fixed_width);
+  }
+  auto binary_filepath = temp_env->get_temp_filepath("WriteNativeBinaryFixedLenByteArray.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(
+      cudf::io::sink_info{binary_filepath}, binary_result.tbl->view())
+      .metadata(std::move(binary_metadata)));
+  auto binary_roundtrip = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{binary_filepath}));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(binary_result.tbl->view(), binary_roundtrip.tbl->view());
+
   // check page headers to make sure each column is encoded with the appropriate encoder
   auto const source = cudf::io::datasource::create(filepath);
   cudf::io::parquet::FileMetaData fmd;

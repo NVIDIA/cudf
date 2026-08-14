@@ -149,6 +149,7 @@ class StringFunction(Expr):
         Name.StripCharsEnd,
         Name.StripPrefix,
         Name.StripSuffix,
+        Name.ToDecimal,
         Name.ToInteger,
         Name.Uppercase,
         Name.Reverse,
@@ -185,13 +186,13 @@ class StringFunction(Expr):
             raise NotImplementedError(f"String function {self.name!r}")
         if self.name is StringFunction.Name.CountMatches:
             (literal,) = self.options
-            if literal:
-                raise NotImplementedError(
-                    f"{literal=} is not supported for count_matches"
-                )
             literal_expr = self.children[1]
             assert isinstance(literal_expr, Literal)
             pattern = literal_expr.value
+            if literal:
+                # libcudf has no literal count; escape the pattern so the
+                # regex engine matches it verbatim.
+                pattern = re.escape(pattern)
             self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.Contains:
             literal, strict = self.options
@@ -216,11 +217,14 @@ class StringFunction(Expr):
             self._regex_program = self._create_regex_program(self._ESCAPE_REGEX_PATTERN)
         elif self.name is StringFunction.Name.Extract:
             (group_index,) = self.options
-            if group_index == 0:
-                raise NotImplementedError(f"{group_index=} is not supported")
             literal_expr = self.children[1]
             assert isinstance(literal_expr, Literal)
             pattern = literal_expr.value
+            if group_index == 0:
+                # libcudf can only extract capture groups, so wrap the whole
+                # pattern in an outer group to emulate extracting group 0
+                # (the entire match).
+                pattern = f"({pattern})"
             self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.ExtractGroups:
             (_, pattern) = self.options
@@ -552,9 +556,12 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Extract:
             (group_index,) = self.options
             plc_column = self.children[0].evaluate(df, context=context).obj
+            # group_index 0 wraps the pattern in an outer group (see __init__),
+            # so the whole match is the first (0-indexed) libcudf capture group.
+            group = 0 if group_index == 0 else group_index - 1
             return Column(
                 plc.strings.extract.extract_single(
-                    plc_column, self._regex_program, group_index - 1, stream=df.stream
+                    plc_column, self._regex_program, group, stream=df.stream
                 ),
                 dtype=self.dtype,
             )
@@ -657,8 +664,6 @@ class StringFunction(Expr):
                 plc_column, self.dtype.plc_type, stream=df.stream
             )
             if parse_ok.null_count() > 0:
-                # is_integer marks null inputs as null; treat them as
-                # non-parseable so they map to null in the output.
                 parse_ok = plc.replace.replace_nulls(
                     parse_ok,
                     plc.Scalar.from_py(
@@ -712,6 +717,23 @@ class StringFunction(Expr):
                         plc_column, stream=df.stream
                     ),
                     self.dtype.plc_type,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        elif self.name is StringFunction.Name.ToDecimal:
+            plc_column = self.children[0].evaluate(df, context=context).obj
+            valid = plc.strings.convert.convert_fixed_point.is_fixed_point(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            decimal_column = plc.strings.convert.convert_fixed_point.to_fixed_point(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            return Column(
+                plc.copying.copy_if_else(
+                    decimal_column,
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    valid,
                     stream=df.stream,
                 ),
                 dtype=self.dtype,

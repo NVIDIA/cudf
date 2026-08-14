@@ -695,9 +695,8 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
   }
 }
 
-// Returns true for every primitive_type ID that variant_value_length recognises (i.e. every ID
-// that does not fall through to its `default: return nullopt` branch).  Used by both
-// cast_status_for_primitive and cast_status_for_bool so the two classifiers stay in sync.
+// Returns true for every primitive_type ID that variant_value_length maps to a known payload
+// size in its `basic_type::PRIMITIVE` switch, i.e. every ID other than its `default` case.
 __device__ bool is_recognized_primitive_type(primitive_type ptype)
 {
   switch (ptype) {
@@ -727,13 +726,8 @@ __device__ bool is_recognized_primitive_type(primitive_type ptype)
 }
 
 /**
- * @brief Status helper for fixed-width primitive targets: returns the failure reason when decode
- * fails.
- *
- * Three cases after `decode_primitive<T>` returns nullopt and the basic type is PRIMITIVE:
- *   - Header type == primitive_type_for<T>() but payload too short → truncated → malformed_variant
- *   - Header type is a different recognized type                   → type_mismatch
- *   - Header type is unrecognized                                   → malformed_variant
+ * @brief Status helper for fixed-width primitive targets: classifies why `decode_primitive<T>`
+ * failed to decode `val`, per `variant_operation_status` semantics.
  */
 template <typename T>
   requires(is_variant_numerical<T>)
@@ -836,11 +830,6 @@ __device__ op_status cast_status_for_string(device_span<uint8_t const> val)
   if (val.empty()) { return op_status::MALFORMED_VARIANT; }
   if (is_variant_null(val)) { return op_status::VARIANT_NULL; }
   if (decode_string(val).has_value()) { return op_status::SUCCESS; }
-  // decode_string failed. Classify the failure:
-  //   SHORT_STRING with truncated payload  → malformed_variant (valid encoding type, bad payload)
-  //   LONG_STRING (PRIMITIVE header)       → malformed_variant (already confirmed truncated above)
-  //   Other recognized primitive type      → type_mismatch (well-formed but wrong type)
-  //   Unrecognized primitive/basic type    → malformed_variant
   auto const btype = decode_basic_type(val[0]);
   if (btype == basic_type::SHORT_STRING) { return op_status::MALFORMED_VARIANT; }
   if (btype == basic_type::PRIMITIVE) {

@@ -1783,6 +1783,16 @@ TEST_F(JoinTest, EmptyLeftTableFullJoin)
   auto const [left_indices, right_indices] = hash_joiner.full_join(lhs, output_size);
   EXPECT_EQ(left_indices->size(), output_size);
   EXPECT_EQ(right_indices->size(), output_size);
+
+  column_wrapper<cudf::size_type> expected_left_indices{
+    {NoneValue, NoneValue, NoneValue, NoneValue, NoneValue}};
+  column_wrapper<cudf::size_type> expected_right_indices{{0, 1, 2, 3, 4}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected_left_indices,
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*left_indices}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected_right_indices,
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*right_indices}});
 }
 
 // Empty Right Table

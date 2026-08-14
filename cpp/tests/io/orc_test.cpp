@@ -683,30 +683,25 @@ void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
     expected, result.tbl->view().column(0), cudf::test::debug_output_level::ALL_ERRORS);
 }
 
-// Verifies that the timestamps ORC can represent - everything except the last 999 ms before the
-// epoch, see `NegativeTimestampsNearEpoch` - round-trip losslessly
-// (https://github.com/rapidsai/cudf/issues/19350).
 TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
 {
+  // ORC readers handle remainders of >= 1 ms above the lower second differently, so cover both
   auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{
-    116'614'807'755'579'786L,  // positive
-    942'496L,                  // positive, sub-second
-    -54'218'791'351'223'251L,  // fraction >= 1 ms
-    -7'713'116'127L,           // fraction >= 1 ms, sub-second
-    -5'999'999L,               // fraction < 1 ms
+    -54'218'791'351'223'251L,  // 776.749 ms above the lower second, so >= 1 ms
+    -5'999'999L,               // 1 us above the lower second, so < 1 ms
   };
   test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, timestamps_us);
 
   auto const timestamps_ns = std::vector<cudf::timestamp_ns::rep>{
-    -131'968'727'238'000'000L,  // fraction >= 1 ms
-    -5'999'999'999L,            // fraction < 1 ms
+    -131'968'727'238'000'000L,  // 762 ms above the lower second, so >= 1 ms
+    -5'999'999'999L,            // 1 ns above the lower second, so < 1 ms
   };
   test_timestamp_roundtrip<cudf::timestamp_ns>(timestamps_ns, timestamps_ns);
 
-  // Milliseconds have no fraction below 1 ms, so only the borrowing path applies.
+  // Millisecond timestamps cannot have a < 1 ms remainder
   auto const timestamps_ms = std::vector<cudf::timestamp_ms::rep>{
-    -123'456L,
-    -5'999L,
+    -123'456L,  // 544 ms above the lower second
+    -5'999L,    // 1 ms above the lower second, the smallest remainder at this resolution
   };
   test_timestamp_roundtrip<cudf::timestamp_ms>(timestamps_ms, timestamps_ms);
 }

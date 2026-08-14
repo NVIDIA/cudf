@@ -1367,7 +1367,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
 
   partition_buf_size_and_dst_buf_info->copy_to_host();
 
-  stream.wait();
+  stream.sync();
 
   return partition_buf_size_and_dst_buf_info;
 }

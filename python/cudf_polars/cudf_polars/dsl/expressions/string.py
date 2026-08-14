@@ -161,7 +161,7 @@ class StringFunction(Expr):
     # backslash via a back-reference replacement template.
     _ESCAPE_REGEX_PATTERN: ClassVar[str] = r"([#$&()*+\-.?\[\\\]\^{|}~])"
     _ESCAPE_REGEX_REPLACEMENT: ClassVar[str] = r"\\1"
-    __slots__ = ("_regex_program", "name", "options")
+    __slots__ = ("_empty_regex", "_invalid_regex", "_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
     def __init__(
@@ -176,6 +176,8 @@ class StringFunction(Expr):
         self.name = name
         self.children = children
         self.is_pointwise = self.name != StringFunction.Name.ConcatVertical
+        self._empty_regex = False
+        self._invalid_regex = False
         self._validate_input()
 
     def _validate_input(self) -> None:
@@ -194,16 +196,22 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Contains:
             literal, strict = self.options
             if not literal:
-                if not strict:
-                    raise NotImplementedError(
-                        f"{strict=} is not supported for regex contains"
-                    )
                 if not isinstance(self.children[1], Literal):
                     raise NotImplementedError(
                         "Regex contains only supports a scalar pattern"
                     )
                 pattern = self.children[1].value
-                self._regex_program = self._create_regex_program(pattern)
+                if pattern == "":
+                    self._empty_regex = True
+                elif strict:
+                    self._regex_program = self._create_regex_program(pattern)
+                else:
+                    try:
+                        re.compile(pattern)
+                    except re.error:
+                        self._invalid_regex = True
+                    else:
+                        self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.EscapeRegex:
             self._regex_program = self._create_regex_program(self._ESCAPE_REGEX_PATTERN)
         elif self.name is StringFunction.Name.Extract:
@@ -220,16 +228,22 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Find:
             literal, strict = self.options
             if not literal:
-                if not strict:
-                    raise NotImplementedError(
-                        f"{strict=} is not supported for regex contains"
-                    )
                 if not isinstance(self.children[1], Literal):
                     raise NotImplementedError(
                         "Regex contains only supports a scalar pattern"
                     )
                 pattern = self.children[1].value
-                self._regex_program = self._create_regex_program(pattern)
+                if pattern == "":
+                    self._empty_regex = True
+                elif strict:
+                    self._regex_program = self._create_regex_program(pattern)
+                else:
+                    try:
+                        re.compile(pattern)
+                    except re.error:
+                        self._invalid_regex = True
+                    else:
+                        self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.Replace:
             _, literal = self.options
             if not literal:
@@ -462,6 +476,28 @@ class StringFunction(Expr):
                     plc.strings.find.contains(column.obj, pattern, stream=df.stream),
                     dtype=self.dtype,
                 )
+            elif self._invalid_regex:
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            elif self._empty_regex:
+                result = plc.Column.from_scalar(
+                    plc.Scalar.from_py(
+                        py_val=True, dtype=self.dtype.plc_type, stream=df.stream
+                    ),
+                    column.size,
+                    stream=df.stream,
+                )
+                if column.obj.null_mask():
+                    result = result.with_mask(
+                        column.obj.null_mask(), column.obj.null_count()
+                    )
+                return Column(result, dtype=self.dtype)
             else:
                 return Column(
                     plc.strings.contains.contains_re(
@@ -535,6 +571,8 @@ class StringFunction(Expr):
             literal, _ = self.options
             (child, expr) = self.children
             plc_column = child.evaluate(df, context=context).obj
+            input_null_mask = plc_column.null_mask()
+            input_null_count = plc_column.null_count()
             if literal:
                 assert isinstance(expr, Literal)
                 plc_column = plc.strings.find.find(
@@ -544,6 +582,21 @@ class StringFunction(Expr):
                     ),
                     stream=df.stream,
                 )
+            elif self._invalid_regex:
+                plc_column = plc.Column.from_scalar(
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    plc_column.size(),
+                    stream=df.stream,
+                )
+                return Column(plc_column, dtype=self.dtype)
+            elif self._empty_regex:
+                plc_column = plc.Column.from_scalar(
+                    plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream),
+                    plc_column.size(),
+                    stream=df.stream,
+                )
+                plc_column = plc_column.with_mask(input_null_mask, input_null_count)
+                return Column(plc_column, dtype=self.dtype)
             else:
                 plc_column = plc.strings.findall.find_re(
                     plc_column, self._regex_program, stream=df.stream
@@ -816,11 +869,106 @@ class StringFunction(Expr):
                 dtype=self.dtype,
             )
 
-        elif self.name is StringFunction.Name.Tail:
+        elif self.name in {StringFunction.Name.Head, StringFunction.Name.Tail}:
             column = self.children[0].evaluate(df, context=context)
+            n_expr = self.children[1]
 
-            assert isinstance(self.children[1], Literal)
-            if self.children[1].value is None:
+            if not isinstance(n_expr, Literal):
+                n_col = n_expr.evaluate(df, context=context)
+                if column.size == 0 or column.null_count == column.size:
+                    return column
+                if n_col.null_count == n_col.size:
+                    return Column(
+                        plc.Column.from_scalar(
+                            plc.Scalar.from_py(
+                                None, self.dtype.plc_type, stream=df.stream
+                            ),
+                            column.size,
+                            stream=df.stream,
+                        ),
+                        self.dtype,
+                    )
+
+                zero = plc.Scalar.from_py(0, n_col.obj.type(), stream=df.stream)
+                n = (
+                    plc.replace.replace_nulls(n_col.obj, zero, stream=df.stream)
+                    if n_col.null_count > 0
+                    else n_col.obj
+                )
+                char_count = plc.unary.cast(
+                    plc.strings.attributes.count_characters(
+                        column.obj, stream=df.stream
+                    ),
+                    n_col.obj.type(),
+                    stream=df.stream,
+                )
+                if column.null_count > 0:
+                    char_count = plc.replace.replace_nulls(
+                        char_count, zero, stream=df.stream
+                    )
+                n_is_negative = plc.binaryop.binary_operation(
+                    n,
+                    zero,
+                    plc.binaryop.BinaryOperator.LESS,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                if self.name is StringFunction.Name.Tail:
+                    start = plc.binaryop.binary_operation(
+                        char_count,
+                        n,
+                        plc.binaryop.BinaryOperator.SUB,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    negative_start = plc.binaryop.binary_operation(
+                        zero,
+                        n,
+                        plc.binaryop.BinaryOperator.SUB,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    start = plc.copying.copy_if_else(
+                        negative_start, start, n_is_negative, stream=df.stream
+                    )
+                    start = plc.binaryop.binary_operation(
+                        start,
+                        zero,
+                        plc.binaryop.BinaryOperator.NULL_MAX,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    stop = char_count
+                else:
+                    stop = plc.binaryop.binary_operation(
+                        char_count,
+                        n,
+                        plc.binaryop.BinaryOperator.ADD,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    stop = plc.copying.copy_if_else(
+                        stop, n, n_is_negative, stream=df.stream
+                    )
+                    stop = plc.binaryop.binary_operation(
+                        stop,
+                        zero,
+                        plc.binaryop.BinaryOperator.NULL_MAX,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    start = plc.Column.from_scalar(zero, n_col.size, stream=df.stream)
+                result = plc.strings.slice.slice_strings(
+                    column.obj, start, stop, stream=df.stream
+                )
+                if n_col.null_count > 0:
+                    combined_mask, null_count = plc.null_mask.bitmask_and(
+                        [column.obj, n_col.obj], stream=df.stream
+                    )
+                    result = result.with_mask(combined_mask, null_count)
+                return Column(result, self.dtype)
+
+            if n_expr.value is None:
                 return Column(
                     plc.Column.from_scalar(
                         plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
@@ -829,7 +977,7 @@ class StringFunction(Expr):
                     ),
                     self.dtype,
                 )
-            elif self.children[1].value == 0:
+            if n_expr.value == 0:
                 result = plc.Column.from_scalar(
                     plc.Scalar.from_py("", self.dtype.plc_type, stream=df.stream),
                     column.size,
@@ -841,46 +989,20 @@ class StringFunction(Expr):
                     )
                 return Column(result, self.dtype)
 
+            if self.name is StringFunction.Name.Tail:
+                start = -n_expr.value
+                stop = 2**31 - 1
             else:
-                start = -(self.children[1].value)
-                end = 2**31 - 1
-                return Column(
-                    plc.strings.slice.slice_strings(
-                        column.obj,
-                        plc.Scalar.from_py(
-                            start, plc.DataType(plc.TypeId.INT32), stream=df.stream
-                        ),
-                        plc.Scalar.from_py(
-                            end, plc.DataType(plc.TypeId.INT32), stream=df.stream
-                        ),
-                        None,
-                        stream=df.stream,
-                    ),
-                    self.dtype,
-                )
-        elif self.name is StringFunction.Name.Head:
-            column = self.children[0].evaluate(df, context=context)
-
-            assert isinstance(self.children[1], Literal)
-
-            end = self.children[1].value
-            if end is None:
-                return Column(
-                    plc.Column.from_scalar(
-                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
-                        column.size,
-                        stream=df.stream,
-                    ),
-                    self.dtype,
-                )
+                start = 0
+                stop = n_expr.value
             return Column(
                 plc.strings.slice.slice_strings(
                     column.obj,
                     plc.Scalar.from_py(
-                        0, plc.DataType(plc.TypeId.INT32), stream=df.stream
+                        start, plc.DataType(plc.TypeId.INT32), stream=df.stream
                     ),
                     plc.Scalar.from_py(
-                        end, plc.DataType(plc.TypeId.INT32), stream=df.stream
+                        stop, plc.DataType(plc.TypeId.INT32), stream=df.stream
                     ),
                     stream=df.stream,
                 ),

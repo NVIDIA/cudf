@@ -60,7 +60,7 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
     CUDF_CUDA_TRY(
       cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.get()));
     _null_count = cudf::null_count(static_cast<cudf::bitmask_type*>(mask.data()), 0, _num_elements);
-    stream.wait();
+    stream.sync();
   }
 
   [[nodiscard]] cudf::size_type num_elements() const { return _num_elements; }

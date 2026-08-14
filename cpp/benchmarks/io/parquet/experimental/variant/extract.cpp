@@ -62,8 +62,9 @@ constexpr uint8_t make_variant_primitive_header(variant_primitive_type type)
 }
 
 // Header byte for a short string of the given length (must fit in 6 bits: 0..63).
-constexpr uint8_t make_variant_short_string_header(std::size_t length)
+uint8_t make_variant_short_string_header(std::size_t length)
 {
+  CUDF_EXPECTS(length <= 63, "Short string length must fit in 6 bits (0..63)");
   return make_variant_header(variant_basic_type::SHORT_STRING, static_cast<uint8_t>(length));
 }
 
@@ -79,6 +80,7 @@ constexpr uint8_t make_variant_array_header()
   return make_variant_header(variant_basic_type::ARRAY, 0);
 }
 
+// Append the low `width` bytes of `bits` to `out` in little-endian order.
 void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
 {
   for (int i = 0; i < width; ++i) {

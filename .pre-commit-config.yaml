@@ -115,7 +115,7 @@ repos:
       - id: use-cuda-iterators
         name: use-cuda-iterators
         description: 'Enforce that CUDA iterators are used instead of equivalent Thrust iterators'
-        entry: 'thrust::(?:make_)?(?:constant|counting|discard|permutation|reverse|tabulate_output|transform|transform_output|zip)_iterator'
+        entry: 'thrust::(?:make_)?(?:constant|counting|discard|permutation|reverse|strided|tabulate_output|transform|transform_input_output|transform_output|zip)_iterator'
         language: pygrep
         types_or: [c, c++, cuda]
       - id: exec-policy-nosync-memory-resource

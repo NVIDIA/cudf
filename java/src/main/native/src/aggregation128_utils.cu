@@ -79,6 +79,8 @@ std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
   auto const num_rows = in_col.size();
   auto out_col =
     cudf::make_fixed_width_column(type, num_rows, copy_bitmask(in_col), in_col.null_count());
+  if (num_rows == 0) { return out_col; }
+
   auto out_view       = out_col->mutable_view();
   auto const in_begin = in_col.begin<int32_t>();
 

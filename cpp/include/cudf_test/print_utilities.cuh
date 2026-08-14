@@ -13,6 +13,7 @@
 
 #include <cuda/iterator>
 
+#include <iterator>
 #include <type_traits>
 
 namespace CUDF_EXPORT cudf {

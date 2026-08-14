@@ -677,8 +677,10 @@ struct less_equivalent_comparator
  *
  */
 struct preprocessed_table {
-  using table_device_view_owner =
-    std::invoke_result_t<decltype(table_device_view::create), table_view, rmm::cuda_stream_view>;
+  using table_device_view_owner = std::invoke_result_t<decltype(table_device_view::create),
+                                                       table_view,
+                                                       rmm::cuda_stream_view,
+                                                       rmm::device_async_resource_ref>;
 
   /**
    * @brief Preprocess table for use with lexicographical comparison

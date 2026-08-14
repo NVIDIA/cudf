@@ -317,6 +317,18 @@ def engine(
 
 
 @pytest.fixture
+def in_memory_engine() -> pl.GPUEngine:
+    """
+    Return an in-memory :class:`polars.GPUEngine` with ``raise_on_fail=True``.
+
+    Use this for tests that intentionally exercise in-memory-only behavior
+    instead of the parametrized engine matrix, but generally prefer the ``engine``
+    fixture instead.
+    """
+    return pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+
+
+@pytest.fixture
 def timeout_seconds() -> int:
     """
     Conservative timeout for APIs that accept a timeout parameter.

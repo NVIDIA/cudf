@@ -21,6 +21,10 @@ from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from cuda.bindings.cyruntime cimport cudaStream_t
 
@@ -64,7 +68,7 @@ cpdef tuple inner_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform an inner join between two tables.
@@ -112,7 +116,7 @@ cpdef tuple left_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a left join between two tables.
@@ -160,7 +164,7 @@ cpdef tuple full_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a full join between two tables.
@@ -208,7 +212,7 @@ cpdef Column left_semi_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a left semi join between two tables.
@@ -259,7 +263,7 @@ cpdef Column left_anti_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a left anti join between two tables.
@@ -307,7 +311,7 @@ cpdef Column left_anti_join(
 
 
 cpdef Table cross_join(
-    Table left, Table right, object stream=None, DeviceMemoryResource mr=None
+    Table left, Table right, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Perform a cross join on two tables.
 
@@ -348,7 +352,7 @@ cpdef tuple conditional_inner_join(
     Table left,
     Table right,
     Expression binary_predicate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a conditional inner join between two tables.
@@ -398,7 +402,7 @@ cpdef tuple conditional_left_join(
     Table left,
     Table right,
     Expression binary_predicate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a conditional left join between two tables.
@@ -448,7 +452,7 @@ cpdef tuple conditional_full_join(
     Table left,
     Table right,
     Expression binary_predicate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a conditional full join between two tables.
@@ -496,7 +500,7 @@ cpdef Column conditional_left_semi_join(
     Table left,
     Table right,
     Expression binary_predicate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a conditional left semi join between two tables.
@@ -542,7 +546,7 @@ cpdef Column conditional_left_anti_join(
     Table left,
     Table right,
     Expression binary_predicate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a conditional left anti join between two tables.
@@ -591,7 +595,7 @@ cpdef tuple mixed_inner_join(
     Table right_conditional,
     Expression binary_predicate,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a mixed inner join between two tables.
@@ -655,7 +659,7 @@ cpdef tuple mixed_left_join(
     Table right_conditional,
     Expression binary_predicate,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a mixed left join between two tables.
@@ -719,7 +723,7 @@ cpdef tuple mixed_full_join(
     Table right_conditional,
     Expression binary_predicate,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a mixed full join between two tables.
@@ -783,7 +787,7 @@ cpdef Column mixed_left_semi_join(
     Table right_conditional,
     Expression binary_predicate,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a mixed left semi join between two tables.
@@ -841,7 +845,7 @@ cpdef Column mixed_left_anti_join(
     Table right_conditional,
     Expression binary_predicate,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a mixed left anti join between two tables.
@@ -910,7 +914,7 @@ cdef class FilteredJoin:
         Table right,
         null_equality compare_nulls=null_equality.EQUAL,
         double load_factor=0.5,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
     ):
         """
         Construct a filtered hash join object for subsequent probe calls.
@@ -944,7 +948,7 @@ cdef class FilteredJoin:
     def semi_join(
         self,
         Table left,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         """
@@ -985,7 +989,7 @@ cdef class FilteredJoin:
     def anti_join(
         self,
         Table left,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         """

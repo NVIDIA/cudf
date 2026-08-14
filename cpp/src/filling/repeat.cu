@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,14 +19,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 #include <thrust/binary_search.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
@@ -39,7 +38,7 @@ struct count_accessor {
   cudf::scalar const* p_scalar = nullptr;
 
   template <typename T>
-  cudf::size_type operator()(rmm::cuda_stream_view stream)
+  cudf::size_type operator()(cuda::stream_ref stream)
     requires(std::is_integral_v<T>)
   {
     using ScalarType = cudf::scalar_type_t<T>;
@@ -53,7 +52,7 @@ struct count_accessor {
   }
 
   template <typename T>
-  cudf::size_type operator()(rmm::cuda_stream_view)
+  cudf::size_type operator()(cuda::stream_ref)
     requires(not std::is_integral_v<T>)
   {
     CUDF_FAIL("count value should be a integral type.");
@@ -64,7 +63,7 @@ struct count_checker {
   cudf::column_view const& count;
 
   template <typename T>
-  void operator()(rmm::cuda_stream_view stream)
+  void operator()(cuda::stream_ref stream)
     requires(std::is_integral_v<T>)
   {
     // static_cast is necessary due to bool
@@ -83,7 +82,7 @@ struct count_checker {
   }
 
   template <typename T>
-  void operator()(rmm::cuda_stream_view)
+  void operator()(cuda::stream_ref)
     requires(not std::is_integral_v<T>)
   {
     CUDF_FAIL("count value type should be integral.");
@@ -96,7 +95,7 @@ namespace cudf {
 namespace detail {
 std::unique_ptr<table> repeat(table_view const& input_table,
                               column_view const& count,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input_table.num_rows() == count.size(), "in and count must have equal size");
@@ -127,7 +126,7 @@ std::unique_ptr<table> repeat(table_view const& input_table,
 
 std::unique_ptr<table> repeat(table_view const& input_table,
                               size_type count,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   if ((input_table.num_rows() == 0) || (count == 0)) { return cudf::empty_like(input_table); }
@@ -150,7 +149,7 @@ std::unique_ptr<table> repeat(table_view const& input_table,
 
 std::unique_ptr<table> repeat(table_view const& input_table,
                               column_view const& count,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -159,7 +158,7 @@ std::unique_ptr<table> repeat(table_view const& input_table,
 
 std::unique_ptr<table> repeat(table_view const& input_table,
                               size_type count,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

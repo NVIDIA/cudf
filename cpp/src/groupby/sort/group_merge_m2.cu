@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -87,9 +86,9 @@ std::unique_ptr<column> merge_m2(column_view const& values,
     data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
 
   auto const out_iter =
-    thrust::make_zip_iterator(result_counts->mutable_view().template data<count_type>(),
-                              result_means->mutable_view().template data<result_type>(),
-                              result_M2s->mutable_view().template data<result_type>());
+    cuda::make_zip_iterator(result_counts->mutable_view().template data<count_type>(),
+                            result_means->mutable_view().template data<result_type>(),
+                            result_M2s->mutable_view().template data<result_type>());
 
   auto const count_valid = values.child(0);
   auto const mean_values = values.child(1);

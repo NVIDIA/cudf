@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,8 +23,6 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/transform_output_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -35,6 +33,14 @@
 
 namespace cudf {
 namespace detail {
+
+double checked_load_factor(double load_factor)
+{
+  CUDF_EXPECTS(load_factor > 0.0 && load_factor <= 1.0,
+               "Invalid load factor: must be greater than 0 and less than or equal to 1.",
+               std::invalid_argument);
+  return load_factor;
+}
 
 VectorPair get_trivial_left_join_indices(table_view const& left,
                                          rmm::cuda_stream_view stream,
@@ -133,8 +139,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // Fused compaction: for each unmatched right row, emit (JoinNoMatch, right_idx) into
   // (left_out_tail, right_out_tail) in a single CUB DeviceSelect pass.
   auto zip_tail =
-    thrust::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
-  auto out_iter = thrust::make_transform_output_iterator(zip_tail, to_no_match_pair{});
+    cuda::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
+  auto out_iter = cuda::make_transform_output_iterator(zip_tail, to_no_match_pair{});
 
   auto const new_end =
     cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},

@@ -15,6 +15,10 @@ from pylibcudf.libcudf.nvtext.minhash cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -32,7 +36,7 @@ cpdef Column minhash(
     Column a,
     Column b,
     size_type width,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """
@@ -86,7 +90,7 @@ cpdef Column minhash64(
     Column a,
     Column b,
     size_type width,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """
@@ -142,7 +146,7 @@ cpdef Column minhash_ngrams(
     uint32_t seed,
     Column a,
     Column b,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """
@@ -199,7 +203,7 @@ cpdef Column minhash64_ngrams(
     uint64_t seed,
     Column a,
     Column b,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """

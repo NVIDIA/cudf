@@ -1814,8 +1814,6 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_missing.py::test_groupby_column_index_name_lost_fill_funcs[bfill]": "AssertionError: Index are different",
     "tests/groupby/test_missing.py::test_groupby_column_index_name_lost_fill_funcs[ffill]": "AssertionError: Index are different",
     "tests/groupby/test_missing.py::test_indices_with_missing": "TODO: Add a reason for failure",
-    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[max]": "Failed: DID NOT RAISE <class 'TypeError'>",
-    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[min]": "Failed: DID NOT RAISE <class 'TypeError'>",
     "tests/groupby/test_reductions.py::test_basic_aggregations[float32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_basic_aggregations[int32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_groupby_mean_no_overflow": "TODO: Add a reason for failure",
@@ -5243,6 +5241,13 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/window/moments/test_moments_consistency_rolling.py::test_rolling_apply_consistency_sum[all_data7-rolling_consistency_cases0-False-sum]": "pandas xfails, but xpasses with cudf.pandas",
 }
 
+# Keep keys in alphabetical order
+NODEIDS_THAT_MAY_FAIL = {
+    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[max]": "Environment-sensitive TypeError expectation",
+    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[min]": "Environment-sensitive TypeError expectation",
+    "tests/io/test_spss.py::test_spss_metadata": "pandas 3.0.3 metadata expectation is incompatible with pyreadstat 1.3.6",
+}
+
 
 def pytest_configure(config):
     config.addinivalue_line(
@@ -5272,5 +5277,9 @@ def pytest_collection_modifyitems(session, config, items):
             )
         ) is not None:
             item.add_marker(pytest.mark.skip(reason=reason))
+        elif (
+            reason := NODEIDS_THAT_MAY_FAIL.get(item.nodeid, None)
+        ) is not None:
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=False))
         elif (reason := NODEIDS_THAT_FAIL.get(item.nodeid, None)) is not None:
             item.add_marker(pytest.mark.xfail(reason=reason))

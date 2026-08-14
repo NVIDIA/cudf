@@ -790,10 +790,7 @@ class GroupedWindow(Expr):
             raise RuntimeError(
                 f"Index column '{orderby_name}' in rolling may not contain nulls"
             )
-        if (
-            plc.traits.is_integral(orderby.obj.type())
-            and orderby.obj.type().id() != plc.TypeId.INT64
-        ):
+        if plc.traits.is_integral(orderby.obj.type()):
             orderby = orderby.astype(DataType(pl.Int64()), stream=df.stream)
         sorted_orderby_obj = plc.copying.gather(
             plc.Table([orderby.obj]),

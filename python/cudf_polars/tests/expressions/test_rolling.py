@@ -265,8 +265,8 @@ def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
             "volume_after": [100, 300, 300, 400, 500, 1100],
         }
     )
-    # Polars <1.36 cannot collect this expression on CPU, so compare GPU
-    # output against the hand-written expected frame.
+    # Polars <1.36 cannot collect this expression on CPU. Switch to
+    # assert_gpu_result_equal after we drop Polars 1.35.
     assert_frame_equal(q.collect(engine=engine), expected)
 
 

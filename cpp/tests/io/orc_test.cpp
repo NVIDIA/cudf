@@ -658,9 +658,9 @@ void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
                               std::vector<typename T::rep> const& expected_values)
 {
   cudf::test::fixed_width_column_wrapper<T, typename T::rep> const input(values.begin(),
-                                                                        values.end());
-  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const expected(
-    expected_values.begin(), expected_values.end());
+                                                                         values.end());
+  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const expected(expected_values.begin(),
+                                                                            expected_values.end());
   cudf::table_view const input_table({input});
 
   std::vector<char> out_buffer;
@@ -708,8 +708,7 @@ TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
 // ORC-771).
 TEST_F(OrcWriterTest, NegativeTimestampsNearEpoch)
 {
-  auto const timestamps_us =
-    std::vector<cudf::timestamp_us::rep>{-1L, -500L, -500'000L, -999'000L};
+  auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{-1L, -500L, -500'000L, -999'000L};
   auto const read_back_us =
     std::vector<cudf::timestamp_us::rep>{999'999L, 999'500L, 500'000L, 1'000L};
   test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, read_back_us);

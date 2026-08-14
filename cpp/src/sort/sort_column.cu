@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,13 +17,13 @@ namespace detail {
 
 /**
  * @copydoc
- * sorted_order(column_view&,order,null_order,rmm::cuda_stream_view,rmm::device_async_resource_ref)
+ * sorted_order(column_view&,order,null_order,cuda::stream_ref,rmm::device_async_resource_ref)
  */
 template <>
 std::unique_ptr<column> sorted_order<sort_method::UNSTABLE>(column_view const& input,
                                                             order column_order,
                                                             null_order null_precedence,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr)
 {
   auto sorted_indices = cudf::make_numeric_column(

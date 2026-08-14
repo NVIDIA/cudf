@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,9 +24,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 
 #include <memory>
 #include <stdexcept>
@@ -38,7 +37,7 @@ void in_place_copy_range(cudf::column_view const& source,
                          cudf::size_type source_begin,
                          cudf::size_type source_end,
                          cudf::size_type target_begin,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   auto p_source_device_view = cudf::column_device_view::create(source, stream);
   if (source.has_nulls()) {
@@ -67,7 +66,7 @@ struct in_place_copy_range_dispatch {
   void operator()(cudf::size_type source_begin,
                   cudf::size_type source_end,
                   cudf::size_type target_begin,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
   {
     in_place_copy_range<T>(source, target, source_begin, source_end, target_begin, stream);
   }
@@ -88,7 +87,7 @@ struct out_of_place_copy_range_dispatch {
     cudf::size_type source_begin,
     cudf::size_type source_end,
     cudf::size_type target_begin,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
     auto p_ret = std::make_unique<cudf::column>(target, stream, mr);
@@ -119,7 +118,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   cudf::size_type source_begin,
   cudf::size_type source_end,
   cudf::size_type target_begin,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return cudf::strings::detail::copy_range(
@@ -131,7 +130,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   cudf::size_type source_begin,
   cudf::size_type source_end,
   cudf::size_type target_begin,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // check the keys in the source and target
@@ -192,7 +191,7 @@ void copy_range_in_place(column_view const& source,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   CUDF_EXPECTS(cudf::is_fixed_width(target.type()),
                "In-place copy_range does not support variable-sized types.",
@@ -222,7 +221,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_begin,
                                    size_type source_end,
                                    size_type target_begin,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS((source_begin >= 0) && (source_end <= source.size()) &&
@@ -249,7 +248,7 @@ void copy_range_in_place(column_view const& source,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_range_in_place(
@@ -261,7 +260,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_begin,
                                    size_type source_end,
                                    size_type target_begin,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

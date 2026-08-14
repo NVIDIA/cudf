@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,14 +8,14 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace detail {
 
 bool is_element_valid_sync(column_view const& col_view,
                            size_type element_index,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   CUDF_EXPECTS(element_index >= 0 and element_index < col_view.size(), "invalid index.");
   if (!col_view.nullable()) { return true; }

@@ -65,7 +65,7 @@ TYPED_TEST(SegmentedGatherTest, Gather)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(),
                                    LCW<T>(expected, stream, mr),
                                    cudf::test::debug_output_level::FIRST_ERROR,
@@ -82,7 +82,7 @@ TYPED_TEST(SegmentedGatherTest, Gather)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     NULLIFY,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(),
                                    LCW<T>(expected, stream, mr),
                                    cudf::test::debug_output_level::FIRST_ERROR,
@@ -107,7 +107,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNothing)
                                     cudf::lists_column_view{gather_map},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     auto const expected = LCW<T>{LCW<T>{}, LCW<T>{}, LCW<T>{}, LCW<T>{}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       *results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
@@ -121,7 +121,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNothing)
                                     cudf::lists_column_view{gather_map},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
 
     // hack to get column of empty list of list
     I32Init expected_dummy{{{1, 2, 3, 4}, {5}}, I32Init{}, I32Init{}, I32Init{}};
@@ -139,7 +139,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNothing)
                                     cudf::lists_column_view{gather_map},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     // hack to get column of empty list of list of list
     I32Init expected_dummy{{{{1, 2, 3, 4}}}, I32Init{}, I32Init{}};
     auto const col      = LCW<T>(expected_dummy, stream, mr);
@@ -176,7 +176,7 @@ TEST_F(SegmentedGatherTestSingle, GatherEmpty)
                                                      cudf::lists_column_view{gather_map},
                                                      cudf::out_of_bounds_policy::DONT_CHECK,
                                                      stream,
-                                                     mr.get_output_mr());
+                                                     mr);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
@@ -201,7 +201,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNulls)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{1, 2}, valids}, I32Init{}, {{7}, valids + 1}, {{10, 9, 8}, valids}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(),
                                    LCW<T>(expected, stream, mr),
@@ -217,7 +217,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNulls)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     NULLIFY,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{
       {{0, 0}, nulls_at({0, 1})}, I32Init{}, {{7}, valids + 1}, {{10, 0, 8}, null_at(1)}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(),
@@ -247,7 +247,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNested)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{2, 3}, {2, 3}, {2, 3}},
                   {{9, 10, 11}},
                   {{17, 18}, {15, 16}, {-17, -18}, {15, 16}}};
@@ -271,7 +271,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNested)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     NULLIFY,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{{2, 3}, I32Init{}, {2, 3}}, null_at(1)},
                   {{9, 10, 11}},
                   {{{17, 18}, {15, 16}, {-17, -18}, I32Init{}}, null_at(3)}};
@@ -299,7 +299,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNested)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
                   I32Init{},
                   {{I32Init{0}}},
@@ -328,7 +328,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNested)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     NULLIFY,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{
       {{{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
       I32Init{},
@@ -362,7 +362,7 @@ TYPED_TEST(SegmentedGatherTest, GatherOutOfOrder)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{4, 5}, {2, 3}},
                   {{9, 10, 11}, {12, 13, 14}, {6, 7, 8}},
                   {{17, 18}, {17, 18}, {17, 18}, {17, 18}, {15, 16}}};
@@ -386,7 +386,7 @@ TYPED_TEST(SegmentedGatherTest, GatherOutOfOrder)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     NULLIFY,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{4, 5}, {2, 3}},
                   {{I32Init{}, {12, 13, 14}, I32Init{}}, nulls_at({0, 2})},
                   {{I32Init{}, {17, 18}, {17, 18}, {17, 18}, {17, 18}, {15, 16}}, null_at(0)}};
@@ -418,7 +418,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNegatives)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{4, 5}, {2, 3}},
                   {{9, 10, 11}, {12, 13, 14}, {6, 7, 8}},
                   {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}, {15, 16}}};
@@ -441,7 +441,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNegatives)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     NULLIFY,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{4, 5}, {2, 3}},
                   {{{9, 10, 11}, {12, 13, 14}, I32Init{}}, null_at(2)},
                   {{I32Init{}, {17, 18}, {17, 18}, {17, 18}, {17, 18}, {15, 16}}, null_at(0)}};
@@ -476,7 +476,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNestedNulls)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{{2, 3}, valids}, {4, 5}},
                   {{{6, 7, 8}, {12, 13, 14}}, no_nulls()},
                   I32Init{},
@@ -505,7 +505,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNestedNulls)
                                     cudf::lists_column_view{LCW<int>(gather_map, stream, mr)},
                                     cudf::out_of_bounds_policy::DONT_CHECK,
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
     I32Init expected{{{{{15, 16}, {{27, 28}, valids}, {{37, 38}, valids}, {47, 48}, {57, 58}}},
                    {{I32Init{0}}},
                    {{{{{10, 20}, valids}}, {I32Init{30}}, {{40, 50}, {60, 70, 80}}}, valids}}};
@@ -532,7 +532,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNestedWithEmpties)
                                                cudf::lists_column_view{gather_map},
                                                cudf::out_of_bounds_policy::DONT_CHECK,
                                                stream,
-                                               mr.get_output_mr());
+                                               mr);
   I32Init expected{{{2, 3}}, {{6, 7, 8}}, {I32Init{}}};  // skip one null, gather one null.
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(),
                                  LCW<T>(expected, stream, mr),
@@ -570,7 +570,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
                                                         gather_map,
                                                         cudf::out_of_bounds_policy::DONT_CHECK,
                                                         stream,
-                                                        mr.get_output_mr());
+                                                        mr);
       I32Init expected{
         {{2, 2}, {3, 3}},
         {{4, 4, 4}, {6, 6}},
@@ -591,7 +591,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
                                                         gather_map,
                                                         cudf::out_of_bounds_policy::DONT_CHECK,
                                                         stream,
-                                                        mr.get_output_mr());
+                                                        mr);
       I32Init expected{
         {{10, 10, 10}, {11, 11}}, I32Init{}, I32Init{}, {{50, 50, 50, 50}, {6, 13}}, I32Init{}};
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(LCW<T>(expected, stream, mr),
@@ -635,7 +635,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
                                       cudf::lists_column_view{LCW<int>(map, stream, mr)},
                                       cudf::out_of_bounds_policy::DONT_CHECK,
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
       I32Init expected{{{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}}};
       CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(LCW<T>(expected, stream, mr),
                                           result->view(),
@@ -653,7 +653,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
                                       cudf::lists_column_view{LCW<int16_t>(map, stream, mr)},
                                       cudf::out_of_bounds_policy::DONT_CHECK,
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
       I32Init expected{
         {{I32Init{0}}},
 
@@ -680,7 +680,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
                                       cudf::lists_column_view{LCW<int>(map, stream, mr)},
                                       cudf::out_of_bounds_policy::DONT_CHECK,
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
       std::vector<bool> expected_valids = {false, true, true, false, false, true};
 
       I32Init expected{{{{I32Init{30}},
@@ -725,7 +725,7 @@ TEST_F(SegmentedGatherTestString, StringGather)
       cudf::lists_column_view{cudf::test::lists_column_wrapper<int8_t>(gather_map, stream, mr)},
       cudf::out_of_bounds_policy::DONT_CHECK,
       stream,
-      mr.get_output_mr());
+      mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(LCW<T>(expected, stream, mr),
                                    result->view(),
                                    cudf::test::debug_output_level::FIRST_ERROR,
@@ -745,7 +745,7 @@ TEST_F(SegmentedGatherTestString, StringGather)
       cudf::lists_column_view{cudf::test::lists_column_wrapper<int8_t>(gather_map, stream, mr)},
       NULLIFY,
       stream,
-      mr.get_output_mr());
+      mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(LCW<T>(expected, stream, mr),
                                    result->view(),
                                    cudf::test::debug_output_level::FIRST_ERROR,
@@ -775,7 +775,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                        cudf::lists_column_view{gather_map_col},
                                                        cudf::out_of_bounds_policy::DONT_CHECK,
                                                        stream,
-                                                       mr.get_output_mr());
+                                                       mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       results->view(), expected_col, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 
@@ -787,7 +787,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                  cudf::lists_column_view{split_m[0]},
                                                  cudf::out_of_bounds_policy::DONT_CHECK,
                                                  stream,
-                                                 mr.get_output_mr());
+                                                 mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[0],
                                         result0->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
@@ -798,7 +798,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                  cudf::lists_column_view{split_m[1]},
                                                  cudf::out_of_bounds_policy::DONT_CHECK,
                                                  stream,
-                                                 mr.get_output_mr());
+                                                 mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[1],
                                         result1->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
@@ -809,7 +809,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                  cudf::lists_column_view{split_m[2]},
                                                  cudf::out_of_bounds_policy::DONT_CHECK,
                                                  stream,
-                                                 mr.get_output_mr());
+                                                 mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[2],
                                         result2->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
@@ -831,7 +831,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                  cudf::lists_column_view{gather_map_col},
                                                  NULLIFY,
                                                  stream,
-                                                 mr.get_output_mr());
+                                                 mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       results->view(), expected_col, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 
@@ -843,7 +843,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                        cudf::lists_column_view{split_m[0]},
                                                        NULLIFY,
                                                        stream,
-                                                       mr.get_output_mr());
+                                                       mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[0],
                                         result0->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
@@ -854,7 +854,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                        cudf::lists_column_view{split_m[1]},
                                                        NULLIFY,
                                                        stream,
-                                                       mr.get_output_mr());
+                                                       mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[1],
                                         result1->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
@@ -865,7 +865,7 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
                                                        cudf::lists_column_view{split_m[2]},
                                                        NULLIFY,
                                                        stream,
-                                                       mr.get_output_mr());
+                                                       mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[2],
                                         result2->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
@@ -895,14 +895,14 @@ TEST_F(SegmentedGatherTestFloat, Fails)
                                              cudf::lists_column_view{nonlist_map0},
                                              cudf::out_of_bounds_policy::DONT_CHECK,
                                              stream,
-                                             mr.get_output_mr()),
+                                             mr),
                cudf::logic_error);
 
   EXPECT_THROW(cudf::lists::segmented_gather(cudf::lists_column_view{LCW<T>(list, stream, mr)},
                                              cudf::lists_column_view{nonlist_map1},
                                              cudf::out_of_bounds_policy::DONT_CHECK,
                                              stream,
-                                             mr.get_output_mr()),
+                                             mr),
                cudf::logic_error);
 
   EXPECT_THROW(cudf::lists::segmented_gather(
@@ -910,7 +910,7 @@ TEST_F(SegmentedGatherTestFloat, Fails)
                  cudf::lists_column_view{LCW<cudf::string_view>(nonlist_map2, stream, mr)},
                  cudf::out_of_bounds_policy::DONT_CHECK,
                  stream,
-                 mr.get_output_mr()),
+                 mr),
                cudf::logic_error);
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
@@ -923,7 +923,7 @@ TEST_F(SegmentedGatherTestFloat, Fails)
       cudf::lists_column_view{cudf::test::lists_column_wrapper<int8_t>(nulls_map, stream, mr)},
       cudf::out_of_bounds_policy::DONT_CHECK,
       stream,
-      mr.get_output_mr()),
+      mr),
     std::invalid_argument);
 
   // Gather map and list column sizes must be the same.
@@ -933,7 +933,7 @@ TEST_F(SegmentedGatherTestFloat, Fails)
                                     size_mismatch_map, stream, mr)},
                                   cudf::out_of_bounds_policy::DONT_CHECK,
                                   stream,
-                                  mr.get_output_mr()),
+                                  mr),
     cudf::logic_error);
 }
 

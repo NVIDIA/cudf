@@ -752,7 +752,7 @@ __device__ op_status cast_status_for_primitive(device_span<uint8_t const> val)
  * that are null, or whose value is not an exact-width match for `T`, are marked null in
  * `d_null_mask` with an output of 0.
  */
-// `d_status` may be an empty span when HasStatus=true but no status_out was requested (only
+// `d_status` may be an empty span when HasStatus=true but no `status` output was requested (only
 // incoming_status propagation to the null mask is desired).  All writes to d_status are guarded
 // by d_status.data() so the empty-span case is safe.
 template <typename T, bool HasStatus>
@@ -916,14 +916,6 @@ void validate_variant_child(column_view const& child)
                std::invalid_argument);
 }
 
-// Status columns are always non-nullable: SQL-null rows are represented by the row_null enum
-// value rather than by a null bit, so no null mask needs to be allocated or counted.
-std::unique_ptr<column> make_status_column(rmm::device_buffer&& status_data, size_type num_rows)
-{
-  return std::make_unique<column>(
-    data_type{type_id::UINT8}, num_rows, std::move(status_data), rmm::device_buffer{}, 0);
-}
-
 struct cast_variant_fn {
   cudf::lists_column_device_view values;
   size_type num_rows;
@@ -935,13 +927,7 @@ struct cast_variant_fn {
   // Optional status tracking
   column_device_view incoming_status_view;
   bool has_incoming{false};
-  std::unique_ptr<column>* status_out{nullptr};
-
-  // Allocates an uninitialized device buffer large enough for num_rows status bytes.
-  rmm::device_buffer alloc_status()
-  {
-    return rmm::device_buffer{static_cast<std::size_t>(num_rows) * sizeof(op_status), stream, mr};
-  }
+  op_status* d_status{nullptr};
 
   template <typename T>
   std::unique_ptr<column> operator()()
@@ -951,20 +937,18 @@ struct cast_variant_fn {
     auto const grid = cudf::detail::grid_1d{num_rows, block_size};
     auto const d_out =
       device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
-    if (status_out != nullptr) {
-      auto s_data = alloc_status();
+    if (d_status != nullptr) {
       cast_variant_primitive_kernel<T, true><<<grid.num_blocks, block_size, 0, stream.value()>>>(
         values,
         d_out,
         d_null_mask,
         incoming_status_view,
         has_incoming,
-        {static_cast<op_status*>(s_data.data()), static_cast<std::size_t>(num_rows)});
+        {d_status, static_cast<std::size_t>(num_rows)});
       CUDF_CUDA_TRY(cudaGetLastError());
-      *status_out = make_status_column(std::move(s_data), num_rows);
     } else if (has_incoming) {
-      // No status_out requested, but incoming_status still needs to be applied to the null mask.
-      // Use HasStatus=true with an empty d_status span so writes are guarded (no allocation).
+      // No status output requested, but incoming_status still needs to be applied to the null
+      // mask. Use HasStatus=true with an empty d_status span so writes are guarded (no-op).
       cast_variant_primitive_kernel<T, true><<<grid.num_blocks, block_size, 0, stream.value()>>>(
         values, d_out, d_null_mask, incoming_status_view, true, {});
       CUDF_CUDA_TRY(cudaGetLastError());
@@ -989,12 +973,7 @@ struct cast_variant_fn {
   {
     rmm::device_buffer data{num_rows * sizeof(bool), stream, mr};
 
-    rmm::device_buffer s_data;
-    op_status* dp_s{nullptr};
-    if (status_out != nullptr) {
-      s_data = alloc_status();
-      dp_s   = static_cast<op_status*>(s_data.data());
-    }
+    auto* dp_s = d_status;
 
     auto const inc_view = incoming_status_view;
     auto const hi       = has_incoming;
@@ -1035,8 +1014,6 @@ struct cast_variant_fn {
                        }
                      });
 
-    if (status_out != nullptr) { *status_out = make_status_column(std::move(s_data), num_rows); }
-
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return std::make_unique<column>(desired_type,
@@ -1050,22 +1027,10 @@ struct cast_variant_fn {
   std::unique_ptr<column> operator()()
     requires(cuda::std::is_same_v<T, cudf::string_view>)
   {
-    rmm::device_buffer status_data;
-    op_status* d_status_ptr{nullptr};
-
-    if (status_out != nullptr) {
-      status_data  = alloc_status();
-      d_status_ptr = static_cast<op_status*>(status_data.data());
-    }
-
     cast_variant_string_fn fn{
-      values, d_null_mask, nullptr, nullptr, {}, d_status_ptr, incoming_status_view, has_incoming};
+      values, d_null_mask, nullptr, nullptr, {}, d_status, incoming_status_view, has_incoming};
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(fn, num_rows, stream, mr);
-
-    if (status_out != nullptr) {
-      *status_out = make_status_column(std::move(status_data), num_rows);
-    }
 
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
@@ -1117,7 +1082,7 @@ namespace detail {
 
 std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                           std::string_view path,
-                                          std::unique_ptr<column>* status_out,
+                                          std::optional<mutable_column_view> status,
                                           rmm::cuda_stream_view stream,
                                           rmm::device_async_resource_ref mr)
 {
@@ -1134,8 +1099,19 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   auto const steps = parse_variant_path(path);
 
   auto const num_rows = variant_column.size();
+
+  if (status.has_value()) {
+    CUDF_EXPECTS(!status->nullable(),
+                 "status column must not be nullable; use row_null for SQL-null rows",
+                 std::invalid_argument);
+    CUDF_EXPECTS(
+      status->type().id() == type_id::UINT8, "status column must be UINT8", std::invalid_argument);
+    CUDF_EXPECTS(status->size() == num_rows,
+                 "status column must have the same number of rows as variant_column",
+                 std::invalid_argument);
+  }
+
   if (num_rows == 0) {
-    if (status_out != nullptr) { *status_out = make_empty_column(data_type{type_id::UINT8}); }
     return cudf::make_lists_column(
       0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
   }
@@ -1166,8 +1142,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
 
   auto grid = cudf::detail::grid_1d{num_rows, block_size};
 
-  if (status_out != nullptr) {
-    rmm::device_buffer status_data{num_rows * sizeof(op_status), stream, mr};
+  if (status.has_value()) {
     locate_variant_fields_kernel<true><<<grid.num_blocks, block_size, 0, stream.value()>>>(
       meta_lists_device_view,
       val_lists_device_view,
@@ -1175,9 +1150,8 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
       d_sizes,
       d_src_offsets,
       d_null_mask,
-      {static_cast<op_status*>(status_data.data()), static_cast<std::size_t>(num_rows)});
+      {reinterpret_cast<op_status*>(status->data<uint8_t>()), static_cast<std::size_t>(num_rows)});
     CUDF_CUDA_TRY(cudaGetLastError());
-    *status_out = make_status_column(std::move(status_data), num_rows);
   } else {
     locate_variant_fields_kernel<false>
       <<<grid.num_blocks, block_size, 0, stream.value()>>>(meta_lists_device_view,
@@ -1229,7 +1203,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
 std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
                                      std::optional<column_view> incoming_status,
-                                     std::unique_ptr<column>* status_out,
+                                     std::optional<mutable_column_view> status,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
 {
@@ -1263,10 +1237,18 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                  std::invalid_argument);
   }
 
-  if (num_rows == 0) {
-    if (status_out != nullptr) { *status_out = make_empty_column(data_type{type_id::UINT8}); }
-    return make_empty_column(desired_type);
+  if (status.has_value()) {
+    CUDF_EXPECTS(!status->nullable(),
+                 "status column must not be nullable; use row_null for SQL-null rows",
+                 std::invalid_argument);
+    CUDF_EXPECTS(
+      status->type().id() == type_id::UINT8, "status column must be UINT8", std::invalid_argument);
+    CUDF_EXPECTS(status->size() == num_rows,
+                 "status column must have the same number of rows as the values column",
+                 std::invalid_argument);
   }
+
+  if (num_rows == 0) { return make_empty_column(desired_type); }
 
   auto val_device_view = column_device_view::create(values, stream);
   cudf::lists_column_device_view val_lists_device_view(*val_device_view);
@@ -1284,61 +1266,65 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                               : column_device_view::create(*placeholder_col, stream);
   bool const has_incoming = incoming_status.has_value();
 
-  return cudf::type_dispatcher(desired_type,
-                               cast_variant_fn{val_lists_device_view,
-                                               num_rows,
-                                               desired_type,
-                                               d_null_mask,
-                                               std::move(null_mask),
-                                               stream,
-                                               mr,
-                                               *incoming_dev_view,
-                                               has_incoming,
-                                               status_out});
+  return cudf::type_dispatcher(
+    desired_type,
+    cast_variant_fn{
+      val_lists_device_view,
+      num_rows,
+      desired_type,
+      d_null_mask,
+      std::move(null_mask),
+      stream,
+      mr,
+      *incoming_dev_view,
+      has_incoming,
+      status.has_value() ? reinterpret_cast<op_status*>(status->data<uint8_t>()) : nullptr});
 }
 
 }  // namespace detail
 
 std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                           std::string_view path,
-                                          std::unique_ptr<column>* status_out,
+                                          std::optional<mutable_column_view> status,
                                           rmm::cuda_stream_view stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::get_variant_field(variant_column, path, status_out, stream, mr);
+  return detail::get_variant_field(variant_column, path, status, stream, mr);
 }
 
 std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
                                      std::optional<column_view> incoming_status,
-                                     std::unique_ptr<column>* status_out,
+                                     std::optional<mutable_column_view> status,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::cast_variant(values, desired_type, incoming_status, status_out, stream, mr);
+  return detail::cast_variant(values, desired_type, incoming_status, status, stream, mr);
 }
 
 std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
                                               std::string_view path,
                                               data_type desired_type,
-                                              std::unique_ptr<column>* status_out,
+                                              std::optional<mutable_column_view> status,
                                               rmm::cuda_stream_view stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto const temp_mr = cudf::get_current_device_resource_ref();
 
-  if (status_out != nullptr) {
-    std::unique_ptr<column> extract_status;
-    auto value = detail::get_variant_field(variant_column, path, &extract_status, stream, temp_mr);
+  if (status.has_value()) {
+    auto extract_status = make_numeric_column(
+      data_type{type_id::UINT8}, variant_column.size(), mask_state::UNALLOCATED, stream, temp_mr);
+    auto value = detail::get_variant_field(
+      variant_column, path, extract_status->mutable_view(), stream, temp_mr);
     return detail::cast_variant(
-      value->view(), desired_type, extract_status->view(), status_out, stream, mr);
+      value->view(), desired_type, extract_status->view(), status, stream, mr);
   }
 
-  auto value = detail::get_variant_field(variant_column, path, nullptr, stream, temp_mr);
-  return detail::cast_variant(value->view(), desired_type, std::nullopt, nullptr, stream, mr);
+  auto value = detail::get_variant_field(variant_column, path, std::nullopt, stream, temp_mr);
+  return detail::cast_variant(value->view(), desired_type, std::nullopt, std::nullopt, stream, mr);
 }
 
 }  // namespace io::parquet::experimental

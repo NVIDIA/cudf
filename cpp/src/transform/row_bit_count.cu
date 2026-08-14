@@ -25,7 +25,7 @@
 
 #include <cuda/functional>
 #include <cuda/std/optional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 namespace cudf {

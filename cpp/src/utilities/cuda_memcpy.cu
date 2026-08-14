@@ -91,7 +91,7 @@ cudaError_t memcpy_batch_async(void* const* dsts,
     }
 
     cudaMemcpyAttributes attrs = {.srcAccessOrder = cudaMemcpySrcAccessOrderStream,
-                                  .flags          = cudaMemcpyFlagPreferOverlapWithCompute};
+                                  .flags          = 0 /*cudaMemcpyFlagPreferOverlapWithCompute*/};
     std::size_t attrs_idxs     = 0;
     return cudaMemcpyBatchAsync(dsts, srcs, sizes, count, &attrs, &attrs_idxs, 1, stream.value());
   }

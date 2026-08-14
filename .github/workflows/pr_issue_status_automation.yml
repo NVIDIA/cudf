@@ -13,7 +13,7 @@ permissions: {}
 
 jobs:
   get-project-id:
-    uses: rapidsai/shared-workflows/.github/workflows/project-get-item-id.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/project-get-item-id.yaml@test-gh200
     secrets:
       ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
     if: github.event.pull_request.state == 'open'
@@ -25,7 +25,7 @@ jobs:
 
   update-status:
     # This job sets the PR and its linked issues to "In Progress" status
-    uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@test-gh200
     secrets:
       ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
     if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
@@ -65,7 +65,7 @@ jobs:
 
   update-release:
     # This job sets the PR and its linked issues to the release they are targeting
-    uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@test-gh200
     secrets:
       ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
     if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}

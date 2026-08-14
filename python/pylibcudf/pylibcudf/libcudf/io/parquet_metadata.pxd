@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int64_t
 from libcpp.memory cimport unique_ptr
+from libcpp.span cimport span as std_span
 from libcpp.string cimport string
 from libcpp.unordered_map cimport unordered_map
 from libcpp.vector cimport vector
@@ -60,7 +61,7 @@ cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
 
     cdef column_chunk_bounds_result column_chunk_bounds(
         vector[FileMetaData] parquet_metadatas,
-        host_span[const_string] column_names,
+        std_span[const_string] column_names,
         cudaStream_t stream,
         device_async_resource_ref mr,
     ) except +libcudf_exception_handler

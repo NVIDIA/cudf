@@ -2414,7 +2414,7 @@ std::vector<Type> aggregate_reader_metadata::get_parquet_types(
 namespace cudf::io {
 
 column_chunk_bounds_result column_chunk_bounds(std::vector<parquet::FileMetaData> parquet_metadatas,
-                                               host_span<std::string const> column_names,
+                                               std::span<std::string const> column_names,
                                                rmm::cuda_stream_view stream,
                                                rmm::device_async_resource_ref mr)
 {
@@ -2426,7 +2426,8 @@ column_chunk_bounds_result column_chunk_bounds(std::vector<parquet::FileMetaData
     false   // has_cols_from_mismatched_srcs
   };
 
-  return metadata.column_chunk_bounds(column_names, stream, mr);
+  return metadata.column_chunk_bounds(
+    host_span<std::string const>{column_names.data(), column_names.size()}, stream, mr);
 }
 
 }  // namespace cudf::io

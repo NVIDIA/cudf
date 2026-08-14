@@ -666,6 +666,14 @@ def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
         )
 
     with pytest.raises(
+        TypeError, match="columns must be a sequence of strings"
+    ):
+        plc.io.parquet_metadata.column_chunk_bounds(
+            file_metadatas,
+            columns="a",
+        )
+
+    with pytest.raises(
         TypeError,
         match="file_metadatas must contain only FileMetaData objects",
     ):

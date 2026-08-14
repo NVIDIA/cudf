@@ -18,7 +18,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/span.hpp>
 
 #include <memory>
 #include <span>
@@ -340,7 +339,7 @@ struct column_chunk_bounds_result {
  */
 column_chunk_bounds_result column_chunk_bounds(
   std::vector<parquet::FileMetaData> parquet_metadatas,
-  host_span<std::string const> column_names,
+  std::span<std::string const> column_names,
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

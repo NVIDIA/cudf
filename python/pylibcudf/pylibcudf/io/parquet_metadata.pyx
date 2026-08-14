@@ -6,6 +6,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 from cpython.bytes cimport PyBytes_FromStringAndSize
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.optional cimport optional
+from libcpp.span cimport span as std_span
 from libcpp.string cimport string
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -805,6 +806,9 @@ cpdef tuple column_chunk_bounds(
             raise TypeError("file_metadatas must contain only FileMetaData objects")
         c_metadatas.push_back((<FileMetaData>metadata_obj).c_obj)
 
+    if isinstance(columns, str):
+        raise TypeError("columns must be a sequence of strings")
+
     for column_name in columns:
         if not isinstance(column_name, str):
             raise TypeError("columns must contain only strings")
@@ -813,7 +817,7 @@ cpdef tuple column_chunk_bounds(
     with nogil:
         c_result = cpp_parquet_metadata.column_chunk_bounds(
             move(c_metadatas),
-            host_span[const_string](c_columns.data(), c_columns.size()),
+            std_span[const_string](c_columns.data(), c_columns.size()),
             _cs,
             mr.get_mr(),
         )

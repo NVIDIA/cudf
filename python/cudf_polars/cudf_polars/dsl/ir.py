@@ -197,6 +197,14 @@ class IRExecutionContext:
             yield result_stream
 
 
+@dataclass(frozen=True)
+class _SortedAggRequest:
+    """Named sorted aggregation request."""
+
+    name: str
+    value: expr.SortedAgg
+
+
 def apply_predicate(df: DataFrame, predicate: expr.NamedExpr | None) -> DataFrame:
     """Filter ``df`` by a predicate expression."""
     if predicate is None:
@@ -2189,11 +2197,11 @@ class GroupBy(IR):
             null_precedence=[k.null_order for k in keys],
         )
         requests: list[expr.NamedExpr] = []
-        sorted_requests: list[expr.NamedExpr] = []
+        sorted_requests: list[_SortedAggRequest] = []
         for request in agg_requests:
             value = request.value
             if isinstance(value, expr.SortedAgg):
-                sorted_requests.append(request)
+                sorted_requests.append(_SortedAggRequest(request.name, value))
             else:
                 requests.append(request)
         group_keys, results = cls._evaluate_aggregation_requests(
@@ -2204,13 +2212,14 @@ class GroupBy(IR):
         )
         if group_keys is None:
             group_keys, _ = grouper.aggregate([], stream=df.stream)
-        results_by_name = {
+        results_by_name: dict[str, Column] = {
             request.name: result
-            for request, result in itertools.chain(
-                zip(requests, results, strict=True),
-                zip(sorted_requests, sorted_results, strict=True),
-            )
+            for request, result in zip(requests, results, strict=True)
         }
+        results_by_name.update(
+            (request.name, result)
+            for request, result in zip(sorted_requests, sorted_results, strict=True)
+        )
         results = [results_by_name[request.name] for request in agg_requests]
         result_keys = [
             Column(grouped_key, name=key.name, dtype=key.dtype)
@@ -2317,23 +2326,25 @@ class GroupBy(IR):
             return None, []
 
         group_keys, raw_tables = grouper.aggregate(requests, stream=df.stream)
-        results = []
-        for result_name, plc_column, should_cast in zip(
-            names,
-            itertools.chain.from_iterable(t.columns() for t in raw_tables),
-            cast_to_schema,
-            strict=True,
-        ):
-            result = Column(plc_column, name=result_name, dtype=schema[result_name])
-            if should_cast:
-                result = result.astype(schema[result_name], stream=df.stream)
-            results.append(result)
+        results = [
+            Column(column, name=name, dtype=schema[name])
+            if not should_cast
+            else Column(column, name=name, dtype=schema[name]).astype(
+                schema[name], stream=df.stream
+            )
+            for name, column, should_cast in zip(
+                names,
+                itertools.chain.from_iterable(t.columns() for t in raw_tables),
+                cast_to_schema,
+                strict=True,
+            )
+        ]
         return group_keys, results
 
     @classmethod
     def _evaluate_sorted_aggregations(
         cls,
-        sorted_requests: Sequence[expr.NamedExpr],
+        sorted_requests: Sequence[_SortedAggRequest],
         keys: Sequence[Column],
         df: DataFrame,
         *,
@@ -2347,11 +2358,10 @@ class GroupBy(IR):
             tuple[
                 tuple[bool, tuple[bool, ...], tuple[bool, ...]], tuple[expr.Expr, ...]
             ],
-            list[expr.NamedExpr],
+            list[_SortedAggRequest],
         ] = {}
         for request in sorted_requests:
             sorted_agg = request.value
-            assert isinstance(sorted_agg, expr.SortedAgg)
             by_exprs = sorted_agg.children[1:]
             request_groups.setdefault((sorted_agg.options, tuple(by_exprs)), []).append(
                 request
@@ -2363,10 +2373,7 @@ class GroupBy(IR):
         key_null_order = [key.null_order for key in keys]
 
         for (options, by_exprs), group in request_groups.items():
-            value_exprs = []
-            for request in group:
-                assert isinstance(request.value, expr.SortedAgg)
-                value_exprs.append(request.value.children[0])
+            value_exprs = [request.value.children[0] for request in group]
             columns = broadcast(
                 *(
                     child.evaluate(df, context=ExecutionContext.GROUPBY)
@@ -2413,7 +2420,6 @@ class GroupBy(IR):
                 strict=True,
             ):
                 sorted_agg = request.value
-                assert isinstance(sorted_agg, expr.SortedAgg)
                 value_name = next(value_names)
                 sorted_values.append(
                     Column(column, name=value_name, dtype=sorted_agg.dtype)

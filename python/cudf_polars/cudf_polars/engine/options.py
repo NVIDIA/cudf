@@ -218,6 +218,12 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE``.
         Default: ``"disabled"``.
         Category: rapidsmpf.
+    ucxx_progress_mode
+        UCXX progress mode (``"polling"``, ``"thread-blocking"``, or
+        ``"thread-polling"``).
+        Env: ``RAPIDSMPF_UCXX_PROGRESS_MODE``.
+        Default: ``"thread-blocking"``.
+        Category: rapidsmpf.
     num_py_executors
         Workers for the internal Python ``ThreadPoolExecutor``.
         Env: ``CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS``.
@@ -341,6 +347,9 @@ class StreamingOptions:
     unbounded_file_read_cache: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
     )
+    ucxx_progress_mode: (
+        Literal["polling", "thread-blocking", "thread-polling"] | Unspecified
+    ) = _opt("rapidsmpf", "RAPIDSMPF_UCXX_PROGRESS_MODE")
     # ---- Executor ----
     num_py_executors: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", int

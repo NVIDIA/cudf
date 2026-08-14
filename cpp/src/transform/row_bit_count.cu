@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,12 +20,12 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/optional>
+#include <cuda/stream_ref>
 #include <thrust/tabulate.h>
 
 namespace cudf {
@@ -148,7 +148,7 @@ void flatten_hierarchy(ColIter begin,
                        std::vector<cudf::column_view>& out,
                        std::vector<column_info>& info,
                        hierarchy_info& h_info,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        size_type cur_depth                   = 0,
                        size_type cur_branch_depth            = 0,
                        cuda::std::optional<int> parent_index = {});
@@ -164,7 +164,7 @@ struct flatten_functor {
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
                   hierarchy_info& h_info,
-                  rmm::cuda_stream_view,
+                  cuda::stream_ref,
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
@@ -182,7 +182,7 @@ struct flatten_functor {
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
                   hierarchy_info& h_info,
-                  rmm::cuda_stream_view,
+                  cuda::stream_ref,
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
@@ -199,7 +199,7 @@ struct flatten_functor {
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
                   hierarchy_info& h_info,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int> parent_index)
@@ -238,7 +238,7 @@ struct flatten_functor {
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
                   hierarchy_info& h_info,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
@@ -279,7 +279,7 @@ void flatten_hierarchy(ColIter begin,
                        std::vector<cudf::column_view>& out,
                        std::vector<column_info>& info,
                        hierarchy_info& h_info,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        size_type cur_depth,
                        size_type cur_branch_depth,
                        cuda::std::optional<int> parent_index)
@@ -476,7 +476,7 @@ CUDF_KERNEL void compute_segment_sizes(device_span<column_device_view const> col
 
 std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 size_type segment_length,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   // If there is no rows, segment_length will not be checked.
@@ -546,7 +546,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
   CUDF_EXPECTS(block_size > 0, "Encountered a column hierarchy too complex for row_bit_count");
 
   cudf::detail::grid_1d grid{num_segments, block_size, 1};
-  compute_segment_sizes<<<grid.num_blocks, block_size, shared_mem_size, stream.value()>>>(
+  compute_segment_sizes<<<grid.num_blocks, block_size, shared_mem_size, stream.get()>>>(
     {std::get<1>(d_cols), cols.size()},
     {d_info.data(), info.size()},
     {mcv.data<size_type>(), static_cast<std::size_t>(mcv.size())},
@@ -558,7 +558,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 }
 
 std::unique_ptr<column> row_bit_count(table_view const& t,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   return detail::segmented_row_bit_count(t, 1, stream, mr);
@@ -568,7 +568,7 @@ std::unique_ptr<column> row_bit_count(table_view const& t,
 
 std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 size_type segment_length,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -576,7 +576,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 }
 
 std::unique_ptr<column> row_bit_count(table_view const& t,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers import DataFrame, DataType
 
-__all__ = ["Agg", "Item"]
+__all__ = ["Agg", "Item", "SortedAgg"]
 
 
 class Item(Expr):
@@ -71,6 +71,54 @@ class Item(Expr):
                     "aggregation 'item' expected a single value, got none"
                 )
         return value
+
+
+class SortedAgg(Expr):
+    """
+    ``first``/``last`` aggregation ordered by one or more expressions.
+
+    Notes
+    -----
+    This expression is used by GroupBy infrastructure for ordered
+    first/last aggregations. The ordering may depend on columns other than
+    the value being aggregated, so this cannot be evaluated independently
+    nor can it be represented as a plain :class:`Agg` variant.
+    """
+
+    __slots__ = ("name", "options")
+    _non_child = ("dtype", "name", "options")
+
+    def __init__(
+        self,
+        dtype: DataType,
+        name: str,
+        options: tuple[Any, ...],
+        value: Expr,
+        *by: Expr,
+    ) -> None:
+        self.dtype = dtype
+        self.name = name
+        stable, nulls_last, descending = options
+        self.options = (stable, tuple(nulls_last), tuple(descending))
+        self.children = (value, *by)
+        self.is_pointwise = False
+        if name not in {"first", "last"}:
+            raise NotImplementedError(f"Sorted aggregation {name=}")
+        if not by:
+            raise NotImplementedError(
+                "Sorted aggregation requires order-by expressions"
+            )
+        if len(self.options[1]) != len(by) or len(self.options[2]) != len(by):
+            raise NotImplementedError(
+                "Sorted aggregation requires one null/descending option per order key"
+            )
+
+    @property
+    def agg_request(self) -> plc.aggregation.Aggregation:  # noqa: D102
+        raise NotImplementedError(
+            "Sorted aggregation cannot be represented as a pylibcudf "
+            "aggregation request"
+        )
 
 
 class Agg(Expr):

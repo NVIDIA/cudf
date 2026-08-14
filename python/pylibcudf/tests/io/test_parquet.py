@@ -674,6 +674,15 @@ def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
             columns=["a"],
         )
 
+    with pytest.raises(
+        ValueError,
+        match="without source metadata",
+    ):
+        plc.io.parquet_metadata.column_chunk_bounds(
+            [],
+            columns=["a"],
+        )
+
 
 def test_file_metadata_wrappers_not_directly_constructible() -> None:
     with pytest.raises(

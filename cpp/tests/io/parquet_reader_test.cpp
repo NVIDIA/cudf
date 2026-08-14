@@ -3673,17 +3673,28 @@ TEST_F(ParquetMetadataReaderTest, ColumnChunkBounds)
     cudf::get_default_stream(),
     cudf::get_current_device_resource_ref());
 
-  EXPECT_EQ(bounds.bounds.size(), 1);
+  ASSERT_EQ(bounds.bounds.size(), 1);
 
   auto expected_file_indices = column_wrapper<cudf::size_type>{0, 0};
   auto expected_rg_indices   = column_wrapper<cudf::size_type>{0, 1};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_file_indices, bounds.file_indices->view());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_rg_indices, bounds.row_group_indices->view());
 
-  auto expected_min = column_wrapper<int64_t>{1, 3};
-  auto expected_max = column_wrapper<int64_t>{2, 4};
+  auto const all_valid = cudf::test::iterators::no_nulls();
+  auto expected_min    = column_wrapper<int64_t>({1, 3}, all_valid);
+  auto expected_max    = column_wrapper<int64_t>({2, 4}, all_valid);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds.bounds.front()->view().column(0));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, bounds.bounds.front()->view().column(1));
+}
+
+TEST_F(ParquetMetadataReaderTest, ColumnChunkBoundsEmptyMetadata)
+{
+  auto column_names = std::vector<std::string>{"value"};
+  auto metadatas    = std::vector<cudf::io::parquet::FileMetaData>{};
+  EXPECT_THROW(cudf::io::column_chunk_bounds(
+                 std::move(metadatas),
+                 cudf::host_span<std::string const>{column_names.data(), column_names.size()}),
+               std::invalid_argument);
 }
 
 TEST_F(ParquetMetadataReaderTest, Nested)

@@ -1429,6 +1429,10 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr) const
 {
+  CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
+               "Cannot decode parquet column-chunk bounds without source metadata",
+               std::invalid_argument);
+
   auto const total_row_groups = get_num_row_groups();
 
   auto input_row_group_indices = std::vector<std::vector<size_type>>(per_file_metadata.size());

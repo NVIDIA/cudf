@@ -4,7 +4,6 @@
 from libc.stdint cimport uint8_t
 from cuda.bindings.cyruntime cimport cudaStream_t
 from cpython.bytes cimport PyBytes_FromStringAndSize
-from cython.operator cimport dereference
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.optional cimport optional
 from libcpp.string cimport string
@@ -791,12 +790,10 @@ cpdef tuple column_chunk_bounds(
         ``(min, max)`` table per requested column.
     """
     cdef vector[cpp_FileMetaData] c_metadatas
-    cdef vector[cpp_FileMetaData*] metadata_ptrs
     cdef vector[string] c_columns
     cdef cpp_parquet_metadata.column_chunk_bounds_result c_result
     cdef object metadata_obj
     cdef object column_name
-    cdef size_t metadata_idx
     cdef vector[unique_ptr[cpp_table]].size_type i
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
@@ -806,12 +803,7 @@ cpdef tuple column_chunk_bounds(
     for metadata_obj in file_metadatas:
         if not isinstance(metadata_obj, FileMetaData):
             raise TypeError("file_metadatas must contain only FileMetaData objects")
-        metadata_ptrs.push_back(&(<FileMetaData>metadata_obj).c_obj)
-
-    c_metadatas.reserve(metadata_ptrs.size())
-    with nogil:
-        for metadata_idx in range(metadata_ptrs.size()):
-            c_metadatas.push_back(dereference(metadata_ptrs[metadata_idx]))
+        c_metadatas.push_back((<FileMetaData>metadata_obj).c_obj)
 
     for column_name in columns:
         if not isinstance(column_name, str):

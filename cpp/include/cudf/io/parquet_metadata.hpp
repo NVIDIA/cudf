@@ -15,6 +15,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -331,11 +332,17 @@ struct column_chunk_bounds_result {
  * @param stream CUDA stream used for device memory operations
  * @param mr Device memory resource to use for device memory allocation
  * @return Decoded min/max bounds and row-group identifiers
+ *
+ * @throw std::invalid_argument If a requested leaf-column path is missing or ambiguous.
+ * @throw std::invalid_argument If a requested column has unsupported or compound statistics dtype.
+ * @throw std::invalid_argument If a requested column has mismatching statistics dtype across
+ * sources.
  */
-column_chunk_bounds_result column_chunk_bounds(std::vector<parquet::FileMetaData> parquet_metadatas,
-                                               host_span<std::string const> column_names,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr);
+column_chunk_bounds_result column_chunk_bounds(
+  std::vector<parquet::FileMetaData> parquet_metadatas,
+  host_span<std::string const> column_names,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace io

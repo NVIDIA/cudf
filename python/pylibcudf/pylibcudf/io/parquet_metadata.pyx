@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stdint cimport uint8_t
+from cpython.bytes cimport PyBytes_FromStringAndSize
 from libcpp.memory cimport make_unique, unique_ptr
+from libcpp.optional cimport optional
 from libcpp.string cimport string
 from libcpp.vector cimport vector
 
@@ -20,6 +22,7 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     FileMetaData as cpp_FileMetaData,
     RowGroup as cpp_RowGroup,
     SortingColumn as cpp_SortingColumn,
+    Statistics as cpp_Statistics,
 )
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.types cimport DataType
@@ -35,6 +38,7 @@ ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
+    "ColumnChunkStatistics",
     "FileMetaData",
     "ParquetColumnSchema",
     "ParquetMetadata",
@@ -304,6 +308,89 @@ cdef class SortingColumn:
         return self.c_obj.nulls_first
 
 
+cdef object _optional_bytes(optional[vector[uint8_t]] value):
+    cdef vector[uint8_t]* buffer
+    if not value.has_value():
+        return None
+    buffer = &value.value()
+    if buffer.size() == 0:
+        return b""
+    return PyBytes_FromStringAndSize(
+        <const char*>buffer.data(), buffer.size()
+    )
+
+
+cdef class ColumnChunkStatistics:
+    """Column chunk statistics."""
+
+    def __init__(self):
+        raise ValueError("ColumnChunkStatistics cannot be constructed directly")
+
+    @staticmethod
+    cdef ColumnChunkStatistics from_cpp(cpp_Statistics statistics):
+        cdef ColumnChunkStatistics result = ColumnChunkStatistics.__new__(
+            ColumnChunkStatistics
+        )
+        result.c_obj = statistics
+        return result
+
+    @property
+    def min(self) -> bytes | None:
+        """Deprecated raw minimum value in signed comparison order."""
+        return _optional_bytes(self.c_obj.min)
+
+    @property
+    def max(self) -> bytes | None:
+        """Deprecated raw maximum value in signed comparison order."""
+        return _optional_bytes(self.c_obj.max)
+
+    @property
+    def has_min_max(self) -> bool:
+        """Whether this column chunk has raw minimum and maximum values."""
+        return (
+            (self.c_obj.min_value.has_value() or self.c_obj.min.has_value())
+            and (self.c_obj.max_value.has_value() or self.c_obj.max.has_value())
+        )
+
+    @property
+    def null_count(self) -> int | None:
+        """Number of null values in the column chunk."""
+        if not self.c_obj.null_count.has_value():
+            return None
+        return self.c_obj.null_count.value()
+
+    @property
+    def distinct_count(self) -> int | None:
+        """Number of distinct values in the column chunk."""
+        if not self.c_obj.distinct_count.has_value():
+            return None
+        return self.c_obj.distinct_count.value()
+
+    @property
+    def min_value(self) -> bytes | None:
+        """Raw minimum value ordered according to the column order."""
+        return _optional_bytes(self.c_obj.min_value)
+
+    @property
+    def max_value(self) -> bytes | None:
+        """Raw maximum value ordered according to the column order."""
+        return _optional_bytes(self.c_obj.max_value)
+
+    @property
+    def is_min_value_exact(self) -> bool | None:
+        """Whether ``min_value`` is the exact column-chunk minimum."""
+        if not self.c_obj.is_min_value_exact.has_value():
+            return None
+        return self.c_obj.is_min_value_exact.value()
+
+    @property
+    def is_max_value_exact(self) -> bool | None:
+        """Whether ``max_value`` is the exact column-chunk maximum."""
+        if not self.c_obj.is_max_value_exact.has_value():
+            return None
+        return self.c_obj.is_max_value_exact.value()
+
+
 cdef class ColumnChunk:
     """Metadata for a row group's column chunk."""
 
@@ -391,6 +478,11 @@ cdef class ColumnChunkMetaData:
     def total_compressed_size(self) -> int:
         """Total compressed page bytes for this chunk."""
         return self.c_obj.total_compressed_size
+
+    @property
+    def statistics(self) -> ColumnChunkStatistics:
+        """Column chunk statistics."""
+        return ColumnChunkStatistics.from_cpp(self.c_obj.statistics)
 
 
 cdef class RowGroup:

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import io
 import os
+import struct
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -494,6 +495,80 @@ def test_file_metadata_row_groups_and_column_chunks() -> None:
             assert meta_data.path_in_schema[-1] == pa_col_chunk.path_in_schema
 
 
+def test_file_metadata_columnchunk_statistics() -> None:
+    def min_stat(stats):
+        return stats.min_value if stats.min_value is not None else stats.min
+
+    def max_stat(stats):
+        return stats.max_value if stats.max_value is not None else stats.max
+
+    table = pa.table(
+        {
+            "a": pa.array([1, 2, 3, None], type=pa.int64()),
+            "s": pa.array(["aa", "bb", "cc", None]),
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, row_group_size=2)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+
+    expected = [
+        (1, 2, 0, b"aa", b"bb"),
+        (3, 3, 1, b"cc", b"cc"),
+    ]
+    for row_group, (
+        min_a,
+        max_a,
+        null_count,
+        min_s,
+        max_s,
+    ) in zip(file_metadata.row_groups, expected, strict=True):
+        stats_by_name = {
+            column.meta_data.path_in_schema[-1]: column.meta_data.statistics
+            for column in row_group.columns
+        }
+
+        a_stats = stats_by_name["a"]
+        assert a_stats.has_min_max
+        assert min_stat(a_stats) == struct.pack("<q", min_a)
+        assert max_stat(a_stats) == struct.pack("<q", max_a)
+        assert a_stats.null_count == null_count
+        assert a_stats.distinct_count is None
+
+        s_stats = stats_by_name["s"]
+        assert s_stats.has_min_max
+        assert min_stat(s_stats) == min_s
+        assert max_stat(s_stats) == max_s
+        assert s_stats.null_count == null_count
+        assert s_stats.distinct_count is None
+
+
+def test_file_metadata_columnchunk_statistics_without_minmax() -> None:
+    table = pa.table({"a": pa.array([1, 2], type=pa.int64())})
+    sink = io.BytesIO()
+    write_table(table, sink, write_statistics=False)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+    statistics = file_metadata.row_groups[0].columns[0].meta_data.statistics
+
+    assert not statistics.has_min_max
+    assert statistics.min is None
+    assert statistics.max is None
+    assert statistics.min_value is None
+    assert statistics.max_value is None
+    assert statistics.is_min_value_exact is None
+    assert statistics.is_max_value_exact is None
+
+
 def test_file_metadata_wrappers_not_directly_constructible() -> None:
     with pytest.raises(
         ValueError, match="SortingColumn cannot be constructed directly"
@@ -507,6 +582,11 @@ def test_file_metadata_wrappers_not_directly_constructible() -> None:
         ValueError, match="ColumnChunkMetaData cannot be constructed directly"
     ):
         plc.io.parquet_metadata.ColumnChunkMetaData()
+    with pytest.raises(
+        ValueError,
+        match="ColumnChunkStatistics cannot be constructed directly",
+    ):
+        plc.io.parquet_metadata.ColumnChunkStatistics()
     with pytest.raises(
         ValueError, match="RowGroup cannot be constructed directly"
     ):

@@ -517,6 +517,19 @@ class aggregate_reader_metadata {
     const;
 
   /**
+   * @brief Decodes min/max statistics for selected column chunks.
+   *
+   * @param column_names Dotted leaf-column paths to decode statistics for
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Device memory resource to use for device memory allocation
+   * @return Decoded min/max bounds and row-group identifiers
+   */
+  [[nodiscard]] column_chunk_bounds_result column_chunk_bounds(
+    host_span<std::string const> column_names,
+    rmm::cuda_stream_view stream,
+    rmm::device_async_resource_ref mr) const;
+
+  /**
    * @brief Get total number of rows across all files
    *
    * @return Total number of rows across all files

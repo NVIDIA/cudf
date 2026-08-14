@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stdint cimport uint8_t
+from cuda.bindings.cyruntime cimport cudaStream_t
 from cpython.bytes cimport PyBytes_FromStringAndSize
+from cython.operator cimport dereference
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.optional cimport optional
 from libcpp.string cimport string
+from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
+from pylibcudf.column cimport Column
 from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
 from pylibcudf.libcudf.io.hybrid_scan cimport (
@@ -24,8 +28,13 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     SortingColumn as cpp_SortingColumn,
     Statistics as cpp_Statistics,
 )
+from pylibcudf.libcudf.table.table cimport table as cpp_table
 from pylibcudf.libcudf.utilities.span cimport host_span
+from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
+from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
+from rmm.pylibrmm.stream cimport Stream
 
 from typing import TYPE_CHECKING
 
@@ -33,6 +42,7 @@ if TYPE_CHECKING:
     from typing_extensions import Buffer
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
+ctypedef const string const_string
 
 
 __all__ = [
@@ -45,6 +55,7 @@ __all__ = [
     "ParquetSchema",
     "RowGroup",
     "SortingColumn",
+    "column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
 ]
@@ -748,3 +759,78 @@ cpdef list read_parquet_footers(SourceInfo src_info):
         )
 
     return [FileMetaData.from_cpp(metadata) for metadata in c_result]
+
+
+cpdef tuple column_chunk_bounds(
+    object file_metadatas,
+    object columns,
+    object stream=None,
+    DeviceMemoryResource mr=None,
+):
+    """
+    Decode parquet column-chunk min/max statistics for selected columns.
+
+    Missing min/max statistics are returned as nulls. Parquet min/max
+    exactness flags are not interpreted by this function.
+
+    Parameters
+    ----------
+    file_metadatas : Sequence[FileMetaData]
+        Parquet footer metadata objects, one per source.
+    columns : Sequence[str]
+        Dotted leaf-column paths to decode statistics for.
+    stream : CudaStreamLike, optional
+        CUDA stream used for device memory operations.
+    mr : DeviceMemoryResource, optional
+        Device memory resource used for device memory allocation.
+
+    Returns
+    -------
+    tuple[Column, Column, tuple[Table, ...]]
+        File indices, file-local row-group indices, and one two-column
+        ``(min, max)`` table per requested column.
+    """
+    cdef vector[cpp_FileMetaData] c_metadatas
+    cdef vector[cpp_FileMetaData*] metadata_ptrs
+    cdef vector[string] c_columns
+    cdef cpp_parquet_metadata.column_chunk_bounds_result c_result
+    cdef object metadata_obj
+    cdef object column_name
+    cdef size_t metadata_idx
+    cdef vector[unique_ptr[cpp_table]].size_type i
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().value()
+    cdef list bounds = []
+    mr = _get_memory_resource(mr)
+
+    for metadata_obj in file_metadatas:
+        if not isinstance(metadata_obj, FileMetaData):
+            raise TypeError("file_metadatas must contain only FileMetaData objects")
+        metadata_ptrs.push_back(&(<FileMetaData>metadata_obj).c_obj)
+
+    c_metadatas.reserve(metadata_ptrs.size())
+    with nogil:
+        for metadata_idx in range(metadata_ptrs.size()):
+            c_metadatas.push_back(dereference(metadata_ptrs[metadata_idx]))
+
+    for column_name in columns:
+        if not isinstance(column_name, str):
+            raise TypeError("columns must contain only strings")
+        c_columns.push_back(column_name.encode())
+
+    with nogil:
+        c_result = cpp_parquet_metadata.column_chunk_bounds(
+            move(c_metadatas),
+            host_span[const_string](c_columns.data(), c_columns.size()),
+            _cs,
+            mr.get_mr(),
+        )
+
+    for i in range(c_result.bounds.size()):
+        bounds.append(Table.from_libcudf(move(c_result.bounds[i]), _stream, mr))
+
+    return (
+        Column.from_libcudf(move(c_result.file_indices), _stream, mr),
+        Column.from_libcudf(move(c_result.row_group_indices), _stream, mr),
+        tuple(bounds),
+    )

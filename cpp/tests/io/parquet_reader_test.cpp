@@ -3646,6 +3646,46 @@ TEST_F(ParquetMetadataReaderTest, PreMaterializedMetadata)
   test_parquet_metadata(3);
 }
 
+TEST_F(ParquetMetadataReaderTest, ColumnChunkBounds)
+{
+  auto values = column_wrapper<int64_t>{1, 2, 3, 4};
+  auto input  = table_view{{values}};
+
+  cudf::io::table_input_metadata metadata(input);
+  metadata.column_metadata[0].set_name("value");
+
+  auto filepath = temp_env->get_temp_filepath("ColumnChunkBounds.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .metadata(std::move(metadata))
+      .row_group_size_rows(2)
+      .max_page_size_rows(2)
+      .max_page_fragment_size(2)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP);
+  cudf::io::write_parquet(out_opts);
+
+  auto datasources  = cudf::io::make_datasources(cudf::io::source_info{filepath});
+  auto metadatas    = cudf::io::read_parquet_footers(datasources);
+  auto column_names = std::vector<std::string>{"value"};
+  auto bounds       = cudf::io::column_chunk_bounds(
+    std::move(metadatas),
+    cudf::host_span<std::string const>{column_names.data(), column_names.size()},
+    cudf::get_default_stream(),
+    cudf::get_current_device_resource_ref());
+
+  EXPECT_EQ(bounds.bounds.size(), 1);
+
+  auto expected_file_indices = column_wrapper<cudf::size_type>{0, 0};
+  auto expected_rg_indices   = column_wrapper<cudf::size_type>{0, 1};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_file_indices, bounds.file_indices->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_rg_indices, bounds.row_group_indices->view());
+
+  auto expected_min = column_wrapper<int64_t>{1, 3};
+  auto expected_max = column_wrapper<int64_t>{2, 4};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds.bounds.front()->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, bounds.bounds.front()->view().column(1));
+}
+
 TEST_F(ParquetMetadataReaderTest, Nested)
 {
   auto const num_rows       = 1200;

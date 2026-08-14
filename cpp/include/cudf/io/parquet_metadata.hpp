@@ -10,12 +10,18 @@
 
 #pragma once
 
+#include <cudf/column/column.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
+#include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -293,6 +299,43 @@ parquet_metadata read_parquet_metadata(source_info const& src_info);
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<cudf::io::datasource> const> sources);
+
+/**
+ * @brief Min/max bounds decoded from parquet column-chunk statistics.
+ *
+ * ``file_indices`` and ``row_group_indices`` identify the column chunks represented by each row of
+ * every table in ``bounds``. Each table in ``bounds`` corresponds positionally to a requested
+ * column and contains exactly two columns: decoded minimum values followed by decoded maximum
+ * values.
+ */
+struct column_chunk_bounds_result {
+  /// File index for each row in every bounds table
+  std::unique_ptr<column> file_indices;
+  /// File-local row-group index for each row in every bounds table
+  std::unique_ptr<column> row_group_indices;
+  /// One two-column table per requested column, where column 0 is min and column 1 is max
+  std::vector<std::unique_ptr<table>> bounds;
+};
+
+/**
+ * @brief Decode parquet column-chunk min/max statistics for selected leaf columns.
+ *
+ * Missing min/max statistics are represented as nulls in the corresponding output column. Parquet
+ * min/max exactness flags are not interpreted by this function. The requested column names are
+ * resolved against each file's schema.
+ *
+ * @ingroup io_readers
+ *
+ * @param parquet_metadatas Parquet file metadata, one per source
+ * @param column_names Dotted leaf-column paths to decode statistics for
+ * @param stream CUDA stream used for device memory operations
+ * @param mr Device memory resource to use for device memory allocation
+ * @return Decoded min/max bounds and row-group identifiers
+ */
+column_chunk_bounds_result column_chunk_bounds(std::vector<parquet::FileMetaData> parquet_metadatas,
+                                               host_span<std::string const> column_names,
+                                               rmm::cuda_stream_view stream,
+                                               rmm::device_async_resource_ref mr);
 
 /** @} */  // end of group
 }  // namespace io

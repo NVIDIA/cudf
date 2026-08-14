@@ -1,8 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
+
+from pylibcudf.column import Column
 from pylibcudf.io.types import SourceInfo
+from pylibcudf.table import Table
 from pylibcudf.types import DataType
+from pylibcudf.utils import CudaStreamLike
+from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 try:
     from collections.abc import Buffer
@@ -19,6 +25,7 @@ __all__ = [
     "ParquetSchema",
     "RowGroup",
     "SortingColumn",
+    "column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
 ]
@@ -130,3 +137,9 @@ class RowGroup:
 
 def read_parquet_metadata(src_info: SourceInfo) -> ParquetMetadata: ...
 def read_parquet_footers(src_info: SourceInfo) -> list[FileMetaData]: ...
+def column_chunk_bounds(
+    file_metadatas: Sequence[FileMetaData],
+    columns: Sequence[str],
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> tuple[Column, Column, tuple[Table, ...]]: ...

@@ -44,7 +44,7 @@ struct all_fn {
 
   template <typename T>
   std::unique_ptr<scalar> operator()(column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<T>)
   {
@@ -65,7 +65,7 @@ struct all_fn {
   }
   template <typename T>
   std::unique_ptr<scalar> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(!std::is_arithmetic_v<T>)
   {
@@ -78,7 +78,7 @@ struct all_fn {
 std::unique_ptr<cudf::scalar> all(column_view const& col,
                                   cudf::data_type const output_dtype,
                                   std::optional<std::reference_wrapper<scalar const>> init,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(output_dtype == cudf::data_type(cudf::type_id::BOOL8),

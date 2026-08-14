@@ -929,7 +929,7 @@ void validate_variant_child(column_view const& child)
 
 // Status columns are always non-nullable: SQL-null rows are represented by the row_null enum
 // value rather than by a null bit, so no null mask needs to be allocated or counted.
-std::unique_ptr<column> make_status_column(rmm::device_buffer status_data, size_type num_rows)
+std::unique_ptr<column> make_status_column(rmm::device_buffer&& status_data, size_type num_rows)
 {
   return std::make_unique<column>(
     data_type{type_id::UINT8}, num_rows, std::move(status_data), rmm::device_buffer{}, 0);

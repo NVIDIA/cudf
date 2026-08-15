@@ -48,6 +48,7 @@ nanoarrow::UniqueSchema make_fixed_size_list_dictionary_schema()
   ArrowSchemaInit(schema.get());
   NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema.get(), NANOARROW_TYPE_INT32));
   NANOARROW_THROW_NOT_OK(ArrowSchemaAllocateDictionary(schema.get()));
+  ArrowSchemaInit(schema->dictionary);
   set_fixed_size_list_type(schema->dictionary);
   return schema;
 }

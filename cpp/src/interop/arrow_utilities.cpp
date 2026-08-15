@@ -91,8 +91,10 @@ fixed_size_list_layout get_fixed_size_list_layout(ArrowSchemaView const* arrow_v
                "fixed-size-list offset and length must be non-negative",
                std::invalid_argument);
 
-  constexpr auto max_row_count = static_cast<int64_t>(std::numeric_limits<size_type>::max());
-  CUDF_EXPECTS(input->length < max_row_count,
+  constexpr auto max_column_size =
+    static_cast<int64_t>(std::numeric_limits<size_type>::max());
+  constexpr auto max_row_count = max_column_size - 1;
+  CUDF_EXPECTS(input->length <= max_row_count,
                "fixed-size-list length exceeds cuDF's maximum supported row count "
                "(cudf::size_type)",
                std::overflow_error);
@@ -115,7 +117,7 @@ fixed_size_list_layout get_fixed_size_list_layout(ArrowSchemaView const* arrow_v
   CUDF_EXPECTS(child_length <= std::numeric_limits<int32_t>::max(),
                "fixed-size-list child elements exceed the INT32 LIST offset range",
                std::overflow_error);
-  CUDF_EXPECTS(child_length <= max_row_count,
+  CUDF_EXPECTS(child_length <= max_column_size,
                "Number of fixed-size-list child elements exceeds cuDF's maximum supported "
                "row count (cudf::size_type)",
                std::overflow_error);

@@ -315,10 +315,11 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
   ArrowSchemaView const* schema, ArrowArray const* input, data_type type, bool skip_mask)
 {
   CUDF_EXPECTS(input->length >= 0, "Number of rows must be non-negative.", std::invalid_argument);
-  CUDF_EXPECTS(
-    input->length < static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
-    std::overflow_error);
+  constexpr auto max_row_count =
+    static_cast<int64_t>(std::numeric_limits<size_type>::max()) - 1;
+  CUDF_EXPECTS(input->length <= max_row_count,
+               "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
+               std::overflow_error);
 
   auto const fixed_size                 = is_fixed_size_list(schema);
   auto [offsets_column, offset, length] = fixed_size

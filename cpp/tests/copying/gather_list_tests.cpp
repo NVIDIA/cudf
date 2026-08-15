@@ -67,7 +67,7 @@ TYPED_TEST(GatherTestListTyped, GatherNothing)
   // List<T>
   {
     LCW<T> list{{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}};
-    cudf::test::fixed_width_column_wrapper<int> gather_map{{}, st, mr};
+    cudf::test::fixed_width_column_wrapper<int> gather_map{};
 
     cudf::table_view source_table({list});
     auto results =
@@ -82,7 +82,7 @@ TYPED_TEST(GatherTestListTyped, GatherNothing)
   // List<T>
   {
     cudf::test::lists_column_wrapper<int> list{{{{1, 2, 3, 4}, {5}}}, {{{6, 7}, {8, 9, 10}}}};
-    cudf::test::fixed_width_column_wrapper<int> gather_map{{}, st, mr};
+    cudf::test::fixed_width_column_wrapper<int> gather_map{};
 
     cudf::table_view source_table({list});
     auto result =
@@ -348,7 +348,7 @@ TEST_F(GatherTestList, GatherIncompleteHierarchies)
 
     cudf::table_view source_table({list});
 
-    cudf::test::fixed_width_column_wrapper<int32_t> empty_map{{}, st, mr};
+    cudf::test::fixed_width_column_wrapper<int32_t> empty_map{};
     auto result =
       cudf::gather(source_table, empty_map, cudf::out_of_bounds_policy::DONT_CHECK, st, mr);
 

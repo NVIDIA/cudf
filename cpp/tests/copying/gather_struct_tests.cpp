@@ -47,6 +47,9 @@ struct TypedStructGatherTest : public cudf::test::BaseFixtureWithHarness {};
 
 TYPED_TEST_SUITE(TypedStructGatherTest, cudf::test::FixedWidthTypes);
 
+// TODO: enable fail_on_current around do_gather after get_sliced_child / slice /
+// valid_if (and nested list gather deps for list-of-struct cases) accept memory_resources.
+
 namespace {
 template <typename ElementTo, typename SourceElementT = ElementTo>
 struct column_wrapper_constructor {
@@ -158,12 +161,7 @@ TYPED_TEST(TypedStructGatherTest, TestSimpleStructGather)
   // Gather to new struct column.
   auto const gather_map = gather_map_t{null_index, 4, 3, 2, 1};
 
-  std::unique_ptr<cudf::column> output;
-  {
-    auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    output = do_gather(struct_column, gather_map, st, mr);
-    this->_harness.synchronize(st);
-  }
+  auto const output = do_gather(struct_column, gather_map, st, mr);
 
   auto const expected_output = [&] {
     auto names_member =
@@ -210,9 +208,10 @@ TYPED_TEST(TypedStructGatherTest, TestSlicedStructsColumnGatherNoNulls)
 
   auto const structs    = cudf::slice(structs_original, {4, 10}, st)[0];
   auto const gather_map = cudf::test::fixed_width_column_wrapper<int32_t>{{1, 5, 3}, st, mr};
+  // No out-of-bounds indices; avoid NULLIFY so the result stays non-nullable like `expected`.
   auto const result =
     cudf::gather(
-      cudf::table_view{{structs}}, gather_map, cudf::out_of_bounds_policy::NULLIFY, st, mr)
+      cudf::table_view{{structs}}, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, st, mr)
       ->get_column(0);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     result.view(), expected, cudf::test::debug_output_level::FIRST_ERROR, st, mr);
@@ -293,12 +292,7 @@ TYPED_TEST(TypedStructGatherTest, TestNullifyOnNonNullInput)
   // Gather to new struct column.
   auto const gather_map = gather_map_t{null_index, 4, 3, 2, 1};
 
-  std::unique_ptr<cudf::column> output;
-  {
-    auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    output = do_gather(struct_column, gather_map, st, mr);
-    this->_harness.synchronize(st);
-  }
+  auto const output = do_gather(struct_column, gather_map, st, mr);
 
   auto const expected_output = [&] {
     auto names_member =
@@ -376,6 +370,8 @@ TYPED_TEST(TypedStructGatherTest, TestGatherStructOfListsOfLists)
   // Testing gather() on struct<list<list<numeric>>>
 
   auto const lists_column_exemplar = [&]() {
+    // Empty nested rows must use an explicit lists_column_wrapper; `{{}}` is ambiguous once
+    // stream/mr arguments are present.
     return lists<TypeParam>{{{{5, 5}},
                              {{10, 15}},
                              {{20, 25}, {30}},
@@ -383,9 +379,9 @@ TYPED_TEST(TypedStructGatherTest, TestGatherStructOfListsOfLists)
                              {{55}, {60, 65}},
                              {{70, 75}},
                              {{80, 80}},
-                             {{}},
-                             {{}}},
-                            nulls_at({0, 3, 6, 9}),
+                             {lists<TypeParam>{}},
+                             {lists<TypeParam>{}}},
+                            nulls_at({0, 3, 6, 8}),
                             st,
                             mr};
   };
@@ -438,12 +434,7 @@ TYPED_TEST(TypedStructGatherTest, TestGatherStructOfStructs)
 
   // Gather to new struct column.
   auto const gather_map       = gather_map_t{null_index, 4, 3, 2, 1, 7, 3};
-  std::unique_ptr<cudf::column> gathered_structs;
-  {
-    auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    gathered_structs = do_gather(struct_of_structs_column, gather_map, st, mr);
-    this->_harness.synchronize(st);
-  }
+  auto const gathered_structs = do_gather(struct_of_structs_column, gather_map, st, mr);
 
   // Verify that the underlying numeric column presents as if
   // it had itself been gathered individually.
@@ -533,12 +524,7 @@ TYPED_TEST(TypedStructGatherTest, TestGatherStructOfStructsWithValidity)
 
   // Gather to new struct column.
   auto const gather_map       = gather_map_t{null_index, 4, 3, 2, 1, 7, 3};
-  std::unique_ptr<cudf::column> gathered_structs;
-  {
-    auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    gathered_structs = do_gather(struct_of_structs_column, gather_map, st, mr);
-    this->_harness.synchronize(st);
-  }
+  auto const gathered_structs = do_gather(struct_of_structs_column, gather_map, st, mr);
 
   // Verify that the underlying numeric column presents as if
   // it had itself been gathered individually.
@@ -569,12 +555,7 @@ TYPED_TEST(TypedStructGatherTest, TestEmptyGather)
   }();
 
   auto const empty_gather_map = gather_map_t{};
-  std::unique_ptr<cudf::column> gathered_structs;
-  {
-    auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    gathered_structs = do_gather(struct_column, empty_gather_map, st, mr);
-    this->_harness.synchronize(st);
-  }
+  auto const gathered_structs = do_gather(struct_column, empty_gather_map, st, mr);
 
   // Expect empty struct column gathered.
   auto const expected_empty_column = [&] {

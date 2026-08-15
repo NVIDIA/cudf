@@ -275,7 +275,7 @@ cdef class OrcReaderOptions:
     For details, see :cpp:class:`cudf::io::orc_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> OrcReaderOptionsBuilder:
         """
         Create a OrcReaderOptionsBuilder object
 
@@ -564,7 +564,7 @@ cdef class OrcWriterOptions:
         self.c_obj.set_row_index_stride(stride)
 
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> OrcWriterOptionsBuilder:
         """
         Create builder to create OrcWriterOptions.
 
@@ -809,7 +809,7 @@ cdef class ChunkedOrcWriterOptions:
         self.c_obj.set_row_index_stride(stride)
 
     @staticmethod
-    def builder(SinkInfo sink):
+    def builder(SinkInfo sink) -> ChunkedOrcWriterOptionsBuilder:
         """
         Create builder to create ChunkedOrcWriterOptions.
 

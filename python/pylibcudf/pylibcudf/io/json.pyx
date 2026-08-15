@@ -162,7 +162,7 @@ cdef class JsonReaderOptions:
     For details, see `:cpp:class:`cudf::io::json_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> JsonReaderOptionsBuilder:
         """
         Create a JsonReaderOptionsBuilder object
 
@@ -701,7 +701,7 @@ cdef class JsonReaderOptionsBuilder:
         self.c_obj.unquoted_control_chars(val)
         return self
 
-    cpdef build(self):
+    cpdef JsonReaderOptions build(self):
         """Create a JsonReaderOptions object"""
         cdef JsonReaderOptions json_options = JsonReaderOptions.__new__(
             JsonReaderOptions
@@ -911,7 +911,7 @@ cdef class JsonWriterOptions:
     For details, see :cpp:class:`cudf::io::json_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> JsonWriterOptionsBuilder:
         """
         Create a JsonWriterOptionsBuilder object
 

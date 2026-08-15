@@ -34,7 +34,7 @@ cdef class AvroReaderOptions:
     For details, see :cpp:class:`cudf::io::avro_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> AvroReaderOptionsBuilder:
         """
         Create a AvroWriterOptionsBuilder object
 

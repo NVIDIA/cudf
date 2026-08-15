@@ -119,7 +119,7 @@ cdef class ParquetReaderOptions:
     For details, see :cpp:class:`cudf::io::parquet_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> ParquetReaderOptionsBuilder:
         """
         Create a ParquetReaderOptionsBuilder object
 
@@ -567,7 +567,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.decimal_width(width)
         return self
 
-    cpdef build(self):
+    cpdef ParquetReaderOptions build(self):
         """Create a ParquetReaderOptions object"""
         cdef ParquetReaderOptions parquet_options = ParquetReaderOptions.__new__(
             ParquetReaderOptions
@@ -835,7 +835,7 @@ cdef class ChunkedParquetWriter:
 
 cdef class ChunkedParquetWriterOptions:
     @staticmethod
-    def builder(SinkInfo sink):
+    def builder(SinkInfo sink) -> ChunkedParquetWriterOptionsBuilder:
         """
         Create builder to create ChunkedParquetWriterOptions.
 
@@ -1048,7 +1048,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 cdef class ParquetWriterOptions:
 
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> ParquetWriterOptionsBuilder:
         """
         Create builder to create ParquetWriterOptionsBuilder.
 

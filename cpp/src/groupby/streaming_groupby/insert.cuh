@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,11 +13,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -27,7 +27,7 @@ namespace cudf::groupby {
 
 template <bool has_nested>
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert_impl(
-  table_view const& batch_keys, rmm::cuda_stream_view stream)
+  table_view const& batch_keys, cuda::stream_ref stream)
 {
   auto const batch_size = batch_keys.num_rows();
   auto const temp_mr    = cudf::get_current_device_resource_ref();

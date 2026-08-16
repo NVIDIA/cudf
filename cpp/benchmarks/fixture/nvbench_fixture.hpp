@@ -37,7 +37,7 @@ inline std::string const& benchmark_output_directory() { return detail::output_d
 /**
  * Base fixture for cudf benchmarks using nvbench.
  *
- * Initializes the default memory resource to use the RMM pool device resource.
+ * Initializes the default memory resource to use the RMM async device resource.
  */
 struct nvbench_base_fixture {
   inline auto make_cuda() { return rmm::mr::cuda_memory_resource{}; }
@@ -120,7 +120,7 @@ struct nvbench_base_fixture {
   }
 
   cuda::mr::any_resource<cuda::mr::device_accessible> mr;
-  std::string rmm_mode{"pool"};
+  std::string rmm_mode{"async"};
 
   std::string cuio_host_mode{"pinned_pool"};
 };

@@ -8,11 +8,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -75,7 +75,7 @@ template <typename count_type>
 std::unique_ptr<column> merge_m2(column_view const& values,
                                  device_span<size_type const> group_offsets,
                                  size_type num_groups,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto result_counts = make_numeric_column(
@@ -119,7 +119,7 @@ std::unique_ptr<column> merge_m2(column_view const& values,
 std::unique_ptr<column> group_merge_m2(column_view const& values,
                                        device_span<size_type const> group_offsets,
                                        size_type num_groups,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(values.type().id() == type_id::STRUCT,

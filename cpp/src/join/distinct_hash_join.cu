@@ -18,7 +18,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
@@ -29,6 +28,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/fill.h>
 #include <thrust/sequence.h>
 
@@ -119,14 +119,14 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
                                 Hasher hasher,
                                 cudf::null_equality nulls_equal,
                                 FoundIterator found_begin,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   auto const left_table_num_rows = left.num_rows();
   // If `idx` is within the range `[0, left_table_num_rows)` and `found_indices[idx]` is not
   // equal to `cudf::JoinNoMatch`, then `idx` has a match in the hash set.
   if (nulls_equal == cudf::null_equality::EQUAL or (not cudf::nullable(left))) {
     hash_table.find_async(
-      iter, iter + left_table_num_rows, d_equal, hasher, found_begin, stream.value());
+      iter, iter + left_table_num_rows, d_equal, hasher, found_begin, stream.get());
   } else {
     auto stencil = cuda::counting_iterator<size_type>{0};
     auto const row_bitmask =
@@ -134,14 +134,8 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
     auto const pred =
       cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
 
-    hash_table.find_if_async(iter,
-                             iter + left_table_num_rows,
-                             stencil,
-                             pred,
-                             d_equal,
-                             hasher,
-                             found_begin,
-                             stream.value());
+    hash_table.find_if_async(
+      iter, iter + left_table_num_rows, stencil, pred, d_equal, hasher, found_begin, stream.get());
   }
 }
 
@@ -149,7 +143,7 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
 
 distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        cudf::null_equality compare_nulls,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : distinct_hash_join{right, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr)}
 {
@@ -158,7 +152,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
 distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        cudf::null_equality compare_nulls,
                                        double load_factor,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _has_nested_columns{cudf::has_nested_columns(right)},
     _nulls_equal{compare_nulls},
@@ -173,7 +167,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                 cuco::thread_scope_device,
                 cuco_storage_type{},
                 rmm::mr::polymorphic_allocator<char>{std::move(mr)},
-                stream.value()}
+                stream.get()}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != this->_right.num_columns(), "Hash join right table is empty");
@@ -183,7 +177,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
 
   auto const build_hash_table = [&](auto iter) {
     if (this->_nulls_equal == cudf::null_equality::EQUAL or (not cudf::nullable(right))) {
-      this->_hash_table.insert_async(iter, iter + right_table_num_rows, stream.value());
+      this->_hash_table.insert_async(iter, iter + right_table_num_rows, stream.get());
     } else {
       auto stencil = cuda::counting_iterator<size_type>{0};
       auto const row_bitmask =
@@ -193,7 +187,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
 
       // insert valid rows
       this->_hash_table.insert_if_async(
-        iter, iter + right_table_num_rows, stencil, pred, stream.value());
+        iter, iter + right_table_num_rows, stencil, pred, stream.get());
     }
   };
 
@@ -219,7 +213,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 distinct_hash_join::inner_join(cudf::table_view const& left,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr) const
 {
   cudf::scoped_range range{"distinct_hash_join::inner_join"};
@@ -315,9 +309,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
-  cudf::table_view const& left,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   cudf::scoped_range range{"distinct_hash_join::left_join"};
 
@@ -402,7 +394,7 @@ distinct_hash_join::~distinct_hash_join() = default;
 distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        null_equality compare_nulls,
                                        double load_factor,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<impl_type>(right, compare_nulls, load_factor, stream, std::move(mr))}
 {
@@ -411,16 +403,14 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 distinct_hash_join::inner_join(cudf::table_view const& left,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr) const
 {
   return _impl->inner_join(left, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
-  cudf::table_view const& left,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   return _impl->left_join(left, stream, mr);
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,7 +15,7 @@
 #include <cub/device/device_select.cuh>
 #include <cuda/iterator>
 #include <cuda/std/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/copy.h>
 
 namespace cudf::detail {

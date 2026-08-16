@@ -71,7 +71,7 @@ class Unspecified:
 
     The singleton instance :data:`UNSPECIFIED` is used as the default for every
     :class:`StreamingOptions` field, as well as for
-    :attr:`ParquetOptions.prefetch_file_metadata`. When a field is still
+    ``ParquetOptions.prefetch_file_metadata``. When a field is still
     ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
     matching environment variable was provided), the consuming component decides
     on the semantics.
@@ -92,7 +92,7 @@ class Unspecified:
 
 UNSPECIFIED = Unspecified()
 """Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
-:attr:`ParquetOptions.prefetch_file_metadata`.
+``ParquetOptions.prefetch_file_metadata``.
 
 A field set to ``UNSPECIFIED`` after construction means no explicit value and no
 matching environment variable was found; the consuming component decides on the

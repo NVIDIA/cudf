@@ -36,6 +36,7 @@ for bench in *_NVBENCH; do
     if [[ "$bench" == NDSH_* ]]; then
       args+=(--axis "scale_factor=${ndsh_scale_factor}")
       if [[ "$bench" =~ ^NDSH_Q([0-9]{2})_NVBENCH$ ]]; then
+        # Validate small-scale NDS-H benchmark outputs against DuckDB
         args+=(--output_directory "${validation_dir}/q${BASH_REMATCH[1]}")
       fi
     fi

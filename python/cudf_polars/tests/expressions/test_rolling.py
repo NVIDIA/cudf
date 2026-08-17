@@ -13,6 +13,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 if TYPE_CHECKING:
@@ -126,28 +127,33 @@ def test_rolling_collect_list_raises(engine: pl.GPUEngine):
 
 
 @skip_rolling_expr_136_to_138
-def test_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
+def test_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, 2], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="2i"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError,
-        match=r"Index column.*in rolling is not sorted, please sort first",
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = r"Index column.*in rolling is not sorted, please sort first"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match=match)):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(RuntimeError, match=match):
+            q.collect(engine=engine)
 
 
 @skip_rolling_expr_136_to_138
-def test_orderby_nulls_raises_computeerror(engine_raise_on_fail: pl.GPUEngine):
+def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, None], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="2i"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError, match=r"Index column.*in rolling may not contain nulls"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = r"Index column.*in rolling may not contain nulls"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match=match)):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(RuntimeError, match=match):
+            q.collect(engine=engine)
 
 
 @skip_rolling_expr_136_to_138
@@ -525,12 +531,12 @@ def test_diff_over_unsupported_args_raises(
 
 @pytest.mark.parametrize("n", [1, -1])
 def test_shift_over_without_order_by(
-    engine_raise_on_fail: pl.GPUEngine,
+    engine: pl.GPUEngine,
     df: pl.LazyFrame,
     n: int,
 ) -> None:
     q = df.select(pl.col("x").shift(n).over("g"))
-    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(

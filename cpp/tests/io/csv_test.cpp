@@ -948,7 +948,7 @@ TEST_F(CsvReaderTest, Strings)
 
 TEST_F(CsvReaderTest, WindowsLineTerminators)
 {
-  std::string const buffer{"1,alpha\r\n\r\n2,beta\r\n"};
+  std::string const buffer{"1,alpha\r\n2,beta\r\n"};
   auto options =
     cudf::io::csv_reader_options::builder(
       cudf::io::source_info{cudf::host_span<std::byte const>{

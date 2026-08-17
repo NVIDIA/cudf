@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -153,3 +153,68 @@ NVBENCH_BENCH_TYPES(BM_cudftable_read_num_columns,
   .set_min_samples(4)
   .add_int64_axis("data_size", {128 << 20})
   .add_int64_power_of_two_axis("num_cols", nvbench::range(0, 12, 2));  // 1 to 4096
+
+// Compression comparison benchmarks
+
+void BM_cudftable_read_compressed(nvbench::state& state)
+{
+  auto const d_type      = get_type_or_group(static_cast<int32_t>(data_type::INTEGRAL));
+  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const compression = retrieve_compression_type_enum(state.get_string("compression_type"));
+  auto const data_size   = static_cast<size_t>(state.get_int64("data_size"));
+  cuio_source_sink_pair source_sink(source_type);
+
+  auto const num_rows_written = [&]() {
+    auto const tbl =
+      create_random_table(cycle_dtypes(d_type, num_cols), table_size_bytes{data_size});
+    auto const view = tbl->view();
+
+    cudf::io::experimental::write_cudftable(
+      cudf::io::experimental::cudftable_writer_options::builder(source_sink.make_sink_info(), view)
+        .compression(compression)
+        .build());
+    return view.num_rows();
+  }();
+
+  cudftable_read_common(num_rows_written, num_cols, source_sink, state);
+}
+
+NVBENCH_BENCH(BM_cudftable_read_compressed)
+  .set_name("cudftable_read_compressed")
+  .set_min_samples(4)
+  .add_string_axis("io_type", {"HOST_BUFFER"})
+  .add_string_axis("compression_type", {"NONE", "SNAPPY"})
+  .add_int64_power_of_two_axis("data_size", nvbench::range(24, 30, 2));  // 16MB to 1GB
+
+// Snappy block size sweep benchmarks
+
+void BM_cudftable_read_snappy_block_size(nvbench::state& state)
+{
+  auto const d_type      = get_type_or_group(static_cast<int32_t>(data_type::INTEGRAL));
+  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const data_size   = static_cast<size_t>(state.get_int64("data_size"));
+  auto const block_size  = static_cast<uint32_t>(state.get_int64("block_size"));
+  cuio_source_sink_pair source_sink(source_type);
+
+  auto const num_rows_written = [&]() {
+    auto const tbl =
+      create_random_table(cycle_dtypes(d_type, num_cols), table_size_bytes{data_size});
+    auto const view = tbl->view();
+
+    cudf::io::experimental::write_cudftable(
+      cudf::io::experimental::cudftable_writer_options::builder(source_sink.make_sink_info(), view)
+        .compression(cudf::io::compression_type::SNAPPY)
+        .block_size(block_size)
+        .build());
+    return view.num_rows();
+  }();
+
+  cudftable_read_common(num_rows_written, num_cols, source_sink, state);
+}
+
+NVBENCH_BENCH(BM_cudftable_read_snappy_block_size)
+  .set_name("cudftable_read_snappy_block_size")
+  .set_min_samples(4)
+  .add_string_axis("io_type", {"HOST_BUFFER"})
+  .add_int64_axis("data_size", {128 << 20})
+  .add_int64_power_of_two_axis("block_size", nvbench::range(16, 22, 1));  // 64KiB to 4MiB

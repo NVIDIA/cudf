@@ -1285,7 +1285,11 @@ namespace experimental {
 
 // Forward declarations for detail functions
 namespace detail {
-void write_cudftable(data_sink* sink, table_view const& input, rmm::cuda_stream_view stream);
+void write_cudftable(data_sink* sink,
+                     table_view const& input,
+                     compression_type compression,
+                     uint32_t block_size,
+                     rmm::cuda_stream_view stream);
 packed_table read_cudftable(datasource* source,
                             rmm::cuda_stream_view stream,
                             rmm::device_async_resource_ref mr);
@@ -1301,7 +1305,11 @@ void write_cudftable(cudftable_writer_options const& options, rmm::cuda_stream_v
   auto sinks = make_datasinks(options.get_sink());
   CUDF_EXPECTS(sinks.size() == 1, "CudfTable format only supports single sink");
 
-  detail::write_cudftable(sinks[0].get(), options.get_table(), stream);
+  detail::write_cudftable(sinks[0].get(),
+                          options.get_table(),
+                          options.get_compression(),
+                          options.get_block_size(),
+                          stream);
 }
 
 /**

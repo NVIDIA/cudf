@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,8 +35,15 @@ class cudftable_writer_options_builder;
  * @brief Settings for `write_cudftable()`.
  */
 class cudftable_writer_options {
+ public:
+  /// Default uncompressed block size (in bytes) used when compression is enabled.
+  static constexpr uint32_t default_block_size = 256 * 1024;
+
+ private:
   sink_info _sink;
   table_view _table;
+  compression_type _compression = compression_type::NONE;
+  uint32_t _block_size          = default_block_size;
 
   friend cudftable_writer_options_builder;
 
@@ -77,11 +84,49 @@ class cudftable_writer_options {
   [[nodiscard]] table_view const& get_table() const noexcept { return _table; }
 
   /**
+   * @brief Returns compression type used for block compression.
+   *
+   * `compression_type::NONE` writes blocks uncompressed.
+   *
+   * @return Compression type
+   */
+  [[nodiscard]] compression_type get_compression() const noexcept { return _compression; }
+
+  /**
+   * @brief Returns the uncompressed block size in bytes for block compression.
+   *
+   * Has no effect when compression is `compression_type::NONE`.
+   *
+   * @return Block size in bytes
+   */
+  [[nodiscard]] uint32_t get_block_size() const noexcept { return _block_size; }
+
+  /**
    * @brief Sets sink info.
    *
    * @param sink The sink info.
    */
   void set_sink(sink_info sink) { _sink = std::move(sink); }
+
+  /**
+   * @brief Sets the compression type used for block compression.
+   *
+   * `compression_type::NONE` writes blocks uncompressed.
+   *
+   * @param compression The compression type to use
+   */
+  void set_compression(compression_type compression) { _compression = compression; }
+
+  /**
+   * @brief Sets the uncompressed block size in bytes for block compression.
+   *
+   * Must be greater than zero when compression is enabled. Is ignored when
+   * compression is `compression_type::NONE`; supplying a non-default value
+   * together with `NONE` will emit a warning at write time.
+   *
+   * @param block_size Block size in bytes
+   */
+  void set_block_size(uint32_t block_size) { _block_size = block_size; }
 };
 
 /**
@@ -98,6 +143,34 @@ class cudftable_writer_options_builder {
   explicit cudftable_writer_options_builder(sink_info const& sink, table_view const& table)
     : _options(sink, table)
   {
+  }
+
+  /**
+   * @brief Sets compression type.
+   *
+   * @param comp The compression type to use
+   * @return this for chaining
+   */
+  cudftable_writer_options_builder& compression(compression_type comp)
+  {
+    _options._compression = comp;
+    return *this;
+  }
+
+  /**
+   * @brief Sets the uncompressed block size in bytes for block compression.
+   *
+   * Must be greater than zero when compression is enabled. Is ignored when
+   * compression is `compression_type::NONE`; supplying a non-default value
+   * together with `NONE` will emit a warning at write time.
+   *
+   * @param size Block size in bytes
+   * @return this for chaining
+   */
+  cudftable_writer_options_builder& block_size(uint32_t size)
+  {
+    _options._block_size = size;
+    return *this;
   }
 
   /**
@@ -192,11 +265,15 @@ class cudftable_reader_options_builder {
 /**
  * @brief Write a table using the CudfTable binary format.
  *
- * This function uses `cudf::pack` to serialize a table into a contiguous format,
- * then writes it to the specified sink with a simple header containing metadata
- * and data lengths.
+ * This function uses `cudf::pack` to serialize a table into a contiguous format
+ * and writes it to the specified sink. The on-disk layout is a single header
+ * describing the compression type and block size, followed by the packed
+ * metadata, a block index, and the (optionally compressed) data blocks. When
+ * `options.get_compression() == compression_type::NONE`, the data is written
+ * as a single uncompressed block.
  *
- * @param options Options specifying the sink and table to write
+ * @param options Options specifying the sink, table, compression type and
+ *                block size
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void write_cudftable(cudftable_writer_options const& options,

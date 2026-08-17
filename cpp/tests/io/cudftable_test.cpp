@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "io_test_utils.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
@@ -18,13 +20,18 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda_runtime.h>
 
+#include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 // Global environment for temporary files
@@ -71,6 +78,58 @@ struct CudftableTest : public cudf::test::BaseFixture {
   {
     run_test_file(t);
     run_test_buffer(t);
+  }
+
+  void run_roundtrip(cudf::table_view const& expected,
+                     cudf::io::compression_type compression,
+                     uint32_t block_size = 256 * 1024)
+  {
+    std::vector<char> buffer;
+
+    cudf::io::experimental::write_cudftable(
+      cudf::io::experimental::cudftable_writer_options::builder(cudf::io::sink_info{&buffer},
+                                                                expected)
+        .compression(compression)
+        .block_size(block_size)
+        .build());
+
+    auto host_buffer = cudf::host_span<std::byte const>(
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size());
+    auto result = cudf::io::experimental::read_cudftable(
+      cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{host_buffer})
+        .build());
+
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+  }
+
+  static cudf::table_view make_sample_table()
+  {
+    static cudf::test::fixed_width_column_wrapper<int32_t> col1(
+      {1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+      {true, true, true, false, true, false, true, true, true, true});
+    static cudf::test::fixed_width_column_wrapper<double> col2(
+      {1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.10});
+    static cudf::test::strings_column_wrapper col3(
+      {"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"},
+      {true, true, false, true, true, true, true, false, true, true});
+    return cudf::table_view{{col1, col2, col3}};
+  }
+
+  // Returns the packed (uncompressed) data length by writing the table once with
+  // no compression and reading the `uncompressed_data_length` header field. This
+  // lets tests target block sizes exactly around the packed-data boundary.
+  static uint64_t packed_data_length(cudf::table_view const& t)
+  {
+    std::vector<char> buffer;
+    cudf::io::experimental::write_cudftable(
+      cudf::io::experimental::cudftable_writer_options::builder(cudf::io::sink_info{&buffer}, t)
+        .compression(cudf::io::compression_type::NONE)
+        .build());
+    // Header: magic(4)+version(4)+compression(4)+block_size(4)+metadata_version(4)
+    //   +reserved(4)+metadata_length(8) -> uncompressed_data_length at offset 32.
+    uint64_t len{};
+    std::memcpy(&len, buffer.data() + 32, sizeof(uint64_t));
+    return len;
   }
 };
 
@@ -598,11 +657,11 @@ TEST_F(CudftableTest, CorruptedMetadataLength)
   auto const file_size = size_check.tellg();
   size_check.close();
 
-  // Corrupt the metadata length (set to a value larger than the file)
+  // Corrupt the metadata length (set to a value larger than the file).
+  // metadata_length lives at offset 24 in the header (after magic, version,
+  // compression, block_size, metadata_version, reserved).
   std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
-  // Skip magic and version
-  file.seekp(sizeof(uint32_t) * 2);
-  // Set metadata length to a value larger than the file
+  file.seekp(24);
   uint64_t bad_meta_length = static_cast<uint64_t>(file_size) + 1000;
   file.write(reinterpret_cast<char*>(&bad_meta_length), sizeof(uint64_t));
   file.close();
@@ -623,31 +682,16 @@ TEST_F(CudftableTest, CorruptedDataLength)
                                             cudf::io::sink_info{filepath}, expected)
                                             .build());
 
-  // Get the actual file size
-  std::ifstream size_check(filepath, std::ios::binary | std::ios::ate);
-  auto const file_size = size_check.tellg();
-  size_check.close();
-
-  // Read the header to get the actual metadata_length
-  std::ifstream header_read(filepath, std::ios::binary);
-  uint32_t magic, version;
-  uint64_t metadata_length;
-  header_read.read(reinterpret_cast<char*>(&magic), sizeof(uint32_t));
-  header_read.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
-  header_read.read(reinterpret_cast<char*>(&metadata_length), sizeof(uint64_t));
-  header_read.close();
-
-  // Corrupt the data length (set to a value that makes total size exceed file size)
+  // Header layout (56 bytes):
+  // magic(4) + version(4) + compression(4) + block_size(4)
+  //   + metadata_version(4) + reserved(4)
+  //   + metadata_length(8) + uncompressed_data_length(8)
+  //   + num_blocks(8) + compressed_data_length(8)
+  // Corrupt compressed_data_length at offset 48 so that the file size check fails.
   std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
-  // Skip magic, version, and metadata_length
-  file.seekp(sizeof(uint32_t) * 2 + sizeof(uint64_t));
-  // Set data_length so that metadata_offset + metadata_length + data_length > file_size
-  size_t header_size     = sizeof(uint32_t) * 2 + sizeof(uint64_t) * 2;
-  size_t metadata_offset = header_size;
-  size_t min_data_length_needed =
-    static_cast<size_t>(file_size) - metadata_offset - metadata_length + 1;
-  uint64_t bad_data_length = min_data_length_needed;
-  file.write(reinterpret_cast<char*>(&bad_data_length), sizeof(uint64_t));
+  file.seekp(48);
+  uint64_t bad_compressed_length = 999999999ULL;
+  file.write(reinterpret_cast<char*>(&bad_compressed_length), sizeof(uint64_t));
   file.close();
 
   EXPECT_THROW(
@@ -677,6 +721,499 @@ TEST_F(CudftableTest, MultipleSourcesError)
   EXPECT_THROW(
     cudf::io::experimental::read_cudftable(
       cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{filepaths})
+        .build()),
+    cudf::logic_error);
+}
+
+// =============================================================================
+// Block Compression Tests
+// =============================================================================
+
+TEST_F(CudftableTest, SnappyRoundtrip)
+{
+  auto const expected = make_sample_table();
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY);
+}
+
+TEST_F(CudftableTest, ZstdRoundtrip)
+{
+  auto const expected = make_sample_table();
+  run_roundtrip(expected, cudf::io::compression_type::ZSTD);
+}
+
+TEST_F(CudftableTest, GzipRoundtrip)
+{
+  auto const expected = make_sample_table();
+  run_roundtrip(expected, cudf::io::compression_type::GZIP);
+}
+
+TEST_F(CudftableTest, NoneRoundtrip)
+{
+  auto const expected = make_sample_table();
+  run_roundtrip(expected, cudf::io::compression_type::NONE);
+}
+
+TEST_F(CudftableTest, SmallBlockSize)
+{
+  auto const expected = make_sample_table();
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY, 64);
+}
+
+TEST_F(CudftableTest, LargeBlockSize)
+{
+  auto const expected = make_sample_table();
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY, 1024 * 1024);
+}
+
+TEST_F(CudftableTest, EmptyTableCompressed)
+{
+  auto const expected = cudf::table_view{std::vector<cudf::column_view>{}};
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY);
+}
+
+TEST_F(CudftableTest, EmptyColumnCompressed)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_col({});
+  auto const expected = cudf::table_view{{empty_col}};
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY);
+}
+
+TEST_F(CudftableTest, LargeTableCompressed)
+{
+  constexpr int num_rows = 100'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col1(sequence, sequence + num_rows);
+  cudf::test::fixed_width_column_wrapper<double> col2(sequence, sequence + num_rows);
+
+  auto const expected = cudf::table_view{{col1, col2}};
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY, 32 * 1024);
+}
+
+TEST_F(CudftableTest, NestedTypesCompressed)
+{
+  cudf::test::strings_column_wrapper string_col({"Lorem", "ipsum", "dolor", "sit"},
+                                                {true, false, true, true});
+  cudf::test::lists_column_wrapper<int32_t> list_col{{1, 2, 3}, {4, 5}, {}, {6, 7, 8, 9}};
+  cudf::test::fixed_width_column_wrapper<int32_t> struct_child1{{1, 2, 3, 4}};
+  cudf::test::strings_column_wrapper struct_child2{{"a", "b", "c", "d"}};
+  cudf::test::structs_column_wrapper struct_col{{struct_child1, struct_child2}};
+
+  auto const expected = cudf::table_view{{string_col, list_col, struct_col}};
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY);
+  run_roundtrip(expected, cudf::io::compression_type::ZSTD);
+}
+
+TEST_F(CudftableTest, DefaultCompressionIsNone)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3});
+  auto const expected = cudf::table_view{{col}};
+
+  std::vector<char> buffer;
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{&buffer}, expected)
+                                            .build());
+
+  // Header is a single version-1 layout; verify magic, version, and that the
+  // compression field reports NONE by default.
+  ASSERT_GE(buffer.size(), 12u);
+  uint32_t magic{};
+  uint32_t version{};
+  uint32_t compression{};
+  std::memcpy(&magic, buffer.data(), sizeof(uint32_t));
+  std::memcpy(&version, buffer.data() + sizeof(uint32_t), sizeof(uint32_t));
+  std::memcpy(&compression, buffer.data() + 2 * sizeof(uint32_t), sizeof(uint32_t));
+  EXPECT_EQ(magic, 0x4C425443u);
+  EXPECT_EQ(version, 1u);
+  EXPECT_EQ(compression, static_cast<uint32_t>(cudf::io::compression_type::NONE));
+}
+
+TEST_F(CudftableTest, NoneWithCustomBlockSizeWarns)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5});
+  auto const expected = cudf::table_view{{col}};
+
+  std::vector<char> buffer;
+  EXPECT_CUDF_LOG_WARN(cudf::io::experimental::write_cudftable(
+    cudf::io::experimental::cudftable_writer_options::builder(cudf::io::sink_info{&buffer},
+                                                              expected)
+      .compression(cudf::io::compression_type::NONE)
+      .block_size(64)
+      .build()));
+}
+
+TEST_F(CudftableTest, NoneNormalizesBlockSize)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5});
+  auto const expected = cudf::table_view{{col}};
+
+  std::vector<char> buffer;
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{&buffer}, expected)
+                                            .compression(cudf::io::compression_type::NONE)
+                                            .block_size(64)
+                                            .build());
+
+  // Header: magic(4) + version(4) + compression(4) + block_size(4) ...
+  // For NONE, block_size must be normalized to 0 on disk regardless of the
+  // caller-supplied value.
+  ASSERT_GE(buffer.size(), 16u);
+  uint32_t block_size{};
+  std::memcpy(&block_size, buffer.data() + 3 * sizeof(uint32_t), sizeof(uint32_t));
+  EXPECT_EQ(block_size, 0u);
+
+  // Roundtrip still works.
+  auto host_buffer = cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size());
+  auto result = cudf::io::experimental::read_cudftable(
+    cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{host_buffer})
+      .build());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+}
+
+TEST_F(CudftableTest, ExplicitSnappyHeader)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3});
+  auto const expected = cudf::table_view{{col}};
+
+  std::vector<char> buffer;
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{&buffer}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  ASSERT_GE(buffer.size(), 12u);
+  uint32_t magic{};
+  uint32_t version{};
+  uint32_t compression{};
+  std::memcpy(&magic, buffer.data(), sizeof(uint32_t));
+  std::memcpy(&version, buffer.data() + sizeof(uint32_t), sizeof(uint32_t));
+  std::memcpy(&compression, buffer.data() + 2 * sizeof(uint32_t), sizeof(uint32_t));
+  EXPECT_EQ(magic, 0x4C425443u);
+  EXPECT_EQ(version, 1u);
+  EXPECT_EQ(compression, static_cast<uint32_t>(cudf::io::compression_type::SNAPPY));
+
+  auto host_buffer = cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size());
+  auto result = cudf::io::experimental::read_cudftable(
+    cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{host_buffer})
+      .build());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+}
+
+TEST_F(CudftableTest, CompressedFileIsSmaller)
+{
+  constexpr int num_rows = 50'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 100; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col(sequence, sequence + num_rows);
+  auto const table = cudf::table_view{{col}};
+
+  std::vector<char> uncompressed_buffer;
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{&uncompressed_buffer}, table)
+                                            .compression(cudf::io::compression_type::NONE)
+                                            .build());
+
+  std::vector<char> compressed_buffer;
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{&compressed_buffer}, table)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  EXPECT_LT(compressed_buffer.size(), uncompressed_buffer.size());
+}
+
+TEST_F(CudftableTest, CorruptedCompressedDataLength)
+{
+  auto const filepath = temp_env->get_temp_filepath("corrupted_compressed.cudftbl");
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5});
+  auto const expected = cudf::table_view{{col}};
+
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{filepath}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  // Header layout (56 bytes):
+  // magic(4) + version(4) + compression(4) + block_size(4)
+  //   + metadata_version(4) + reserved(4)
+  //   + metadata_length(8) + uncompressed_data_length(8)
+  //   + num_blocks(8) + compressed_data_length(8)
+  // Corrupt compressed_data_length at offset 48.
+  std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
+  file.seekp(48);
+  uint64_t bad_length = 999999999ULL;
+  file.write(reinterpret_cast<char*>(&bad_length), sizeof(uint64_t));
+  file.close();
+
+  EXPECT_THROW(
+    cudf::io::experimental::read_cudftable(
+      cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{filepath})
+        .build()),
+    cudf::logic_error);
+}
+
+TEST_F(CudftableTest, CompressedFileRoundtrip)
+{
+  auto const filepath = temp_env->get_temp_filepath("compressed_roundtrip.cudftbl");
+  cudf::test::fixed_width_column_wrapper<int64_t> col({100, 200, 300, 400, 500},
+                                                      {true, false, true, true, true});
+  auto const expected = cudf::table_view{{col}};
+
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{filepath}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  auto result = cudf::io::experimental::read_cudftable(
+    cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{filepath})
+      .build());
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+}
+
+TEST_F(CudftableTest, LargeTableCompressedZstd)
+{
+  constexpr int num_rows = 100'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col1(sequence, sequence + num_rows);
+  cudf::test::fixed_width_column_wrapper<double> col2(sequence, sequence + num_rows);
+
+  auto const expected = cudf::table_view{{col1, col2}};
+  run_roundtrip(expected, cudf::io::compression_type::ZSTD, 32 * 1024);
+}
+
+TEST_F(CudftableTest, LargeTableCompressedGzip)
+{
+  constexpr int num_rows = 100'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col1(sequence, sequence + num_rows);
+  cudf::test::fixed_width_column_wrapper<double> col2(sequence, sequence + num_rows);
+
+  auto const expected = cudf::table_view{{col1, col2}};
+  run_roundtrip(expected, cudf::io::compression_type::GZIP, 32 * 1024);
+}
+
+TEST_F(CudftableTest, CompressedWithZeroBlockSize)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3});
+  auto const expected = cudf::table_view{{col}};
+
+  std::vector<char> buffer;
+  EXPECT_THROW(cudf::io::experimental::write_cudftable(
+                 cudf::io::experimental::cudftable_writer_options::builder(
+                   cudf::io::sink_info{&buffer}, expected)
+                   .compression(cudf::io::compression_type::SNAPPY)
+                   .block_size(0)
+                   .build()),
+               cudf::logic_error);
+}
+
+TEST_F(CudftableTest, CorruptedBlockIndex)
+{
+  auto const filepath = temp_env->get_temp_filepath("corrupted_block_index.cudftbl");
+
+  // Create a table large enough to produce multiple blocks at the requested block size.
+  constexpr int num_rows = 10'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col(sequence, sequence + num_rows);
+  auto const expected = cudf::table_view{{col}};
+
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{filepath}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .block_size(4 * 1024)
+                                            .build());
+
+  // Read the header to find the block index offset, then stamp out a clearly
+  // inconsistent per-block compressed_size (which must sum to
+  // compressed_data_length in a valid file).
+  std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
+  uint64_t metadata_length{};
+  file.seekg(24);
+  file.read(reinterpret_cast<char*>(&metadata_length), sizeof(uint64_t));
+
+  constexpr size_t header_size       = 56;
+  auto const block_index_offset      = header_size + metadata_length;
+  uint64_t const bad_compressed_size = 1;  // too small to match the header
+  file.seekp(static_cast<std::streamoff>(block_index_offset));
+  file.write(reinterpret_cast<char const*>(&bad_compressed_size), sizeof(uint64_t));
+  file.close();
+
+  EXPECT_THROW(
+    cudf::io::experimental::read_cudftable(
+      cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{filepath})
+        .build()),
+    cudf::logic_error);
+}
+
+namespace {
+/**
+ * @brief Host-only data sink that does not support device writes.
+ *
+ * Used to exercise the compressed/uncompressed fallback path where the writer
+ * must stage bytes through a host bounce buffer.
+ */
+class host_only_sink : public cudf::io::data_sink {
+ public:
+  void host_write(void const* data, size_t size) override
+  {
+    auto const* bytes = static_cast<char const*>(data);
+    buffer_.insert(buffer_.end(), bytes, bytes + size);
+  }
+
+  [[nodiscard]] bool supports_device_write() const override { return false; }
+
+  void flush() override {}
+
+  [[nodiscard]] size_t bytes_written() override { return buffer_.size(); }
+
+  [[nodiscard]] std::vector<char> const& buffer() const { return buffer_; }
+
+ private:
+  std::vector<char> buffer_;
+};
+}  // namespace
+
+TEST_F(CudftableTest, HostOnlySinkCompressedRoundtrip)
+{
+  constexpr int num_rows = 10'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 64; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col(sequence, sequence + num_rows);
+  auto const expected = cudf::table_view{{col}};
+
+  host_only_sink sink;
+  cudf::io::experimental::write_cudftable(
+    cudf::io::experimental::cudftable_writer_options::builder(cudf::io::sink_info{&sink}, expected)
+      .compression(cudf::io::compression_type::SNAPPY)
+      .block_size(4 * 1024)
+      .build());
+
+  ASSERT_FALSE(sink.buffer().empty());
+  auto const& data = sink.buffer();
+  auto host_buffer =
+    cudf::host_span<std::byte const>(reinterpret_cast<std::byte const*>(data.data()), data.size());
+  auto result = cudf::io::experimental::read_cudftable(
+    cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{host_buffer})
+      .build());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+}
+
+TEST_F(CudftableTest, HostOnlySinkUncompressedRoundtrip)
+{
+  auto const expected = make_sample_table();
+
+  host_only_sink sink;
+  cudf::io::experimental::write_cudftable(
+    cudf::io::experimental::cudftable_writer_options::builder(cudf::io::sink_info{&sink}, expected)
+      .build());
+
+  ASSERT_FALSE(sink.buffer().empty());
+  auto const& data = sink.buffer();
+  auto host_buffer =
+    cudf::host_span<std::byte const>(reinterpret_cast<std::byte const*>(data.data()), data.size());
+  auto result = cudf::io::experimental::read_cudftable(
+    cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{host_buffer})
+      .build());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+}
+
+TEST_F(CudftableTest, BlockSizeBoundaries)
+{
+  constexpr int num_rows = 20'000;
+  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col(sequence, sequence + num_rows);
+  auto const expected = cudf::table_view{{col}};
+
+  auto const len = packed_data_length(expected);
+  ASSERT_GT(len, 2u);
+  ASSERT_LE(len, static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()));
+
+  // Exercise block sizes exactly one-less-than (last block is a 1-byte partial),
+  // equal-to, and one-more-than the packed data size (both single-block).
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY, static_cast<uint32_t>(len - 1));
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY, static_cast<uint32_t>(len));
+  run_roundtrip(expected, cudf::io::compression_type::SNAPPY, static_cast<uint32_t>(len + 1));
+
+  // Exact multiple: two full blocks with no partial final block.
+  if (len % 2 == 0) {
+    run_roundtrip(expected, cudf::io::compression_type::SNAPPY, static_cast<uint32_t>(len / 2));
+  }
+}
+
+TEST_F(CudftableTest, CallerProvidedMemoryResource)
+{
+  auto const expected = make_sample_table();
+
+  std::vector<char> buffer;
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{&buffer}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  auto host_buffer = cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size());
+
+  auto stats_mr = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
+  auto result   = cudf::io::experimental::read_cudftable(
+    cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{host_buffer})
+      .build(),
+    cudf::get_default_stream(),
+    stats_mr);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.table);
+  // The returned table's device data must have been allocated from the caller
+  // supplied resource.
+  EXPECT_GT(stats_mr.get_bytes_counter().peak, 0);
+}
+
+TEST_F(CudftableTest, CorruptedNumBlocksOverflow)
+{
+  auto const filepath = temp_env->get_temp_filepath("overflow_blocks.cudftbl");
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5});
+  auto const expected = cudf::table_view{{col}};
+
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{filepath}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  // num_blocks lives at offset 40. A value near UINT64_MAX overflows the
+  // num_blocks * sizeof(block_index_entry) product used to compute offsets.
+  std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
+  file.seekp(40);
+  uint64_t bad_num_blocks = std::numeric_limits<uint64_t>::max();
+  file.write(reinterpret_cast<char*>(&bad_num_blocks), sizeof(uint64_t));
+  file.close();
+
+  EXPECT_THROW(
+    cudf::io::experimental::read_cudftable(
+      cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{filepath})
+        .build()),
+    cudf::logic_error);
+}
+
+TEST_F(CudftableTest, CorruptedMetadataLengthOverflow)
+{
+  auto const filepath = temp_env->get_temp_filepath("overflow_meta.cudftbl");
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5});
+  auto const expected = cudf::table_view{{col}};
+
+  cudf::io::experimental::write_cudftable(cudf::io::experimental::cudftable_writer_options::builder(
+                                            cudf::io::sink_info{filepath}, expected)
+                                            .compression(cudf::io::compression_type::SNAPPY)
+                                            .build());
+
+  // metadata_length lives at offset 24. A value near UINT64_MAX overflows the
+  // header_size + metadata_length sum used to compute the block index offset.
+  std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
+  file.seekp(24);
+  uint64_t bad_meta_length = std::numeric_limits<uint64_t>::max();
+  file.write(reinterpret_cast<char*>(&bad_meta_length), sizeof(uint64_t));
+  file.close();
+
+  EXPECT_THROW(
+    cudf::io::experimental::read_cudftable(
+      cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{filepath})
         .build()),
     cudf::logic_error);
 }

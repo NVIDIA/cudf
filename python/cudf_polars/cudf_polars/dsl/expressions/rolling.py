@@ -976,6 +976,7 @@ class GroupedWindow(Expr):
         ob_nulls_last: bool,
         value_col: plc.Column | None = None,
         value_desc: bool = False,
+        reverse: bool = False,
         stream: Stream,
     ) -> plc.Column:
         """Compute a stable row ordering for unary operations in a grouped context."""
@@ -996,7 +997,9 @@ class GroupedWindow(Expr):
         if order_by_col is not None:
             cols.append(order_by_col.obj)
             orders.append(
-                plc.types.Order.DESCENDING if ob_desc else plc.types.Order.ASCENDING
+                plc.types.Order.DESCENDING
+                if ob_desc ^ reverse
+                else plc.types.Order.ASCENDING
             )
             nulls.append(
                 plc.types.NullOrder.AFTER
@@ -1006,7 +1009,9 @@ class GroupedWindow(Expr):
 
         # Use the row id to break ties
         cols.append(row_id)
-        orders.append(plc.types.Order.ASCENDING)
+        orders.append(
+            plc.types.Order.DESCENDING if reverse else plc.types.Order.ASCENDING
+        )
         nulls.append(plc.types.NullOrder.AFTER)
 
         return plc.sorting.stable_sorted_order(
@@ -1044,10 +1049,11 @@ class GroupedWindow(Expr):
         ob_desc: bool,
         ob_nulls_last: bool,
         grouper: plc.groupby.GroupBy,
+        reverse: bool = False,
         stream: Stream,
         require_sorted_groups: bool = False,
     ) -> tuple[plc.Column | None, list[Column] | None, plc.groupby.GroupBy]:
-        if order_by_col is None and not require_sorted_groups:
+        if order_by_col is None and not (require_sorted_groups or reverse):
             # keep the original ordering
             return None, None, grouper
         order_index = self._build_window_order_index(
@@ -1056,6 +1062,7 @@ class GroupedWindow(Expr):
             order_by_col=order_by_col,
             ob_desc=ob_desc,
             ob_nulls_last=ob_nulls_last,
+            reverse=reverse,
             stream=stream,
         )
         by_cols_for_scan = self._gather_columns(by_cols, order_index, stream=stream)
@@ -1125,6 +1132,7 @@ class GroupedWindow(Expr):
         order_by_col: Column | None,
         ob_desc: bool = False,
         ob_nulls_last: bool = False,
+        reverse: bool = False,
         require_sorted_groups: bool = False,
     ) -> list[Column]:
         order_index, by_cols_for_scan, local = self._grouped_window_scan_setup(
@@ -1134,6 +1142,7 @@ class GroupedWindow(Expr):
             ob_desc=ob_desc,
             ob_nulls_last=ob_nulls_last,
             grouper=grouper,
+            reverse=reverse,
             stream=df.stream,
             require_sorted_groups=require_sorted_groups,
         )
@@ -1444,27 +1453,46 @@ class GroupedWindow(Expr):
                 )
 
         if cum_named := unary_window_ops["cum_sum"]:
-            # A fill_null_with_strategy fill runs on the scan output, which is
-            # always in sorted-group order, so it needs a sorted grouper even when
-            # there is no order_by.
-            has_fill = any(
-                isinstance(ne.value, expr.UnaryFunction)
-                and ne.value.name == "fill_null_with_strategy"
-                for ne in cum_named
-            )
-            broadcasted_cols.extend(
-                self._apply_ordered_unary_op(
-                    CumSumOp(named_exprs=cum_named),
-                    df,
-                    grouper,
-                    by_cols,
-                    row_id,
-                    order_by_col=over_order_by_col,
-                    ob_desc=over_ob_desc,
-                    ob_nulls_last=over_ob_nulls_last,
-                    require_sorted_groups=has_fill,
+            cum_reverse = []
+            for ne in cum_named:
+                v = ne.value
+                assert isinstance(v, expr.UnaryFunction)
+                if v.name == "fill_null_with_strategy":
+                    cum_sum_expr = v.children[0]
+                    assert isinstance(cum_sum_expr, expr.UnaryFunction)
+                    cum_reverse.append(bool(cum_sum_expr.options[0]))
+                else:
+                    cum_reverse.append(bool(v.options[0]))
+            for is_reverse in (False, True):
+                subset = [
+                    ne
+                    for ne, rev in zip(cum_named, cum_reverse, strict=True)
+                    if rev is is_reverse
+                ]
+                if not subset:
+                    continue
+                # A fill_null_with_strategy fill runs on the scan output, which is
+                # always in sorted-group order, so it needs a sorted grouper even when
+                # there is no order_by.
+                has_fill = any(
+                    isinstance(ne.value, expr.UnaryFunction)
+                    and ne.value.name == "fill_null_with_strategy"
+                    for ne in subset
                 )
-            )
+                broadcasted_cols.extend(
+                    self._apply_ordered_unary_op(
+                        CumSumOp(named_exprs=subset),
+                        df,
+                        grouper,
+                        by_cols,
+                        row_id,
+                        order_by_col=over_order_by_col,
+                        ob_desc=over_ob_desc,
+                        ob_nulls_last=over_ob_nulls_last,
+                        reverse=is_reverse,
+                        require_sorted_groups=has_fill,
+                    )
+                )
 
         if shift_named := unary_window_ops["shift"]:
             broadcasted_cols.extend(

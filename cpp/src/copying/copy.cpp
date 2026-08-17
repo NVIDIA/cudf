@@ -12,7 +12,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 

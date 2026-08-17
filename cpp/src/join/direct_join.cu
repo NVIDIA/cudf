@@ -18,7 +18,7 @@
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <memory>

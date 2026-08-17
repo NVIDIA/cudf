@@ -18,7 +18,7 @@
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/type_traits>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 

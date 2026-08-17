@@ -11,7 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 class column_device_view;

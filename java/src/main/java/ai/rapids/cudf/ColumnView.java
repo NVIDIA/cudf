@@ -883,9 +883,9 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Replace the null mask of a column. The resultant null mask is the bitwise {@code mergeOp} of
    * null masks in the columns given as arguments, AND-ed with this column's existing null mask.
    *
-   * If applying the null mask would be a no-op, the original column is returned with incremented
-   * refcount. Otherwise, a deep copy of the column is made (for a non-owning ColumnView, a deep copy
-   * must be made in either case).
+   * If applying the null mask would be a no-op and this is a {@link ColumnVector}, the original
+   * column is returned with incremented refcount. Otherwise, a deep copy of the column is made.
+   * For a non-owning ColumnView, a deep copy must be made in either case.
    *
    * For STRUCT columns the new mask is also pushed down into every descendant column, to
    * stay consistent with the parent. For LIST/STRING columns the resultant offsets are
@@ -896,10 +896,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param mergeOp binary operator (either BITWISE_AND or BITWISE_OR)
    * @param columns array of columns whose null masks are merged, must have identical number of rows.
    * @return the new ColumnVector with merged null mask.
-   * @deprecated Use {@link ColumnVector#mergeAndSetValidity(BinaryOp, ColumnView...)} instead.
    */
-  @Deprecated
-  public ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
+  public final ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
     assert mergeOp == BinaryOp.BITWISE_AND || mergeOp == BinaryOp.BITWISE_OR : "Only BITWISE_AND and BITWISE_OR supported right now";
     long[] columnViews = new long[columns.length];
     long size = getRowCount();

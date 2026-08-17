@@ -11,14 +11,21 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -36,10 +43,10 @@ namespace {
  * @param seed Seed for the next column
  */
 void append_random_columns(std::vector<std::unique_ptr<cudf::column>>& columns,
-                           std::vector<cudf::type_id> const& types,
+                           std::span<cudf::type_id const> types,
                            cudf::size_type num_rows,
                            data_profile const& profile,
-                           unsigned& seed)
+                           std::uint32_t& seed)
 {
   for (auto const type : types) {
     columns.push_back(create_random_column(type, row_count{num_rows}, profile, seed++));
@@ -62,8 +69,8 @@ void append_random_columns(std::vector<std::unique_ptr<cudf::column>>& columns,
  * @return Generated input table
  */
 std::unique_ptr<cudf::table> make_input_table(
-  std::vector<cudf::type_id> const& key_types,
-  std::vector<cudf::type_id> const& payload_types,
+  std::span<cudf::type_id const> key_types,
+  std::span<cudf::type_id const> payload_types,
   cudf::size_type num_rows,
   std::optional<double> key_null_probability     = std::nullopt,
   std::optional<double> payload_null_probability = std::nullopt)
@@ -77,7 +84,7 @@ std::unique_ptr<cudf::table> make_input_table(
   auto columns = std::vector<std::unique_ptr<cudf::column>>{};
   columns.reserve(key_types.size() + payload_types.size());
 
-  auto seed = 1234u;
+  auto seed = std::uint32_t{1234};
   append_random_columns(columns, key_types, num_rows, key_profile, seed);
   append_random_columns(columns, payload_types, num_rows, payload_profile, seed);
   return std::make_unique<cudf::table>(std::move(columns));
@@ -96,7 +103,7 @@ std::unique_ptr<cudf::table> make_input_table(
  */
 std::unique_ptr<cudf::column> make_hot_key_column(cudf::size_type num_rows,
                                                   double hot_probability,
-                                                  unsigned& seed)
+                                                  std::uint32_t& seed)
 {
   data_profile const tail_profile =
     data_profile_builder().cardinality(num_rows).avg_run_length(1).no_validity();
@@ -112,16 +119,19 @@ std::unique_ptr<cudf::column> make_hot_key_column(cudf::size_type num_rows,
 }
 
 /**
- * @brief Create indices for the leading columns in a table.
+ * @brief Read an integer benchmark axis after checking that it fits in `cudf::size_type`.
  *
- * @param num_keys Number of columns to select
- * @return Column indices in the range [0, num_keys)
+ * @param state Benchmark state
+ * @param axis_name Name of the integer axis
+ * @return Axis value converted to `cudf::size_type`
  */
-std::vector<cudf::size_type> make_key_indices(cudf::size_type num_keys)
+cudf::size_type get_size_type_axis(nvbench::state& state, std::string const& axis_name)
 {
-  auto keys = std::vector<cudf::size_type>(num_keys);
-  std::iota(keys.begin(), keys.end(), cudf::size_type{0});
-  return keys;
+  auto const value = state.get_int64(axis_name);
+  CUDF_EXPECTS(std::in_range<cudf::size_type>(value),
+               axis_name + " value " + std::to_string(value) + " does not fit in cudf::size_type",
+               std::out_of_range);
+  return static_cast<cudf::size_type>(value);
 }
 
 /**
@@ -132,24 +142,28 @@ std::vector<cudf::size_type> make_key_indices(cudf::size_type num_keys)
  *
  * @param state Benchmark state
  * @param input Table to partition
- * @param keys Column indices to hash
+ * @param num_keys Number of leading columns to hash
  * @param num_partitions Number of output partitions
  */
 void run_hash_partition(nvbench::state& state,
                         cudf::table const& input,
-                        std::vector<cudf::size_type> const& keys,
+                        cudf::size_type num_keys,
                         cudf::size_type num_partitions)
 {
   auto const stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
+  auto const input_view  = input.view();
+  auto const key_begin   = cuda::counting_iterator<cudf::size_type>{0};
+  auto const keys        = input_view.select(key_begin, key_begin + num_keys);
   auto const input_bytes = static_cast<std::int64_t>(input.alloc_size());
   auto const key_bytes =
-    std::accumulate(keys.begin(), keys.end(), std::int64_t{0}, [&](auto bytes, auto key) {
+    std::accumulate(key_begin, key_begin + num_keys, std::int64_t{0}, [&](auto bytes, auto key) {
       return bytes + static_cast<std::int64_t>(input.get_column(key).alloc_size());
     });
   auto const output_bytes = input_bytes;
-  auto const offset_bytes = static_cast<std::int64_t>(num_partitions + 1) * sizeof(cudf::size_type);
+  auto const offset_bytes =
+    (static_cast<std::int64_t>(num_partitions) + 1) * sizeof(cudf::size_type);
 
   state.add_element_count(input.num_rows(), "rows");
   state.add_buffer_size(input_bytes, "input_size", "input_size");
@@ -161,7 +175,7 @@ void run_hash_partition(nvbench::state& state,
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    [[maybe_unused]] auto output = cudf::hash_partition(input, keys, num_partitions);
+    [[maybe_unused]] auto output = cudf::hash_partition(input_view, keys, num_partitions);
   });
 
   state.add_buffer_size(
@@ -180,17 +194,16 @@ void run_hash_partition(nvbench::state& state,
 template <typename Key>
 void bench_hash_partition_analytic(nvbench::state& state, nvbench::type_list<Key>)
 {
-  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const num_keys = static_cast<cudf::size_type>(state.get_int64("num_key_columns"));
-  auto const num_payload_columns =
-    static_cast<cudf::size_type>(state.get_int64("num_payload_columns"));
-  auto const num_partitions = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_rows            = get_size_type_axis(state, "num_rows");
+  auto const num_keys            = get_size_type_axis(state, "num_key_columns");
+  auto const num_payload_columns = get_size_type_axis(state, "num_payload_columns");
+  auto const num_partitions      = get_size_type_axis(state, "num_partitions");
 
   auto input =
     make_input_table(std::vector<cudf::type_id>(num_keys, cudf::type_to_id<Key>()),
                      std::vector<cudf::type_id>(num_payload_columns, cudf::type_id::INT64),
                      num_rows);
-  run_hash_partition(state, *input, make_key_indices(num_keys), num_partitions);
+  run_hash_partition(state, *input, num_keys, num_partitions);
 }
 
 /**
@@ -203,11 +216,12 @@ void bench_hash_partition_analytic(nvbench::state& state, nvbench::type_list<Key
 void bench_hash_partition_partition_count(nvbench::state& state)
 {
   auto const num_rows       = cudf::size_type{1} << 23;
-  auto const num_partitions = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_partitions = get_size_type_axis(state, "num_partitions");
 
-  auto input = make_input_table(
-    {cudf::type_id::INT64}, std::vector<cudf::type_id>(8, cudf::type_id::INT64), num_rows);
-  run_hash_partition(state, *input, {0}, num_partitions);
+  auto input = make_input_table(std::array{cudf::type_id::INT64},
+                                std::vector<cudf::type_id>(8, cudf::type_id::INT64),
+                                num_rows);
+  run_hash_partition(state, *input, 1, num_partitions);
 }
 
 /**
@@ -221,8 +235,8 @@ void bench_hash_partition_partition_count(nvbench::state& state)
 void bench_hash_partition_equal_input_size(nvbench::state& state)
 {
   auto const target_input_bytes = static_cast<std::size_t>(state.get_int64("target_input_bytes"));
-  auto const num_columns        = static_cast<cudf::size_type>(state.get_int64("num_columns"));
-  auto const num_partitions     = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_columns        = get_size_type_axis(state, "num_columns");
+  auto const num_partitions     = get_size_type_axis(state, "num_partitions");
   auto const row_width          = static_cast<std::size_t>(num_columns) * sizeof(std::int64_t);
 
   if (target_input_bytes % row_width != 0) {
@@ -234,10 +248,10 @@ void bench_hash_partition_equal_input_size(nvbench::state& state)
     state.skip("number of rows exceeds cudf::size_type");
     return;
   }
-  auto input = make_input_table({cudf::type_id::INT64},
+  auto input = make_input_table(std::array{cudf::type_id::INT64},
                                 std::vector<cudf::type_id>(num_columns - 1, cudf::type_id::INT64),
                                 static_cast<cudf::size_type>(num_rows));
-  run_hash_partition(state, *input, {0}, num_partitions);
+  run_hash_partition(state, *input, 1, num_partitions);
 }
 
 /**
@@ -252,11 +266,11 @@ void bench_hash_partition_key_skew(nvbench::state& state)
 {
   auto const num_rows       = cudf::size_type{1} << 23;
   auto const distribution   = state.get_string("distribution");
-  auto const num_partitions = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_partitions = get_size_type_axis(state, "num_partitions");
 
   auto columns = std::vector<std::unique_ptr<cudf::column>>{};
   columns.reserve(9);
-  auto seed = 1234u;
+  auto seed = std::uint32_t{1234};
   if (distribution == "uniform_16_values") {
     data_profile const profile =
       data_profile_builder().cardinality(16).avg_run_length(1).no_validity();
@@ -276,7 +290,7 @@ void bench_hash_partition_key_skew(nvbench::state& state)
   append_random_columns(
     columns, std::vector<cudf::type_id>(8, cudf::type_id::INT64), num_rows, payload_profile, seed);
   auto input = std::make_unique<cudf::table>(std::move(columns));
-  run_hash_partition(state, *input, {0}, num_partitions);
+  run_hash_partition(state, *input, 1, num_partitions);
 }
 
 /**
@@ -288,9 +302,9 @@ void bench_hash_partition_key_skew(nvbench::state& state)
  */
 void bench_hash_partition_nullability(nvbench::state& state)
 {
-  auto const num_rows       = cudf::size_type{1} << 23;
-  auto const nullable       = state.get_string("nullable");
-  auto const num_partitions = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_rows               = cudf::size_type{1} << 23;
+  auto const nullable               = state.get_string("nullable");
+  auto const num_partitions         = get_size_type_axis(state, "num_partitions");
   constexpr double null_probability = 0.1;
 
   auto key_nulls     = std::optional<double>{};
@@ -307,12 +321,12 @@ void bench_hash_partition_nullability(nvbench::state& state)
     return;
   }
 
-  auto input = make_input_table({cudf::type_id::INT64},
+  auto input = make_input_table(std::array{cudf::type_id::INT64},
                                 std::vector<cudf::type_id>(8, cudf::type_id::INT64),
                                 num_rows,
                                 key_nulls,
                                 payload_nulls);
-  run_hash_partition(state, *input, {0}, num_partitions);
+  run_hash_partition(state, *input, 1, num_partitions);
 }
 
 /**
@@ -327,7 +341,7 @@ void bench_hash_partition_type_mix(nvbench::state& state)
 {
   auto const num_rows       = cudf::size_type{1} << 23;
   auto const layout         = state.get_string("layout");
-  auto const num_partitions = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_partitions = get_size_type_axis(state, "num_partitions");
 
   auto key_types     = std::vector<cudf::type_id>{};
   auto payload_types = std::vector<cudf::type_id>{};
@@ -362,10 +376,7 @@ void bench_hash_partition_type_mix(nvbench::state& state)
   }
 
   auto input = make_input_table(key_types, payload_types, num_rows);
-  run_hash_partition(state,
-                     *input,
-                     make_key_indices(static_cast<cudf::size_type>(key_types.size())),
-                     num_partitions);
+  run_hash_partition(state, *input, static_cast<cudf::size_type>(key_types.size()), num_partitions);
 }
 
 /**
@@ -379,12 +390,16 @@ void bench_hash_partition_type_mix(nvbench::state& state)
 void bench_hash_partition_all_keys_stress(nvbench::state& state)
 {
   auto const num_rows       = cudf::size_type{1} << 21;
-  auto const num_columns    = static_cast<cudf::size_type>(state.get_int64("num_columns"));
-  auto const num_partitions = static_cast<cudf::size_type>(state.get_int64("num_partitions"));
+  auto const num_columns    = get_size_type_axis(state, "num_columns");
+  auto const num_partitions = get_size_type_axis(state, "num_partitions");
+
+  auto const input_bytes = sizeof(std::int64_t) * static_cast<std::size_t>(num_rows) * num_columns;
+  CUDF_EXPECTS(input_bytes <= (std::size_t{1} << 32),
+               "All-keys stress benchmark input exceeds 4 GiB");
 
   auto input =
     make_input_table(std::vector<cudf::type_id>(num_columns, cudf::type_id::INT64), {}, num_rows);
-  run_hash_partition(state, *input, make_key_indices(num_columns), num_partitions);
+  run_hash_partition(state, *input, num_columns, num_partitions);
 }
 
 }  // namespace

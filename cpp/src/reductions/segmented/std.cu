@@ -27,6 +27,19 @@ std::unique_ptr<cudf::column> segmented_standard_deviation(column_view const& co
     col.type(), reducer(), col, offsets, output_dtype, null_handling, ddof, stream, mr);
 }
 
+std::unique_ptr<cudf::column> segmented_variance(column_view const& col,
+                                                 device_span<size_type const> offsets,
+                                                 cudf::data_type const output_dtype,
+                                                 null_policy null_handling,
+                                                 size_type ddof,
+                                                 cuda::stream_ref stream,
+                                                 rmm::device_async_resource_ref mr)
+{
+  using reducer = compound::detail::compound_segmented_dispatcher<op::variance>;
+  return cudf::type_dispatcher(
+    col.type(), reducer(), col, offsets, output_dtype, null_handling, ddof, stream, mr);
+}
+
 }  // namespace detail
 }  // namespace reduction
 }  // namespace cudf

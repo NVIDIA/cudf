@@ -52,7 +52,7 @@ std::unique_ptr<table> unique(table_view const& input,
 
   auto temp_mr        = cudf::get_current_device_resource_ref();
   auto unique_indices = make_numeric_column(
-    data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, temp_mr);
   auto mutable_view = mutable_column_device_view::create(*unique_indices, stream, temp_mr);
   auto keys_view    = input.select(keys);
 

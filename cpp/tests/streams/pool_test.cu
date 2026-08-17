@@ -9,7 +9,6 @@
 
 #include <cudf/detail/utilities/stream_pool.hpp>
 
-#include <cuda/stream_ref>
 
 class StreamPoolTest : public cudf::test::BaseFixture {};
 

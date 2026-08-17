@@ -19,7 +19,6 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/functional>
-#include <cuda/stream_ref>
 
 template <typename T>
 struct TableToDeviceArrayTypedTest : public cudf::test::BaseFixture {};

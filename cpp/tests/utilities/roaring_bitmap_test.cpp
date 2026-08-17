@@ -12,7 +12,6 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
-#include <cuda/stream_ref>
 
 #include <vector>
 

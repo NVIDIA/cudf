@@ -11,7 +11,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 // Including this declaration/defintion in two_table_comparison_utilities.cu causes

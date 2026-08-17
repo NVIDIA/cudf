@@ -3476,18 +3476,18 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
   auto num_rowgroups = chunks.size().first;
   dim3 dim_grid(num_columns, num_rowgroups);  // 1 threadblock per rowgroup
   gpuInitPages<<<dim_grid, encode_block_size, 0, stream.get()>>>(chunks,
-                                                                   pages,
-                                                                   page_sizes,
-                                                                   comp_page_sizes,
-                                                                   col_desc,
-                                                                   page_grstats,
-                                                                   chunk_grstats,
-                                                                   num_columns,
-                                                                   max_page_size_bytes,
-                                                                   max_page_size_rows,
-                                                                   page_align,
-                                                                   write_v2_headers,
-                                                                   write_page_stats);
+                                                                 pages,
+                                                                 page_sizes,
+                                                                 comp_page_sizes,
+                                                                 col_desc,
+                                                                 page_grstats,
+                                                                 chunk_grstats,
+                                                                 num_columns,
+                                                                 max_page_size_bytes,
+                                                                 max_page_size_rows,
+                                                                 page_align,
+                                                                 write_v2_headers,
+                                                                 write_page_stats);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

@@ -204,8 +204,8 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
-  auto const col1 = [&] {
-    auto const get_structs = [&] {
+  auto const col1 = [stream, mr] {
+    auto const get_structs = [stream, mr] {
       auto child0 = data_col{{0, 3, 0, 2}, stream, mr};
       auto child1 = strings_col{{"a", "c", "a", "b"}, stream, mr};
       return structs_col{{child0, child1}, {}, stream, mr};
@@ -213,8 +213,8 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
     return cudf::make_lists_column(
       2, int32s_col{{0, 2, 4}, stream, mr}.release(), get_structs().release(), 0, {});
   }();
-  auto const col2 = [&] {
-    auto const get_structs = [&] {
+  auto const col2 = [] {
+    auto const get_structs = [] {
       auto child0 = data_col{};
       auto child1 = strings_col{};
       return structs_col{{child0, child1}};

@@ -132,11 +132,12 @@ compute_row_frequencies(table_view const& input,
   std::size_t const num_rows = input.num_rows();
 
   // Construct a vector to store reduced counts and init to zero
-  rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, temp_mr);
-  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
-                             reduction_results.begin(),
-                             reduction_results.end(),
-                             histogram_count_type{0});
+  rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, mr);
+  thrust::uninitialized_fill(
+    rmm::exec_policy_nosync(stream, temp_mr),
+    reduction_results.begin(),
+    reduction_results.end(),
+    histogram_count_type{0});
 
   // Construct a hash set
   auto row_set =

@@ -50,13 +50,12 @@ std::unique_ptr<table> unique(table_view const& input,
   auto const num_rows = input.num_rows();
   if (num_rows == 0 or input.num_columns() == 0 or keys.empty()) { return empty_like(input); }
 
-  auto const temp_mr  = cudf::get_current_device_resource_ref();
   auto unique_indices = make_numeric_column(
-    data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, temp_mr);
+    data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, mr);
   auto mutable_view = mutable_column_device_view::create(*unique_indices, stream);
   auto keys_view    = input.select(keys);
 
-  auto comp = cudf::detail::row::equality::self_comparator(keys_view, stream, temp_mr);
+  auto comp = cudf::detail::row::equality::self_comparator(keys_view, stream);
 
   size_type const unique_size = [&] {
     if (cudf::detail::has_nested_columns(keys_view)) {
@@ -65,10 +64,10 @@ std::unique_ptr<table> unique(table_view const& input,
       // runtime performance over using the comparator directly in thrust::unique_copy.
       auto row_equal =
         comp.equal_to<true>(nullate::DYNAMIC{has_nested_nulls(keys_view)}, nulls_equal);
-      auto d_results = rmm::device_uvector<bool>(num_rows, stream, temp_mr);
+      auto d_results = rmm::device_uvector<bool>(num_rows, stream);
       auto itr       = cuda::counting_iterator<size_type>{0};
       thrust::transform(
-        rmm::exec_policy_nosync(stream, temp_mr),
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         itr,
         itr + num_rows,
         d_results.begin(),

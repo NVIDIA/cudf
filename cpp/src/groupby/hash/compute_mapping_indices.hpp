@@ -7,7 +7,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/std/atomic>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {
 

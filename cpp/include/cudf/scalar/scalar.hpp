@@ -15,7 +15,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_scalar.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <span>
 #include <string_view>

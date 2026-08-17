@@ -10,7 +10,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace {

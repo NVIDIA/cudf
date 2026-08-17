@@ -17,7 +17,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {
 

@@ -21,7 +21,7 @@
 #include <cudf/utilities/traits.cuh>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>

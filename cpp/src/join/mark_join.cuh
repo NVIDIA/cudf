@@ -25,7 +25,7 @@
 #include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
 #include <cuda/std/limits>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <memory>
 

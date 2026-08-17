@@ -10,7 +10,7 @@
 
 #include <rmm/cuda_stream_view.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <span>
 

@@ -16,7 +16,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/extrema.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
@@ -116,7 +116,7 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
     gather_map->mutable_view().template begin<size_type>(),
     cuda::proclaim_return_type<size_type>(
       [d_offsets =
-         child_offsets.template begin<size_type>(),  // E.g. [0,   2,     5,     8,     11, 13]
+         child_offsets.template begin<int32_t>(),  // E.g.     [0,   2,     5,     8,     11, 13]
        d_groups =
          per_row_mapping.template begin<size_type>(),  // E.g. [0,0, 1,1,1, 2,2,2, 3,3,3, 4,4]
        d_prev = preceding_iter] __device__(auto i) {

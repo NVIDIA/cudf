@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_factories.hpp>
@@ -40,11 +40,11 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
   end += lists.offset();
 
   // Offsets at the beginning and end of the slice:
-  auto offsets_data = lists.offsets().data<cudf::size_type>();
-  auto start_offset = cudf::detail::get_value<size_type>(lists.offsets(), start, stream);
-  auto end_offset   = cudf::detail::get_value<size_type>(lists.offsets(), end, stream);
+  auto offsets_data = lists.offsets().data<int32_t>();
+  auto start_offset = cudf::detail::get_value<int32_t>(lists.offsets(), start, stream);
+  auto end_offset   = cudf::detail::get_value<int32_t>(lists.offsets(), end, stream);
 
-  rmm::device_uvector<cudf::size_type> out_offsets(offsets_count, stream);
+  rmm::device_uvector<int32_t> out_offsets(offsets_count, stream);
 
   // Compute the offsets column of the result:
   thrust::transform(

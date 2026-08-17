@@ -25,7 +25,7 @@
 #include <cuda/std/algorithm>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>

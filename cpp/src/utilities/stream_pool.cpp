@@ -19,9 +19,14 @@
 
 namespace cudf::detail {
 
-// Maximum number of streams a single thread's pool will create. Sized to cover the largest
-// number of streams requested by a single `fork_streams` call in libcudf, which is the number
-// of distinct parquet decode kernels (see `decode_kernel_mask`).
+// Maximum number of streams a single thread's pool will create, for a single device. Sized to cover
+// the largest number of streams requested by a single `fork_streams` call in libcudf, which is the
+// number of distinct parquet decode kernels (see `decode_kernel_mask`).
+//
+// This is a per-thread bound, not a process-wide one, so the streams an application holds scale
+// with the number of threads that call into libcudf. Pools only grow on demand and are recycled
+// when a thread exits, so the steady-state total is bounded by the peak number of concurrent
+// threads rather than by the number of threads created.
 std::size_t constexpr STREAM_POOL_SIZE = 32;
 
 // FIXME: "borrowed" from rmm...remove when this stream pool is moved there

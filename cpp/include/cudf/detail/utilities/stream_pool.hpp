@@ -16,6 +16,13 @@
 namespace CUDF_EXPORT cudf {
 namespace detail {
 
+/**
+ * @brief Interface for a pool of CUDA streams.
+ *
+ * Implementations are not required to be thread safe. A pool is owned by a single thread at a time,
+ * which is how `global_cuda_stream_pool()` hands them out, so an implementation may keep
+ * unsynchronized state. Sharing one pool between threads requires external synchronization.
+ */
 class cuda_stream_pool {
  public:
   // matching type used in rmm::cuda_stream_pool::get_stream(stream_id)
@@ -30,8 +37,6 @@ class cuda_stream_pool {
   /**
    * @brief Get a `cuda_stream_view` of a stream in the pool.
    *
-   * This function is thread safe with respect to other calls to the same function.
-   *
    * @return Stream view.
    */
   virtual rmm::cuda_stream_view get_stream() = 0;
@@ -40,7 +45,6 @@ class cuda_stream_pool {
    * @brief Get a `cuda_stream_view` of the stream associated with `stream_id`.
    *
    * Equivalent values of `stream_id` return a `cuda_stream_view` to the same underlying stream.
-   * This function is thread safe with respect to other calls to the same function.
    *
    * @param stream_id Unique identifier for the desired stream
    * @return Requested stream view.
@@ -58,8 +62,6 @@ class cuda_stream_pool {
    * guaranteed: once the pool has reached its maximum size the assignment wraps around, so a
    * request for more than half the pool can overlap with the streams the caller holds.
    *
-   * This function is thread safe with respect to other calls to the same function.
-   *
    * @param count The number of stream views to return.
    * @return Vector containing `count` stream views.
    */
@@ -67,8 +69,6 @@ class cuda_stream_pool {
 
   /**
    * @brief Get the maximum number of unique stream objects the pool can provide.
-   *
-   * This function is thread safe with respect to other calls to the same function.
    *
    * @return the maximum number of stream objects in the pool
    */

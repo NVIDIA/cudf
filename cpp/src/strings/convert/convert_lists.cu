@@ -12,7 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -183,7 +183,7 @@ struct format_lists_fn {
 std::unique_ptr<column> format_list_column(lists_column_view const& input,
                                            string_scalar const& na_rep,
                                            strings_column_view const& separators,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(data_type{type_id::STRING});
@@ -224,7 +224,7 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
 std::unique_ptr<column> format_list_column(lists_column_view const& input,
                                            string_scalar const& na_rep,
                                            strings_column_view const& separators,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

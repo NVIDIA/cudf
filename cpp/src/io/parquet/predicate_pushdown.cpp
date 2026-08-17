@@ -63,7 +63,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   host_span<data_type const> output_dtypes,
   host_span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   auto mr = cudf::get_current_device_resource_ref();
 
@@ -165,7 +165,7 @@ aggregate_reader_metadata::filter_row_groups(
   host_span<data_type const> output_dtypes,
   host_span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Apply stats filtering on input row groups
   auto const stats_filtered_row_groups = apply_stats_filters(input_row_group_indices,

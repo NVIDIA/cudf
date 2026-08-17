@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -18,7 +18,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
@@ -26,6 +25,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/equal.h>
 #include <thrust/fill.h>
@@ -180,7 +180,7 @@ CUDF_KERNEL void multi_contains_kernel(column_device_view const d_strings,
 
 std::unique_ptr<table> contains_multiple(strings_column_view const& input,
                                          strings_column_view const& targets,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -204,7 +204,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     auto vals_out  = indices.begin();
     auto num_items = targets.size();
     auto cmp_op    = cuda::std::less();
-    auto sv        = stream.value();
+    auto sv        = stream.get();
 
     std::size_t tmp_bytes = 0;
     cub::DeviceMergeSort::SortPairsCopy(
@@ -263,14 +263,14 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     // Smaller strings perform better with a row per string
     cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()), block_size};
     multi_contains_kernel<1>
-      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(*d_strings,
-                                                                           *d_targets,
-                                                                           d_first_bytes,
-                                                                           d_indices,
-                                                                           d_offsets,
-                                                                           unique_count,
-                                                                           nullptr,
-                                                                           d_results);
+      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(*d_strings,
+                                                                         *d_targets,
+                                                                         d_first_bytes,
+                                                                         d_indices,
+                                                                         d_offsets,
+                                                                         unique_count,
+                                                                         nullptr,
+                                                                         d_results);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     constexpr cudf::thread_index_type tile_size = cudf::detail::warp_size;
@@ -284,7 +284,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * tile_size,
                                block_size};
     multi_contains_kernel<tile_size>
-      <<<grid.num_blocks, grid.num_threads_per_block, shared_mem_size, stream.value()>>>(
+      <<<grid.num_blocks, grid.num_threads_per_block, shared_mem_size, stream.get()>>>(
         *d_strings,
         *d_targets,
         d_first_bytes,
@@ -303,7 +303,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
 
 std::unique_ptr<table> contains_multiple(strings_column_view const& strings,
                                          strings_column_view const& targets,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

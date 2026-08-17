@@ -16,11 +16,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 
@@ -64,7 +64,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          bool build_null_mask,
                                          concatenate_null_policy null_policy,
                                          device_span<size_type const> row_null_counts,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // outgoing offsets.
@@ -148,7 +148,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
 }
 
 rmm::device_uvector<size_type> generate_null_counts(table_device_view const& input,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   rmm::device_uvector<size_type> null_counts(input.num_rows(), stream);
 
@@ -187,7 +187,7 @@ rmm::device_uvector<size_type> generate_null_counts(table_device_view const& inp
  */
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.num_columns() > 0, "The input table must have at least one column.");
@@ -304,7 +304,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
  */
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

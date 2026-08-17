@@ -14,7 +14,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -88,7 +88,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<int const> dictionary_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
  public:
   /**
@@ -216,7 +216,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<cudf::size_type const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Get the bloom filter byte ranges, one per column chunk with equality predicate
@@ -278,7 +278,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<cudf::size_type const> dictionary_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Filter the row groups using bloom filters based on predicate filter
@@ -298,7 +298,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<cudf::size_type const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Builds a row mask with all rows set to true
@@ -311,7 +311,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    */
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     std::span<std::vector<size_type> const> row_group_indices,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -333,7 +333,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<cudf::data_type const> output_dtypes,
     std::span<cudf::size_type const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -360,7 +360,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<std::vector<size_type> const> row_group_indices,
     std::span<input_column_info const> input_columns,
     cudf::size_type row_mask_offset,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 };
 
 /**

@@ -26,6 +26,7 @@ classifiers = [
     "Environment :: GPU :: NVIDIA CUDA",
 ]
 dependencies = [
+    "cuda-toolkit[nvrtc]==13.*",
     "libkvikio==26.10.*,>=0.0.0a0",
     "librmm==26.10.*,>=0.0.0a0",
     "nvidia-libnvcomp==5.3.0.16",
@@ -70,6 +71,7 @@ dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [
     "cmake>=4.0",
+    "cuda-toolkit[nvrtc]==13.*",
     "libkvikio==26.10.*,>=0.0.0a0",
     "librmm==26.10.*,>=0.0.0a0",
     "ninja",

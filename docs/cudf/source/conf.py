@@ -419,10 +419,13 @@ _names_to_skip_in_pylibcudf = {
     "size_type",
     "size_t",
     "type_id",
+    "null_policy",
+    "nan_policy",
     # Unknown base types
     "int32_t",
     "uint64_t",
     "void",
+    "double",
 }
 
 

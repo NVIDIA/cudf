@@ -4414,9 +4414,12 @@ void filter_unary_operation_typed_test()
     filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, not_expr1, expr2);
     ref_filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, ref_not_expr1, ref_expr2);
-    // For signed numeric types, RGs 1,2,3 pass. Otherwise, RGs 2,3 pass
+    // For signed numeric types, RGs 1,2,3 pass. Otherwise, RGs 2,3 pass.
+    // Floating point columns are the exception: `NOT(col0 < 100)` cannot be rewritten as
+    // `col0 >= 100` for them, because every ordered comparison against a `NaN` is false, so the
+    // negated comparison is relaxed and the disjunction keeps every row group
     auto constexpr expected_filtered_row_groups_with_unary_or =
-      (cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2;
+      cudf::is_floating_point<T>() ? 4 : ((cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2);
     test_predicate_pushdown(filter_expression,
                             ref_filter,
                             expected_total_row_groups,

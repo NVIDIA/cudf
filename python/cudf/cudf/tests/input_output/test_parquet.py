@@ -4721,6 +4721,123 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     )
 
 
+def test_parquet_negated_ordering_with_nan_stats(tmp_path):
+    """`NOT(col < v)` must not be rewritten to `col >= v` for a float column.
+
+    IEEE-754 makes every ordered comparison against NaN false, so a NaN row satisfies
+    `NOT(col < v)` while `col >= v` is false for it. Arrow writes min/max that merely
+    *exclude* NaN (cudf's own writer drops min/max entirely, per PARQUET-1246), so a row
+    group holding NaN still has usable statistics and would be wrongly pruned.
+    """
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    # One row group per 3 rows. The first holds NaN alongside small values, so its
+    # statistics are min=1.0/max=2.0 and `vmax >= 50` is false for it.
+    values = [float("nan"), 1.0, 2.0] + [100.0, 200.0, 300.0]
+    path = tmp_path / "nan_ordering.parquet"
+    pq.write_table(pa.table({"x": values}), path, row_group_size=3)
+
+    # Sanity check the fixture actually reproduces the Arrow statistics behaviour
+    stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
+    assert stats.has_min_max and stats.min == 1.0 and stats.max == 2.0
+
+    col = ColumnNameReference("x")
+    lit = Literal(plc.Scalar.from_arrow(pa.scalar(50.0)))
+    filter_expr = Operation(
+        ASTOperator.NOT, Operation(ASTOperator.LESS, col, lit)
+    )
+
+    source = plc.io.SourceInfo([str(path)])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_filter(filter_expr)
+    got = plc.io.parquet.read_parquet(options).tbl.to_arrow().column(0).to_pylist()
+
+    # NOT(x < 50) is true for NaN and for 100/200/300, and false for 1.0/2.0
+    assert len(got) == 4
+    assert math.isnan(got[0])
+    assert got[1:] == [100.0, 200.0, 300.0]
+
+
+@pytest.mark.parametrize(
+    "bloom_filter_fname",
+    [
+        "mixed_card_ndv_100_bf_fpp0.1_nostats.snappy.parquet",
+        "mixed_card_ndv_500_bf_fpp0.1_nostats.snappy.parquet",
+    ],
+)
+def test_parquet_bloom_filter_negated_equality(datadir, bloom_filter_fname):
+    """Negated equality predicates must prune identically to their rewrites"""
+
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    fname = datadir / bloom_filter_fname
+    needle = Literal(plc.Scalar.from_arrow(pa.scalar("FINDME")))
+
+    def read_with(filter_expr):
+        source = plc.io.SourceInfo([str(fname)])
+        options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+        options.set_filter(filter_expr)
+        return plc.io.parquet.read_parquet(options)
+
+    def assert_equivalent(lhs, rhs):
+        lhs_result = read_with(lhs)
+        rhs_result = read_with(rhs)
+        assert_eq(
+            lhs_result.num_row_groups_after_bloom_filter,
+            rhs_result.num_row_groups_after_bloom_filter,
+        )
+        assert_arrow_table_equal(
+            lhs_result.tbl.to_arrow(), rhs_result.tbl.to_arrow()
+        )
+        return lhs_result
+
+    str_col = ColumnNameReference("str")
+    str_eq = Operation(ASTOperator.EQUAL, str_col, needle)
+    str_ne = Operation(ASTOperator.NOT_EQUAL, str_col, needle)
+
+    negated_equality = assert_equivalent(
+        Operation(ASTOperator.NOT, str_eq),
+        str_ne,
+    )
+    # 998 of the 1000 rows are not "FINDME".
+    assert_eq(negated_equality.tbl.num_rows(), 998)
+
+    assert_equivalent(
+        Operation(ASTOperator.NOT, str_ne),
+        str_eq,
+    )
+
+    fp64_col = ColumnNameReference("fp64")
+    fp64_needle = Literal(plc.Scalar.from_arrow(pa.scalar(500.0)))
+    assert_equivalent(
+        Operation(
+            ASTOperator.NOT,
+            Operation(
+                ASTOperator.LOGICAL_AND,
+                str_ne,
+                Operation(ASTOperator.NOT_EQUAL, fp64_col, fp64_needle),
+            ),
+        ),
+        Operation(
+            ASTOperator.LOGICAL_OR,
+            str_eq,
+            Operation(ASTOperator.EQUAL, fp64_col, fp64_needle),
+        ),
+    )
+
+
 @pytest.mark.skipif(
     pa.__version__ == "19.0.0",
     reason="https://github.com/apache/arrow/issues/45283, https://github.com/NVIDIA/cudf/issues/17806",

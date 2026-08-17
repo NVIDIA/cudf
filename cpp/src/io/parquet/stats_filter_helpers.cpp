@@ -89,16 +89,25 @@ std::pair<thrust::host_vector<bool>, bool> stats_columns_collector::get_stats_co
   return {std::move(_columns_mask), _has_is_null_operator};
 }
 
-stats_expression_converter::stats_expression_converter(ast::expression const& expr,
-                                                       size_type num_columns,
-                                                       bool has_is_null_operator,
-                                                       cuda::stream_ref stream)
-  : _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
+stats_expression_converter::stats_expression_converter(
+  ast::expression const& expr,
+  cudf::host_span<cudf::data_type const> output_dtypes,
+  bool has_is_null_operator,
+  cuda::stream_ref stream)
+  : _output_dtypes{output_dtypes},
+    _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
     _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
 {
   _stats_cols_per_column = has_is_null_operator ? 3 : 2;
-  _num_columns           = num_columns;
+  _num_columns           = static_cast<size_type>(output_dtypes.size());
   expr.accept(*this);
+}
+
+bool stats_expression_converter::can_negate_ordering(ast::column_reference const& col_ref) const
+{
+  auto const col_idx = col_ref.get_column_index();
+  if (std::cmp_greater_equal(col_idx, _output_dtypes.size())) { return false; }
+  return not cudf::is_floating_point(_output_dtypes[col_idx]);
 }
 
 std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
@@ -158,8 +167,12 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             auto const rhs_kind        = binary_operands.rhs_type;
 
             // For NOT(col op lit) negate the operator if negatable and visit the negated operation
-            // directly
-            if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
+            // directly. Equality is always exact, but an ordering comparison is only exact when the
+            // column cannot hold a `NaN` - see `can_negate_ordering()`
+            auto const is_equality =
+              child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
+            if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL and
+                (is_equality or can_negate_ordering(*binary_operands.col_ref))) {
               auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
               if (negated_op.has_value()) {
                 auto const& child_operands = child_operation->get_operands();

@@ -150,7 +150,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
   // Converts AST to StatsAST with reference to min, max columns in above `stats_table`.
   stats_expression_converter const stats_expr{
-    filter.get(), static_cast<size_type>(output_dtypes.size()), has_is_null_operator, stream};
+    filter.get(), output_dtypes, has_is_null_operator, stream};
 
   // Filter stats table with StatsAST expression and collect filtered row group indices
   return collect_filtered_row_group_indices(

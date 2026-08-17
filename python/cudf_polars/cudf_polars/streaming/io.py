@@ -13,10 +13,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, overload
 
+import nvtx
+
 import polars as pl
 
 import pylibcudf as plc
+from rmm import DeviceBuffer
 
+from cudf_polars.containers import Column, DataFrame
 from cudf_polars.dsl.ir import (
     IR,
     DataFrameScan,
@@ -24,8 +28,10 @@ from cudf_polars.dsl.ir import (
     PythonScan,
     Scan,
     Sink,
+    _prepare_parquet_predicate,
 )
-from cudf_polars.dsl.tracing import nvtx_annotate_cudf_polars
+from cudf_polars.dsl.to_ast import to_parquet_filter
+from cudf_polars.dsl.tracing import CUDF_POLARS_NVTX_DOMAIN, nvtx_annotate_cudf_polars
 from cudf_polars.streaming.base import (
     IOPartitionFlavor,
     IOPartitionPlan,
@@ -40,7 +46,12 @@ from cudf_polars.utils.versions import POLARS_VERSION_LT_137
 if TYPE_CHECKING:
     from collections.abc import Hashable, MutableMapping, Sequence
 
-    from cudf_polars.containers import DataFrame, DataType
+    from kvikio.cufile import IOFuture
+
+    import pylibcudf.expressions as plc_expr
+    from rmm.pylibrmm.stream import Stream
+
+    from cudf_polars.containers import DataType
     from cudf_polars.dsl.expr import NamedExpr
     from cudf_polars.dsl.ir import CachedParquetInfo, IRExecutionContext
     from cudf_polars.streaming.base import (
@@ -49,6 +60,7 @@ if TYPE_CHECKING:
         StatsCollector,
     )
     from cudf_polars.streaming.dispatch import LowerIRTransformer
+    from cudf_polars.streaming.prefetch import PinnedBuffer
     from cudf_polars.typing import Schema
     from cudf_polars.utils.config import (
         ConfigOptions,
@@ -81,6 +93,13 @@ def scan_partition_plan(
     """Extract the partitioning plan of a Scan operation."""
     if ir.typ == "parquet":
         blocksize: int = config_options.executor.target_partition_size
+        single_file = len(ir.paths) == 1
+        # A single file always uses SplitScan when hybrid scan is enabled, so the
+        # hybrid reader can be used on it even when it would otherwise not split.
+        # The split factor is still size-based, so a large file is split into many.
+        hybrid_single_file = (
+            single_file and config_options.parquet_options.use_hybrid_scan
+        )
         if source := stats.scan_stats.get(ir):
             column_sizes = [
                 sz
@@ -97,12 +116,18 @@ def scan_partition_plan(
                         <= abs(file_size / k_hi - blocksize)
                         else k_hi
                     )
-                    if factor >= 2:
+                    if factor >= 2 or hybrid_single_file:
                         return IOPartitionPlan(
                             factor,
                             IOPartitionFlavor.SPLIT_FILES,
                             estimated_chunk_bytes=file_size // factor,
                         )
+                elif hybrid_single_file:
+                    return IOPartitionPlan(
+                        1,
+                        IOPartitionFlavor.SPLIT_FILES,
+                        estimated_chunk_bytes=file_size,
+                    )
                 else:
                     k_lo = min(blocksize // int(file_size), len(ir.paths))
                     k_hi = k_lo + 1
@@ -118,6 +143,9 @@ def scan_partition_plan(
                     IOPartitionFlavor.FUSED_FILES,
                     estimated_chunk_bytes=file_size * factor,
                 )
+
+        if hybrid_single_file:
+            return IOPartitionPlan(1, IOPartitionFlavor.SPLIT_FILES)
 
     # TODO: Use file sizes for csv and json
     return IOPartitionPlan(1, IOPartitionFlavor.SINGLE_FILE)
@@ -181,6 +209,272 @@ def expand_scan_for_rank(
         )
 
 
+@dataclasses.dataclass
+class PrefetchedByteRanges:
+    """Prefetched byte ranges and pinned host buffers for a single scan task."""
+
+    row_group_indices: list[int]
+    filter_ranges: list[plc.io.text.ByteRangeInfo]
+    payload_ranges: list[plc.io.text.ByteRangeInfo]
+    filter_host: memoryview | None
+    payload_host: memoryview | None
+    filter_futures: list[IOFuture] = dataclasses.field(
+        default_factory=list, compare=False, repr=False
+    )
+    payload_futures: list[IOFuture] = dataclasses.field(
+        default_factory=list, compare=False, repr=False
+    )
+    filter_buf: PinnedBuffer | None = dataclasses.field(
+        default=None, compare=False, repr=False
+    )
+    payload_buf: PinnedBuffer | None = dataclasses.field(
+        default=None, compare=False, repr=False
+    )
+
+    @classmethod
+    def empty(cls) -> PrefetchedByteRanges:
+        """Return a fully-pruned split with no rows to read."""
+        return cls(
+            row_group_indices=[],
+            filter_ranges=[],
+            payload_ranges=[],
+            filter_host=None,
+            payload_host=None,
+        )
+
+    def release(self) -> None:
+        """Release pinned host memory reservations after the H2D copy completes."""
+        self.filter_buf = None
+        self.payload_buf = None
+
+
+def _fetch_byte_ranges(
+    source_info: plc.io.SourceInfo,
+    byte_ranges: list[plc.io.text.ByteRangeInfo],
+    stream: Stream,
+) -> list[plc.gpumemoryview]:
+    return plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+        source_info, byte_ranges, stream=stream
+    )
+
+
+def copy_host_ranges_to_device(
+    host: memoryview,
+    ranges: list[plc.io.text.ByteRangeInfo],
+    futures: list[IOFuture],
+    stream: Stream,
+    *,
+    base_scan_id: int = 0,
+    split_index: int = 0,
+    total_splits: int = 1,
+    label: str = "",
+) -> list[plc.gpumemoryview]:
+    """Wait for in-flight S3 reads then copy pinned host ranges to device."""
+    total = sum(r.size for r in ranges)
+    if not total:
+        return []
+    rng = nvtx.start_range("copy_host_ranges_to_device", domain=CUDF_POLARS_NVTX_DOMAIN)
+    with nvtx_annotate_cudf_polars(
+        message=f"pread_ranges:wait:{label}" if label else "pread_ranges:wait",
+        payload=(base_scan_id, split_index + 1, total_splits, total),
+    ):
+        for f in futures:
+            f.get()
+    # TODO: Reserve device memory via rapidsmpf before allocating.
+    buf = DeviceBuffer(size=total)
+    buf.copy_from_host(host[:total], stream=stream)
+    gv = plc.gpumemoryview(buf)
+    result = []
+    offset = 0
+    for r in ranges:
+        result.append(gv.byte_slice(slice(offset, offset + r.size)))
+        offset += r.size
+    nvtx.end_range(rng)
+    return result
+
+
+def _read_with_hybrid_scan(
+    schema: Schema,
+    paths: list[str],
+    with_columns: list[str] | None,
+    plc_filter: plc_expr.Expression,
+    row_group_indices: list[int],
+    stream: Stream,
+    cached_info: CachedParquetInfo,
+    base_scan_id: int,
+    *,
+    split_index: int = 0,
+    total_splits: int = 1,
+    stats_pruning: bool = True,
+    prefetched: PrefetchedByteRanges | None = None,
+) -> DataFrame:
+    """Two-pass parquet read via HybridScanReader for a row-group-aligned split."""
+    assert plc_filter is not None
+    assert len(paths) == 1, (
+        "hybrid scan only supported for SplitScan; one physical file"
+    )
+    with nvtx_annotate_cudf_polars(
+        message="HybridScan", payload=(split_index + 1, total_splits)
+    ):
+        source_info = plc.io.SourceInfo(
+            [plc.io.types.FilepathSource(cached_info.path, cached_info.size)]
+        )
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(source_info)
+            .decimal_width(plc.TypeId.DECIMAL128)
+            .build()
+        )
+        if with_columns is not None:
+            options.set_column_names(with_columns)
+        options.set_filter(plc_filter)
+
+        reader = cached_info.hybrid_scan_reader(options)
+
+        if stats_pruning:
+            row_group_indices = reader.filter_row_groups_with_stats(
+                row_group_indices, options, stream=stream
+            )
+
+            if row_group_indices:
+                bloom_ranges, _ = reader.secondary_filters_byte_ranges(
+                    row_group_indices, options
+                )
+                if bloom_ranges:
+                    bloom_chunks = _fetch_byte_ranges(source_info, bloom_ranges, stream)
+                    row_group_indices = reader.filter_row_groups_with_bloom_filters(
+                        bloom_chunks, row_group_indices, options, stream=stream
+                    )
+
+        if not row_group_indices:
+            col_names = with_columns if with_columns is not None else list(schema)
+            return DataFrame(
+                [
+                    Column(
+                        plc.column_factories.make_empty_column(
+                            schema[name].plc_type, stream=stream
+                        ),
+                        dtype=schema[name],
+                        name=name,
+                    )
+                    for name in col_names
+                ],
+                stream=stream,
+            )
+
+        # TODO: Consider implementing page-index stats pruning. For SplitScans, we can
+        # reuse the same page index for all splits of the same file, so the overhead of
+        # reading the page index can be amortized. For FusedScans, we would need to read
+        # the page index for all files, which may be too expensive.
+        row_mask = reader.build_all_true_row_mask(row_group_indices, stream=stream)
+
+        if prefetched is not None and prefetched.filter_host is not None:
+            filter_chunks = copy_host_ranges_to_device(
+                prefetched.filter_host,
+                prefetched.filter_ranges,
+                prefetched.filter_futures,
+                stream,
+                base_scan_id=base_scan_id,
+                split_index=split_index,
+                total_splits=total_splits,
+                label="filter",
+            )
+        else:
+            filter_chunks = _fetch_byte_ranges(
+                source_info,
+                reader.filter_column_chunks_byte_ranges(row_group_indices, options),
+                stream,
+            )
+        filter_tbl_w_meta = reader.materialize_filter_columns(
+            row_group_indices,
+            filter_chunks,
+            row_mask,
+            plc.io.experimental.UseDataPageMask.YES,
+            options,
+            stream=stream,
+        )
+
+        if prefetched is not None and prefetched.payload_host is not None:
+            payload_chunks = copy_host_ranges_to_device(
+                prefetched.payload_host,
+                prefetched.payload_ranges,
+                prefetched.payload_futures,
+                stream,
+                base_scan_id=base_scan_id,
+                split_index=split_index,
+                total_splits=total_splits,
+                label="payload",
+            )
+        else:
+            payload_chunks = _fetch_byte_ranges(
+                source_info,
+                reader.payload_column_chunks_byte_ranges(row_group_indices, options),
+                stream,
+            )
+        payload_tbl_w_meta = reader.materialize_payload_columns(
+            row_group_indices,
+            payload_chunks,
+            row_mask,
+            plc.io.experimental.UseDataPageMask.YES,
+            options,
+            stream=stream,
+        )
+
+        filter_names = filter_tbl_w_meta.column_names(include_children=False)
+        payload_names = payload_tbl_w_meta.column_names(include_children=False)
+        filter_df = DataFrame.from_table(
+            filter_tbl_w_meta.tbl,
+            filter_names,
+            [schema[n] for n in filter_names],
+            stream=stream,
+        )
+        payload_df = DataFrame.from_table(
+            payload_tbl_w_meta.tbl,
+            payload_names,
+            [schema[n] for n in payload_names],
+            stream=stream,
+        )
+        stream.synchronize()
+        if prefetched is not None:
+            prefetched.release()
+        return DataFrame(
+            [*filter_df.columns, *payload_df.columns], stream=stream
+        ).select(list(schema.keys()))
+
+
+def _evaluate_with_prefetch(
+    scan: SplitScan,
+    prefetched: PrefetchedByteRanges,
+    *,
+    context: IRExecutionContext,
+) -> DataFrame:
+    """Evaluate a SplitScan using already-prefetched I/O results."""
+    stream = context.get_cuda_stream()
+    predicate = scan.base_scan.predicate
+    assert predicate is not None
+    plc_filter = to_parquet_filter(
+        _prepare_parquet_predicate(
+            predicate.value, scan.paths, scan.schema, scan.base_scan.with_columns
+        ),
+        stream=stream,
+    )
+    assert plc_filter is not None
+    assert scan.cached_parquet_info is not None
+    return _read_with_hybrid_scan(
+        scan.schema,
+        scan.paths,
+        scan.base_scan.with_columns,
+        plc_filter,
+        prefetched.row_group_indices,
+        stream,
+        scan.cached_parquet_info[0],
+        id(scan.base_scan),
+        split_index=scan.split_index,
+        total_splits=scan.total_splits,
+        stats_pruning=False,
+        prefetched=prefetched,
+    )
+
+
 class SplitScan(IR):
     """
     Input from a split file.
@@ -208,7 +502,7 @@ class SplitScan(IR):
         "total_splits",
         "parquet_options",
     )
-    _n_non_child_args = 13
+    _n_non_child_args = 15
     base_scan: Scan
     """Scan operation this node is based on."""
     paths: list[str]
@@ -250,6 +544,7 @@ class SplitScan(IR):
             base_scan.include_file_paths,
             base_scan.predicate,
             parquet_options,
+            id(base_scan),
             cached_parquet_info,
         )
         self.parquet_options = parquet_options
@@ -288,6 +583,7 @@ class SplitScan(IR):
         include_file_paths: str | None,
         predicate: NamedExpr | None,
         parquet_options: ParquetOptions,
+        base_scan_id: int,
         cached_parquet_info: list[CachedParquetInfo] | None,
         *,
         context: IRExecutionContext,
@@ -336,6 +632,44 @@ class SplitScan(IR):
             skip_rgs = rg_stride * split_index
             skip_rows = sum(row_group_num_rows[:skip_rgs])
             n_rows = sum(row_group_num_rows[skip_rgs : skip_rgs + rg_stride])
+            # Hybrid scan reads through the prefetched, shared file metadata, so
+            # it is only used when footer prefetching is enabled.
+            # TODO: Investigate re-enabling for some of the excluded paths
+            # (row_index / include_file_paths). Needs performance investigation.
+            if (
+                parquet_options.use_hybrid_scan
+                and cached_parquet_info is not None
+                and row_index is None
+                and include_file_paths is None
+                and predicate is not None
+            ):
+                stream = context.get_cuda_stream()
+                plc_filter = to_parquet_filter(
+                    _prepare_parquet_predicate(
+                        predicate.value, paths, schema, with_columns
+                    ),
+                    stream=stream,
+                )
+                if plc_filter is not None:
+                    end_rg = (
+                        total_row_groups
+                        if split_index == total_splits - 1
+                        else skip_rgs + rg_stride
+                    )
+                    return _read_with_hybrid_scan(
+                        schema,
+                        paths,
+                        with_columns,
+                        plc_filter,
+                        list(range(skip_rgs, end_rg)),
+                        stream,
+                        cached_parquet_info[0],
+                        base_scan_id,
+                        split_index=split_index,
+                        total_splits=total_splits,
+                        stats_pruning=parquet_options._hybrid_scan_stats_pruning,
+                    )
+
         else:
             # There are not enough row-groups to align
             # all "total_splits" of our reads with row-group

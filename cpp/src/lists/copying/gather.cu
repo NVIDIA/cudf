@@ -8,9 +8,8 @@
 #include <cudf/lists/detail/gather.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 
@@ -80,7 +79,7 @@ struct list_gatherer {
  */
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // gather map iterator for this level (N)
@@ -109,7 +108,7 @@ std::unique_ptr<column> gather_list_leaf(column_view const& column,
  */
 std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
                                            gather_data& gd,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   // gather map iterator for this level (N)

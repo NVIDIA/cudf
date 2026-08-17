@@ -93,12 +93,11 @@ struct contains_scalar_dispatch {
     // In addition, haystack and needle structure compatibility will be checked later on by
     // constructor of the table comparator.
 
-    auto const haystack_tv = table_view{{haystack}};
-    auto const temp_mr     = cudf::get_current_device_resource_ref();
-    auto const needle_as_col =
-      make_column_from_scalar(needle, 1, stream, cudf::get_current_device_resource_ref());
-    auto const needle_tv = table_view{{needle_as_col->view()}};
-    auto const has_nulls = has_nested_nulls(haystack_tv) || has_nested_nulls(needle_tv);
+    auto const haystack_tv   = table_view{{haystack}};
+    auto const temp_mr       = cudf::get_current_device_resource_ref();
+    auto const needle_as_col = make_column_from_scalar(needle, 1, stream, temp_mr);
+    auto const needle_tv     = table_view{{needle_as_col->view()}};
+    auto const has_nulls     = has_nested_nulls(haystack_tv) || has_nested_nulls(needle_tv);
 
     auto const comparator =
       cudf::detail::row::equality::two_table_comparator(haystack_tv, needle_tv, stream, temp_mr);

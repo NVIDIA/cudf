@@ -1787,7 +1787,8 @@ aggregate_reader_metadata::select_row_groups(
                    });
 
     // Set the current span of row group indices to the vector of all row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(all_row_group_indices);
+    current_row_group_indices = host_span<std::vector<size_type> const>{
+      all_row_group_indices.data(), all_row_group_indices.size()};
   }
   // Otherwise, set the current span of row group indices to the specified input row group indices
   else {
@@ -1816,7 +1817,8 @@ aggregate_reader_metadata::select_row_groups(
       apply_row_bounds_filter(current_row_group_indices, rows_to_skip, rows_to_read);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
+    current_row_group_indices = host_span<std::vector<size_type> const>{
+      trimmed_row_group_indices.data(), trimmed_row_group_indices.size()};
   }
 
   // Flag to check if the row groups will be filtered using byte bounds
@@ -1835,7 +1837,8 @@ aggregate_reader_metadata::select_row_groups(
       apply_byte_bounds_filter(current_row_group_indices, skip_bytes_opt, byte_count_opt);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
+    current_row_group_indices = host_span<std::vector<size_type> const>{
+      trimmed_row_group_indices.data(), trimmed_row_group_indices.size()};
   }
 
   // Compute number of input row groups after row or byte bounds trimming
@@ -1863,8 +1866,9 @@ aggregate_reader_metadata::select_row_groups(
     // rows to skip relative to the first surviving row group
     if (filtered_row_group_indices.has_value()) {
       // Update the current span of row group indices
+      auto const& filtered_indices = filtered_row_group_indices.value();
       current_row_group_indices =
-        host_span<std::vector<size_type> const>(filtered_row_group_indices.value());
+        host_span<std::vector<size_type> const>{filtered_indices.data(), filtered_indices.size()};
 
       // Only need to update the rows to skip relative to the first surviving row group
       // if row bounds were previously applied

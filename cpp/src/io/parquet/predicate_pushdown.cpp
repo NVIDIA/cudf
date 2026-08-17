@@ -189,7 +189,8 @@ aggregate_reader_metadata::filter_row_groups(
   // Span of row groups to apply bloom filtering on.
   auto const bloom_filter_input_row_groups =
     stats_filtered_row_groups.has_value()
-      ? host_span<std::vector<size_type> const>(stats_filtered_row_groups.value())
+      ? host_span<std::vector<size_type> const>{stats_filtered_row_groups.value().data(),
+                                                stats_filtered_row_groups.value().size()}
       : input_row_group_indices;
 
   // Collect equality literals for each input table column for bloom filtering

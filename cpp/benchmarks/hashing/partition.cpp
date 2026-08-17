@@ -209,13 +209,13 @@ void bench_hash_partition_analytic(nvbench::state& state, nvbench::type_list<Key
 /**
  * @brief Measure partition-count scaling for a fixed table.
  *
- * The input contains one INT64 key, eight INT64 payload columns, and 2^23 rows.
+ * The input contains one INT64 key, eight INT64 payload columns, and 2^26 rows.
  *
  * @param state Benchmark state
  */
 void bench_hash_partition_partition_count(nvbench::state& state)
 {
-  auto const num_rows       = cudf::size_type{1} << 23;
+  auto const num_rows       = cudf::size_type{1} << 26;
   auto const num_partitions = get_size_type_axis(state, "num_partitions");
 
   auto input = make_input_table(std::array{cudf::type_id::INT64},

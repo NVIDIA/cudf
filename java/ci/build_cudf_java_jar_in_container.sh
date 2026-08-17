@@ -117,12 +117,6 @@ cd "${REPO_ROOT}/java"
 
 CUDF_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout "${BUILD_ARG[@]}")"
 
-# TEMPORARY (revert with the pr.yaml change): force the release-tag path for the
-# manual release. Set here rather than as a job-level `env:` because GHA
-# silently ignores that override.
-# rapids-pre-commit-hooks: disable-next-line[verify-hardcoded-version]
-export GITHUB_REF=refs/tags/v26.08.00
-
 # Release tag builds strip -SNAPSHOT and rewrite the POM so packaged artifacts
 # carry the release version. Non-release builds keep -SNAPSHOT.
 if rapids-is-release-build; then

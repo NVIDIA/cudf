@@ -320,7 +320,8 @@ struct same_column_type_dispatcher {
   static constexpr bool is_supported()
   {
     return !(cudf::is_dictionary<ElementType>() || std::is_same_v<ElementType, cudf::list_view> ||
-             std::is_same_v<ElementType, cudf::struct_view>);
+             std::is_same_v<ElementType, cudf::struct_view> ||
+             std::is_same_v<ElementType, cudf::binary_view>);
   }
 
  public:

@@ -38,7 +38,8 @@ struct find_index_fn {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(not std::is_same_v<Element, dictionary32> and
-             not std::is_same_v<Element, list_view> and not std::is_same_v<Element, struct_view>)
+             not std::is_same_v<Element, binary_view> and not std::is_same_v<Element, list_view> and
+             not std::is_same_v<Element, struct_view>)
   {
     auto const num_keys = input.keys_size();
     if (!key.is_valid(stream) || num_keys == 0) {
@@ -72,11 +73,10 @@ struct find_index_fn {
                                      scalar const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(std::is_same_v<Element, dictionary32> or std::is_same_v<Element, list_view> or
-             std::is_same_v<Element, struct_view>)
+    requires(std::is_same_v<Element, binary_view> or std::is_same_v<Element, dictionary32> or
+             std::is_same_v<Element, list_view> or std::is_same_v<Element, struct_view>)
   {
-    CUDF_FAIL(
-      "dictionary, list_view, and struct_view columns cannot be the keys column of a dictionary");
+    CUDF_FAIL("BINARY, dictionary, LIST, and STRUCT columns cannot currently be dictionary keys");
   }
 };
 

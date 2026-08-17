@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/hash_functions.cuh>
@@ -64,6 +65,14 @@ XXHash_32<double>::result_type __device__ inline XXHash_32<double>::operator()(
 template <>
 XXHash_32<cudf::string_view>::result_type __device__ inline XXHash_32<cudf::string_view>::
 operator()(cudf::string_view const& key) const
+{
+  return this->compute_bytes(reinterpret_cast<cuda::std::byte const*>(key.data()),
+                             key.size_bytes());
+}
+
+template <>
+XXHash_32<cudf::binary_view>::result_type __device__ inline XXHash_32<cudf::binary_view>::
+operator()(cudf::binary_view const& key) const
 {
   return this->compute_bytes(reinterpret_cast<cuda::std::byte const*>(key.data()),
                              key.size_bytes());

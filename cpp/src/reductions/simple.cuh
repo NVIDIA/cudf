@@ -270,7 +270,8 @@ struct same_element_type_dispatcher {
   template <typename ElementType>
   static constexpr bool is_supported()
   {
-    return !cudf::is_dictionary<ElementType>() && !std::is_same_v<ElementType, void>;
+    return !cudf::is_dictionary<ElementType>() &&
+           !std::is_same_v<ElementType, cudf::binary_view> && !std::is_same_v<ElementType, void>;
   }
 
   template <typename IndexType>

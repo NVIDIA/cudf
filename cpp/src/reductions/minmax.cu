@@ -174,7 +174,7 @@ struct minmax_dictionary_functor {
   static constexpr bool is_supported()
   {
     return !cudf::is_dictionary<T>() && !std::is_same_v<T, cudf::list_view> &&
-           !std::is_same_v<T, cudf::struct_view>;
+           !std::is_same_v<T, cudf::struct_view> && !std::is_same_v<T, cudf::binary_view>;
   }
 
   template <typename T>
@@ -225,7 +225,8 @@ struct minmax_functor {
   template <typename T>
   static constexpr bool is_supported()
   {
-    return !(std::is_same_v<T, cudf::list_view> || std::is_same_v<T, cudf::struct_view>);
+    return !(std::is_same_v<T, cudf::list_view> || std::is_same_v<T, cudf::struct_view> ||
+             std::is_same_v<T, cudf::binary_view>);
   }
 
   template <typename T>

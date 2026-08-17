@@ -68,7 +68,7 @@ static constexpr bool is_group_scan_supported()
   else if (K == aggregation::PRODUCT)
     return cudf::is_numeric<T>();
   else if (K == aggregation::MIN or K == aggregation::MAX)
-    return not cudf::is_dictionary<T>() and
+    return not cudf::is_dictionary<T>() and not std::is_same_v<T, cudf::binary_view> and
            (is_relationally_comparable<T, T>() or std::is_same_v<T, cudf::struct_view>);
   else
     return false;

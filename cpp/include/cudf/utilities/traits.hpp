@@ -599,6 +599,7 @@ CUDF_HOST_DEVICE constexpr inline bool is_fixed_width()
  */
 bool is_fixed_width(data_type type);
 
+class binary_view;
 class string_view;
 
 /**
@@ -616,7 +617,8 @@ class string_view;
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_compound()
 {
-  return cuda::std::is_same_v<T, cudf::string_view> or
+  return cuda::std::is_same_v<T, cudf::binary_view> or
+         cuda::std::is_same_v<T, cudf::string_view> or
          cuda::std::is_same_v<T, cudf::dictionary32> or cuda::std::is_same_v<T, cudf::list_view> or
          cuda::std::is_same_v<T, cudf::struct_view>;
 }

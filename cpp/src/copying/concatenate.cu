@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/binary/binary_column_factories.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/concatenate.hpp>
@@ -27,6 +28,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
@@ -358,6 +360,41 @@ template <>
 std::unique_ptr<column> concatenate_dispatch::operator()<cudf::string_view>()
 {
   return cudf::strings::detail::concatenate(views, stream, mr);
+}
+
+template <>
+std::unique_ptr<column> concatenate_dispatch::operator()<cudf::binary_view>()
+{
+  auto const row_count = std::accumulate(
+    views.begin(), views.end(), size_type{0}, [](size_type total, column_view const& view) {
+      return total + view.size();
+    });
+  if (row_count == 0) { return make_empty_binary_column(); }
+
+  auto values        = rmm::device_uvector<binary_view>(row_count, stream, mr);
+  size_type position = 0;
+  for (auto const& view : views) {
+    if (view.is_empty()) { continue; }
+    auto device_view     = column_device_view::create(view, stream);
+    auto const has_nulls = view.has_nulls();
+    auto input           = cuda::counting_iterator<size_type>{0};
+    thrust::transform(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      input,
+      input + view.size(),
+      values.begin() + position,
+      [column = *device_view, has_nulls] __device__(size_type index) {
+        if (has_nulls && column.is_null(index)) { return binary_view{}; }
+        auto const value = column.element<binary_view>(index);
+        auto const data  = value.data() == nullptr && value.empty()
+                             ? reinterpret_cast<uint8_t const*>(1)
+                             : value.data();
+        return binary_view{data, value.size_bytes()};
+      });
+    position += view.size();
+  }
+  return make_binary_column(
+    device_span<binary_view const>{values}, binary_view{}, stream, mr);
 }
 
 template <>

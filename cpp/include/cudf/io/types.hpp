@@ -961,12 +961,20 @@ struct partition_info {
 };
 
 /**
- * @brief schema element for reader
- *
+ * @brief Output representation for Parquet byte-array data.
+ */
+enum class byte_array_output_type : int8_t {
+  DEFAULT,     ///< Use the file schema: annotated text becomes STRING, otherwise BINARY
+  BINARY,      ///< Return a BINARY column
+  STRING,      ///< Return a STRING column
+  LIST_UINT8,  ///< Return the legacy LIST<UINT8> representation
+};
+
+/**
+ * @brief Schema element for reader output options.
  */
 class reader_column_schema {
-  // Whether to read binary data as a string column
-  bool _convert_binary_to_strings{true};
+  byte_array_output_type _byte_array_output{byte_array_output_type::DEFAULT};
   int32_t _type_length{0};
 
   std::vector<reader_column_schema> children;
@@ -1020,16 +1028,27 @@ class reader_column_schema {
   [[nodiscard]] reader_column_schema const& child(size_type i) const { return children[i]; }
 
   /**
-   * @brief Specifies whether this column should be written as binary or string data
-   * Only valid for the following column types:
-   * string, list<int8>
+   * @brief Compatibility API selecting STRING or legacy LIST<UINT8> output.
    *
-   * @param convert_to_string True = convert binary to strings False = return binary
+   * @param convert_to_string True selects STRING; false selects LIST<UINT8>
    * @return this for chaining
    */
   reader_column_schema& set_convert_binary_to_strings(bool convert_to_string)
   {
-    _convert_binary_to_strings = convert_to_string;
+    _byte_array_output =
+      convert_to_string ? byte_array_output_type::STRING : byte_array_output_type::LIST_UINT8;
+    return *this;
+  }
+
+  /**
+   * @brief Selects the output representation for Parquet byte-array data.
+   *
+   * @param output_type Requested output representation
+   * @return this for chaining
+   */
+  reader_column_schema& set_byte_array_output(byte_array_output_type output_type)
+  {
+    _byte_array_output = output_type;
     return *this;
   }
 
@@ -1046,13 +1065,21 @@ class reader_column_schema {
   }
 
   /**
-   * @brief Get whether to encode this column as binary or string data
+   * @brief Returns whether STRING output was explicitly selected.
    *
-   * @return Boolean indicating whether to encode this column as binary data
+   * @return true when the byte-array output policy is STRING
    */
   [[nodiscard]] bool is_enabled_convert_binary_to_strings() const
   {
-    return _convert_binary_to_strings;
+    return _byte_array_output == byte_array_output_type::STRING;
+  }
+
+  /**
+   * @brief Returns the requested output representation for byte-array data.
+   */
+  [[nodiscard]] byte_array_output_type get_byte_array_output() const
+  {
+    return _byte_array_output;
   }
 
   /**

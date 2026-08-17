@@ -10,6 +10,7 @@
 
 #include "column_buffer.hpp"
 
+#include <cudf/binary/binary_column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -66,7 +67,7 @@ void cudf::io::detail::inline_column_buffer::create_string_data(size_t num_bytes
 namespace {
 
 /**
- * @brief Recursively copy `name`, `user_data`, and `string_as_binary` fields of one buffer to
+ * @brief Recursively copy metadata fields of one buffer to
  * another.
  *
  * @param buff The old output buffer
@@ -75,9 +76,9 @@ namespace {
 template <class string_policy>
 void copy_buffer_data(string_policy const& buff, string_policy& new_buff)
 {
-  new_buff.name             = buff.name;
-  new_buff.user_data        = buff.user_data;
-  new_buff.string_as_binary = buff.string_as_binary;
+  new_buff.name              = buff.name;
+  new_buff.user_data         = buff.user_data;
+  new_buff.byte_array_output = buff.byte_array_output;
   for (auto const& child : buff.children) {
     auto& new_child = new_buff.children.emplace_back(string_policy(child.type, child.is_nullable));
     copy_buffer_data(child, new_child);
@@ -190,50 +191,64 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
     }
     switch (buffer.type.id()) {
       case type_id::STRING: {
-        if (schema.value_or(reader_column_schema{}).is_enabled_convert_binary_to_strings() and
-            not buffer.string_as_binary) {
+        auto const schema_output = schema.has_value() ? schema->get_byte_array_output()
+                                                      : byte_array_output_type::DEFAULT;
+        auto const requested_output = schema_output == byte_array_output_type::DEFAULT
+                                        ? buffer.byte_array_output
+                                        : schema_output;
+        auto const output = requested_output == byte_array_output_type::DEFAULT
+                              ? byte_array_output_type::STRING
+                              : requested_output;
+        if (output == byte_array_output_type::STRING) {
           if (schema_info != nullptr) { schema_info->children.emplace_back("offsets"); }
 
-          // make_strings_column allocates new memory, it does not simply move
-          // from the inputs, so we need to pass it the memory resource given to
-          // the buffer on construction so that the memory is allocated using the
-          // resource that the calling code expected.
           return buffer.make_string_column(stream);
-        } else {
-          // convert to binary
-          auto const string_col = buffer.make_string_column(stream);
-          auto const num_rows   = string_col->size();
-          auto const null_count = string_col->null_count();
-          auto col_content      = string_col->release();
+        }
 
-          // convert to uint8 column, strings are currently stored as int8
-          auto data      = col_content.data.release();
-          auto char_size = data->size();
+        auto const string_col = buffer.make_string_column(stream);
+        auto const num_rows   = string_col->size();
+        auto const null_count = string_col->null_count();
+        auto col_content      = string_col->release();
 
-          CUDF_EXPECTS(char_size < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
-                       "Cannot convert strings column to lists column due to size_type limit",
-                       std::overflow_error);
-
-          auto uint8_col = std::make_unique<column>(
-            data_type{type_id::UINT8}, char_size, std::move(*data), rmm::device_buffer{}, 0);
-
-          if (schema_info != nullptr) {
-            schema_info->children.emplace_back("offsets");
-            schema_info->children.emplace_back("binary");
-            // cuDF type will be list<UINT8>, but remember it was originally binary data
-            schema_info->is_binary = true;
-            if (schema.has_value() and schema->get_type_length() > 0) {
-              schema_info->type_length = schema->get_type_length();
-            }
-          }
-
-          return make_lists_column(
+        if (output == byte_array_output_type::BINARY) {
+          if (schema_info != nullptr) { schema_info->children.emplace_back("offsets"); }
+          return make_binary_column(
             num_rows,
             std::move(col_content.children[strings_column_view::offsets_column_index]),
-            std::move(uint8_col),
+            std::move(*col_content.data),
             null_count,
             std::move(*col_content.null_mask));
         }
+
+        CUDF_EXPECTS(output == byte_array_output_type::LIST_UINT8,
+                     "Invalid byte-array output type");
+        // Convert to uint8 column; strings are currently stored as int8.
+        auto data      = col_content.data.release();
+        auto char_size = data->size();
+
+        CUDF_EXPECTS(char_size < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
+                     "Cannot convert strings column to lists column due to size_type limit",
+                     std::overflow_error);
+
+        auto uint8_col = std::make_unique<column>(
+          data_type{type_id::UINT8}, char_size, std::move(*data), rmm::device_buffer{}, 0);
+
+        if (schema_info != nullptr) {
+          schema_info->children.emplace_back("offsets");
+          schema_info->children.emplace_back("binary");
+          // cuDF type will be list<UINT8>, but remember it was originally binary data.
+          schema_info->is_binary = true;
+          if (schema.has_value() and schema->get_type_length() > 0) {
+            schema_info->type_length = schema->get_type_length();
+          }
+        }
+
+        return make_lists_column(
+          num_rows,
+          std::move(col_content.children[strings_column_view::offsets_column_index]),
+          std::move(uint8_col),
+          null_count,
+          std::move(*col_content.null_mask));
       }
 
       case type_id::LIST: {
@@ -321,7 +336,11 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
 
   switch (buffer.type.id()) {
     case type_id::STRING: {
-      if (buffer.string_as_binary) {
+      if (buffer.byte_array_output == byte_array_output_type::BINARY) {
+        if (schema_info != nullptr) { schema_info->children.emplace_back("offsets"); }
+        return make_empty_binary_column();
+      }
+      if (buffer.byte_array_output == byte_array_output_type::LIST_UINT8) {
         auto offsets = cudf::make_empty_column(type_id::INT32);
         auto child   = cudf::make_empty_column(type_id::UINT8);
         if (schema_info != nullptr) {

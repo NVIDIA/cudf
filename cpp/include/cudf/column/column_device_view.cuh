@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/alignment.hpp>
@@ -132,7 +133,9 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  template <typename T,
+            CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view> or
+                           cuda::std::is_same_v<T, binary_view>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     return base::element<T>(element_index);

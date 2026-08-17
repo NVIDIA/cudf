@@ -164,6 +164,14 @@ struct dispatch_to_flatbuf {
 
   template <typename T>
   void operator()()
+    requires(std::is_same_v<T, cudf::binary_view>)
+  {
+    field_type_id = flatbuf::Type_BinaryView;
+    field_offset  = flatbuf::CreateBinaryView(fbb).Union();
+  }
+
+  template <typename T>
+  void operator()()
     requires(std::is_same_v<T, cudf::timestamp_D>)
   {
     field_type_id = flatbuf::Type_Date;

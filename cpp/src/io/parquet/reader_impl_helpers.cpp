@@ -132,6 +132,29 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
   return cuda::std::nullopt;
 }
 
+bool has_string_annotation(SchemaElement const& schema)
+{
+  if (schema.logical_type.has_value()) {
+    switch (schema.logical_type->type) {
+      case LogicalType::STRING:
+      case LogicalType::ENUM:
+      case LogicalType::JSON:
+      case LogicalType::BSON: return true;
+      default: break;
+    }
+  }
+  if (schema.converted_type.has_value()) {
+    switch (*schema.converted_type) {
+      case ConvertedType::UTF8:
+      case ConvertedType::ENUM:
+      case ConvertedType::JSON:
+      case ConvertedType::BSON: return true;
+      default: break;
+    }
+  }
+  return false;
+}
+
 /**
  * @brief Lookup schema children by name or field ID across multiple sources.
  */
@@ -1956,12 +1979,12 @@ aggregate_reader_metadata::select_columns(
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
 
-        // Flag the `metadata` / `value` BYTE_ARRAY children of a VARIANT group so that
-        // `make_column` materializes them as `list<uint8>` instead of strings.
-        if (schema_elem.type == Type::BYTE_ARRAY && parent_schema.logical_type.has_value() &&
-            parent_schema.logical_type->type == LogicalType::VARIANT &&
-            (schema_elem.name == "metadata" || schema_elem.name == "value")) {
-          output_col.string_as_binary = true;
+        if (output_col.type.id() == type_id::STRING &&
+            (schema_elem.type == Type::BYTE_ARRAY ||
+             schema_elem.type == Type::FIXED_LEN_BYTE_ARRAY)) {
+          output_col.byte_array_output = has_string_annotation(schema_elem)
+                                           ? byte_array_output_type::STRING
+                                           : byte_array_output_type::BINARY;
         }
 
         path_is_valid = true;  // If we're able to reach leaf then path is valid

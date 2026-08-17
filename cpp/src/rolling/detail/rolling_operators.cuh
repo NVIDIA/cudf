@@ -122,8 +122,9 @@ struct DeviceRollingArgMinMaxBase {
   static constexpr bool is_supported()
   {
     // Right now only support ARGMIN/ARGMAX for compound-types but not lists
-    auto const type_supported =
-      cudf::is_compound<InputType>() && !std::is_same_v<InputType, cudf::list_view>;
+    auto const type_supported = cudf::is_compound<InputType>() &&
+                                !std::is_same_v<InputType, cudf::list_view> &&
+                                !std::is_same_v<InputType, cudf::binary_view>;
     auto const op_supported = op == aggregation::Kind::ARGMIN || op == aggregation::Kind::ARGMAX;
 
     return type_supported && op_supported;
@@ -238,7 +239,7 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
 
   struct keys_dispatch_fn {
     template <typename T>
-      requires(cudf::is_dictionary_key<T>())
+      requires(cudf::is_dictionary_key<T>() && !std::is_same_v<T, cudf::binary_view>)
     size_type __device__ operator()(column_device_view const& dict,
                                     bool has_nulls,
                                     size_type start_index,
@@ -263,7 +264,7 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
       return count >= min_periods ? index : -1;
     }
     template <typename T>
-      requires(not cudf::is_dictionary_key<T>())
+      requires(not cudf::is_dictionary_key<T>() || std::is_same_v<T, cudf::binary_view>)
     size_type __device__
     operator()(column_device_view const&, bool, size_type, size_type, size_type)
     {

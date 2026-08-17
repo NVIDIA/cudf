@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/column/column_child_offsets.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -464,15 +465,21 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  template <typename T,
+            CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view> or
+                           cuda::std::is_same_v<T, binary_view>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
-    size_type index       = element_index + offset();  // account for this view's _offset
-    char const* d_strings = static_cast<char const*>(_data);
-    auto const offsets    = child(offsets_column_index);
-    auto const itr        = cudf::detail::input_offsetalator(offsets.head(), offsets.type());
-    auto const offset     = itr[index];
-    return string_view{d_strings + offset, static_cast<cudf::size_type>(itr[index + 1] - offset)};
+    size_type index    = element_index + offset();  // account for this view's _offset
+    auto const offsets = child(offsets_column_index);
+    auto const itr     = cudf::detail::input_offsetalator(offsets.head(), offsets.type());
+    auto const offset  = itr[index];
+    auto const size    = static_cast<cudf::size_type>(itr[index + 1] - offset);
+    if constexpr (cuda::std::is_same_v<T, string_view>) {
+      return string_view{static_cast<char const*>(_data) + offset, size};
+    } else {
+      return binary_view{static_cast<uint8_t const*>(_data) + offset, size};
+    }
   }
 
  public:
@@ -697,15 +704,21 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  template <typename T,
+            CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view> or
+                           cuda::std::is_same_v<T, binary_view>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
-    size_type index       = element_index + offset();  // account for this view's _offset
-    char const* d_strings = static_cast<char const*>(_data);
-    auto const offsets    = child(offsets_column_index);
-    auto const itr        = cudf::detail::input_offsetalator(offsets.head(), offsets.type());
-    auto const offset     = itr[index];
-    return string_view{d_strings + offset, static_cast<cudf::size_type>(itr[index + 1] - offset)};
+    size_type index    = element_index + offset();  // account for this view's _offset
+    auto const offsets = child(offsets_column_index);
+    auto const itr     = cudf::detail::input_offsetalator(offsets.head(), offsets.type());
+    auto const offset  = itr[index];
+    auto const size    = static_cast<cudf::size_type>(itr[index + 1] - offset);
+    if constexpr (cuda::std::is_same_v<T, string_view>) {
+      return string_view{static_cast<char const*>(_data) + offset, size};
+    } else {
+      return binary_view{static_cast<uint8_t const*>(_data) + offset, size};
+    }
   }
 
   /**

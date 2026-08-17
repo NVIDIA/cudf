@@ -9,6 +9,7 @@
 #include "page_string_utils.cuh"
 #include "parquet_gpu.cuh"
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/assert.cuh>
@@ -198,6 +199,10 @@ void __device__ calculate_frag_size(frag_init_state_s* const s, int t)
           case type_id::STRING: {
             auto str = s->col.leaf_column->element<string_view>(val_idx);
             len += str.size_bytes();
+          } break;
+          case type_id::BINARY: {
+            auto value = s->col.leaf_column->element<binary_view>(val_idx);
+            len += value.size_bytes();
           } break;
           case type_id::LIST: {
             auto list_element =
@@ -1722,6 +1727,8 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
       if (physical_type == Type::BYTE_ARRAY) {
         if (type_id == type_id::STRING) {
           len += s->col.leaf_column->element<string_view>(val_idx).size_bytes();
+        } else if (type_id == type_id::BINARY) {
+          len += s->col.leaf_column->element<binary_view>(val_idx).size_bytes();
         } else if (s->col.output_as_byte_array && type_id == type_id::LIST) {
           len +=
             get_element<statistics::byte_array_view>(*s->col.leaf_column, val_idx).size_bytes();
@@ -1815,6 +1822,9 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
               case type_id::STRING:
                 return reinterpret_cast<void const*>(
                   leaf_column->element<string_view>(val_idx).data());
+              case type_id::BINARY:
+                return reinterpret_cast<void const*>(
+                  leaf_column->element<binary_view>(val_idx).data());
               case type_id::LIST:
                 return reinterpret_cast<void const*>(
                   get_element<statistics::byte_array_view>(*(leaf_column), val_idx).data());
@@ -1841,8 +1851,15 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
                            dst + pos);
             }
           } else {
-            auto const elem =
-              get_element<statistics::byte_array_view>(*(s->col.leaf_column), val_idx);
+            auto const elem = [&] {
+              if (type_id == type_id::BINARY) {
+                auto const value = s->col.leaf_column->element<binary_view>(val_idx);
+                return statistics::byte_array_view{
+                  reinterpret_cast<std::byte const*>(value.data()),
+                  static_cast<std::size_t>(value.size_bytes())};
+              }
+              return get_element<statistics::byte_array_view>(*(s->col.leaf_column), val_idx);
+            }();
             if (len != 0 and elem.data() != nullptr) {
               if (is_split_stream) {
                 auto const v_char_ptr = reinterpret_cast<uint8_t const*>(elem.data());
@@ -2166,6 +2183,8 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
           if (type_id == type_id::STRING) {
             first_string = reinterpret_cast<uint8_t const*>(
               s->col.leaf_column->element<string_view>(idx_in_col).data());
+          } else if (type_id == type_id::BINARY) {
+            first_string = s->col.leaf_column->element<binary_view>(idx_in_col).data();
           } else if (s->col.output_as_byte_array && type_id == type_id::LIST) {
             first_string = reinterpret_cast<uint8_t const*>(
               get_element<statistics::byte_array_view>(*s->col.leaf_column, idx_in_col).data());
@@ -2195,6 +2214,8 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
     if (is_valid) {
       if (type_id == type_id::STRING) {
         v = s->col.leaf_column->element<string_view>(val_idx).size_bytes();
+      } else if (type_id == type_id::BINARY) {
+        v = s->col.leaf_column->element<binary_view>(val_idx).size_bytes();
       } else if (s->col.output_as_byte_array && type_id == type_id::LIST) {
         auto const arr_size =
           get_element<statistics::byte_array_view>(*s->col.leaf_column, val_idx).size_bytes();
@@ -2357,6 +2378,9 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
     if (type_id == type_id::STRING) {
       auto const str = s->col.leaf_column->element<string_view>(idx);
       return {reinterpret_cast<uint8_t const*>(str.data()), str.size_bytes()};
+    } else if (type_id == type_id::BINARY) {
+      auto const value = s->col.leaf_column->element<binary_view>(idx);
+      return {value.data(), value.size_bytes()};
     } else if (s->col.output_as_byte_array && type_id == type_id::LIST) {
       auto const str = get_element<statistics::byte_array_view>(*s->col.leaf_column, idx);
       return {reinterpret_cast<uint8_t const*>(str.data()),

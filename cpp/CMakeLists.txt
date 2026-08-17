@@ -581,6 +581,10 @@ add_library(
   src/ast/expressions.cpp
   src/ast/jit/expressions.cpp
   src/ast/operators.cpp
+  src/binary/binary_column_factories.cpp
+  src/binary/binary_column_view.cpp
+  src/binary/copying.cu
+  src/binary/from_views.cu
   src/binaryop/binaryop.cpp
   src/binaryop/compiled/ATan2.cu
   src/binaryop/compiled/Add.cu

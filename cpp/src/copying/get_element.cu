@@ -134,6 +134,15 @@ struct get_element_functor {
     }
   }
 
+  template <typename T, std::enable_if_t<std::is_same_v<T, binary_view>>* p = nullptr>
+  std::unique_ptr<scalar> operator()(column_view const&,
+                                     size_type,
+                                     cuda::stream_ref,
+                                     rmm::device_async_resource_ref)
+  {
+    CUDF_FAIL("BINARY scalar support is not yet implemented");
+  }
+
   template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,

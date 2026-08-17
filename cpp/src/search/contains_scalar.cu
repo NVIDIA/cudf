@@ -51,9 +51,8 @@ struct contains_scalar_dispatch {
   // SFINAE with conditional return type because we need to support device lambda in this function.
   // This is required due to a limitation of nvcc.
   template <typename Element>
-  std::enable_if_t<!is_nested<Element>(), bool> operator()(column_view const& haystack,
-                                                           scalar const& needle,
-                                                           cuda::stream_ref stream) const
+  std::enable_if_t<!is_nested<Element>() && !std::is_same_v<Element, binary_view>, bool> operator()(
+    column_view const& haystack, scalar const& needle, cuda::stream_ref stream) const
   {
     CUDF_EXPECTS(cudf::have_same_types(haystack, needle),
                  "Scalar and column types must match",
@@ -78,6 +77,13 @@ struct contains_scalar_dispatch {
                return val_pair.has_value() && (needle == *val_pair);
              },
              stream) > 0;
+  }
+
+  template <typename Element>
+  std::enable_if_t<std::is_same_v<Element, binary_view>, bool> operator()(
+    column_view const&, scalar const&, cuda::stream_ref) const
+  {
+    CUDF_FAIL("BINARY scalar support is not yet implemented");
   }
 
   template <typename Element>

@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/hash_functions.cuh>
@@ -67,6 +68,15 @@ template <>
 MurmurHash3_x64_128<cudf::string_view>::result_type
   __device__ inline MurmurHash3_x64_128<cudf::string_view>::
   operator()(cudf::string_view const& key) const
+{
+  return this->compute_bytes(reinterpret_cast<cuda::std::byte const*>(key.data()),
+                             key.size_bytes());
+}
+
+template <>
+MurmurHash3_x64_128<cudf::binary_view>::result_type
+  __device__ inline MurmurHash3_x64_128<cudf::binary_view>::
+  operator()(cudf::binary_view const& key) const
 {
   return this->compute_bytes(reinterpret_cast<cuda::std::byte const*>(key.data()),
                              key.size_bytes());

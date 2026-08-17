@@ -5,6 +5,7 @@
 
 #include "parquet_gpu.cuh"
 
+#include <cudf/binary/binary_view.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
@@ -153,14 +154,16 @@ struct map_insert_fn {
                 if (col_type == type_id::STRING) {
                   // Strings are stored as int32_t length + string bytes
                   return sizeof(int32_t) + data_col.element<string_view>(val_idx).size_bytes();
+                } else if (col_type == type_id::BINARY) {
+                  return sizeof(int32_t) + data_col.element<binary_view>(val_idx).size_bytes();
                 } else if (col_type == type_id::LIST) {
                   // Binary is stored as int32_t length + bytes
                   return sizeof(int32_t) +
                          get_element<statistics::byte_array_view>(data_col, val_idx).size_bytes();
                 }
                 CUDF_UNREACHABLE(
-                  "Byte array only supports string and list<byte> column types for dictionary "
-                  "encoding!");
+                  "Byte array only supports string, binary, and list<byte> column types for "
+                  "dictionary encoding!");
               }
               case Type::FIXED_LEN_BYTE_ARRAY:
                 if (data_col.type().id() == type_id::DECIMAL128) { return sizeof(__int128_t); }

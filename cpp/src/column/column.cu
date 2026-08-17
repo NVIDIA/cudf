@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/binary/binary_column_view.hpp>
+#include <cudf/binary/detail/copying.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_stream.hpp>
@@ -166,6 +168,14 @@ struct create_column_from_view {
   {
     cudf::strings_column_view sview(view);
     return cudf::strings::detail::copy_slice(sview, 0, view.size(), stream, mr);
+  }
+
+  template <typename ColumnType>
+  std::unique_ptr<column> operator()()
+    requires(std::is_same_v<ColumnType, cudf::binary_view>)
+  {
+    return cudf::binary::detail::copy_slice(
+      cudf::binary_column_view{view}, 0, view.size(), stream, mr);
   }
 
   template <typename ColumnType>

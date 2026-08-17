@@ -252,7 +252,7 @@ void BM_parquet_read_filter(nvbench::state& state)
     state.add_global_memory_writes<DataType>(static_cast<size_t>(num_rows * selectivity));
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(

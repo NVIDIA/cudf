@@ -164,7 +164,7 @@ void BM_parquet_reader_construction(nvbench::state& state)
                            .convert_strings_to_categories(false)
                            .build();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(
@@ -211,7 +211,7 @@ void BM_parquet_column_selection(nvbench::state& state)
   auto const read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
                            .use_arrow_schema(false)
                            .build();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(
@@ -316,7 +316,7 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   read_opts.enable_case_sensitive_names(case_sensitive);
   read_opts.set_filter(filter_expr);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {

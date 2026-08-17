@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "common.hpp"
@@ -29,7 +29,7 @@ using result_t   = std::unique_ptr<cudf::table>;
 std::unique_ptr<cudf::table> load_chunk(std::string const& input_file,
                                         std::size_t start,
                                         std::size_t size,
-                                        rmm::cuda_stream_view stream)
+                                        cuda::stream_ref stream)
 {
   cudf::io::csv_reader_options in_opts =
     cudf::io::csv_reader_options::builder(cudf::io::source_info{input_file})
@@ -47,7 +47,7 @@ std::unique_ptr<cudf::table> load_chunk(std::string const& input_file,
 struct chunk_fn {
   std::string input_file;
   std::vector<result_t>& agg_data;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 
   std::vector<byte_range> byte_ranges{};
   bool first_range{};
@@ -137,7 +137,7 @@ int main(int argc, char const** argv)
   }
 
   // in case some kernels are still running on the default stream
-  stream.synchronize();
+  stream.sync();
 
   // combine each thread's agg data into a single vector
   std::vector<result_t> agg_data(divider);
@@ -149,7 +149,7 @@ int main(int argc, char const** argv)
 
   // now aggregate the aggregate results
   auto results = compute_final_aggregates(agg_data, stream);
-  stream.synchronize();
+  stream.sync();
 
   elapsed_t elapsed = std::chrono::steady_clock::now() - start;
   std::cout << "Number of keys: " << results->num_rows() << std::endl;

@@ -16,13 +16,13 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 
 #include <filesystem>
 #include <fstream>
@@ -40,9 +40,7 @@ namespace {
  * given column index
  */
 [[nodiscard]] auto compute_page_row_counts_and_offsets(
-  cudf::io::parquet::FileMetaData const& metadata,
-  cudf::size_type col_idx,
-  rmm::cuda_stream_view stream)
+  cudf::io::parquet::FileMetaData const& metadata, cudf::size_type col_idx, cuda::stream_ref stream)
 {
   auto const num_colchunks = metadata.row_groups.front().columns.size();
 
@@ -116,7 +114,7 @@ namespace {
  *
  * @return A unique pointer to a column
  */
-auto make_index_column(cudf::size_type num_rows, rmm::cuda_stream_view stream)
+auto make_index_column(cudf::size_type num_rows, cuda::stream_ref stream)
 {
   std::vector<cudf::size_type> data(num_rows);
   std::iota(data.begin(), data.end(), 0);
@@ -139,7 +137,7 @@ auto make_index_column(cudf::size_type num_rows, rmm::cuda_stream_view stream)
  * @return A unique pointer to a column
  */
 template <typename T>
-auto make_column(cudf::host_span<T const> host_data, rmm::cuda_stream_view stream)
+auto make_column(cudf::host_span<T const> host_data, cuda::stream_ref stream)
 {
   auto device_buffer = rmm::device_buffer(host_data.data(), host_data.size() * sizeof(T), stream);
   stream.synchronize();
@@ -167,7 +165,7 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
                                 cudf::host_span<cudf::size_type const> col_page_offsets,
                                 cudf::size_type num_row_groups,
                                 cudf::size_type num_pages_this_column,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   CUDF_EXPECTS(col_page_offsets.size() == num_row_groups + 1,
                "Mismatch between offsets and number of row groups");
@@ -240,7 +238,7 @@ std::tuple<cudf::io::parquet::FileMetaData, bool> read_parquet_file_metadata(
 
 void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
                              std::string const& output_filepath,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -322,7 +320,7 @@ void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
 
 void write_page_metadata(cudf::io::parquet::FileMetaData const& metadata,
                          std::string const& output_filepath,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -353,7 +351,7 @@ void write_page_metadata(cudf::io::parquet::FileMetaData const& metadata,
       columns.emplace_back(make_page_data_list_column<int64_t>(
         page_byte_offsets, col_page_offsets, num_row_groups, num_pages_this_column, stream));
 
-      stream.synchronize();
+      stream.sync();
     });
 
   CUDF_EXPECTS(columns.size() == (num_columns * output_cols_per_column) + 1,

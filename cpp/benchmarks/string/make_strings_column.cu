@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,8 +27,7 @@ using string_index_pair = cuda::std::pair<char const*, cudf::size_type>;
 
 template <bool batch_construction>
 std::vector<std::unique_ptr<cudf::column>> make_strings_columns(
-  std::vector<cudf::device_span<string_index_pair const>> const& input,
-  rmm::cuda_stream_view stream)
+  std::vector<cudf::device_span<string_index_pair const>> const& input, cuda::stream_ref stream)
 {
   if constexpr (batch_construction) {
     return cudf::make_strings_column_batch(input, stream);
@@ -77,7 +76,7 @@ static void BM_make_strings_column_batch(nvbench::state& state)
     input.emplace_back(input_data.back());
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto const output = make_strings_columns<true>(input, stream);
   });

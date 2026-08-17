@@ -107,7 +107,7 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
@@ -139,7 +139,7 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
@@ -174,7 +174,7 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
@@ -211,7 +211,7 @@ struct q9_data {
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
   engine_type engine,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   switch (engine) {
@@ -269,7 +269,7 @@ std::unique_ptr<table_with_names> compute_profit(
   nvbench::state& state,
   engine_type engine,
   q9_data const& data,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto joined_table = join_data(data);

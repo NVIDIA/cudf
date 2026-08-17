@@ -3592,10 +3592,28 @@ class MapFunction(IR):
             raise NotImplementedError(
                 "Fast count unsupported for CSV scans"
             )  # pragma: no cover
-        elif (
-            self.name == "hint_sorted"
-        ):  # pragma: no cover; polars prunes hints in some cases
-            raise NotImplementedError("Hint sorted unsupported")
+        elif self.name == "hint_sorted":
+            if len(options) == 3:
+                column_names, descending, nulls_last = options
+                self.options = (
+                    tuple(column_names),
+                    tuple(bool(value) for value in descending),
+                    tuple(bool(value) for value in nulls_last),
+                )
+            else:
+                (sorted_info,) = options
+                column_names = []
+                descending = []
+                nulls_last = []
+                for column_name, is_descending, is_nulls_last in sorted_info:
+                    column_names.append(column_name)
+                    descending.append(bool(is_descending))
+                    nulls_last.append(bool(is_nulls_last))
+                self.options = (
+                    tuple(column_names),
+                    tuple(descending),
+                    tuple(nulls_last),
+                )
         self._non_child_args = (schema, name, self.options)
 
     def get_hashable(self) -> Hashable:
@@ -3705,6 +3723,23 @@ class MapFunction(IR):
                 dtype=dtype,
             )
             return DataFrame([index_col, *df.columns], stream=df.stream)
+        elif name == "hint_sorted":
+            column_names, descending, nulls_last = options
+            orders, null_orders = sorting.sort_order(
+                descending,
+                nulls_last=nulls_last,
+                num_keys=len(column_names),
+            )
+            result = DataFrame([col.copy() for col in df.columns], stream=df.stream)
+            for column_name, order, null_order in zip(
+                column_names, orders, null_orders, strict=True
+            ):
+                result.column_map[column_name].set_sorted(
+                    is_sorted=plc.types.Sorted.YES,
+                    order=order,
+                    null_order=null_order,
+                )
+            return result
         else:
             raise AssertionError("Should never be reached")  # pragma: no cover
 

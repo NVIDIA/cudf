@@ -46,6 +46,23 @@ struct row_group_stats_caster : public stats_caster_base {
                          rmm::cuda_stream_view stream,
                          rmm::device_async_resource_ref mr) const
   {
+    CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),
+                 "Row-group indices must match parquet metadata sources",
+                 std::invalid_argument);
+    CUDF_EXPECTS(per_source_schema_indices.size() == per_file_metadata.size(),
+                 "Per-source schema indices must match parquet metadata sources",
+                 std::invalid_argument);
+    auto const computed_total_row_groups =
+      std::accumulate(row_group_indices.begin(),
+                      row_group_indices.end(),
+                      size_type{0},
+                      [](auto count, auto const& source_row_group_indices) {
+                        return count + static_cast<size_type>(source_row_group_indices.size());
+                      });
+    CUDF_EXPECTS(total_row_groups == computed_total_row_groups,
+                 "Total row groups must match selected row-group indices",
+                 std::invalid_argument);
+
     if constexpr (cudf::is_compound<T>() and not std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types do not have statistics");
     } else {
@@ -57,17 +74,26 @@ struct row_group_stats_caster : public stats_caster_base {
       size_type stats_idx = 0;
       for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
         auto const mapped_schema_idx = per_source_schema_indices[src_idx];
+        auto const& source_metadata  = per_file_metadata[src_idx];
+        CUDF_EXPECTS(mapped_schema_idx >= 0 and
+                       static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
+                     "Mapped schema index is out of bounds",
+                     std::invalid_argument);
         // Compute timestamp scale factor for precision conversion from the mapped source schema.
         auto const ts_scale = [&] {
           if constexpr (cudf::is_timestamp<T>()) {
-            auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+            auto const& schema = source_metadata.schema[mapped_schema_idx];
             return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
           }
           return 0;
         }();
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
-          auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
+          CUDF_EXPECTS(
+            rg_idx >= 0 and static_cast<size_t>(rg_idx) < source_metadata.row_groups.size(),
+            "Row-group index is out of bounds",
+            std::invalid_argument);
+          auto const& row_group = source_metadata.row_groups[rg_idx];
           auto col              = std::find_if(row_group.columns.begin(),
                                   row_group.columns.end(),
                                   [mapped_schema_idx](ColumnChunk const& col) {

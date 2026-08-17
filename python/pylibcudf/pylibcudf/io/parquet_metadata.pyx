@@ -832,7 +832,7 @@ cpdef tuple column_chunk_bounds(
     for metadata_obj in file_metadatas:
         if not isinstance(metadata_obj, FileMetaData):
             raise TypeError("file_metadatas must contain only FileMetaData objects")
-        c_metadatas.push_back((<FileMetaData>metadata_obj).c_obj)
+        c_metadatas.push_back(dereference((<FileMetaData>metadata_obj).c_obj))
 
     if isinstance(columns, str):
         raise TypeError("columns must be a sequence of strings")

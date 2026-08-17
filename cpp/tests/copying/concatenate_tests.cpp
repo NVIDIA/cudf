@@ -360,7 +360,7 @@ TEST_F(OverflowTest, OverflowTest)
     cudf::table_view tbl_last({*many_chars_last});
     std::vector<cudf::table_view> table_views_to_concat({tbl, tbl, tbl, tbl, tbl, tbl_last});
     std::unique_ptr<cudf::table> concatenated_tables = cudf::concatenate(table_views_to_concat);
-    EXPECT_NO_THROW(cudf::get_default_stream().synchronize());
+    EXPECT_NO_THROW(cudf::get_default_stream().sync());
     ASSERT_EQ(concatenated_tables->num_rows(), std::numeric_limits<cudf::size_type>::max());
   }
 

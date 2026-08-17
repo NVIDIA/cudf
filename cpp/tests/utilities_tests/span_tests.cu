@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -237,7 +237,7 @@ TEST(SpanTest, CanUseDeviceSpan)
 
   auto d_span = device_span<bool>(d_message.data(), d_message.size());
 
-  simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(d_span);
+  simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(d_span);
 
   ASSERT_TRUE(d_message.element(0, cudf::get_default_stream()));
 }
@@ -283,8 +283,8 @@ TEST(MdSpanTest, DeviceReadWrite)
 {
   auto vector = hostdevice_2dvector<int>(11, 23, cudf::get_default_stream());
 
-  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(vector);
-  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(vector);
+  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
+  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
   vector.device_to_host(cudf::get_default_stream());
   EXPECT_EQ(vector[5][6], 30);
 }
@@ -417,8 +417,8 @@ TEST(HostDeviceSpanTest, CanSendToDevice)
                   original_message.device_ptr(),
                   original_message.size(),
                   cudaMemcpyDefault,
-                  stream.value());
-  stream.synchronize();
+                  stream.get());
+  stream.sync();
 
   EXPECT_EQ(got_message, hello_world_message);
 }

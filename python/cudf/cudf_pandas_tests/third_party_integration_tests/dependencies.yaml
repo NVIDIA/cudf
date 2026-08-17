@@ -316,14 +316,11 @@ dependencies:
     common:
       - output_types: conda
         packages:
-        # TODO: Remove hypothesis pinning once https://github.com/HypothesisWorks/hypothesis/issues/4365 is resolved
         # TODO: Can replace `conda-forge::xgboost` with `xgboost` once https://github.com/rapidsai/build-planning/issues/312 is fully resolved
-          - hypothesis>=6.131.7
           - numpy
           - scipy
           - scikit-learn
-          - pip
-          - conda-forge::xgboost>=2.0.1
+          - conda-forge::xgboost
   test_catboost:
     common:
       - output_types: conda

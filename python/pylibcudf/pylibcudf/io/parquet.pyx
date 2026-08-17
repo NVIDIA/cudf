@@ -836,6 +836,8 @@ cdef class ChunkedParquetWriter:
 
 
 cdef class ChunkedParquetWriterOptions:
+    """The settings to use for chunked Parquet writing."""
+
     @staticmethod
     def builder(SinkInfo sink) -> ChunkedParquetWriterOptionsBuilder:
         """
@@ -1050,6 +1052,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
 
 cdef class ParquetWriterOptions:
+    """The settings to use for ``write_parquet``."""
 
     @staticmethod
     def builder(SinkInfo sink, Table table) -> ParquetWriterOptionsBuilder:

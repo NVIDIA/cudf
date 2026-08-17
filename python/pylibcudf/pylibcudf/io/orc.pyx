@@ -509,6 +509,8 @@ cpdef ParsedOrcStatistics read_parsed_orc_statistics(
 
 
 cdef class OrcWriterOptions:
+    """The settings to use for ``write_orc``."""
+
     cpdef void set_stripe_size_bytes(self, size_t size_bytes):
         """
         Sets the maximum stripe size, in bytes.
@@ -617,7 +619,7 @@ cdef class OrcWriterOptionsBuilder:
         """
         Choose granularity of column statistics to be written.
 
-        For details, see :cpp:func:`enable_statistics`
+        For details, see :cpp:func:`cudf::io::orc_writer_options_builder::enable_statistics`
 
         Parameters
         ----------
@@ -762,6 +764,8 @@ cdef class OrcChunkedWriter:
 
 
 cdef class ChunkedOrcWriterOptions:
+    """The settings to use for chunked ORC writing."""
+
     cpdef void set_stripe_size_bytes(self, size_t size_bytes):
         """
         Sets the maximum stripe size, in bytes.

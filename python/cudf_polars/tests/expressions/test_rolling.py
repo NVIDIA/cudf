@@ -363,7 +363,7 @@ def test_rolling_sum_over_index_types_and_group_sizes(
 
 @skip_rolling_expr_136_to_138
 def test_rolling_sum_over_null_index_raises(
-    engine_raise_on_fail: pl.GPUEngine,
+    engine: pl.GPUEngine,
 ) -> None:
     df = pl.LazyFrame(
         {
@@ -373,10 +373,13 @@ def test_rolling_sum_over_null_index_raises(
         }
     )
     q = df.select(pl.col("x").sum().rolling("idx", period="2i").over("g").alias("sum"))
-    with pytest.raises(
-        RuntimeError, match="Index column 'idx' in rolling may not contain nulls"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = "Index column 'idx' in rolling may not contain nulls"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match=match)):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(RuntimeError, match=match):
+            q.collect(engine=engine)
 
 
 def test_rolling_orderby_name_multiple_index_columns_raises() -> None:

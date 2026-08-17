@@ -13,7 +13,6 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <cuda/stream_ref>
 
 #include <nvbench/nvbench.cuh>
 

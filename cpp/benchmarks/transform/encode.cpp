@@ -14,7 +14,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <cuda/stream_ref>
 
 #include <nvbench/nvbench.cuh>
 

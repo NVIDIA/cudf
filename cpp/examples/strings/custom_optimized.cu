@@ -11,7 +11,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
 #include <thrust/scan.h>
@@ -111,7 +111,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
                                              cudf::column_view const& visibilities)
 {
   // all device memory operations and kernel functions will run on this stream
-  auto stream = cuda::stream_ref{};
+  auto stream = cuda::stream_ref{cudaStreamLegacy};
 
   auto const d_names        = cudf::column_device_view::create(names, stream);
   auto const d_visibilities = cudf::column_device_view::create(visibilities, stream);

@@ -14,7 +14,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <cuda/stream_ref>
 
 #include <nvbench/nvbench.cuh>
 

@@ -18,7 +18,6 @@
 #include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
 
 #include <nvbench/nvbench.cuh>
 #include <nvbench/types.cuh>

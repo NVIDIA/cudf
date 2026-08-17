@@ -8,7 +8,6 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
 
-#include <cuda/stream_ref>
 
 #include <filesystem>
 #include <iostream>

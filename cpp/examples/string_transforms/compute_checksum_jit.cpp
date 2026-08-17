@@ -8,7 +8,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <array>
 #include <utility>
@@ -16,7 +16,7 @@
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = cuda::stream_ref{};
+  auto stream = cuda::stream_ref{cudaStreamLegacy};
   auto mr     = cudf::get_current_device_resource_ref();
 
   auto udf = R"***(

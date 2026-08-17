@@ -11,7 +11,6 @@
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <cuda/stream_ref>
 
 #include <nvbench/nvbench.cuh>
 

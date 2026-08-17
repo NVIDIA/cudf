@@ -225,6 +225,92 @@
                 <cxx.flags>-Wno-deprecated-declarations</cxx.flags>
             </properties>
         </profile>
+        <!--
+            Default `mvn test` compiles java/src/main, builds natives via cmake,
+            puts classes on the surefire classpath ahead of any JAR, and runs
+            java/src/test. That exercises the local tree, not a published
+            classifier JAR. Activate -Ppackaged-jar-tests with
+            -Dcudf.jar.path=<classifier.jar> to skip cmake/main compile, put the
+            packaged JAR on the classpath instead, and run the same tests
+            (plus PackagedJarOriginCheck) against it.
+        -->
+        <profile>
+            <id>packaged-jar-tests</id>
+            <properties>
+                <skipNativeCopy>true</skipNativeCopy>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>ai.rapids</groupId>
+                    <artifactId>cudf-packaged</artifactId>
+                    <version>${project.version}</version>
+                    <scope>system</scope>
+                    <systemPath>${cudf.jar.path}</systemPath>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>cmake</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.gmavenplus</groupId>
+                        <artifactId>gmavenplus-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>setproperty</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <skipMain>true</skipMain>
+                        </configuration>
+                    </plugin>
+                    <!-- copy-native-libs resolves ${native.cudf.path}, which is
+                         only defined by the disabled setproperty step above; skip
+                         it entirely since the packaged JAR already bundles natives. -->
+                    <plugin>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-native-libs</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>packaged-jar-origin-check</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <excludes combine.self="override"/>
+                                    <includes>
+                                        <include>**/PackagedJarOriginCheck.java</include>
+                                    </includes>
+                                    <failIfNoTests>true</failIfNoTests>
+                                    <systemPropertyVariables>
+                                        <cudf.packaged.jar>${cudf.jar.path}</cudf.packaged.jar>
+                                    </systemPropertyVariables>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>default-tests</id>
             <build>
@@ -236,6 +322,7 @@
                                 <exclude>**/CudaFatalTest.java</exclude>
                                 <exclude>**/ColumnViewNonEmptyNullsTest.java</exclude>
                                 <exclude>**/NativeDepsLoaderTest.java</exclude>
+                                <exclude>**/PackagedJarOriginCheck.java</exclude>
                             </excludes>
                         </configuration>
                         <executions>
@@ -298,6 +385,7 @@
                                 <exclude>**/CuFileTest.java</exclude>
                                 <exclude>**/CudaFatalTest.java</exclude>
                                 <exclude>**/NativeDepsLoaderTest.java</exclude>
+                                <exclude>**/PackagedJarOriginCheck.java</exclude>
                             </excludes>
                         </configuration>
                         <executions>
@@ -697,9 +785,12 @@
                     </systemPropertyVariables>
                     <!-- NativeDepsLoaderTest mutates the lib-native-dir system property
                          and asserts the JVM is pristine; it must run in its own forked
-                         JVM via the dedicated execution defined in the test profiles. -->
+                         JVM via the dedicated execution defined in the test profiles.
+                         PackagedJarOriginCheck needs a packaged classifier JAR and is
+                         only run by the packaged-jar-tests profile. -->
                     <excludes>
                         <exclude>**/NativeDepsLoaderTest.java</exclude>
+                        <exclude>**/PackagedJarOriginCheck.java</exclude>
                     </excludes>
                 </configuration>
             </plugin>

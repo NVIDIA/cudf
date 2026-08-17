@@ -19,7 +19,7 @@
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <rapidsmpf/communicator/communicator.hpp>
 #include <rapidsmpf/cuda_event.hpp>

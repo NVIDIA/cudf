@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,10 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf::binops::compiled::detail {
@@ -62,7 +62,7 @@ void apply_struct_binary_op(mutable_column_view& out,
                             bool is_lhs_scalar,
                             bool is_rhs_scalar,
                             PhysicalElementComparator comparator,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   auto const compare_orders = std::vector<order>(
     lhs.size(),
@@ -137,7 +137,7 @@ void apply_struct_equality_op(mutable_column_view& out,
                               bool is_rhs_scalar,
                               binary_operator op,
                               PhysicalEqualityComparator comparator,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_EXPECTS(op == binary_operator::EQUAL || op == binary_operator::NOT_EQUAL ||
                  op == binary_operator::NULL_EQUALS || op == binary_operator::NULL_NOT_EQUALS,

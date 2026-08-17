@@ -110,6 +110,8 @@ def prefetch_parquet_file_metadata_for_ir(
     root: IR,
     py_executor: concurrent.futures.Executor | None,
     stats: StatsCollector | None = None,
+    *,
+    remote_only: bool = False,
 ) -> dict[str, CachedParquetInfo]:
     """
     Prefetch parquet metadata for all parquet scans in an IR graph.
@@ -125,6 +127,9 @@ def prefetch_parquet_file_metadata_for_ir(
         prefetched during statistics collection, when the number of files
         sampled equals the total number of files. Providing ``stats`` here will
         skip rereading metadata for those files.
+    remote_only
+        If ``True``, only prefetch metadata for remote URIs (e.g. ``s3://``),
+        skipping local paths.
 
     Returns
     -------
@@ -135,7 +140,7 @@ def prefetch_parquet_file_metadata_for_ir(
     all_paths: set[str] = set()
 
     for node in traversal([root]):
-        if isinstance(node, StreamingScan):
+        if isinstance(node, StreamingScan) and node.base_scan.typ == "parquet":
             for scan in node.scans:
                 for path in scan.paths:
                     all_paths.add(path)
@@ -155,6 +160,10 @@ def prefetch_parquet_file_metadata_for_ir(
                     cached_parquet_info[info.path] = info
 
     missing_paths = all_paths - set(cached_parquet_info.keys())
+    if remote_only:
+        missing_paths = {
+            p for p in missing_paths if plc.io.SourceInfo._is_remote_uri(p)
+        }
     cm: contextlib.AbstractContextManager[concurrent.futures.Executor | None]
 
     if py_executor is None:
@@ -194,8 +203,10 @@ def attach_cached_parquet_metadata(
         Mapping from file paths to cached parquet metadata.
     """
     for node in traversal([root]):
-        if isinstance(node, StreamingScan):
+        if isinstance(node, StreamingScan) and node.base_scan.typ == "parquet":
             for scan in node.scans:
+                if not all(path in cached_parquet_info_map for path in scan.paths):
+                    continue
                 cached = [cached_parquet_info_map[path] for path in scan.paths]
                 Scan._validate_cached_parquet_info(scan.paths, cached)
                 scan.cached_parquet_info = cached

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,12 +16,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/gather.h>
 
 namespace cudf {
@@ -74,7 +74,7 @@ struct column_sorted_order_fn {
                     mutable_column_view& indices,
                     bool ascending,
                     null_order null_precedence,
-                    rmm::cuda_stream_view stream)
+                    cuda::stream_ref stream)
   {
     auto keys      = column_device_view::create(input, stream);
     auto comp      = simple_comparator<T>{*keys, input.has_nulls(), ascending, null_precedence};
@@ -83,16 +83,16 @@ struct column_sorted_order_fn {
     auto tmp_bytes = std::size_t{0};
     if constexpr (method == sort_method::STABLE) {
       cub::DeviceMergeSort::StableSortKeysCopy(
-        nullptr, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.value());
+        nullptr, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
       auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
       cub::DeviceMergeSort::StableSortKeysCopy(
-        tmp_stg.data(), tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.value());
+        tmp_stg.data(), tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
     } else {
       cub::DeviceMergeSort::SortKeysCopy(
-        nullptr, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.value());
+        nullptr, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
       auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
       cub::DeviceMergeSort::SortKeysCopy(
-        tmp_stg.data(), tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.value());
+        tmp_stg.data(), tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
     }
   }
 
@@ -102,14 +102,14 @@ struct column_sorted_order_fn {
                   mutable_column_view& indices,
                   bool ascending,
                   null_order null_precedence,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
   {
     sorted_order<T>(input, indices, ascending, null_precedence, stream);
   }
 
   template <typename T>
     requires(not cudf::is_relationally_comparable<T, T>())
-  void operator()(column_view const&, mutable_column_view&, bool, null_order, rmm::cuda_stream_view)
+  void operator()(column_view const&, mutable_column_view&, bool, null_order, cuda::stream_ref)
   {
     CUDF_FAIL("Column type must be relationally comparable");
   }
@@ -120,7 +120,7 @@ struct column_sorted_order_fn {
                   mutable_column_view& indices,
                   bool ascending,
                   null_order null_precedence,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
   {
     auto const keys = dictionary_column_view(input).keys();
     // For the keys we do an arg-sort of arg-sort to get the rank and use that as a map

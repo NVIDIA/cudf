@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from cython.operator cimport dereference
 from libc.stdint cimport uint8_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.string cimport string
+from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
 from pylibcudf.io.types cimport SourceInfo
@@ -472,31 +474,34 @@ cdef class FileMetaData:
         raise ValueError("FileMetaData cannot be constructed directly")
 
     @staticmethod
-    cdef FileMetaData from_cpp(cpp_FileMetaData metadata):
+    cdef FileMetaData from_libcudf(unique_ptr[cpp_FileMetaData] metadata):
         cdef FileMetaData result = FileMetaData.__new__(FileMetaData)
-        result.c_obj = metadata
+        result.c_obj = move(metadata)
         return result
 
     @property
     def version(self) -> int:
         """Get the file format version."""
-        return self.c_obj.version
+        return dereference(self.c_obj).version
 
     @property
     def num_rows(self) -> int:
         """Get the total number of rows."""
-        return self.c_obj.num_rows
+        return dereference(self.c_obj).num_rows
 
     @property
     def created_by(self) -> str:
         """Get the application that created the file."""
-        return self.c_obj.created_by.decode("utf-8")
+        return dereference(self.c_obj).created_by.decode("utf-8")
 
     @property
     def row_groups(self) -> list[RowGroup]:
         """Get row group metadata in this file."""
         cdef cpp_RowGroup row_group
-        return [RowGroup.from_cpp(row_group) for row_group in self.c_obj.row_groups]
+        return [
+            RowGroup.from_cpp(row_group)
+            for row_group in dereference(self.c_obj).row_groups
+        ]
 
     @property
     def row_group_num_rows(self) -> list[int]:
@@ -517,8 +522,10 @@ cdef class FileMetaData:
            >>> [rg.num_rows for rg in file_metadata.row_groups]
         """
         cdef Py_ssize_t i
-        cdef Py_ssize_t n = self.c_obj.row_groups.size()
-        return [self.c_obj.row_groups[i].num_rows for i in range(n)]
+        cdef Py_ssize_t n = dereference(self.c_obj).row_groups.size()
+        return [
+            dereference(self.c_obj).row_groups[i].num_rows for i in range(n)
+        ]
 
     @property
     def columnchunk_metadata(self) -> dict[str, list[int]]:
@@ -549,21 +556,33 @@ cdef class FileMetaData:
            ...         )
         """
         cdef Py_ssize_t i, j, k, n_path, n_col
-        cdef Py_ssize_t n_rg = self.c_obj.row_groups.size()
+        cdef Py_ssize_t n_rg = dereference(self.c_obj).row_groups.size()
         cdef dict result = {}
         cdef str name
         cdef list path_parts
         for i in range(n_rg):
-            n_col = self.c_obj.row_groups[i].columns.size()
+            n_col = dereference(self.c_obj).row_groups[i].columns.size()
             for j in range(n_col):
-                n_path = self.c_obj.row_groups[i].columns[j].meta_data.path_in_schema.size()
+                n_path = (
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.path_in_schema.size()
+                )
                 path_parts = [
-                    self.c_obj.row_groups[i].columns[j].meta_data.path_in_schema[k].decode("utf-8")
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.path_in_schema[k]
+                    .decode("utf-8")
                     for k in range(n_path)
                 ]
                 name = ".".join(path_parts)
                 result.setdefault(name, []).append(
-                    self.c_obj.row_groups[i].columns[j].meta_data.total_uncompressed_size
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.total_uncompressed_size
                 )
         return result
 
@@ -590,7 +609,7 @@ cdef class FileMetaData:
         """
         cdef parquet_reader_options options = parquet_reader_options()
         cdef unique_ptr[cpp_hybrid_scan_reader] reader
-        cdef cpp_FileMetaData metadata
+        cdef unique_ptr[cpp_FileMetaData] metadata
         cdef const uint8_t* footer_ptr = <const uint8_t*>0
 
         if len(footer_bytes) > 0:
@@ -601,9 +620,11 @@ cdef class FileMetaData:
                 host_span[const_uint8_t](footer_ptr, len(footer_bytes)),
                 options,
             )
-            metadata = reader.get()[0].parquet_metadata()
+            metadata = make_unique[cpp_FileMetaData](
+                reader.get()[0].parquet_metadata()
+            )
 
-        return FileMetaData.from_cpp(metadata)
+        return FileMetaData.from_libcudf(move(metadata))
 
 
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
@@ -651,7 +672,8 @@ cpdef list read_parquet_footers(SourceInfo src_info):
     """
     cdef vector[unique_ptr[datasource]] sources
     cdef vector[cpp_FileMetaData] c_result
-    cdef cpp_FileMetaData metadata
+    cdef vector[unique_ptr[cpp_FileMetaData]] owned
+    cdef size_t i, n
     with nogil:
         sources = make_datasources(src_info.c_obj)
         c_result = cpp_parquet_metadata.read_parquet_footers(
@@ -660,5 +682,12 @@ cpdef list read_parquet_footers(SourceInfo src_info):
                 sources.size(),
             )
         )
+        n = c_result.size()
+        owned.reserve(n)
+        for i in range(n):
+            owned.push_back(
+                move(make_unique[cpp_FileMetaData](move(c_result[i])))
+            )
 
-    return [FileMetaData.from_cpp(metadata) for metadata in c_result]
+    # GIL held only for Python object allocation + list build
+    return [FileMetaData.from_libcudf(move(owned[i])) for i in range(n)]

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,7 +18,7 @@ std::unique_ptr<cudf::column> segmented_sum(
   cudf::data_type const output_dtype,
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   using reducer = simple::detail::column_type_dispatcher<op::sum>;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,7 +43,7 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
                                                      device_span<size_type const> offsets,
                                                      null_policy null_handling,
                                                      size_type ddof,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   auto d_col              = cudf::column_device_view::create(col, stream);
@@ -98,7 +98,7 @@ struct compound_float_output_dispatcher {
                                      device_span<size_type const> offsets,
                                      null_policy null_handling,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_v<ResultType>())
   {
@@ -111,7 +111,7 @@ struct compound_float_output_dispatcher {
                                      device_span<size_type const>,
                                      null_policy,
                                      size_type,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported_v<ResultType>())
   {
@@ -135,7 +135,7 @@ struct compound_segmented_dispatcher {
                                      cudf::data_type const output_dtype,
                                      null_policy null_handling,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_v<ElementType>())
   {
@@ -155,7 +155,7 @@ struct compound_segmented_dispatcher {
                                      cudf::data_type const,
                                      null_policy,
                                      size_type,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported_v<ElementType>())
   {

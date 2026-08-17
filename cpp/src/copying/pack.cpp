@@ -7,7 +7,7 @@
 #include <cudf/detail/contiguous_split.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>

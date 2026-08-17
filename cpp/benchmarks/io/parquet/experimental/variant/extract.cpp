@@ -34,7 +34,7 @@ namespace {
 using cudf::io::parquet::experimental::variant_basic_type;
 using cudf::io::parquet::experimental::variant_primitive_type;
 
-// The leaf value type exercised by a benchmark row, selected via the nvbench "type" string axis.
+// The leaf value type exercised by the benchmark (nvbench "type" string axis).
 enum class bench_variant_type : uint8_t { INT32, FLOAT, BOOL, STRING, ARRAY };
 
 bench_variant_type parse_bench_variant_type(std::string const& type_str)

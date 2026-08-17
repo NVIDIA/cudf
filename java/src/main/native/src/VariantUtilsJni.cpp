@@ -48,7 +48,6 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_castVariantValue(JNIEnv
       value_bytes,
       cudf::data_type{static_cast<cudf::type_id>(cudf_type_id)},
       std::nullopt,
-      std::nullopt,
       cudf::get_default_stream(),
       cudf::get_current_device_resource_ref()));
   }

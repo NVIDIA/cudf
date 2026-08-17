@@ -752,17 +752,16 @@ __device__ op_status cast_status_for_primitive(device_span<uint8_t const> val)
  * that are null, or whose value is not an exact-width match for `T`, are marked null in
  * `d_null_mask` with an output of 0.
  */
-// `d_status` may be an empty span when HasStatus=true but no `status` output was requested (only
-// incoming_status propagation to the null mask is desired).  All writes to d_status are guarded
-// by d_status.data() so the empty-span case is safe.
+// `d_status`, when present, is an in-out buffer: it is read as incoming status from a prior
+// `get_variant_field` call (rows already marked non-success are propagated without decoding), then
+// overwritten in place with the final per-row status. Callers with no real incoming status must
+// pre-fill every row with `op_status::SUCCESS` before calling.
 template <typename T, bool HasStatus>
 CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
   cudf::lists_column_device_view values,
   device_span<T> d_output,
   bitmask_type* d_null_mask,
-  column_device_view incoming_status,  // only used when HasStatus
-  bool has_incoming,                   // only meaningful when HasStatus
-  device_span<op_status> d_status)     // only used when HasStatus; may be empty
+  op_status* d_status)  // only used when HasStatus
 {
   auto const num_rows = static_cast<size_type>(d_output.size());
   auto const tid      = cudf::detail::grid_1d::global_thread_id<block_size>();
@@ -770,22 +769,18 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
 
   for (auto row = tid; row < num_rows; row += stride) {
     if constexpr (HasStatus) {
-      if (has_incoming) {
-        // Status column is always non-nullable; row_null replaces the null bit.
-        auto const s = static_cast<op_status>(incoming_status.element<uint8_t>(row));
-        if (s != op_status::SUCCESS) {
-          d_output[row] = T{};
-          if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
-          if (d_status.data()) { d_status[row] = s; }
-          continue;
-        }
-        // incoming success → fall through to decode (value null bit is set)
-      } else {
-        if (!cudf::bit_is_set(d_null_mask, row)) {
-          d_output[row] = T{};
-          if (d_status.data()) { d_status[row] = op_status::ROW_NULL; }
-          continue;
-        }
+      // Status column is always non-nullable; row_null replaces the null bit.
+      auto const s = d_status[row];
+      if (s != op_status::SUCCESS) {
+        d_output[row] = T{};
+        if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
+        d_status[row] = s;
+        continue;
+      }
+      if (!cudf::bit_is_set(d_null_mask, row)) {
+        d_output[row] = T{};
+        d_status[row] = op_status::ROW_NULL;
+        continue;
       }
     } else {
       if (!cudf::bit_is_set(d_null_mask, row)) {
@@ -798,15 +793,11 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
     auto const decoded = decode_primitive<T>(val);
     if (decoded.has_value()) {
       d_output[row] = *decoded;
-      if constexpr (HasStatus) {
-        if (d_status.data()) { d_status[row] = op_status::SUCCESS; }
-      }
+      if constexpr (HasStatus) { d_status[row] = op_status::SUCCESS; }
     } else {
       d_output[row] = T{};
       cudf::clear_bit(d_null_mask, row);
-      if constexpr (HasStatus) {
-        if (d_status.data()) { d_status[row] = cast_status_for_primitive<T>(val); }
-      }
+      if constexpr (HasStatus) { d_status[row] = cast_status_for_primitive<T>(val); }
     }
   }
 }
@@ -857,10 +848,10 @@ struct cast_variant_string_fn {
   size_type* d_sizes;
   char* d_chars;
   cudf::detail::input_offsetalator d_offsets;
-  // Status tracking (optional: d_status non-null to enable; status is always non-nullable)
+  // In-out status tracking (optional: d_status non-null to enable; status is always non-nullable).
+  // Read as incoming status from a prior `get_variant_field` call, then overwritten in place with
+  // the final status on the sizing pass.
   op_status* d_status{nullptr};
-  column_device_view incoming_status;
-  bool has_incoming{false};
 
   __device__ void operator()(size_type row)
   {
@@ -869,20 +860,25 @@ struct cast_variant_string_fn {
     // write status (that would misidentify a decode-failed row as a SQL-null row).
     bool const sizing = (d_chars == nullptr);
 
-    if (has_incoming) {
+    if (d_status) {
       // Status column is always non-nullable; row_null replaces the null bit.
-      auto const s = static_cast<op_status>(incoming_status.element<uint8_t>(row));
+      auto const s = d_status[row];
       if (s != op_status::SUCCESS) {
         if (sizing) { d_sizes[row] = 0; }
         if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
-        if (sizing && d_status) { d_status[row] = s; }
+        if (sizing) { d_status[row] = s; }
         return;
       }
-      // incoming success: fall through to decode
+      if (!cudf::bit_is_set(d_null_mask, row)) {
+        if (sizing) {
+          d_sizes[row]  = 0;
+          d_status[row] = op_status::ROW_NULL;
+        }
+        return;
+      }
     } else {
       if (!cudf::bit_is_set(d_null_mask, row)) {
         if (sizing) { d_sizes[row] = 0; }
-        if (sizing && d_status) { d_status[row] = op_status::ROW_NULL; }
         return;
       }
     }
@@ -924,9 +920,7 @@ struct cast_variant_fn {
   rmm::device_buffer null_mask;
   rmm::cuda_stream_view stream;
   rmm::device_async_resource_ref mr;
-  // Optional status tracking
-  column_device_view incoming_status_view;
-  bool has_incoming{false};
+  // In-out status tracking; null when no status was requested.
   op_status* d_status{nullptr};
 
   template <typename T>
@@ -938,23 +932,12 @@ struct cast_variant_fn {
     auto const d_out =
       device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
     if (d_status != nullptr) {
-      cast_variant_primitive_kernel<T, true><<<grid.num_blocks, block_size, 0, stream.value()>>>(
-        values,
-        d_out,
-        d_null_mask,
-        incoming_status_view,
-        has_incoming,
-        {d_status, static_cast<std::size_t>(num_rows)});
-      CUDF_CUDA_TRY(cudaGetLastError());
-    } else if (has_incoming) {
-      // No status output requested, but incoming_status still needs to be applied to the null
-      // mask. Use HasStatus=true with an empty d_status span so writes are guarded (no-op).
-      cast_variant_primitive_kernel<T, true><<<grid.num_blocks, block_size, 0, stream.value()>>>(
-        values, d_out, d_null_mask, incoming_status_view, true, {});
+      cast_variant_primitive_kernel<T, true>
+        <<<grid.num_blocks, block_size, 0, stream.value()>>>(values, d_out, d_null_mask, d_status);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
-      cast_variant_primitive_kernel<T, false><<<grid.num_blocks, block_size, 0, stream.value()>>>(
-        values, d_out, d_null_mask, incoming_status_view, false, {});
+      cast_variant_primitive_kernel<T, false>
+        <<<grid.num_blocks, block_size, 0, stream.value()>>>(values, d_out, d_null_mask, nullptr);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
 
@@ -975,30 +958,30 @@ struct cast_variant_fn {
 
     auto* dp_s = d_status;
 
-    auto const inc_view = incoming_status_view;
-    auto const hi       = has_incoming;
     thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      cuda::counting_iterator<size_type>(0),
                      cuda::counting_iterator<size_type>(num_rows),
                      [vals  = this->values,
                       d_out = static_cast<bool*>(data.data()),
                       dnm   = this->d_null_mask,
-                      dp_s,
-                      inc_view,
-                      hi] __device__(size_type row) {
+                      dp_s] __device__(size_type row) {
                        // Status column is always non-nullable; row_null replaces the null bit.
-                       if (hi) {
-                         auto const s = static_cast<op_status>(inc_view.element<uint8_t>(row));
+                       if (dp_s) {
+                         auto const s = dp_s[row];
                          if (s != op_status::SUCCESS) {
                            d_out[row] = false;
                            if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
-                           if (dp_s) { dp_s[row] = s; }
+                           dp_s[row] = s;
+                           return;
+                         }
+                         if (!cudf::bit_is_set(dnm, row)) {
+                           d_out[row] = false;
+                           dp_s[row]  = op_status::ROW_NULL;
                            return;
                          }
                        } else {
                          if (!cudf::bit_is_set(dnm, row)) {
                            d_out[row] = false;
-                           if (dp_s) { dp_s[row] = op_status::ROW_NULL; }
                            return;
                          }
                        }
@@ -1027,8 +1010,7 @@ struct cast_variant_fn {
   std::unique_ptr<column> operator()()
     requires(cuda::std::is_same_v<T, cudf::string_view>)
   {
-    cast_variant_string_fn fn{
-      values, d_null_mask, nullptr, nullptr, {}, d_status, incoming_status_view, has_incoming};
+    cast_variant_string_fn fn{values, d_null_mask, nullptr, nullptr, {}, d_status};
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(fn, num_rows, stream, mr);
 
@@ -1202,7 +1184,6 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
 
 std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
-                                     std::optional<column_view> incoming_status,
                                      std::optional<mutable_column_view> status,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
@@ -1223,20 +1204,8 @@ std::unique_ptr<column> cast_variant(column_view const& values,
 
   size_type const num_rows = values.size();
 
-  // Validate incoming_status before the empty-values fast path so callers always get
+  // Validate status before the empty-values fast path so callers always get
   // std::invalid_argument for a malformed status column, even when values is empty.
-  if (incoming_status.has_value()) {
-    CUDF_EXPECTS(!incoming_status->nullable(),
-                 "incoming status column must not be nullable; use row_null for SQL-null rows",
-                 std::invalid_argument);
-    CUDF_EXPECTS(incoming_status->type().id() == type_id::UINT8,
-                 "incoming status column must be UINT8",
-                 std::invalid_argument);
-    CUDF_EXPECTS(incoming_status->size() == num_rows,
-                 "incoming status column must have the same number of rows as the values column",
-                 std::invalid_argument);
-  }
-
   if (status.has_value()) {
     CUDF_EXPECTS(!status->nullable(),
                  "status column must not be nullable; use row_null for SQL-null rows",
@@ -1258,14 +1227,6 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
   auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
 
-  // Build device view for incoming status if provided; keep a placeholder when absent so that
-  // cast_variant_fn always holds a valid column_device_view (kernel ignores it when !has_incoming).
-  auto placeholder_col    = make_empty_column(data_type{type_id::UINT8});
-  auto incoming_dev_view  = incoming_status.has_value()
-                              ? column_device_view::create(*incoming_status, stream)
-                              : column_device_view::create(*placeholder_col, stream);
-  bool const has_incoming = incoming_status.has_value();
-
   return cudf::type_dispatcher(
     desired_type,
     cast_variant_fn{
@@ -1276,8 +1237,6 @@ std::unique_ptr<column> cast_variant(column_view const& values,
       std::move(null_mask),
       stream,
       mr,
-      *incoming_dev_view,
-      has_incoming,
       status.has_value() ? reinterpret_cast<op_status*>(status->data<uint8_t>()) : nullptr});
 }
 
@@ -1295,13 +1254,12 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
 
 std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
-                                     std::optional<column_view> incoming_status,
                                      std::optional<mutable_column_view> status,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::cast_variant(values, desired_type, incoming_status, status, stream, mr);
+  return detail::cast_variant(values, desired_type, status, stream, mr);
 }
 
 std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
@@ -1315,16 +1273,14 @@ std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
   auto const temp_mr = cudf::get_current_device_resource_ref();
 
   if (status.has_value()) {
-    auto extract_status = make_numeric_column(
-      data_type{type_id::UINT8}, variant_column.size(), mask_state::UNALLOCATED, stream, temp_mr);
-    auto value = detail::get_variant_field(
-      variant_column, path, extract_status->mutable_view(), stream, temp_mr);
-    return detail::cast_variant(
-      value->view(), desired_type, extract_status->view(), status, stream, mr);
+    // `status` is filled by `get_variant_field`, then read back by `cast_variant` as incoming
+    // status and overwritten in place with the final per-row status.
+    auto value = detail::get_variant_field(variant_column, path, status, stream, temp_mr);
+    return detail::cast_variant(value->view(), desired_type, status, stream, mr);
   }
 
   auto value = detail::get_variant_field(variant_column, path, std::nullopt, stream, temp_mr);
-  return detail::cast_variant(value->view(), desired_type, std::nullopt, std::nullopt, stream, mr);
+  return detail::cast_variant(value->view(), desired_type, std::nullopt, stream, mr);
 }
 
 }  // namespace io::parquet::experimental

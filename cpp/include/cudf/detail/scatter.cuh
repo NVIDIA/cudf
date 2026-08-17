@@ -26,7 +26,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -47,9 +47,9 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
   auto const num_rows = input.size();
 
   auto out_offsets = make_numeric_column(
-    data_type{type_to_id<size_type>()}, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_id::INT32}, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
 
-  auto const d_out_offsets  = out_offsets->mutable_view().template begin<size_type>();
+  auto const d_out_offsets  = out_offsets->mutable_view().template begin<int32_t>();
   auto const d_row_offsets  = lists_column_view(input).offsets_begin();
   auto const d_list_offsets = lists_column_view(lists_column_view(input).child()).offsets_begin();
 
@@ -179,7 +179,7 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
      d_list_offsets,
      d_indices = gather_map.begin(),
      d_out_list_offsets =
-       output_list_offsets.template begin<size_type>()] __device__(size_type const idx) {
+       output_list_offsets.template begin<int32_t>()] __device__(size_type const idx) {
       // The output row has been identified as a null/empty list during list size computation.
       if (d_out_list_offsets[idx + 1] == d_out_list_offsets[idx]) { return; }
 
@@ -207,9 +207,8 @@ std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& inp
   auto [list_offsets, list_validities] = generate_list_offsets_and_validities(input, stream, mr);
   auto const offsets_view              = list_offsets->view();
 
-  auto const num_rows = input.size();
-  auto const num_output_entries =
-    cudf::detail::get_value<size_type>(offsets_view, num_rows, stream);
+  auto const num_rows           = input.size();
+  auto const num_output_entries = cudf::detail::get_value<int32_t>(offsets_view, num_rows, stream);
 
   auto list_entries =
     gather_list_entries(input, offsets_view, num_rows, num_output_entries, stream, mr);
@@ -258,7 +257,7 @@ std::unique_ptr<column> concatenate_list_elements(column_view const& input,
   if (child.size() == 0) {
     auto const num_rows = input.size();
     auto out_offsets    = cudf::make_column_from_scalar(
-      numeric_scalar<size_type>(0, true, stream, mr), num_rows + 1, stream, mr);
+      numeric_scalar<int32_t>(0, true, stream, mr), num_rows + 1, stream, mr);
     // Use the grandchild's schema (not child's) so out_entries has type T, not list<T>.
     auto out_entries = cudf::empty_like(lists_column_view(child).child());
     return make_lists_column(num_rows,

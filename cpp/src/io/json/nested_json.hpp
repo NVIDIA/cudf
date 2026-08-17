@@ -72,8 +72,8 @@ struct json_column {
   std::vector<row_offset_t> string_offsets;
   std::vector<row_offset_t> string_lengths;
 
-  // Row offsets
-  std::vector<row_offset_t> child_offsets;
+  // Row offsets (LIST offsets child data; always 32-bit)
+  std::vector<int32_t> child_offsets;
 
   // Validity bitmap
   std::vector<bitmask_type> validity;
@@ -148,8 +148,8 @@ struct device_json_column {
   rmm::device_uvector<row_offset_t> string_offsets;
   rmm::device_uvector<row_offset_t> string_lengths;
 
-  // Row offsets
-  rmm::device_uvector<row_offset_t> child_offsets;
+  // Row offsets (LIST offsets child data; always 32-bit)
+  rmm::device_uvector<int32_t> child_offsets;
 
   // Validity bitmap
   rmm::device_buffer validity;

@@ -19,7 +19,7 @@
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <rapidsmpf/communicator/communicator.hpp>
 #include <rapidsmpf/cuda_event.hpp>
@@ -204,7 +204,7 @@ streaming::Message inner_join_chunk(std::shared_ptr<streaming::Context> ctx,
                                     cudf::hash_join& joiner,
                                     cudf::table_view build_carrier,
                                     std::vector<cudf::size_type> right_on,
-                                    rmm::cuda_stream_view build_stream,
+                                    cuda::stream_ref build_stream,
                                     CudaEvent* build_event,
                                     CudaEvent* tmp_event
 

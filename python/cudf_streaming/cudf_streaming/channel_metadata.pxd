@@ -9,7 +9,6 @@ from libcpp.utility cimport pair
 from libcpp.vector cimport vector
 from pylibcudf.libcudf.types cimport null_order as cpp_null_order
 from pylibcudf.libcudf.types cimport order as cpp_order
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
 

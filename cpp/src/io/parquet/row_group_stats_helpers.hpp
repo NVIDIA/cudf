@@ -127,7 +127,7 @@ struct row_group_stats_caster : public stats_caster_base {
               }
             }
           } else {
-            // Marking it null, if column present in row group
+            // Mark it null if the column chunk is absent from this row group.
             min.set_index(stats_idx, std::nullopt, {});
             max.set_index(stats_idx, std::nullopt, {});
             if (has_is_null_operator) { is_null->set_index(stats_idx, std::nullopt, {}); }

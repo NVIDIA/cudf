@@ -232,7 +232,7 @@ rapidsmpf::streaming::Actor top_k_by(std::shared_ptr<rapidsmpf::streaming::Conte
 
   co_await ctx->executor()->schedule();
   std::vector<std::unique_ptr<cudf::table>> partials;
-  std::vector<rmm::cuda_stream_view> chunk_streams;
+  std::vector<cuda::stream_ref> chunk_streams;
   while (true) {
     auto msg = co_await ch_in->receive();
     if (msg.empty()) { break; }

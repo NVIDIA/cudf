@@ -13,8 +13,7 @@
 #include <cudf_streaming/detail/approx_distinct_count.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream_ref>
 #include <cuda_runtime_api.h>
 
 #include <rapidsmpf/cuda_stream.hpp>
@@ -141,7 +140,7 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
       tag_,
       [precision = precision_, sketch_bytes, row_count_offset](rapidsmpf::Buffer const* left,
                                                                rapidsmpf::Buffer* right) {
-        right->write_access([&](std::byte* out, rmm::cuda_stream_view stream) {
+        right->write_access([&](std::byte* out, cuda::stream_ref stream) {
           auto sketch =
             cudf::approx_distinct_count({reinterpret_cast<cuda::std::byte*>(out), sketch_bytes},
                                         precision,
@@ -160,7 +159,7 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
   }
 
   auto const [distinct_count, row_count] =
-    storage->write_access([&](std::byte* data, rmm::cuda_stream_view stream) {
+    storage->write_access([&](std::byte* data, cuda::stream_ref stream) {
       auto sketch =
         cudf::approx_distinct_count({reinterpret_cast<cuda::std::byte*>(data), sketch_bytes},
                                     precision_,

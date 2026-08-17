@@ -91,7 +91,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
       tag,
       [filter_size = filter_size_, seed = seed_](rapidsmpf::Buffer const* left,
                                                  rapidsmpf::Buffer* right) {
-        right->write_access([&](std::byte* out_bytes, rmm::cuda_stream_view stream) {
+        right->write_access([&](std::byte* out_bytes, cuda::stream_ref stream) {
           auto const in =
             cudf_streaming::detail::device_bloom_filter::view(filter_size, seed, left->data());
           cudf_streaming::detail::device_bloom_filter(filter_size, seed, out_bytes)

@@ -19,12 +19,12 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/cub.cuh>
 #include <cuda/functional>
 #include <cuda/std/limits>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -799,15 +799,29 @@ CUDF_KERNEL void __launch_bounds__(block_size)
           case BOOLEAN:
           case BYTE: s->vals.u8[nz_idx] = column.element<uint8_t>(row); break;
           case TIMESTAMP: {
-            int64_t ts          = column.element<int64_t>(row);
-            int32_t ts_scale    = cudf::detail::powers_of_ten[9 - min(s->chunk.scale, 9)];
-            int64_t seconds     = ts / ts_scale;
-            int64_t nanos       = (ts - seconds * ts_scale);
+            auto const ts             = column.element<int64_t>(row);
+            auto const ticks_per_sec  = cudf::detail::powers_of_ten[9 - min(s->chunk.scale, 9)];
+            auto const nanos_per_tick = cudf::detail::powers_of_ten[min(s->chunk.scale, 9)];
+
+            auto seconds = ts / ticks_per_sec;
+            auto nanos   = (ts - seconds * ticks_per_sec) * nanos_per_tick;
+
+            // Adjust to keep the nanosecond remainder non-negative.
+            // See https://github.com/rapidsai/cudf/issues/19350.
+            if (nanos < 0) {
+              seconds -= 1;
+              nanos += 1'000'000'000;
+            }
+            // ORC readers borrow a second when the stored seconds are negative and the stored nanos
+            // are at least 1 ms (ORC-306/ORC-763, mirrored in the reader), so give that second back
+            // here. Timestamps in the last 999 ms before the epoch then store zero seconds and are
+            // read back a second later, as documented on `write_orc` (ORC-771).
+            if (seconds < 0 and nanos > 999'999) { seconds += 1; }
+
             s->vals.i64[nz_idx] = seconds - orc_utc_epoch;
             if (nanos != 0) {
               // Trailing zeroes are encoded in the lower 3-bits
               uint32_t zeroes = 0;
-              nanos *= cudf::detail::powers_of_ten[min(s->chunk.scale, 9)];
               if (!(nanos % 100)) {
                 nanos /= 100;
                 zeroes = 1;
@@ -845,8 +859,8 @@ CUDF_KERNEL void __launch_bounds__(block_size)
           case MAP: {
             auto const& offsets = column.child(lists_column_view::offsets_column_index);
             // Compute list length from the offsets
-            s->lengths.u32[nz_idx] = offsets.element<size_type>(row + 1 + column.offset()) -
-                                     offsets.element<size_type>(row + column.offset());
+            s->lengths.u32[nz_idx] = offsets.element<int32_t>(row + 1 + column.offset()) -
+                                     offsets.element<int32_t>(row + column.offset());
           } break;
           default: break;
         }
@@ -1298,11 +1312,11 @@ CUDF_KERNEL void decimal_sizes_to_offsets_kernel(device_2dspan<rowgroup_rows con
 
 void encode_orc_column_data(device_2dspan<encoder_chunk const> chunks,
                             device_2dspan<encoder_chunk_streams> streams,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   auto const num_blocks = chunks.size().first * chunks.size().second;
   encode_column_data_kernel<encode_block_size>
-    <<<num_blocks, encode_block_size, 0, stream.value()>>>(chunks, streams);
+    <<<num_blocks, encode_block_size, 0, stream.get()>>>(chunks, streams);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -1312,18 +1326,18 @@ void encode_stripe_dictionaries(stripe_dictionary const* stripes,
                                 size_type num_string_columns,
                                 size_type num_stripes,
                                 device_2dspan<encoder_chunk_streams> enc_streams,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   constexpr int block_size = 512;  // 512 threads per dictionary
   dim3 dim_grid(num_string_columns * num_stripes, 2);
   encode_string_dictionaries_kernel<block_size>
-    <<<dim_grid, block_size, 0, stream.value()>>>(stripes, columns, chunks, enc_streams);
+    <<<dim_grid, block_size, 0, stream.get()>>>(stripes, columns, chunks, enc_streams);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
                               device_2dspan<encoder_chunk_streams> enc_streams,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   auto const num_rowgroups = enc_streams.size().second;
   auto const num_streams   = strm_desc.size().second;
@@ -1339,7 +1353,7 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
   auto const num_blocks =
     cudf::util::div_rounding_up_unsafe(num_stripes, compact_streams_block_size) *
     strm_desc.size().second;
-  init_batched_memcpy_kernel<<<num_blocks, compact_streams_block_size, 0, stream.value()>>>(
+  init_batched_memcpy_kernel<<<num_blocks, compact_streams_block_size, 0, stream.get()>>>(
     strm_desc, enc_streams, srcs, dsts, lengths);
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -1359,26 +1373,26 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
   device_2dspan<stripe_stream> strm_desc,
   device_2dspan<encoder_chunk_streams> enc_streams,
   device_span<codec_exec_result> comp_res,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   rmm::device_uvector<device_span<uint8_t const>> comp_in(num_compressed_blocks, stream);
   rmm::device_uvector<device_span<uint8_t>> comp_out(num_compressed_blocks, stream);
 
   size_t const num_blocks = strm_desc.size().first * strm_desc.size().second;
-  init_compression_blocks_kernel<<<num_blocks, 256, 0, stream.value()>>>(strm_desc,
-                                                                         enc_streams,
-                                                                         comp_in,
-                                                                         comp_out,
-                                                                         comp_res,
-                                                                         compressed_data,
-                                                                         comp_blk_size,
-                                                                         max_comp_blk_size,
-                                                                         comp_block_align);
+  init_compression_blocks_kernel<<<num_blocks, 256, 0, stream.get()>>>(strm_desc,
+                                                                       enc_streams,
+                                                                       comp_in,
+                                                                       comp_out,
+                                                                       comp_res,
+                                                                       compressed_data,
+                                                                       comp_blk_size,
+                                                                       max_comp_blk_size,
+                                                                       comp_block_align);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   cudf::io::detail::compress(compression, comp_in, comp_out, comp_res, stream);
 
-  compact_compressed_blocks_kernel<<<num_blocks, 1024, 0, stream.value()>>>(
+  compact_compressed_blocks_kernel<<<num_blocks, 1024, 0, stream.get()>>>(
     strm_desc, comp_in, comp_out, comp_res, compressed_data, comp_blk_size, max_comp_blk_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -1391,7 +1405,7 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
 
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
                               std::map<uint32_t, rmm::device_uvector<uint32_t>>& elem_sizes,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   if (rg_bounds.count() == 0) return;
 
@@ -1410,7 +1424,7 @@ void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
   // number of rowgroups * number of decimal columns
   auto const num_blocks = elem_sizes.size() * rg_bounds.size().first;
   decimal_sizes_to_offsets_kernel<block_size>
-    <<<num_blocks, block_size, 0, stream.value()>>>(rg_bounds, d_sizes);
+    <<<num_blocks, block_size, 0, stream.get()>>>(rg_bounds, d_sizes);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

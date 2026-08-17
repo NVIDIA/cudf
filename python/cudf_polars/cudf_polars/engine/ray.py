@@ -10,6 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
+import kvikio.defaults
 import ray
 import ray.exceptions
 import ucxx._lib.libucxx as ucx_api
@@ -48,7 +49,11 @@ from cudf_polars.engine.persisted_result import (
 from cudf_polars.quent._context import LocalQuentContext
 from cudf_polars.quent._types import Worker
 from cudf_polars.unstable import unstable
-from cudf_polars.utils.config import MemoryResourceConfig, RayContext
+from cudf_polars.utils.config import (
+    MemoryResourceConfig,
+    RayContext,
+    resolve_kvikio_nthreads,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -239,6 +244,7 @@ class RankActor:
         nranks: int,
         rapidsmpf_options_as_bytes: bytes,
         num_py_executors: int,
+        kvikio_nthreads: int,
         hardware_binding: HardwareBindingPolicy,
         memory_resource_config: MemoryResourceConfig | None,
         worker_id: uuid.UUID,
@@ -246,6 +252,7 @@ class RankActor:
         quent_enabled: bool,
     ) -> None:
         bind_to_gpu(hardware_binding)
+        kvikio.defaults.set("num_threads", kvikio_nthreads)
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -342,7 +349,7 @@ class RankActor:
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
 
-    def reset(self, *, rapidsmpf_options_as_bytes: bytes) -> None:
+    def reset(self, *, rapidsmpf_options_as_bytes: bytes, kvikio_nthreads: int) -> None:
         """
         Rebuild the streaming Context with new options.
 
@@ -353,9 +360,12 @@ class RankActor:
         ----------
         rapidsmpf_options_as_bytes
             Serialized :class:`Options` to install.
+        kvikio_nthreads
+            Number of kvikio threads to configure on this worker process.
         """
         if self._ctx is None:
             raise RuntimeError("reset() requires setup_worker() to have run")
+        kvikio.defaults.set("num_threads", kvikio_nthreads)
         assert self._comm is not None
         # Collective: all ranks idle before any rank tears down its Context.
         if self._comm.nranks > 1:
@@ -716,6 +726,9 @@ class RayEngine(StreamingEngine):
         num_ranks: int | None = None,
     ) -> None:
         executor_options = executor_options or {}
+        executor_options.setdefault(
+            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
+        )
         engine_options = engine_options or {}
         ray_init_options = ray_init_options or {}
 
@@ -795,6 +808,7 @@ class RayEngine(StreamingEngine):
                         "int",
                         executor_options.get("num_py_executors", 8),
                     ),
+                    kvikio_nthreads=executor_options["kvikio_nthreads"],
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
                     worker_id=worker_id,
@@ -851,6 +865,9 @@ class RayEngine(StreamingEngine):
             existing_quent_context = existing_executor_options.get("quent_context")
             if existing_quent_context is not None:
                 executor_options.setdefault("quent_context", existing_quent_context)
+            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
+            if existing_kvikio_nthreads is not None:
+                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
         engine_options = engine_options or {}
         rapidsmpf_options_as_bytes = resolve_rapidsmpf_options(
             rapidsmpf_options
@@ -863,6 +880,7 @@ class RayEngine(StreamingEngine):
             [
                 rank.reset.remote(
                     rapidsmpf_options_as_bytes=rapidsmpf_options_as_bytes,
+                    kvikio_nthreads=executor_options["kvikio_nthreads"],
                 )
                 for rank in self._rank_actors
             ]

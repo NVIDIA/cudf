@@ -18,13 +18,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/cub.cuh>
 #include <cuda/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/transform_iterator.h>
@@ -222,7 +222,7 @@ template <bool NullifyOutOfBounds, typename MapIterator>
 std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                      MapIterator begin,
                                      MapIterator end,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   auto const output_count = std::distance(begin, end);
@@ -272,7 +272,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
     gather_chars_fn_string_parallel<<<grid_size,
                                       warps_per_threadblock * cudf::detail::warp_size,
                                       0,
-                                      stream.value()>>>(
+                                      stream.get()>>>(
       d_strings->begin<string_view>(), d_out_chars, offsets_view, begin, output_count);
   } else {
     // Threshold is based on empirical data on H100.
@@ -285,7 +285,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
       auto const grid_size                  = cudf::util::div_rounding_up_safe(
         static_cast<int64_t>(output_count), static_cast<int64_t>(strings_per_threadblock));
       gather_chars_fn_char_parallel<strings_per_threadblock>
-        <<<grid_size, warps_per_threadblock * cudf::detail::warp_size, 0, stream.value()>>>(
+        <<<grid_size, warps_per_threadblock * cudf::detail::warp_size, 0, stream.get()>>>(
           d_strings->begin<string_view>(), d_out_chars, offsets_view, begin, output_count);
     } else {
       // Iterator over the character column of input strings to gather
@@ -315,7 +315,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                  out_chars_itr,
                                  sizes_itr,
                                  output_count,
-                                 stream.value());
+                                 stream.get());
 
       // Allocate temporary storage
       auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, mr);
@@ -327,7 +327,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                  out_chars_itr,
                                  sizes_itr,
                                  output_count,
-                                 stream.value());
+                                 stream.get());
     }
   }
 
@@ -366,7 +366,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                      MapIterator begin,
                                      MapIterator end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   if (nullify_out_of_bounds) return gather<true>(strings, begin, end, stream, mr);

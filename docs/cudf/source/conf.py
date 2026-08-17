@@ -419,10 +419,13 @@ _names_to_skip_in_pylibcudf = {
     "size_type",
     "size_t",
     "type_id",
+    "null_policy",
+    "nan_policy",
     # Unknown base types
     "int32_t",
     "uint64_t",
     "void",
+    "double",
 }
 
 
@@ -652,6 +655,13 @@ nitpick_ignore = [
     ("py:class", "Value"),
     ("py:class", "polars.lazyframe.frame.LazyFrame"),
     ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
+    # pylibcudf typing aliases rendered as bare names in autodoc signatures.
+    ("py:class", "ColumnNameSpec"),
+    ("py:class", "CudaStreamLike"),
+    ("py:class", "Datasource"),
+    ("py:class", "Span"),
+    ("py:class", "SupportsArrayInterface"),
+    ("py:class", "SupportsCudaArrayInterface"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [

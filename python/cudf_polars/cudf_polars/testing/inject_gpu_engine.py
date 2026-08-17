@@ -470,6 +470,7 @@ STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/unit/sql/test_window_functions.py::test_window_multiple_named_window": "TODO: https://github.com/rapidsai/cudf/pull/22048#discussion_r3238041970",
     "tests/unit/functions/test_concat.py::test_concat_horizontal_lazy_strict_raises_shape_error_27415": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
     "tests/unit/io/test_io_plugin.py::test_defer_validate_true": "correct SchemaError raised but wrapped in an ExceptionGroup under the streaming engine",
+    "tests/unit/lazyframe/test_projections.py::test_merge_sorted_projection_pd": "https://github.com/rapidsai/cudf/issues/23055",
     "tests/unit/operations/test_slice.py::test_hconcat_tail_unequal_heights_strict_raises_27552": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
 }
 

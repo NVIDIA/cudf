@@ -15,11 +15,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <functional>
@@ -506,7 +506,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   static std::unique_ptr<column_device_view, std::function<void(column_device_view*)>> create(
     column_view source_view,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -657,7 +657,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
   static std::unique_ptr<mutable_column_device_view,
                          std::function<void(mutable_column_device_view*)>>
   create(mutable_column_view source_view,
-         rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+         cuda::stream_ref stream           = cudf::get_default_stream(),
          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**

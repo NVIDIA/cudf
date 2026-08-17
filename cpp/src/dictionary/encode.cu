@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,7 +23,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
@@ -32,6 +31,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
@@ -55,7 +55,7 @@ struct encode_fn {
 
 std::unique_ptr<column> encode(column_view const& input,
                                data_type indices_type,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_signed(indices_type) && is_index_type(indices_type),
@@ -89,8 +89,8 @@ std::unique_ptr<column> encode(column_view const& input,
   auto const empty_key  = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
   auto probe            = encode_probe_t{row_hash.device_hasher(has_nulls)};
   auto allocator        = rmm::mr::polymorphic_allocator<char>{};
-  auto set              = cuco::static_set{
-    input.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.value()};
+  auto set =
+    cuco::static_set{input.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
   auto set_ref    = set.ref(cuco::insert_and_find);
   using set_ref_t = decltype(set_ref);
 
@@ -105,7 +105,7 @@ std::unique_ptr<column> encode(column_view const& input,
                     encode_fn{set_ref, *d_input});
 
   auto keys_indices = rmm::device_uvector<size_type>(input.size(), stream);
-  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.value());
+  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
   keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 
   // sort the keys_indices so we can use lower-bound on them
@@ -154,7 +154,7 @@ data_type get_indices_type_for_size(size_type keys_size)
 
 std::unique_ptr<column> encode(column_view const& input_column,
                                data_type indices_type,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

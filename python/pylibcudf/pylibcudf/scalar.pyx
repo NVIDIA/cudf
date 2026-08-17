@@ -64,6 +64,10 @@ from .column cimport Column
 from .traits cimport is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from functools import singledispatch
 from ._interop_helpers import ArrowLike, ColumnMetadata
 
@@ -153,7 +157,7 @@ cdef class Scalar:
         """The type of data in the column."""
         return self._data_type
 
-    cpdef bool is_valid(self, object stream = None):
+    cpdef bool is_valid(self, object stream: CudaStreamLike | None = None):
         """True if the scalar is valid, false if not"""
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()

@@ -91,9 +91,7 @@ requirements:
     - pandas >=3.0.0,<3.1.0
     - cupy >=14.0.1,!=14.1.0
     - numba-cuda >=0.22.2
-    # TODO: add `numba-cuda-mlir >=0.3.0` here once it is published to a conda
-    # channel. Currently only available via PyPI; the pip-only declaration
-    # lives in `dependencies.yaml::depends_on_numba_cuda_mlir`.
+    - numba-cuda-mlir >=0.3.0
     - numba >=0.60.0,<0.65.0
     - numpy >=2.0,<3.0
     - pyarrow>=19.0.0,<24  # https://github.com/rapidsai/cudf/issues/22229

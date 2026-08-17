@@ -423,6 +423,7 @@ files:
       - depends_on_cuda_bindings
       - depends_on_rapidsmpf
       - depends_on_cudf_streaming
+      - depends_on_kvikio
       - depends_on_pylibcudf
   # TODO(26.10): Remove this alias in favor of dask
   py_run_cudf_polars_experimental:
@@ -956,24 +957,29 @@ dependencies:
           - matrix:
               use_cuda_wheels: "false"
             packages:
-          # We always want nvJitLink >= whatever minor version was available in the build environment
-          # nvJitLink tends to follow the CTK's minor versions, but check at https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
-          #
-          # ref: https://github.com/rapidsai/cudf/pull/20873
           - matrix:
-              cuda: "12.9"
+              cuda: "12.*"
+              cuda_suffixed: "true"
               use_cuda_wheels: "true"
             packages:
+              - cuda-toolkit[nvrtc]==12.*
+              # We always want nvJitLink >= whatever minor version was available in the build environment
+              # nvJitLink tends to follow the CTK's minor versions, but check at https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
+              #
+              # ref: https://github.com/rapidsai/cudf/pull/20873
               - nvidia-nvjitlink-cu12>=12.9,<13
           - matrix:
               cuda: "13.*"
+              cuda_suffixed: "true"
               use_cuda_wheels: "true"
             packages:
+              - cuda-toolkit[nvrtc]==13.*
               - &nvjitlink_cu13 nvidia-nvjitlink>=13.3,<14
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:
             packages:
+              - cuda-toolkit[nvrtc]==13.*
               - *nvjitlink_cu13
   cuda_static:
     common:
@@ -1090,31 +1096,6 @@ dependencies:
           - nvtx>=0.2.1
           - packaging
           - rich
-    specific:
-      - output_types: [requirements, pyproject]
-        matrices:
-          # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
-          # (e.g. for DLFW and pip devcontainers)
-          - matrix:
-              use_cuda_wheels: "false"
-            packages:
-          - matrix:
-              cuda: "12.*"
-              cuda_suffixed: "true"
-              use_cuda_wheels: "true"
-            packages:
-              - cuda-toolkit[nvcc,nvrtc]==12.*
-              # cuda-toolkit before 12.6.3 does not have the `cufile` extra.
-              - nvidia-cufile-cu12
-          - matrix:
-              cuda: "13.*"
-              cuda_suffixed: "true"
-              use_cuda_wheels: "true"
-            packages:
-              - cuda-toolkit[cufile,nvcc,nvrtc]==13.*
-          - matrix:
-              cuda_suffixed: "false"
-            packages: []
   run_cudf_polars:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -1402,11 +1383,14 @@ dependencies:
             packages:
               - *numba_cuda
   depends_on_numba_cuda_mlir:
-    # numba-cuda-mlir is the MLIR-based numba-cuda compiler used by the cudf
-    # UDF backend. Currently only published to PyPI; conda packaging is a
-    # tracked feature request (see TODOs in conda/recipes/cudf/recipe.yaml).
-    # Once a conda package exists, add an `output_types: [conda]` entry here
-    # mirroring `depends_on_numba_cuda`.
+    common:
+      - output_types: [conda, requirements, pyproject]
+        packages:
+          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
+          - numba>=0.60.0,<0.65.0
+      - output_types: [conda]
+        packages:
+          - &numba_cuda_mlir numba-cuda-mlir>=0.3.0
     specific:
       - output_types: [requirements, pyproject]
         matrices:
@@ -1425,7 +1409,7 @@ dependencies:
           - matrix:
               cuda_suffixed: "false"
             packages:
-              - numba-cuda-mlir>=0.3.0
+              - *numba_cuda_mlir
   depends_on_pylibcudf:
     common:
       - output_types: conda
@@ -1547,6 +1531,31 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cupy-cuda13x[ctk]>=14.0.1,!=14.1.0
+  depends_on_kvikio:
+    common:
+      - output_types: conda
+        packages:
+          - &kvikio_unsuffixed kvikio==26.10.*,>=0.0.0a0
+      - output_types: requirements
+        packages:
+          - --extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/
+    specific:
+      - output_types: [requirements, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+              cuda_suffixed: "true"
+            packages:
+              - kvikio-cu12==26.10.*,>=0.0.0a0
+          - matrix:
+              cuda: "13.*"
+              cuda_suffixed: "true"
+            packages:
+              - kvikio-cu13==26.10.*,>=0.0.0a0
+          - matrix:
+              cuda_suffixed: "false"
+            packages:
+              - *kvikio_unsuffixed
   depends_on_libkvikio:
     common:
       - output_types: conda

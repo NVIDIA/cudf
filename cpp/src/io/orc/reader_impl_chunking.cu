@@ -507,7 +507,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
       // Instead, it may use some other stream(s) to sync the H->D memcpy.
       // As such, we need to make sure the device buffers in `lvl_stripe_data` are ready first.
       if (!stream_synchronized) {
-        _stream.synchronize();
+        _stream.sync();
         stream_synchronized = true;
       }
       device_read_tasks.emplace_back(
@@ -528,7 +528,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
     CUDF_CUDA_TRY(
       cudf::detail::memcpy_async(dev_dst, host_buffer->data(), host_buffer->size(), _stream));
   }
-  _stream.synchronize();
+  _stream.sync();
 
   for (auto& task : device_read_tasks) {  // if there were device reads
     CUDF_EXPECTS(task.first.get() == task.second, "Unexpected discrepancy in bytes read.");

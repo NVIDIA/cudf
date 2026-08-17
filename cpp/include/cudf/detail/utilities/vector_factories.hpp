@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -102,7 +102,6 @@ rmm::device_uvector<std::remove_cv_t<T>> make_device_uvector_async(
  * @note This function does not synchronize `stream`.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input host container from which to copy
  * @param stream The stream on which to allocate memory and perform the copy
  * @param mr The memory resource to use for allocating the returned device_uvector
@@ -166,7 +165,6 @@ rmm::device_uvector<std::remove_cv_t<T>> make_device_uvector_async(
  * @note This function does not synchronize `stream`.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input device container from which to copy
  * @param stream The stream on which to allocate memory and perform the copy
  * @param mr The memory resource to use for allocating the returned device_uvector
@@ -210,7 +208,6 @@ rmm::device_uvector<T> make_device_uvector(host_span<T const> source_data,
  * @note This function synchronizes `stream`.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input host container from which to copy
  * @param stream The stream on which to allocate memory and perform the copy
  * @param mr The memory resource to use for allocating the returned device_uvector
@@ -273,7 +270,6 @@ rmm::device_uvector<T> make_device_uvector(device_span<T const> source_data,
  * @note This function synchronizes `stream`.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input device container from which to copy
  * @param stream The stream on which to allocate memory and perform the copy
  * @param mr The memory resource to use for allocating the returned device_uvector
@@ -316,7 +312,6 @@ std::vector<std::remove_cv_t<T>> make_std_vector_async(device_span<T> v,
  * @note This function synchronizes `stream` after the copy.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input device container from which to copy
  * @param stream The stream on which to perform the copy
  * @return The data copied to the host
@@ -355,7 +350,6 @@ std::vector<T> make_std_vector(device_span<T const> v, rmm::cuda_stream_view str
  * @note This function synchronizes `stream`.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input device container from which to copy
  * @param stream The stream on which to perform the copy
  * @return The data copied to the host
@@ -430,7 +424,6 @@ host_vector<T> make_host_vector_async(device_span<T const> v, rmm::cuda_stream_v
  * using a pinned memory resource.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input device container from which to copy
  * @param stream The stream on which to perform the copy
  * @return The data copied to the host
@@ -470,7 +463,6 @@ host_vector<T> make_host_vector(device_span<T const> v, rmm::cuda_stream_view st
  * @note This function synchronizes `stream` after the copy.
  *
  * @tparam Container The type of the container to copy from
- * @tparam T The type of the data to copy
  * @param c The input device container from which to copy
  * @param stream The stream on which to perform the copy
  * @return The data copied to the host

@@ -13,15 +13,14 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuco/operator.hpp>
 #include <cuco/static_set_ref.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
-void filtered_join::insert_right_table_nested(rmm::cuda_stream_view stream)
+void filtered_join::insert_right_table_nested(cuda::stream_ref stream)
 {
   auto const comparator =
     cudf::detail::row::equality::self_comparator{_preprocessed_right}.equal_to<true>(

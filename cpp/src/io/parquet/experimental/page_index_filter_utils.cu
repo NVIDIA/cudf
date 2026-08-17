@@ -11,9 +11,9 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/stream>
 #include <thrust/gather.h>
 
 #include <algorithm>
@@ -27,7 +27,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   size_type schema_idx,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Compute total number of row groups
   auto const total_row_groups =
@@ -146,7 +146,7 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
 rmm::device_uvector<size_type> compute_page_indices_async(
   cudf::host_span<cudf::size_type const> page_row_offsets,
   cudf::size_type total_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto row_offsets = cudf::detail::make_device_uvector_async(

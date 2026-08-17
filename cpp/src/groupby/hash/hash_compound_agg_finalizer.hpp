@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -19,13 +19,13 @@ struct hash_compound_agg_finalizer {
   data_type const input_type;
   cudf::detail::result_cache* const cache;
   bitmask_type const* const d_row_bitmask;
-  rmm::cuda_stream_view const stream;
+  cuda::stream_ref const stream;
   rmm::device_async_resource_ref const mr;
 
   hash_compound_agg_finalizer(column_view const& col,
                               cudf::detail::result_cache* cache,
                               bitmask_type const* d_row_bitmask,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
   // Default case: no-op

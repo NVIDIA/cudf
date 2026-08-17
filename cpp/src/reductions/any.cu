@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ struct any_fn {
 
   template <typename T>
   std::unique_ptr<scalar> operator()(column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<T>)
   {
@@ -66,7 +66,7 @@ struct any_fn {
   }
   template <typename T>
   std::unique_ptr<scalar> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(!std::is_arithmetic_v<T>)
   {
@@ -79,7 +79,7 @@ struct any_fn {
 std::unique_ptr<cudf::scalar> any(column_view const& col,
                                   cudf::data_type const output_dtype,
                                   std::optional<std::reference_wrapper<scalar const>> init,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(output_dtype == cudf::data_type(cudf::type_id::BOOL8),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,8 +16,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -43,7 +44,7 @@ class hostdevice_vector {
 
   hostdevice_vector() : hostdevice_vector(0, cudf::get_default_stream()) {}
 
-  explicit hostdevice_vector(size_t size, rmm::cuda_stream_view stream)
+  explicit hostdevice_vector(size_t size, cuda::stream_ref stream)
     : keep_single_copy{cudf::io::integrated_memory_optimization::is_enabled()},
       h_data{make_pinned_vector_async<T>(size, stream)},
       d_data{keep_single_copy ? 0 : size, stream},
@@ -91,26 +92,25 @@ class hostdevice_vector {
     return cudf::device_span<T const>(device_ptr(), size());
   }
 
-  void host_to_device_async(rmm::cuda_stream_view stream)
+  void host_to_device_async(cuda::stream_ref stream)
   {
     if (not keep_single_copy) { cuda_memcpy_async<T>(d_data, h_data, stream); }
   }
 
-  [[deprecated("Use host_to_device_async instead")]] void host_to_device(
-    rmm::cuda_stream_view stream)
+  [[deprecated("Use host_to_device_async instead")]] void host_to_device(cuda::stream_ref stream)
   {
     host_to_device_async(stream);
-    stream.synchronize();
+    stream.sync();
   }
-  void device_to_host_async(rmm::cuda_stream_view stream)
+  void device_to_host_async(cuda::stream_ref stream)
   {
     if (not keep_single_copy) { cuda_memcpy_async<T>(h_data, d_data, stream); }
   }
 
-  void device_to_host(rmm::cuda_stream_view stream)
+  void device_to_host(cuda::stream_ref stream)
   {
     device_to_host_async(stream);
-    stream.synchronize();
+    stream.sync();
   }
 
   /**
@@ -142,7 +142,7 @@ class hostdevice_2dvector {
  public:
   hostdevice_2dvector() : hostdevice_2dvector(0, 0, cudf::get_default_stream()) {}
 
-  hostdevice_2dvector(size_t rows, size_t columns, rmm::cuda_stream_view stream)
+  hostdevice_2dvector(size_t rows, size_t columns, cuda::stream_ref stream)
     : _data{rows * columns, stream}, _size{rows, columns}
   {
   }
@@ -207,15 +207,14 @@ class hostdevice_2dvector {
 
   [[nodiscard]] size_t size_bytes() const noexcept { return _data.size_bytes(); }
 
-  void host_to_device_async(rmm::cuda_stream_view stream) { _data.host_to_device_async(stream); }
-  [[deprecated("Use host_to_device_async instead")]] void host_to_device(
-    rmm::cuda_stream_view stream)
+  void host_to_device_async(cuda::stream_ref stream) { _data.host_to_device_async(stream); }
+  [[deprecated("Use host_to_device_async instead")]] void host_to_device(cuda::stream_ref stream)
   {
     _data.host_to_device(stream);
   }
 
-  void device_to_host_async(rmm::cuda_stream_view stream) { _data.device_to_host_async(stream); }
-  void device_to_host(rmm::cuda_stream_view stream) { _data.device_to_host(stream); }
+  void device_to_host_async(cuda::stream_ref stream) { _data.device_to_host_async(stream); }
+  void device_to_host(cuda::stream_ref stream) { _data.device_to_host(stream); }
 
  private:
   hostdevice_vector<T> _data;

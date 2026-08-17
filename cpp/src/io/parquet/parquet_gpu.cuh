@@ -92,7 +92,7 @@ inline size_type __device__ row_to_value_idx(size_type idx,
  */
 void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cudf::detail::device_2dspan<PageFragment> frags,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 
 /**
  * @brief Compact dictionary hash map entries into chunk.dict_data
@@ -108,7 +108,7 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
 void collect_map_entries(device_span<slot_type> const map_storage,
                          device_span<EncColumnChunk> chunks,
                          cudf::detail::device_2dspan<PageFragment const> frags,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Get the Dictionary Indices for each row
@@ -125,7 +125,7 @@ void collect_map_entries(device_span<slot_type> const map_storage,
  */
 void get_dictionary_indices(device_span<slot_type> const map_storage,
                             cudf::detail::device_2dspan<PageFragment const> frags,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @brief Compute the minimum width required for the dictionary indices for each data page
@@ -133,6 +133,6 @@ void get_dictionary_indices(device_span<slot_type> const map_storage,
  * @param pages Device span of encoder pages
  * @param stream CUDA stream to use
  */
-void compute_per_page_dict_bits(device_span<EncPage> pages, rmm::cuda_stream_view stream);
+void compute_per_page_dict_bits(device_span<EncPage> pages, cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::detail

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/detail/copy.hpp>
@@ -14,9 +14,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 
@@ -27,7 +26,7 @@ namespace detail {
 std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
                                          lists_column_view const& gather_map,
                                          out_of_bounds_policy bounds_policy,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_index_type(gather_map.child().type()),
@@ -111,7 +110,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
 std::unique_ptr<column> segmented_gather(lists_column_view const& source_column,
                                          lists_column_view const& gather_map_list,
                                          out_of_bounds_policy bounds_policy,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

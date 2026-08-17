@@ -57,7 +57,7 @@ struct unique_keys_dispatch_fn {
     auto const d_equal    = row_equal.equal_to<false>(has_nulls, null_equality::EQUAL, comparator);
     auto const empty_key  = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
     auto probe            = probe_t{row_hash.device_hasher(has_nulls)};
-    auto allocator        = rmm::mr::polymorphic_allocator<char>{};
+    auto allocator        = rmm::mr::polymorphic_allocator<char>{temp_mr};
     auto set              = cuco::static_set{
       all_keys.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
 
@@ -66,7 +66,7 @@ struct unique_keys_dispatch_fn {
     set.insert_async(iter, iter + all_keys.size(), stream.get());
 
     // retrieve the indices of all the unique keys
-    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream);
+    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream, temp_mr);
     auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
     keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 

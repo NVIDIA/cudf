@@ -152,7 +152,7 @@ cudf::size_type distinct_count(table_view const& keys,
                                     cuco::linear_probing<1, hasher_type>{hash_key},
                                          {},
                                          {},
-                                    rmm::mr::polymorphic_allocator<char>{},
+                                    rmm::mr::polymorphic_allocator<char>{temp_mr},
                                     stream.get()};
 
     auto const iter = cuda::counting_iterator<cudf::size_type>{0};

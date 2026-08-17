@@ -133,11 +133,10 @@ compute_row_frequencies(table_view const& input,
 
   // Construct a vector to store reduced counts and init to zero
   rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, mr);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, temp_mr),
-    reduction_results.begin(),
-    reduction_results.end(),
-    histogram_count_type{0});
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
+                             reduction_results.begin(),
+                             reduction_results.end(),
+                             histogram_count_type{0});
 
   // Construct a hash set
   auto row_set =
@@ -148,7 +147,7 @@ compute_row_frequencies(table_view const& input,
                      cuco::linear_probing<DEFAULT_HISTOGRAM_CG_SIZE, row_hash>{key_hasher},
                      {},  // thread scope
                      {},  // storage
-                     rmm::mr::polymorphic_allocator<char>{},
+                     rmm::mr::polymorphic_allocator<char>{temp_mr},
                      stream.get()};
 
   // Device-accessible reference to the hash set with `insert_and_find` operator

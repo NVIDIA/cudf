@@ -41,9 +41,8 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
   if (source.is_empty()) return make_empty_column(type_id::EMPTY);
 
   // annotated indices include the offset, size and bitmask from it's parent
-  auto const indices = source.get_indices_annotated();
-  auto const d_indices =
-    column_device_view::create(indices, stream, cudf::get_current_device_resource_ref());
+  auto const indices       = source.get_indices_annotated();
+  auto const d_indices     = column_device_view::create(indices, stream);
   auto const d_iterator    = cudf::detail::indexalator_factory::make_input_iterator(indices);
   auto const indices_begin = cudf::detail::make_counting_transform_iterator(
     0, indices_handler_fn{d_iterator, *d_indices, source.keys().size()});

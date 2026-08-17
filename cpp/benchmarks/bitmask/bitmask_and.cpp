@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <algorithm>
+#include <numeric>
 #include <random>
 
 namespace {
@@ -34,7 +36,9 @@ auto setup_masks(nvbench::state& state)
   std::vector<cudf::size_type> segments(num_segments + 1);
   auto num_masks = 0;
   std::generate_n(segments.begin(), num_segments, [&normal_dist, &generator, &num_masks]() {
-    cudf::size_type segment_size = normal_dist(generator);
+    // The distribution is unbounded, so a small mean draws negative sizes; those would make the
+    // offsets below non-monotonic. Empty segments are valid input and are kept.
+    auto const segment_size = std::max(cudf::size_type{0}, cudf::size_type(normal_dist(generator)));
     num_masks += segment_size;
     return segment_size;
   });

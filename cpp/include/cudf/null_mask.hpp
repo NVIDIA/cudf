@@ -237,6 +237,12 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(
  *
  * The function assumes all the input columns passed are nullable.
  *
+ * A segment may be empty, i.e. `segment_offsets[i] == segment_offsets[i + 1]`. Reducing no bitmasks
+ * yields the identity of bitwise AND, so such a segment's result marks every row valid and its
+ * count of unset bits is zero.
+ *
+ * @throws cudf::logic_error if `segment_offsets` is decreasing, or if it reaches outside `colviews`
+ *
  * @param colviews A span containing column views whose bitmasks will be ANDed within their
  * respective segments
  * @param segment_offsets A span containing the starting positions of each segment
@@ -259,6 +265,12 @@ segmented_bitmask_and(host_span<column_view const> colviews,
  * Returns a pair containing (i) a vector of unique pointers to
  * device buffers, with each buffer containing the resulting bitmask for a segment, and (ii) a
  * vector of integers representing the count of null (unset) bits for each segment
+ *
+ * A segment may be empty, i.e. `segment_offsets[i] == segment_offsets[i + 1]`. Reducing no bitmasks
+ * yields the identity of bitwise AND, so such a segment's result marks every row valid and its
+ * count of unset bits is zero.
+ *
+ * @throws cudf::logic_error if `segment_offsets` is decreasing, or if it reaches outside `masks`
  *
  * @param masks A span containing bitmasks that will be ANDed within their
  * respective segments

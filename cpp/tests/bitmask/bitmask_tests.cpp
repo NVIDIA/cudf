@@ -22,6 +22,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream_ref>
+#include <thrust/iterator/counting_iterator.h>
 
 #include <stdexcept>
 
@@ -673,6 +674,131 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndMultipleSegments)
                                    static_cast<cudf::column_view>(bools_col3).null_mask(),
                                    cudf::num_bitmask_words(num_rows));
   }
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
+{
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1}, {0, 1, 1, 1, 0});
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 2, 1, 0, 255}, {1, 1, 0, 1, 0});
+
+  auto const num_rows = 5;
+  std::vector<cudf::column_view> const colviews{bools_col1, bools_col2};
+
+  // An empty segment reduces no masks, so it yields the identity of bitwise AND: every row valid.
+  auto const expect_all_valid = [&](void const* mask) {
+    EXPECT_EQ(cudf::null_count(static_cast<cudf::bitmask_type const*>(mask), 0, num_rows), 0);
+  };
+
+  // The reduction of both masks leaves rows 1 and 3 valid.
+  auto const expect_anded = [&](void const* mask) {
+    auto odd_indices = cudf::test::iterators::nulls_at_multiples_of(2);
+    auto const odd =
+      std::get<0>(cudf::test::detail::make_null_mask(odd_indices, odd_indices + num_rows));
+    CUDF_TEST_EXPECT_EQUAL_BUFFERS(mask, odd.data(), cudf::num_bitmask_words(num_rows));
+  };
+
+  // Leading, then trailing, then interior empty segment. The trailing case is the one that would
+  // index the mask array past its end if a segment's first mask were read unconditionally.
+  {
+    std::vector<cudf::size_type> const segment_offsets{0, 0, 2};
+    auto const [result_masks, result_null_count] =
+      cudf::segmented_bitmask_and(colviews, segment_offsets);
+    ASSERT_EQ(result_masks.size(), 2);
+    EXPECT_EQ(result_null_count[0], 0);
+    EXPECT_EQ(result_null_count[1], 3);
+    expect_all_valid(result_masks[0]->data());
+    expect_anded(result_masks[1]->data());
+  }
+
+  {
+    std::vector<cudf::size_type> const segment_offsets{0, 2, 2};
+    auto const [result_masks, result_null_count] =
+      cudf::segmented_bitmask_and(colviews, segment_offsets);
+    ASSERT_EQ(result_masks.size(), 2);
+    EXPECT_EQ(result_null_count[0], 3);
+    EXPECT_EQ(result_null_count[1], 0);
+    expect_anded(result_masks[0]->data());
+    expect_all_valid(result_masks[1]->data());
+  }
+
+  {
+    std::vector<cudf::size_type> const segment_offsets{0, 1, 1, 2};
+    auto const [result_masks, result_null_count] =
+      cudf::segmented_bitmask_and(colviews, segment_offsets);
+    ASSERT_EQ(result_masks.size(), 3);
+    EXPECT_EQ(result_null_count[0], 2);
+    EXPECT_EQ(result_null_count[1], 0);
+    EXPECT_EQ(result_null_count[2], 2);
+    CUDF_TEST_EXPECT_EQUAL_BUFFERS(result_masks[0]->data(),
+                                   static_cast<cudf::column_view>(bools_col1).null_mask(),
+                                   cudf::num_bitmask_words(num_rows));
+    expect_all_valid(result_masks[1]->data());
+    CUDF_TEST_EXPECT_EQUAL_BUFFERS(result_masks[2]->data(),
+                                   static_cast<cudf::column_view>(bools_col2).null_mask(),
+                                   cudf::num_bitmask_words(num_rows));
+  }
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegmentsMultipleWords)
+{
+  // Spans several bitmask words with a partial last word, so that the identity seed is exercised
+  // across the kernel's word-strided loop and against the masking of the trailing bits.
+  auto const num_rows = 300;
+  auto const nulls    = cudf::test::iterators::nulls_at_multiples_of(3);
+  cudf::test::fixed_width_column_wrapper<int32_t> const col(
+    thrust::make_counting_iterator(0), thrust::make_counting_iterator(num_rows), nulls);
+  auto const expected_nulls = cudf::size_type{100};
+
+  std::vector<cudf::column_view> const colviews{col};
+  std::vector<cudf::size_type> const segment_offsets{0, 0, 1, 1};
+  auto const [result_masks, result_null_count] =
+    cudf::segmented_bitmask_and(colviews, segment_offsets);
+  ASSERT_EQ(result_masks.size(), 3);
+  EXPECT_EQ(result_null_count[0], 0);
+  EXPECT_EQ(result_null_count[1], expected_nulls);
+  EXPECT_EQ(result_null_count[2], 0);
+
+  for (auto const& segment : {0, 2}) {
+    auto const mask = static_cast<cudf::bitmask_type const*>(result_masks[segment]->data());
+    EXPECT_EQ(cudf::null_count(mask, 0, num_rows), 0);
+  }
+  CUDF_TEST_EXPECT_EQUAL_BUFFERS(result_masks[1]->data(),
+                                 static_cast<cudf::column_view>(col).null_mask(),
+                                 cudf::num_bitmask_words(num_rows));
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegmentsMaskOverload)
+{
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1}, {0, 1, 1, 1, 0});
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 2, 1, 0, 255}, {1, 1, 0, 1, 0});
+
+  auto const num_rows = 5;
+  std::vector<cudf::bitmask_type const*> const masks{
+    static_cast<cudf::column_view>(bools_col1).null_mask(),
+    static_cast<cudf::column_view>(bools_col2).null_mask()};
+  std::vector<cudf::size_type> const segment_offsets{0, 1, 1, 2};
+
+  auto const [result_masks, result_null_count] =
+    cudf::segmented_bitmask_and(masks, segment_offsets, num_rows);
+  ASSERT_EQ(result_masks.size(), 3);
+  EXPECT_EQ(result_null_count[0], 2);
+  EXPECT_EQ(result_null_count[1], 0);
+  EXPECT_EQ(result_null_count[2], 2);
+  EXPECT_EQ(
+    cudf::null_count(static_cast<cudf::bitmask_type const*>(result_masks[1]->data()), 0, num_rows),
+    0);
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndRejectsDecreasingOffsets)
+{
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1}, {0, 1, 1, 1, 0});
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 2, 1, 0, 255}, {1, 1, 0, 1, 0});
+  std::vector<cudf::column_view> const colviews{bools_col1, bools_col2};
+
+  EXPECT_THROW(cudf::segmented_bitmask_and(colviews, std::vector<cudf::size_type>{0, 2, 1}),
+               cudf::logic_error);
+  EXPECT_THROW(cudf::segmented_bitmask_and(colviews, std::vector<cudf::size_type>{0, 3}),
+               cudf::logic_error);
 }
 
 TEST_F(MergeBitmaskTest, TestBitmaskOr)

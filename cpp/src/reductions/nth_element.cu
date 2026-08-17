@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,11 +10,11 @@
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
@@ -24,7 +24,7 @@ namespace cudf::reduction::detail {
 std::unique_ptr<cudf::scalar> nth_element(column_view const& col,
                                           size_type n,
                                           null_policy null_handling,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(n >= -col.size() and n < col.size(), "Index out of bounds");

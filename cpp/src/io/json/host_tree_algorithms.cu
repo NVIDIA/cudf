@@ -220,7 +220,7 @@ struct json_column_data {
   using row_offset_t = json_column::row_offset_t;
   row_offset_t* string_offsets;
   row_offset_t* string_lengths;
-  row_offset_t* child_offsets;
+  int32_t* child_offsets;
   bitmask_type* validity;
 };
 
@@ -1161,7 +1161,7 @@ void scatter_offsets(tree_meta_t const& tree,
         col.child_offsets.begin(),
         col.child_offsets.end(),
         col.child_offsets.begin(),
-        cuda::maximum<json_column::row_offset_t>{});
+        cuda::maximum<int32_t>{});
     }
   }
   stream.synchronize();

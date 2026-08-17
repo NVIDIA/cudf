@@ -82,23 +82,27 @@ def _warn_deprecated(api_name, new_api):
     )
 
 
-cdef vector[cpp_FileMetaData] _build_parquet_metadatas(
+cdef vector[cpp_FileMetaData*] _parquet_metadata_ptrs(
     object parquet_metadatas,
     size_t num_sources,
 ) except *:
-    cdef vector[cpp_FileMetaData] c_metadatas
+    """Validate Python FileMetaData list and collect non-owning C++ pointers.
+
+    The expensive deep clone must happen later under the same ``nogil`` block as
+    ``read_parquet`` / the chunked reader ctor. Returning ``vector[FileMetaData]``
+    from a cdef helper copies again with the GIL held (no libcudf NVTX).
+    """
     cdef vector[cpp_FileMetaData*] metadata_ptrs
     cdef object metadata
-    cdef size_t i
     if parquet_metadatas is None:
-        return c_metadatas
+        return metadata_ptrs
 
     for metadata in parquet_metadatas:
         if not isinstance(metadata, FileMetaData):
             raise TypeError(
                 "parquet_metadatas must contain only FileMetaData objects"
             )
-        metadata_ptrs.push_back(&(<FileMetaData>metadata).c_obj)
+        metadata_ptrs.push_back((<FileMetaData>metadata).c_obj.get())
 
     if metadata_ptrs.size() != num_sources:
         raise ValueError(
@@ -107,14 +111,7 @@ cdef vector[cpp_FileMetaData] _build_parquet_metadatas(
             f"({num_sources})"
         )
 
-    c_metadatas.reserve(metadata_ptrs.size())
-    with nogil:
-        # This copies the (potentially large) metadata object. We don't
-        # want to hold the GIL for that.
-        for i in range(metadata_ptrs.size()):
-            c_metadatas.push_back(dereference(metadata_ptrs[i]))
-
-    return c_metadatas
+    return metadata_ptrs
 
 
 cdef class ParquetReaderOptions:
@@ -617,7 +614,9 @@ cdef class ChunkedParquetReader:
         self.mr = _get_memory_resource(mr)
         cdef vector[unique_ptr[datasource]] sources
         cdef vector[cpp_FileMetaData] c_metadatas
+        cdef vector[cpp_FileMetaData*] metadata_ptrs
         cdef cudaStream_t stream_view = self._stream.view().value()
+        cdef size_t i
         if parquet_metadatas is None:
             with nogil:
                 self.reader.reset(
@@ -632,10 +631,16 @@ cdef class ChunkedParquetReader:
         else:
             with nogil:
                 sources = make_datasources(options.c_obj.get_source())
-            c_metadatas = _build_parquet_metadatas(
-                parquet_metadatas, sources.size()
+            # Pin wrappers for the nogil clone; do not rely on the caller's
+            # mutable parquet_metadatas container remaining unchanged.
+            metadata_holders = tuple(parquet_metadatas)
+            metadata_ptrs = _parquet_metadata_ptrs(
+                metadata_holders, sources.size()
             )
             with nogil:
+                c_metadatas.reserve(metadata_ptrs.size())
+                for i in range(metadata_ptrs.size()):
+                    c_metadatas.push_back(dereference(metadata_ptrs[i]))
                 self.reader.reset(
                     new cpp_chunked_parquet_reader(
                         chunk_read_limit,
@@ -716,16 +721,26 @@ cpdef TableWithMetadata read_parquet(
     cdef cudaStream_t _cs = s.view().value()
     cdef vector[unique_ptr[datasource]] sources
     cdef vector[cpp_FileMetaData] c_metadatas
+    cdef vector[cpp_FileMetaData*] metadata_ptrs
     cdef table_with_metadata c_result
+    cdef size_t i
     mr = _get_memory_resource(mr)
     if parquet_metadatas is None:
         with nogil:
             c_result = move(cpp_read_parquet(options.c_obj, _cs, mr.get_mr()))
     else:
+        # Collect pointers under GIL; clone + read must share one nogil block so
+        # Cython does not deep-copy vector[FileMetaData] while holding the GIL.
         with nogil:
             sources = make_datasources(options.c_obj.get_source())
-        c_metadatas = _build_parquet_metadatas(parquet_metadatas, sources.size())
+        # Pin wrappers for the nogil clone; do not rely on the caller's
+        # mutable parquet_metadatas container remaining unchanged.
+        metadata_holders = tuple(parquet_metadatas)
+        metadata_ptrs = _parquet_metadata_ptrs(metadata_holders, sources.size())
         with nogil:
+            c_metadatas.reserve(metadata_ptrs.size())
+            for i in range(metadata_ptrs.size()):
+                c_metadatas.push_back(dereference(metadata_ptrs[i]))
             c_result = move(
                 cpp_read_parquet(
                     move(sources),

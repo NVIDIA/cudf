@@ -21,10 +21,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <limits>

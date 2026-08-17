@@ -4685,80 +4685,6 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     )
 
 
-@pytest.mark.parametrize(
-    "bloom_filter_fname",
-    [
-        "mixed_card_ndv_100_bf_fpp0.1_nostats.snappy.parquet",
-        "mixed_card_ndv_500_bf_fpp0.1_nostats.snappy.parquet",
-    ],
-)
-def test_parquet_bloom_filter_negated_equality(datadir, bloom_filter_fname):
-    """Negated equality predicates must prune identically to their rewrites"""
-
-    import pylibcudf as plc
-    from pylibcudf.expressions import (
-        ASTOperator,
-        ColumnNameReference,
-        Literal,
-        Operation,
-    )
-
-    fname = datadir / bloom_filter_fname
-    needle = Literal(plc.Scalar.from_arrow(pa.scalar("FINDME")))
-
-    def read_with(filter_expr):
-        source = plc.io.SourceInfo([str(fname)])
-        options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
-        options.set_filter(filter_expr)
-        return plc.io.parquet.read_parquet(options)
-
-    def assert_equivalent(lhs, rhs):
-        lhs_result = read_with(lhs)
-        rhs_result = read_with(rhs)
-        assert_eq(
-            lhs_result.num_row_groups_after_bloom_filter,
-            rhs_result.num_row_groups_after_bloom_filter,
-        )
-        assert_arrow_table_equal(
-            lhs_result.tbl.to_arrow(), rhs_result.tbl.to_arrow()
-        )
-        return lhs_result
-
-    str_col = ColumnNameReference("str")
-    str_eq = Operation(ASTOperator.EQUAL, str_col, needle)
-    str_ne = Operation(ASTOperator.NOT_EQUAL, str_col, needle)
-
-    negated_equality = assert_equivalent(
-        Operation(ASTOperator.NOT, str_eq),
-        str_ne,
-    )
-    # 998 of the 1000 rows are not "FINDME".
-    assert_eq(negated_equality.tbl.num_rows(), 998)
-
-    assert_equivalent(
-        Operation(ASTOperator.NOT, str_ne),
-        str_eq,
-    )
-
-    fp64_col = ColumnNameReference("fp64")
-    fp64_needle = Literal(plc.Scalar.from_arrow(pa.scalar(500.0)))
-    assert_equivalent(
-        Operation(
-            ASTOperator.NOT,
-            Operation(
-                ASTOperator.LOGICAL_AND,
-                str_ne,
-                Operation(ASTOperator.NOT_EQUAL, fp64_col, fp64_needle),
-            ),
-        ),
-        Operation(
-            ASTOperator.LOGICAL_OR,
-            str_eq,
-            Operation(ASTOperator.EQUAL, fp64_col, fp64_needle),
-        ),
-    )
-
-
 @pytest.mark.skipif(
     pa.__version__ == "19.0.0",
     reason="https://github.com/apache/arrow/issues/45283, https://github.com/rapidsai/cudf/issues/17806",
@@ -4780,6 +4706,7 @@ def test_parquet_bloom_filter_negated_equality(datadir, bloom_filter_fname):
     "predicate,expected_len",
     [
         ([[("str", "==", "FINDME")], [("fp64", "==", float(500))]], 2),
+        ([("str", "!=", "FINDME")], 998),
         ([("fixed_pt", "==", decimal.Decimal(float(500)))], 2),
         ([[("ui32", "==", np.uint32(500)), ("str", "==", "FINDME")]], 2),
         ([[("str", "==", "FINDME")], [("ui32", ">=", np.uint32(0))]], 1000),

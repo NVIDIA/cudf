@@ -80,7 +80,7 @@ def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetI
             # request for S3/HTTP endpoints, but that's the entire reason we're running
             # this code. So long as it makes just *one* HTTP request, there's no advantage
             # to inferring the endpoint type.
-            with kvikio.RemoteFile.open(path) as remote_file:
+            with kvikio.RemoteFile.open(path) as remote_file:  # pragma: no cover
                 sizes.append(remote_file.nbytes())
         else:
             sizes.append(None)

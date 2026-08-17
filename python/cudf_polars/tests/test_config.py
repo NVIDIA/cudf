@@ -325,6 +325,7 @@ def test_validate_cluster() -> None:
         "client_device_threshold",
         "max_concurrent_io_tasks",
         "num_py_executors",
+        "kvikio_nthreads",
     ],
 )
 def test_validate_streaming_executor_options(option: str) -> None:
@@ -333,6 +334,16 @@ def test_validate_streaming_executor_options(option: str) -> None:
             pl.GPUEngine(
                 executor="streaming",
                 executor_options={option: object()},
+            )
+        )
+
+
+def test_kvikio_nthreads_non_positive_raises() -> None:
+    with pytest.raises(ValueError, match="kvikio_nthreads must be positive"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"kvikio_nthreads": 0},
             )
         )
 

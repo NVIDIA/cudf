@@ -17,9 +17,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/fill.h>
 
@@ -42,7 +42,7 @@ namespace {
  */
 std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
                                                size_type,
-                                               rmm::cuda_stream_view stream)
+                                               cuda::stream_ref stream)
 {
   // New column, near identical to `indices`, except with null values replaced.
   // `segmented_gather()` on a null index should produce a null row.
@@ -77,7 +77,7 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
  */
 std::unique_ptr<cudf::column> make_index_child(size_type index,
                                                size_type num_rows,
-                                               rmm::cuda_stream_view stream)
+                                               cuda::stream_ref stream)
 {
   auto index_child =  // [index, index, index, ..., index]
     make_numeric_column(data_type{type_to_id<size_type>()},
@@ -99,7 +99,7 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
  * This may be used to construct an "index-list" column, where each list row
  * has a single element.
  */
-std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists, rmm::cuda_stream_view stream)
+std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists, cuda::stream_ref stream)
 {
   return cudf::detail::sequence(
     num_lists + 1,
@@ -118,7 +118,7 @@ std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists, rmm::cuda_
 template <typename index_t>
 std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column,
                                                   index_t const& index,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
 {
   auto const num_lists = lists_column.size();
@@ -173,7 +173,7 @@ std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column
  */
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              size_type const index,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   return detail::extract_list_element_impl(lists_column, index, stream, mr);
@@ -181,7 +181,7 @@ std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
 
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              column_view const& indices,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   return detail::extract_list_element_impl(lists_column, indices, stream, mr);
@@ -196,7 +196,7 @@ std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
  */
 std::unique_ptr<column> extract_list_element(lists_column_view const& lists_column,
                                              size_type index,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -210,7 +210,7 @@ std::unique_ptr<column> extract_list_element(lists_column_view const& lists_colu
  */
 std::unique_ptr<column> extract_list_element(lists_column_view const& lists_column,
                                              column_view const& indices,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

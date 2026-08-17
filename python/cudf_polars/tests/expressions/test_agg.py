@@ -195,12 +195,21 @@ def test_cum_count(engine: pl.GPUEngine, data):
 
 
 @pytest.mark.parametrize("cum_agg", sorted(expr.UnaryFunction._supported_cum_aggs))
-def test_cum_agg_reverse_unsupported(engine: pl.GPUEngine, cum_agg):
-    df = pl.LazyFrame({"a": [1, 2, 3]})
-    expr = getattr(pl.col("a"), cum_agg)(reverse=True)
-    q = df.select(expr)
-
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+@pytest.mark.parametrize(
+    "data,dtype",
+    [
+        ([1, 2, 3, 4, 5], pl.Int32),
+        ([1, None, 3, None, 5], pl.Int32),
+        ([None, None, None], pl.Int32),
+        ([2, 3, 4], pl.Int8),
+        ([1.5, 2.0, 0.5, 4.0], pl.Float64),
+        ([], pl.Int32),
+    ],
+)
+def test_cum_agg_reverse(engine: pl.GPUEngine, cum_agg, data, dtype):
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = df.select(getattr(pl.col("a"), cum_agg)(reverse=True))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
 @pytest.mark.parametrize("q", [0.5, pl.lit(0.5)])

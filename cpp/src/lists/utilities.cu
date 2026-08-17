@@ -14,7 +14,7 @@ namespace cudf::lists::detail {
 
 std::unique_ptr<column> generate_labels(lists_column_view const& input,
                                         size_type n_elements,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   auto labels = make_numeric_column(
@@ -27,7 +27,7 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
 
 std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
                                             size_type n_lists,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 
 {
@@ -45,7 +45,7 @@ std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
 }
 
 std::unique_ptr<column> get_normalized_offsets(lists_column_view const& input,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return empty_like(input.offsets()); }

@@ -21,7 +21,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -29,6 +28,7 @@
 #include <cuco/extent.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -962,7 +962,7 @@ struct dictionary_caster {
    */
   [[nodiscard]] std::vector<std::unique_ptr<cudf::column>> build_columns(
     cudf::host_span<rmm::device_buffer> results_buffers,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     auto columns = std::vector<std::unique_ptr<cudf::column>>{};
@@ -997,7 +997,7 @@ struct dictionary_caster {
   std::vector<std::unique_ptr<cudf::column>> evaluate_many_literals(
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Host vectors to store the running number of hash set slots and decoded values for all
@@ -1046,10 +1046,10 @@ struct dictionary_caster {
 
     // Create a single bulk storage used by all cuco hash sets
     auto set_storage =
-      storage_type{total_set_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.value()};
+      storage_type{total_set_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get()};
 
     // Initialize storage with the empty key sentinel
-    set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.value()});
+    set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.get()});
 
     // Device vector to store the decoded values for all dictionaries
     rmm::device_uvector<T> decoded_data{total_num_values, stream, default_mr};
@@ -1083,16 +1083,16 @@ struct dictionary_caster {
       // Decode fixed width dictionaries and insert them to cuco hash sets, one dictionary per
       // thread block
       build_fixed_width_dictionaries<T>
-        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.value()>>>(pages.device_begin(),
-                                                                     chunks.device_begin(),
-                                                                     decoded_data,
-                                                                     set_storage.data(),
-                                                                     set_offsets.data(),
-                                                                     value_offsets.data(),
-                                                                     physical_type,
-                                                                     num_dictionary_columns,
-                                                                     dictionary_col_idx,
-                                                                     error_code.data());
+        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.get()>>>(pages.device_begin(),
+                                                                   chunks.device_begin(),
+                                                                   decoded_data,
+                                                                   set_storage.data(),
+                                                                   set_offsets.data(),
+                                                                   value_offsets.data(),
+                                                                   physical_type,
+                                                                   num_dictionary_columns,
+                                                                   dictionary_col_idx,
+                                                                   error_code.data());
       CUDF_CUDA_TRY(cudaGetLastError());
 
     } else {
@@ -1110,7 +1110,7 @@ struct dictionary_caster {
 
       // Decode string dictionaries and insert them to cuco hash sets, one dictionary per
       // warp
-      build_string_dictionaries<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.value()>>>(
+      build_string_dictionaries<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.get()>>>(
         pages.device_begin(),
         decoded_data,
         set_storage.data(),
@@ -1151,15 +1151,15 @@ struct dictionary_caster {
 
     // Query one predicate against all cuco hash sets of this column using a thread block
     query_dictionaries<T>
-      <<<total_num_literals, query_block_size, 0, stream.value()>>>(decoded_data,
-                                                                    results_ptrs,
-                                                                    scalars.data(),
-                                                                    d_operators.data(),
-                                                                    set_storage.data(),
-                                                                    set_offsets.data(),
-                                                                    value_offsets.data(),
-                                                                    total_row_groups,
-                                                                    physical_type);
+      <<<total_num_literals, query_block_size, 0, stream.get()>>>(decoded_data,
+                                                                  results_ptrs,
+                                                                  scalars.data(),
+                                                                  d_operators.data(),
+                                                                  set_storage.data(),
+                                                                  set_offsets.data(),
+                                                                  value_offsets.data(),
+                                                                  total_row_groups,
+                                                                  physical_type);
     CUDF_CUDA_TRY(cudaGetLastError());
 
     // Build the BOOL8 columns from the results buffers
@@ -1181,7 +1181,7 @@ struct dictionary_caster {
   std::vector<std::unique_ptr<cudf::column>> evaluate_few_literals(
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Get the total number of scalars and literals
@@ -1226,16 +1226,16 @@ struct dictionary_caster {
       // Decode fixed width dictionaries and evaluate literals against them, one dictionary per
       // thread block
       evaluate_few_fixed_width_literals<T>
-        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.value()>>>(pages.device_begin(),
-                                                                     chunks.device_begin(),
-                                                                     results_ptrs,
-                                                                     scalars.data(),
-                                                                     d_operators.data(),
-                                                                     physical_type,
-                                                                     total_num_literals,
-                                                                     num_dictionary_columns,
-                                                                     dictionary_col_idx,
-                                                                     error_code.data());
+        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.get()>>>(pages.device_begin(),
+                                                                   chunks.device_begin(),
+                                                                   results_ptrs,
+                                                                   scalars.data(),
+                                                                   d_operators.data(),
+                                                                   physical_type,
+                                                                   total_num_literals,
+                                                                   num_dictionary_columns,
+                                                                   dictionary_col_idx,
+                                                                   error_code.data());
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       static_assert(DECODE_BLOCK_SIZE % cudf::detail::warp_size == 0,
@@ -1250,7 +1250,7 @@ struct dictionary_caster {
 
       // Decode string dictionaries and evaluate all literals against them, one dictionary per
       // warp
-      evaluate_few_string_literals<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.value()>>>(
+      evaluate_few_string_literals<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.get()>>>(
         pages.device_begin(),
         results_ptrs,
         scalars.data(),
@@ -1277,7 +1277,7 @@ struct dictionary_caster {
     cudf::data_type dtype,
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Boolean, List, Struct, Dictionary types are not supported
@@ -1315,7 +1315,7 @@ class dictionary_expression_converter : public equality_literals_collector {
   dictionary_expression_converter(ast::expression const& expr,
                                   cudf::host_span<cudf::data_type const> output_dtypes,
                                   cudf::host_span<std::vector<ast::literal*> const> literals,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
     : _literals{literals},
       _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
       _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
@@ -1447,7 +1447,7 @@ aggregate_reader_metadata::apply_dictionary_filter(
   std::span<data_type const> output_dtypes,
   std::span<int const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Number of input table columns
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());

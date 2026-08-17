@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -17,12 +17,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <stdexcept>
@@ -64,7 +64,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
                                             int64_t chars_size,
                                             IndexPairIterator begin,
                                             size_type strings_count,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   auto chars_data      = rmm::device_uvector<char>(chars_size, stream, mr);
@@ -89,7 +89,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
 
   size_t temp_storage_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
-    nullptr, temp_storage_bytes, src_ptrs, dst_ptrs, src_sizes, strings_count, stream.value()));
+    nullptr, temp_storage_bytes, src_ptrs, dst_ptrs, src_sizes, strings_count, stream.get()));
   rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(d_temp_storage.data(),
                                            temp_storage_bytes,
@@ -97,7 +97,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
                                            dst_ptrs,
                                            src_sizes,
                                            strings_count,
-                                           stream.value()));
+                                           stream.get()));
 
   return chars_data;
 }
@@ -122,7 +122,7 @@ template <typename InputIterator>
 std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   InputIterator begin,
   InputIterator end,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto constexpr size_type_max = static_cast<int64_t>(std::numeric_limits<size_type>::max());
@@ -223,7 +223,7 @@ template <typename SizeAndExecuteFunction>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type exec_size,
                            size_type strings_count,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   // This is called twice -- once for computing sizes and once for writing chars.
@@ -231,8 +231,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   auto for_each_fn = [exec_size, stream](SizeAndExecuteFunction& size_and_exec_fn) {
     auto constexpr block_size = 256;
     auto grid                 = cudf::detail::grid_1d{exec_size, block_size};
-    strings_children_kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(size_and_exec_fn,
-                                                                                exec_size);
+    strings_children_kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(size_and_exec_fn,
+                                                                              exec_size);
   };
 
   // Compute the output sizes
@@ -303,7 +303,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
 template <typename SizeAndExecuteFunction>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type strings_count,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   return make_strings_children(size_and_exec_fn, strings_count, strings_count, stream, mr);

@@ -44,7 +44,7 @@ void fill_table_meta(table_input_metadata& table_meta)
   }
 }
 
-[[nodiscard]] size_t column_size(column_view const& column, rmm::cuda_stream_view stream)
+[[nodiscard]] size_t column_size(column_view const& column, cuda::stream_ref stream)
 {
   if (column.is_empty()) { return 0; }
 

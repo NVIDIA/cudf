@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,12 +11,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
 
@@ -53,7 +53,7 @@ std::unique_ptr<column> scatter(SourceIterator begin,
                                 SourceIterator end,
                                 MapIterator scatter_map,
                                 strings_column_view const& target,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   if (target.is_empty()) return make_empty_column(type_id::STRING);

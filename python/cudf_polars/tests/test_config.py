@@ -33,7 +33,9 @@ from cudf_polars.utils.config import (
     InMemoryExecutor,
     JoinFilterPushdownOptions,
     MemoryResourceConfig,
+    ParquetOptions,
     StreamingExecutor,
+    Unspecified,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -375,6 +377,13 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.parquet_options.use_jit_filter is True
 
     with monkeypatch.context() as m:
+        # Env must win over the executor-derived default (streaming => True).
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "0")
+        engine = pl.GPUEngine(executor="streaming")
+        config = ConfigOptions.from_polars_engine(engine)
+        assert config.parquet_options.prefetch_file_metadata is False
+
+    with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__CHUNKED", "foo")
         engine = pl.GPUEngine()
         with pytest.raises(ValueError, match="Invalid boolean value: 'foo'"):
@@ -490,6 +499,47 @@ def test_validate_parquet_options(option: str) -> None:
                 parquet_options={option: object()},
             )
         )
+
+
+def test_prefetch_file_metadata_default() -> None:
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="in-memory"))
+    assert config.parquet_options.prefetch_file_metadata is False
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming", parquet_options={"prefetch_file_metadata": True}
+        )
+    )
+    assert config.parquet_options.prefetch_file_metadata is True
+
+
+def test_parquet_options_object_passthrough() -> None:
+    parquet_options = ParquetOptions(prefetch_file_metadata=False)
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert config.parquet_options is parquet_options
+
+
+def test_parquet_options_object_engine_default() -> None:
+    # If a user passes in a ParquetOptions object instead of a plain dict, and
+    # doesn't set prefetch_file_metadata on it, we still need to fill in the
+    # right default for the chosen executor.
+    parquet_options = ParquetOptions()
+    assert isinstance(parquet_options.prefetch_file_metadata, Unspecified)
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="in-memory", parquet_options=parquet_options)
+    )
+    assert config.parquet_options.prefetch_file_metadata is False
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
 
 
 def test_validate_raise_on_fail() -> None:

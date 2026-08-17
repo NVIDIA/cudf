@@ -8,7 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {

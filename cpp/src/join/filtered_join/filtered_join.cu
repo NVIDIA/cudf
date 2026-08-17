@@ -25,7 +25,7 @@
 
 #include <cuco/extent.cuh>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
 

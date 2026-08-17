@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <string>
@@ -50,7 +50,7 @@ class reader {
    */
   explicit reader(std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                   orc_reader_options const& options,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr);
 
   /**
@@ -76,7 +76,7 @@ class chunked_reader {
  public:
   /**
    * @copydoc cudf::io::chunked_orc_reader::chunked_orc_reader(std::size_t, std::size_t, size_type,
-   * orc_reader_options const&, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+   * orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
    *
    * @param sources Input `datasource` objects to read the dataset from
    */
@@ -85,11 +85,11 @@ class chunked_reader {
                           size_type output_row_granularity,
                           std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                           orc_reader_options const& options,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr);
   /**
    * @copydoc cudf::io::chunked_orc_reader::chunked_orc_reader(std::size_t, std::size_t,
-   * orc_reader_options const&, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+   * orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
    *
    * @param sources Input `datasource` objects to read the dataset from
    */
@@ -97,7 +97,7 @@ class chunked_reader {
                           std::size_t pass_read_limit,
                           std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                           orc_reader_options const& options,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr);
 
   /**
@@ -140,7 +140,7 @@ class writer {
   explicit writer(std::unique_ptr<cudf::io::data_sink> sink,
                   orc_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -153,7 +153,7 @@ class writer {
   explicit writer(std::unique_ptr<cudf::io::data_sink> sink,
                   chunked_orc_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Destructor explicitly declared to avoid inlining in header

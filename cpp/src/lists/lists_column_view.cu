@@ -9,7 +9,7 @@
 #include <cudf/lists/list_view.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 
@@ -32,7 +32,7 @@ column_view lists_column_view::child() const
   return column_view::child(child_column_index);
 }
 
-column_view lists_column_view::get_sliced_child(rmm::cuda_stream_view stream) const
+column_view lists_column_view::get_sliced_child(cuda::stream_ref stream) const
 {
   // if I have a positive offset, I need to slice my child
   if (offset() > 0) {

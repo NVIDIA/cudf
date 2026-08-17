@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ void fill_table_meta(table_input_metadata& table_meta);
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The data size of the input
  */
-[[nodiscard]] size_t column_size(column_view const& column, rmm::cuda_stream_view stream);
+[[nodiscard]] size_t column_size(column_view const& column, cuda::stream_ref stream);
 
 /**
  * @brief Indicates if the column should be marked as nullable in the output schema

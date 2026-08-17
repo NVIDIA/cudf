@@ -26,6 +26,10 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -42,7 +46,7 @@ cpdef Column fill(
     size_type begin,
     size_type end,
     Scalar value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -94,7 +98,7 @@ cpdef void fill_in_place(
     size_type begin,
     size_type end,
     Scalar value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
 ):
 
     """Fill destination column in place from begin to end with value.
@@ -137,7 +141,7 @@ cpdef Column sequence(
     size_type size,
     Scalar init,
     Scalar step,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a sequence column of size ``size`` with initial value ``init`` and step
@@ -183,7 +187,7 @@ cpdef Column sequence(
 cpdef Table repeat(
     Table input_table,
     ColumnOrSize count,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Repeat rows of a Table.
@@ -245,7 +249,7 @@ cpdef Column calendrical_month_sequence(
     size_type n,
     Scalar init,
     size_type months,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 

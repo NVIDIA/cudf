@@ -64,6 +64,7 @@ dependencies:
 - nbsphinx
 - ninja
 - notebook
+- numba-cuda-mlir>=0.3.0
 - numba-cuda>=0.22.2
 - numba>=0.60.0,<0.65.0
 - numexpr

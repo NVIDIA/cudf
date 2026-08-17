@@ -18,12 +18,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #include <thrust/logical.h>
@@ -96,7 +96,7 @@ struct has_nans {
    * @returns bool true if `input` has `NaN` else false
    */
   template <typename T>
-  bool operator()(column_view const& input, rmm::cuda_stream_view stream)
+  bool operator()(column_view const& input, cuda::stream_ref stream)
     requires(std::is_floating_point_v<T>)
   {
     auto input_device_view = cudf::column_device_view::create(input, stream);
@@ -120,7 +120,7 @@ struct has_nans {
    * @returns bool Always false as non-floating point columns can't have `NaN`
    */
   template <typename T>
-  bool operator()(column_view const&, rmm::cuda_stream_view)
+  bool operator()(column_view const&, cuda::stream_ref)
     requires(not std::is_floating_point_v<T>)
   {
     return false;
@@ -130,7 +130,7 @@ struct has_nans {
 
 cudf::size_type distinct_count(table_view const& keys,
                                null_equality nulls_equal,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   auto const num_rows = keys.num_rows();
   if (num_rows == 0) { return 0; }  // early exit for empty input
@@ -151,7 +151,7 @@ cudf::size_type distinct_count(table_view const& keys,
                                          {},
                                          {},
                                     rmm::mr::polymorphic_allocator<char>{},
-                                    stream.value()};
+                                    stream.get()};
 
     auto const iter = cuda::counting_iterator<cudf::size_type>{0};
     // when nulls are equal, we skip hashing any row that has a null
@@ -170,11 +170,11 @@ cudf::size_type distinct_count(table_view const& keys,
       // to do a filtered insertion.
       if (null_count > 0) {
         row_validity pred{static_cast<bitmask_type const*>(row_bitmask.data())};
-        return key_set.insert_if(iter, iter + num_rows, stencil, pred, stream.value()) + 1;
+        return key_set.insert_if(iter, iter + num_rows, stencil, pred, stream.get()) + 1;
       }
     }
     // otherwise, insert all
-    return key_set.insert(iter, iter + num_rows, stream.value());
+    return key_set.insert(iter, iter + num_rows, stream.get());
   };
 
   if (cudf::detail::has_nested_columns(keys)) {
@@ -189,7 +189,7 @@ cudf::size_type distinct_count(table_view const& keys,
 cudf::size_type distinct_count(column_view const& input,
                                null_policy null_handling,
                                nan_policy nan_handling,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   if (0 == input.size()) { return 0; }
 
@@ -221,7 +221,7 @@ cudf::size_type distinct_count(column_view const& input,
 cudf::size_type distinct_count(column_view const& input,
                                null_policy null_handling,
                                nan_policy nan_handling,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::distinct_count(input, null_handling, nan_handling, stream);
@@ -229,7 +229,7 @@ cudf::size_type distinct_count(column_view const& input,
 
 cudf::size_type distinct_count(table_view const& input,
                                null_equality nulls_equal,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::distinct_count(input, nulls_equal, stream);

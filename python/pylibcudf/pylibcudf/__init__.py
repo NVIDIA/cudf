@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # If libcudf was installed as a wheel, we must request it to load the library symbols.
@@ -52,6 +52,7 @@ from . import (
     transform,
     transpose,
     types,
+    typing,
     unary,
     utilities,
     utils,
@@ -110,6 +111,7 @@ __all__ = [
     "transform",
     "transpose",
     "types",
+    "typing",
     "unary",
     "utilities",
     "utils",

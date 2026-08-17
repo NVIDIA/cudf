@@ -499,7 +499,7 @@ struct mask_tform {
 }  // anonymous namespace
 
 uint32_t get_aggregated_decode_kernel_mask(cudf::detail::hostdevice_span<PageInfo const> pages,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   // determine which kernels to invoke
   return cudf::detail::transform_reduce(pages.device_begin(),
@@ -520,7 +520,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       int level_type_size,
                       cudf::device_span<bool const> page_mask,
                       kernel_error::pointer error_code,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -528,11 +528,11 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    decode_page_data<rolling_buf_size, uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_page_data<rolling_buf_size, uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_page_data<rolling_buf_size, uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_page_data<rolling_buf_size, uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -548,7 +548,7 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                             int level_type_size,
                             cudf::device_span<bool const> page_mask,
                             kernel_error::pointer error_code,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -557,12 +557,12 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
   if (level_type_size == 1) {
     decode_split_page_data_kernel<rolling_buf_size, uint8_t>
-      <<<dim_grid, dim_block, 0, stream.value()>>>(
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
         pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     decode_split_page_data_kernel<rolling_buf_size, uint16_t>
-      <<<dim_grid, dim_block, 0, stream.value()>>>(
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
         pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -570,7 +570,7 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
 void write_final_offsets(host_span<size_type const> offsets,
                          host_span<size_type* const> buff_addrs,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   // Copy offsets to device and create an iterator
   auto d_src_data = cudf::detail::make_device_uvector_async(

@@ -25,7 +25,6 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
@@ -34,6 +33,7 @@
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 
@@ -467,7 +467,7 @@ template <typename Transform>
 void materialize_range_window_bounds(size_type size,
                                      size_type* result,
                                      Transform transform,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   if (size == 0) { return; }
 
@@ -475,7 +475,7 @@ void materialize_range_window_bounds(size_type size,
   materialize_range_window_bounds_kernel<<<config.num_blocks,
                                            config.num_threads_per_block,
                                            0,
-                                           stream.value()>>>(size, result, transform);
+                                           stream.get()>>>(size, result, transform);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -496,7 +496,7 @@ struct range_window_clamper {
                         direction direction,
                         size_type size,
                         mutable_column_view& result,
-                        rmm::cuda_stream_view stream) const
+                        cuda::stream_ref stream) const
   {
     materialize_range_window_bounds(
       size, result.data<size_type>(), unbounded_distance_functor{grouping, direction}, stream);
@@ -509,7 +509,7 @@ struct range_window_clamper {
                           column_device_view::const_iterator<OrderbyT> begin,
                           size_type size,
                           mutable_column_view& result,
-                          rmm::cuda_stream_view stream) const
+                          cuda::stream_ref stream) const
   {
     materialize_range_window_bounds(size,
                                     result.data<size_type>(),
@@ -525,7 +525,7 @@ struct range_window_clamper {
                       DeltaT const* row_delta,
                       size_type size,
                       mutable_column_view& result,
-                      rmm::cuda_stream_view stream) const
+                      cuda::stream_ref stream) const
   {
     materialize_range_window_bounds(
       size,
@@ -561,7 +561,7 @@ struct range_window_clamper {
     std::optional<preprocessed_group_info> const& grouping,
     bool nulls_at_start,
     scalar const* row_delta,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     auto result = make_numeric_column(
@@ -604,7 +604,7 @@ struct range_window_clamper {
   /**
    * @brief Is the given type supported as an orderby column.
    *
-   * @tparam The type of the elements of the orderby column.
+   * @tparam OrderbyT The type of the elements of the orderby column.
    */
   template <typename OrderbyT>
   static constexpr bool is_supported()
@@ -624,7 +624,7 @@ struct range_window_clamper {
     std::optional<preprocessed_group_info> const& grouping,
     bool nulls_at_start,
     scalar const* row_delta,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     using ScalarT = cudf::scalar_type_t<typename OrderbyT::duration>;
@@ -646,7 +646,7 @@ struct range_window_clamper {
     std::optional<preprocessed_group_info> const& grouping,
     bool nulls_at_start,
     scalar const* row_delta,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(!row_delta || (orderby.type().id() == row_delta->type().id()),
@@ -680,7 +680,7 @@ struct range_window_clamper {
     std::optional<preprocessed_group_info> const& grouping,
     bool nulls_at_start,
     scalar const* row_delta,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(!row_delta || cudf::have_same_types(orderby, *row_delta),
@@ -701,7 +701,7 @@ struct range_window_clamper {
     std::optional<preprocessed_group_info> const& grouping,
     bool nulls_at_start,
     scalar const* row_delta,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(!row_delta,
@@ -717,7 +717,7 @@ struct range_window_clamper {
                                      std::optional<preprocessed_group_info> const&,
                                      bool,
                                      scalar const*,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
   {
     CUDF_FAIL("Unsupported rolling window type.", cudf::data_type_error);

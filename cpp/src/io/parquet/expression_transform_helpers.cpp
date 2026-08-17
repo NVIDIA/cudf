@@ -330,7 +330,7 @@ std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_in
   cudf::table_view table,
   std::reference_wrapper<ast::expression const> ast_expr,
   host_span<std::vector<size_type> const> input_row_group_indices,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Filter the input table using AST expression
   auto predicate_col = cudf::detail::compute_column(

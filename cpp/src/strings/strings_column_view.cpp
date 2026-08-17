@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,7 +7,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 //
@@ -24,20 +24,19 @@ column_view strings_column_view::offsets() const
   return child(offsets_column_index);
 }
 
-int64_t strings_column_view::chars_size(rmm::cuda_stream_view stream) const
+int64_t strings_column_view::chars_size(cuda::stream_ref stream) const
 {
   if (size() == 0) { return 0L; }
   return cudf::strings::detail::get_offset_value(offsets(), offsets().size() - 1, stream);
 }
 
 strings_column_view::chars_iterator strings_column_view::chars_begin(
-  rmm::cuda_stream_view) const noexcept
+  cuda::stream_ref) const noexcept
 {
   return head<char>();
 }
 
-strings_column_view::chars_iterator strings_column_view::chars_end(
-  rmm::cuda_stream_view stream) const
+strings_column_view::chars_iterator strings_column_view::chars_end(cuda::stream_ref stream) const
 {
   return chars_begin(stream) + chars_size(stream);
 }

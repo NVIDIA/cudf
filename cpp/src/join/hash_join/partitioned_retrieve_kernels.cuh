@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,6 @@
 #include <cudf/join/join.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -21,6 +20,7 @@
 #include <cuda/atomic>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
+#include <cuda/stream>
 #include <thrust/reduce.h>
 
 namespace cudf::detail {
@@ -218,7 +218,7 @@ launch_partitioned_retrieve(probe_key_type const* keys,
                             size_type const* match_counts,
                             Ref ref,
                             size_type left_offset,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   if (n == 0) {
@@ -248,7 +248,7 @@ launch_partitioned_retrieve(probe_key_type const* keys,
   auto constexpr tiles_in_block = DEFAULT_JOIN_BLOCK_SIZE / Ref::cg_size;
   auto const num_blocks = static_cast<unsigned int>((n + tiles_in_block - 1) / tiles_in_block);
 
-  partitioned_retrieve_kernel<IsOuter><<<num_blocks, DEFAULT_JOIN_BLOCK_SIZE, 0, stream.value()>>>(
+  partitioned_retrieve_kernel<IsOuter><<<num_blocks, DEFAULT_JOIN_BLOCK_SIZE, 0, stream.get()>>>(
     keys, n, left_offset, left_indices->data(), right_indices->data(), output_counter.data(), ref);
   CUDF_CUDA_TRY(cudaGetLastError());
 

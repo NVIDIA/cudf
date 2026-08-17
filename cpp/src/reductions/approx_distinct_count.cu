@@ -15,12 +15,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
+#include <cuda/stream>
 
 #include <cmath>
 #include <utility>
@@ -166,7 +166,7 @@ approx_distinct_count<Hasher>::approx_distinct_count(
   std::int32_t precision,
   null_policy null_handling,
   nan_policy nan_handling,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _mr{std::move(mr)},
     _storage{rmm::device_uvector<register_type>{
@@ -176,7 +176,7 @@ approx_distinct_count<Hasher>::approx_distinct_count(
     _nan_handling{nan_handling}
 {
   auto sketch_span = sketch();
-  CUDF_CUDA_TRY(cudaMemsetAsync(sketch_span.data(), 0, sketch_span.size(), stream.value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(sketch_span.data(), 0, sketch_span.size(), stream.get()));
 
   if (input.num_rows() > 0) { add(input, stream); }
 }
@@ -187,7 +187,7 @@ approx_distinct_count<Hasher>::approx_distinct_count(
   cudf::approx_distinct_count::desired_standard_error error,
   null_policy null_handling,
   nan_policy nan_handling,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : approx_distinct_count{input,
                           precision_from_standard_error(error.value),
@@ -214,7 +214,7 @@ approx_distinct_count<Hasher>::approx_distinct_count(
 }
 
 template <template <typename> class Hasher>
-void approx_distinct_count<Hasher>::add(table_view const& input, rmm::cuda_stream_view stream)
+void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_ref stream)
 {
   auto const num_rows = input.num_rows();
   if (num_rows == 0) { return; }
@@ -268,7 +268,7 @@ void approx_distinct_count<Hasher>::add(table_view const& input, rmm::cuda_strea
 
 template <template <typename> class Hasher>
 void approx_distinct_count<Hasher>::merge(approx_distinct_count const& other,
-                                          rmm::cuda_stream_view stream)
+                                          cuda::stream_ref stream)
 {
   CUDF_EXPECTS(_precision == other._precision,
                "Cannot merge sketches with different precisions",
@@ -288,7 +288,7 @@ void approx_distinct_count<Hasher>::merge(approx_distinct_count const& other,
 
 template <template <typename> class Hasher>
 void approx_distinct_count<Hasher>::merge(cuda::std::span<cuda::std::byte const> sketch_span,
-                                          rmm::cuda_stream_view stream)
+                                          cuda::stream_ref stream)
 {
   auto const checked = check_sketch_span(sketch_span, _precision);
 
@@ -300,7 +300,7 @@ void approx_distinct_count<Hasher>::merge(cuda::std::span<cuda::std::byte const>
 }
 
 template <template <typename> class Hasher>
-std::size_t approx_distinct_count<Hasher>::estimate(rmm::cuda_stream_view stream) const
+std::size_t approx_distinct_count<Hasher>::estimate(cuda::stream_ref stream) const
 {
   typename approx_distinct_count<Hasher>::hll_ref_type ref{
     const_cast<approx_distinct_count*>(this)->sketch(), cuda::std::identity{}};
@@ -374,7 +374,7 @@ approx_distinct_count::approx_distinct_count(table_view const& input,
                                              std::int32_t precision,
                                              null_policy null_handling,
                                              nan_policy nan_handling,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl(std::make_unique<impl_type>(
       input, precision, null_handling, nan_handling, stream, std::move(mr)))
@@ -385,7 +385,7 @@ approx_distinct_count::approx_distinct_count(table_view const& input,
                                              desired_standard_error error,
                                              null_policy null_handling,
                                              nan_policy nan_handling,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl(
       std::make_unique<impl_type>(input, error, null_handling, nan_handling, stream, std::move(mr)))
@@ -401,23 +401,23 @@ approx_distinct_count::approx_distinct_count(cuda::std::span<cuda::std::byte> sk
 {
 }
 
-void approx_distinct_count::add(table_view const& input, rmm::cuda_stream_view stream)
+void approx_distinct_count::add(table_view const& input, cuda::stream_ref stream)
 {
   _impl->add(input, stream);
 }
 
-void approx_distinct_count::merge(approx_distinct_count const& other, rmm::cuda_stream_view stream)
+void approx_distinct_count::merge(approx_distinct_count const& other, cuda::stream_ref stream)
 {
   _impl->merge(*other._impl, stream);
 }
 
 void approx_distinct_count::merge(cuda::std::span<cuda::std::byte const> sketch_span,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   _impl->merge(sketch_span, stream);
 }
 
-std::size_t approx_distinct_count::estimate(rmm::cuda_stream_view stream) const
+std::size_t approx_distinct_count::estimate(cuda::stream_ref stream) const
 {
   return _impl->estimate(stream);
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,14 +12,14 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace {
 struct dispatch_create_indices {
   template <typename IndexType>
   std::unique_ptr<column> operator()(column_view const& indices,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_index_type<IndexType>())
   {
@@ -31,7 +31,7 @@ struct dispatch_create_indices {
   }
   template <typename IndexType>
   std::unique_ptr<column> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(!is_index_type<IndexType>())
   {
@@ -42,7 +42,7 @@ struct dispatch_create_indices {
 
 std::unique_ptr<column> make_dictionary_column(column_view const& keys_column,
                                                column_view const& indices_column,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!keys_column.has_nulls(), "keys column must not have nulls", std::invalid_argument);
@@ -114,7 +114,7 @@ struct make_signed_fn {
 
 std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys,
                                                std::unique_ptr<column> indices,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!keys->has_nulls(), "keys column must not have nulls", std::invalid_argument);

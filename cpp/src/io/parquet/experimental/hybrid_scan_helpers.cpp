@@ -325,7 +325,7 @@ std::size_t aggregate_reader_metadata::total_rows_in_row_groups(
 
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -421,7 +421,7 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -645,7 +645,7 @@ aggregate_reader_metadata::filter_row_groups_with_dictionary_pages(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Compute total number of input row groups
   auto const total_row_groups =
@@ -673,7 +673,7 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Collect equality literals for each input table column
   auto const literals =

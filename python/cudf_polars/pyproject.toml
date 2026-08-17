@@ -23,6 +23,7 @@ requires-python = ">=3.11"
 dependencies = [
     "cuda-bindings>=13.0.1,<14.0",
     "cudf-streaming==26.10.*,>=0.0.0a0",
+    "kvikio==26.10.*,>=0.0.0a0",
     "nvidia-ml-py>=12",
     "packaging",
     "polars>=1.35,<1.43",

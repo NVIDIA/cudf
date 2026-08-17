@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,10 +17,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -49,7 +49,7 @@ struct ohe_equality_functor {
 
 std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const& input,
                                                               column_view const& categories,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(input, categories),
@@ -103,7 +103,7 @@ std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const&
 
 std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const& input,
                                                               column_view const& categories,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -23,8 +23,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <algorithm>
 #include <memory>
@@ -104,7 +105,7 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
   }
 }
 
-void streaming_groupby::impl::initialize(table_view const& data, rmm::cuda_stream_view stream)
+void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_ref stream)
 {
   auto const mr = cudf::get_current_device_resource_ref();
 
@@ -211,7 +212,7 @@ void streaming_groupby::impl::initialize(table_view const& data, rmm::cuda_strea
   _initialized = true;
 }
 
-void streaming_groupby::impl::create_key_set(rmm::cuda_stream_view stream)
+void streaming_groupby::impl::create_key_set(cuda::stream_ref stream)
 {
   _key_set = std::make_unique<streaming_set_t>(
     cuco::extent<int64_t>{static_cast<int64_t>(_max_distinct_keys)},
@@ -222,7 +223,7 @@ void streaming_groupby::impl::create_key_set(rmm::cuda_stream_view stream)
     cuco::thread_scope_device,
     cuco::storage<detail::hash::GROUPBY_BUCKET_SIZE>{},
     rmm::mr::polymorphic_allocator<char>{_mr},
-    stream.value());
+    stream.get());
 }
 
 void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys)
@@ -237,7 +238,7 @@ void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   // The results we care about are dense in `[0, _distinct_keys)` and can be extracted by
   // slice+copy.
@@ -247,7 +248,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   if (_compacted_batches.empty()) {
     return std::make_unique<table>(_empty_key_schema->view(), stream, mr);
@@ -264,7 +265,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
-streaming_groupby::impl::do_finalize(rmm::cuda_stream_view stream,
+streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
 {
   CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
@@ -333,7 +334,7 @@ streaming_groupby::impl::do_finalize(rmm::cuda_stream_view stream,
 }
 
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert(
-  table_view const& batch_keys, rmm::cuda_stream_view stream)
+  table_view const& batch_keys, cuda::stream_ref stream)
 {
   if (_has_nested_keys) {
     return probe_and_insert_impl<true>(batch_keys, stream);
@@ -361,18 +362,18 @@ streaming_groupby& streaming_groupby::operator=(streaming_groupby&&) noexcept = 
 
 // Private member functions defined here (requires full impl definition).
 // The public API wrappers in streaming_groupby.cpp call these.
-void streaming_groupby::do_aggregate(table_view const& data, rmm::cuda_stream_view stream)
+void streaming_groupby::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
   _impl->do_aggregate(data, stream);
 }
 
-void streaming_groupby::do_merge(streaming_groupby const& other, rmm::cuda_stream_view stream)
+void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_ref stream)
 {
   _impl->do_merge(*other._impl, stream);
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   return _impl->do_finalize(stream, mr);
 }

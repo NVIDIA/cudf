@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -26,6 +26,8 @@ pytest.importorskip("structlog")
 def engine_with_quent_context(
     request: pytest.FixtureRequest,
     quent_context: QuentContext,
+    ray_num_ranks: int,
+    ray_init_options: dict[str, Any],
 ) -> Iterator[StreamingEngine]:
     """
     A streaming engine configured with a quent context from the 'quent_context'
@@ -43,8 +45,14 @@ def engine_with_quent_context(
         pytest.importorskip("ray")
         import cudf_polars.engine.ray
 
+        # Always specify num_ranks: the default path sizes the engine from the
+        # GPUs Ray reports, which fails if this test shares an xdist worker
+        # with a test that already brought up the shared num_gpus=0 cluster.
         engine = cudf_polars.engine.ray.RayEngine(
-            executor_options={"quent_context": quent_context}
+            executor_options={"quent_context": quent_context},
+            engine_options={"allow_gpu_sharing": True},
+            ray_init_options=ray_init_options,
+            num_ranks=ray_num_ranks,
         )
     elif backend == "dask":
         pytest.importorskip("distributed")

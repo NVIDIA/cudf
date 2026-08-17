@@ -72,7 +72,9 @@
 
 #include <jni.h>
 
+#include <array>
 #include <numeric>
+#include <utility>
 
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
@@ -1556,11 +1558,18 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
     cudf::jni::native_jstring n_j_udf(env, j_udf);
     std::string n_udf              = n_j_udf;
     cudf::transform_input inputs[] = {*column};
-    return release_as_jlong(cudf::transform_extended(
-      inputs,
-      n_udf,
-      cudf::data_type(cudf::type_id::INT32),
-      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA));
+    return release_as_jlong(std::move(
+      cudf::transform(n_udf,
+                      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      inputs,
+                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                                                        cudf::output_nullability::PRESERVE}},
+                      {},
+                      std::nullopt)
+        ->release()
+        .front()));
   }
   JNI_CATCH(env, 0);
 }
@@ -2209,33 +2218,30 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_bitwiseMergeAndSetValidit
   {
     cudf::jni::auto_set_device(env);
     cudf::column_view* original_column = reinterpret_cast<cudf::column_view*>(base_column);
-    std::unique_ptr<cudf::column> copy(new cudf::column(*original_column));
     cudf::jni::native_jpointerArray<cudf::column_view> n_cudf_columns(env, column_handles);
-
-    // If we have no columns to merge, drop the top-level null mask and return the bare copy.
-    if (n_cudf_columns.size() == 0) {
-      copy->set_null_mask({}, 0);
-      return release_as_jlong(copy);
-    }
 
     auto const op = static_cast<cudf::binary_operator>(bin_op);
     if (op != cudf::binary_operator::BITWISE_AND && op != cudf::binary_operator::BITWISE_OR) {
       JNI_THROW_NEW(env, cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS, "Unsupported merge operation", 0);
     }
 
-    // Merge the null masks of the provided columns using the binary op.
-    auto const input_table              = cudf::table_view{n_cudf_columns.get_dereferenced()};
-    auto [merge_mask, merge_null_count] = [&]() -> std::pair<rmm::device_buffer, cudf::size_type> {
-      switch (op) {
-        case cudf::binary_operator::BITWISE_AND: return cudf::bitmask_and(input_table);
-        case cudf::binary_operator::BITWISE_OR: return cudf::bitmask_or(input_table);
-        default: CUDF_FAIL("Unsupported merge operation");
-      }
-    }();
+    // If we have no columns to merge, return the original column unchanged.
+    // 0 signals to the caller that this was a no-op.
+    if (n_cudf_columns.size() == 0) { return 0; }
 
-    // bitmask_and / bitmask_or can return an empty mask, meaning the merged mask is all-valid.
-    // If so, we do not need to touch the original mask.
-    if (merge_mask.is_empty()) { return release_as_jlong(copy); }
+    // Merge the null masks of the provided columns using the binary op.
+    auto const cudf_columns             = n_cudf_columns.get_dereferenced();
+    auto const input_table              = cudf::table_view{cudf_columns};
+    auto [merge_mask, merge_null_count] = op == cudf::binary_operator::BITWISE_AND
+                                            ? cudf::bitmask_and(input_table)
+                                            : cudf::bitmask_or(input_table);
+
+    // If the merge null count is 0, the merged mask is all-valid - either the binop returned
+    // an empty mask or the mask was allocated but had no nulls.
+    // in either case this is a no-op on the original mask and we can return as-is.
+    if (merge_null_count == 0) { return 0; }
+
+    auto copy = std::make_unique<cudf::column>(*original_column);
 
     // Now apply the merged mask to the original by AND-ing it into
     // the parent's null mask. This will also push it down through any
@@ -2292,7 +2298,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
           new cudf::column_view(cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0));
       } else {
         JNI_NULL_CHECK(env, j_offset, "offset is null", 0);
-        cudf::size_type* offsets = reinterpret_cast<cudf::size_type*>(j_offset);
+        int32_t* offsets = reinterpret_cast<int32_t*>(j_offset);
         cudf::column_view offsets_column(
           cudf::data_type{cudf::type_id::INT32}, size + 1, offsets, nullptr, 0);
         return ptr_as_jlong(new cudf::column_view(cudf::data_type{cudf::type_id::STRING},
@@ -2308,11 +2314,11 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
       cudf::jni::native_jpointerArray<cudf::column_view> children(env, j_children);
       JNI_ARG_CHECK(env, (children.size() == 1), "LIST children size is not 1", 0);
       cudf::size_type offsets_size = 0;
-      cudf::size_type* offsets     = nullptr;
+      int32_t* offsets             = nullptr;
       if (size != 0) {
         JNI_NULL_CHECK(env, j_offset, "offset is null", 0);
         offsets_size = size + 1;
-        offsets      = reinterpret_cast<cudf::size_type*>(j_offset);
+        offsets      = reinterpret_cast<int32_t*>(j_offset);
       }
       cudf::column_view offsets_column(
         cudf::data_type{cudf::type_id::INT32}, offsets_size, offsets, nullptr, 0);

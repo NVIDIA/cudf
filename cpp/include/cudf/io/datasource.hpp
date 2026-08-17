@@ -10,7 +10,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <future>
 #include <memory>
@@ -254,7 +254,7 @@ class datasource {
    */
   virtual std::unique_ptr<datasource::buffer> device_read(size_t offset,
                                                           size_t size,
-                                                          rmm::cuda_stream_view stream)
+                                                          cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read must override it.");
   }
@@ -276,7 +276,7 @@ class datasource {
    *
    * @return The number of bytes read (can be smaller than size)
    */
-  virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, rmm::cuda_stream_view stream)
+  virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read must override it.");
   }
@@ -307,7 +307,7 @@ class datasource {
   virtual std::future<size_t> device_read_async(size_t offset,
                                                 size_t size,
                                                 uint8_t* dst,
-                                                rmm::cuda_stream_view stream)
+                                                cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read_async must override it.");
   }

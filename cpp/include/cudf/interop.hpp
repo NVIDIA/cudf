@@ -323,8 +323,6 @@ class arrow_column {
   /**
    * @brief Get a view of the column data
    *
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used for any allocations during conversion
    * @return A view of the column data
    */
   [[nodiscard]] column_view view() const;
@@ -443,8 +441,6 @@ class arrow_table {
   /**
    * @brief Get a view of the table data
    *
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used for any allocations during conversion
    * @return A view of the table data
    */
   [[nodiscard]] table_view view() const;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,7 +33,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 make_trivial_outer_indices(size_type left_start_idx,
                            size_type partition_size,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   auto left_indices  = std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
@@ -57,7 +57,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                              cudf::join_partition_context const& context,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -158,7 +158,7 @@ template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<hash_join_hasher>::partitioned_join_retrieve(join_kind,
                                                        cudf::join_partition_context const&,
-                                                       rmm::cuda_stream_view,
+                                                       cuda::stream_ref,
                                                        rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

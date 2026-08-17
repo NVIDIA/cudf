@@ -1738,21 +1738,18 @@ class MultiIndex(Index):
             ('aa', 'b')],
            )
         """
-        name_i = self._column_names[i] if isinstance(i, int) else i
-        name_j = self._column_names[j] if isinstance(j, int) else j
-        to_swap = {name_i, name_j}
-        new_data = {}
+        lvl_i = self._level_index_from_level(i)
+        lvl_j = self._level_index_from_level(j)
+        order = list(range(self.nlevels))
+        order[lvl_i], order[lvl_j] = order[lvl_j], order[lvl_i]
+        keys = self._column_names
+        columns = self._columns
         # TODO: Preserve self._codes and self._levels if set
-        for k, v in self._column_labels_and_values:
-            if k not in to_swap:
-                new_data[k] = v
-            elif k == name_i:
-                new_data[name_j] = self._data[name_j]
-            elif k == name_j:
-                new_data[name_i] = self._data[name_i]
-        midx = type(self)._from_data(new_data)
-        if all(n is None for n in self.names):
-            midx = midx.set_names(self.names)
+        midx = type(self)._from_data({keys[k]: columns[k] for k in order})
+        # the accessor keys may be positional stand-ins (e.g. for
+        # duplicated or unset level names), so carry the level names
+        # over from ``self.names`` rather than deriving them from keys
+        midx.names = [self.names[k] for k in order]
         return midx
 
     @_performance_tracking
@@ -2109,14 +2106,14 @@ class MultiIndex(Index):
         except ValueError:
             if not is_integer(level):
                 raise KeyError(f"Level {level} not found")
-            if level < 0:
-                level += self.nlevels
-            if level >= self.nlevels:
+            norm = level + self.nlevels if level < 0 else level
+            if not 0 <= norm < self.nlevels:
+                # matches pandas MultiIndex._get_level_number
                 raise IndexError(
-                    f"Level {level} out of bounds. "
-                    f"Index has {self.nlevels} levels."
+                    f"Too many levels: Index has only {self.nlevels} "
+                    f"levels, {level} is not a valid level number"
                 ) from None
-            return level
+            return norm
 
     @_performance_tracking
     def get_indexer(self, target, method=None, limit=None, tolerance=None):

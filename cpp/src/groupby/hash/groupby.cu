@@ -21,7 +21,7 @@
 #include <cudf/utilities/traits.cuh>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -35,7 +35,7 @@ std::unique_ptr<table> dispatch_groupby(table_view const& keys,
                                         cudf::detail::result_cache* cache,
                                         bool const keys_have_nulls,
                                         null_policy const include_null_keys,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   auto const null_keys_are_equal  = null_equality::EQUAL;
@@ -134,7 +134,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby(
   table_view const& keys,
   std::span<aggregation_request const> requests,
   null_policy include_null_keys,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   cudf::detail::result_cache cache(requests.size());

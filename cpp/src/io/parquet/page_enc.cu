@@ -18,7 +18,6 @@
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
@@ -30,10 +29,10 @@
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/gather.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/merge.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -3429,33 +3428,33 @@ void InitRowGroupFragments(device_2dspan<PageFragment> frag,
                            device_span<partition_info const> partitions,
                            device_span<int const> part_frag_offset,
                            uint32_t fragment_size,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   auto const num_columns              = frag.size().first;
   auto const num_fragments_per_column = frag.size().second;
   auto const grid_y = std::min(static_cast<uint32_t>(num_fragments_per_column), MAX_GRID_Y_SIZE);
   dim3 const dim_grid(num_columns, grid_y);  // 1 threadblock per fragment
-  gpuInitRowGroupFragments<512><<<dim_grid, 512, 0, stream.value()>>>(
+  gpuInitRowGroupFragments<512><<<dim_grid, 512, 0, stream.get()>>>(
     frag, col_desc, partitions, part_frag_offset, fragment_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void CalculatePageFragments(device_span<PageFragment> frag,
                             device_span<size_type const> column_frag_sizes,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
-  gpuCalculatePageFragments<512><<<frag.size(), 512, 0, stream.value()>>>(frag, column_frag_sizes);
+  gpuCalculatePageFragments<512><<<frag.size(), 512, 0, stream.get()>>>(frag, column_frag_sizes);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void InitFragmentStatistics(device_span<statistics_group> groups,
                             device_span<PageFragment const> fragments,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   int const num_fragments = fragments.size();
   int const dim =
     util::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
-  gpuInitFragmentStats<<<dim, encode_block_size, 0, stream.value()>>>(groups, fragments);
+  gpuInitFragmentStats<<<dim, encode_block_size, 0, stream.get()>>>(groups, fragments);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -3472,11 +3471,11 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
                       bool write_page_stats,
                       statistics_merge_group* page_grstats,
                       statistics_merge_group* chunk_grstats,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   auto num_rowgroups = chunks.size().first;
   dim3 dim_grid(num_columns, num_rowgroups);  // 1 threadblock per rowgroup
-  gpuInitPages<<<dim_grid, encode_block_size, 0, stream.value()>>>(chunks,
+  gpuInitPages<<<dim_grid, encode_block_size, 0, stream.get()>>>(chunks,
                                                                    pages,
                                                                    page_sizes,
                                                                    comp_page_sizes,
@@ -3497,7 +3496,7 @@ void EncodePages(device_span<EncPage> pages,
                  device_span<device_span<uint8_t const>> comp_in,
                  device_span<device_span<uint8_t>> comp_out,
                  device_span<codec_exec_result> comp_results,
-                 rmm::cuda_stream_view stream)
+                 cuda::stream_ref stream)
 {
   auto num_pages = pages.size();
 
@@ -3573,11 +3572,11 @@ void EncodePages(device_span<EncPage> pages,
 
 void decide_compression(device_span<EncColumnChunk> chunks,
                         bool page_level_compression,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   auto const num_blocks =
     util::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
-  decide_compression_kernel<<<num_blocks, decide_compression_block_size, 0, stream.value()>>>(
+  decide_compression_kernel<<<num_blocks, decide_compression_block_size, 0, stream.get()>>>(
     chunks, page_level_compression);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -3586,26 +3585,26 @@ void EncodePageHeaders(device_span<EncPage> pages,
                        device_span<codec_exec_result const> comp_results,
                        device_span<statistics_chunk const> page_stats,
                        statistics_chunk const* chunk_stats,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   auto const num_blocks = util::div_rounding_up_safe<int>(pages.size(), encode_block_size);
-  gpuEncodePageHeaders<<<num_blocks, encode_block_size, 0, stream.value()>>>(
+  gpuEncodePageHeaders<<<num_blocks, encode_block_size, 0, stream.get()>>>(
     pages, comp_results, page_stats, chunk_stats);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-void GatherPages(device_span<EncColumnChunk> chunks, rmm::cuda_stream_view stream)
+void GatherPages(device_span<EncColumnChunk> chunks, cuda::stream_ref stream)
 {
-  gpuGatherPages<<<chunks.size(), 1024, 0, stream.value()>>>(chunks);
+  gpuGatherPages<<<chunks.size(), 1024, 0, stream.get()>>>(chunks);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void EncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
                          int32_t column_index_truncate_length,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
-  gpuEncodeColumnIndexes<<<chunks.size(), 1, 0, stream.value()>>>(
+  gpuEncodeColumnIndexes<<<chunks.size(), 1, 0, stream.get()>>>(
     chunks, column_stats, column_index_truncate_length);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

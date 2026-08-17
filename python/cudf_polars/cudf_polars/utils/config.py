@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "UNSPECIFIED",
     "Cluster",
     "ConfigOptions",
     "DaskContext",
@@ -60,7 +61,43 @@ __all__ = [
     "SPMDContext",
     "StreamingExecutor",
     "StreamingFallbackMode",
+    "Unspecified",
 ]
+
+
+class Unspecified:
+    """
+    Sentinel value meaning "no value was explicitly provided".
+
+    The singleton instance :data:`UNSPECIFIED` is used as the default for every
+    :class:`StreamingOptions` field, as well as for
+    ``ParquetOptions.prefetch_file_metadata``. When a field is still
+    ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
+    matching environment variable was provided), the consuming component decides
+    on the semantics.
+    """
+
+    _instance: Unspecified | None = None
+
+    def __new__(cls) -> Unspecified:
+        """Return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        """Return ``"UNSPECIFIED"``."""
+        return "UNSPECIFIED"
+
+
+UNSPECIFIED = Unspecified()
+"""Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
+``ParquetOptions.prefetch_file_metadata``.
+
+A field set to ``UNSPECIFIED`` after construction means no explicit value and no
+matching environment variable was found; the consuming component decides on the
+semantics.
+"""
 
 
 def _env_get_int(name: str, default: int) -> int:
@@ -161,6 +198,19 @@ def _make_default_factory(
     return default_factory
 
 
+def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
+    """Resolve kvikio thread count from executor options with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_nthreads",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                os.environ.get("KVIKIO_NTHREADS", "256"),
+            ),
+        )
+    )
+
+
 def _bool_converter(v: str) -> bool:
     lowered = v.lower()
     if lowered in {"true", "yes", "y", "1"}:
@@ -169,16 +219,6 @@ def _bool_converter(v: str) -> bool:
         return False
     else:
         raise ValueError(f"Invalid boolean value: '{v}'")
-
-
-def _optional_converter(v: str, parse: Callable[[str], T]) -> T | None:
-    if v.lower() in {"none", "null"}:
-        return None
-    return parse(v)
-
-
-def _optional_int_converter(v: str) -> int | None:
-    return _optional_converter(v, int)
 
 
 def _quent_context_converter(v: str) -> QuentContext | None:
@@ -229,13 +269,12 @@ class ParquetOptions:
 
         Set to 0 to avoid row-group sampling. Note that row-group sampling
         will also be skipped if ``max_footer_samples`` is 0.
-    use_rapidsmpf_native
-        Whether to use the native rapidsmpf node for parquet reading.
-        This option is only used by the streaming executor.
-        Default is False.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
-        `parquet_metadatas` to avoid rereading file footers.
+        `parquet_metadatas` to avoid rereading file footers. Not supported
+        by the in-memory executor, where it defaults to disabled. For the
+        streaming executor, it defaults to being enabled for remote URIs
+        (e.g. ``s3://``) only; pass ``True`` to also prefetch local files.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
@@ -275,18 +314,11 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    use_rapidsmpf_native: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__USE_RAPIDSMPF_NATIVE",
-            _bool_converter,
-            default=False,
-        )
-    )
-    prefetch_file_metadata: bool = dataclasses.field(
+    prefetch_file_metadata: bool | Unspecified = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__PREFETCH_FILE_METADATA",
             _bool_converter,
-            default=False,
+            default=UNSPECIFIED,
         )
     )
     use_jit_filter: bool = dataclasses.field(
@@ -310,15 +342,8 @@ class ParquetOptions:
             raise TypeError("max_footer_samples must be an int")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.use_rapidsmpf_native, bool):
-            raise TypeError("use_rapidsmpf_native must be a bool")
-        if not isinstance(self.prefetch_file_metadata, bool):
-            raise TypeError("prefetch_file_metadata must be a bool")
-
-        if self.use_rapidsmpf_native and self.prefetch_file_metadata:
-            raise NotImplementedError(
-                "'use_rapidsmpf_native=True' does not currently support 'prefetch_file_metadata=True'"
-            )
+        if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
+            raise TypeError("prefetch_file_metadata must be a bool when specified")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -362,16 +387,6 @@ class DynamicPlanningOptions:
     sample_chunk_count
         The maximum number of chunks to sample before making
         dynamic-planning decisions. Default is 2.
-    join_prefilter_threshold
-        Row-count ratio (small / large) below which one side of a join is
-        filtered by a bloom filter built from the other side before
-        performing the join. Set to 0 to disable. Default is 0.5.
-    join_prefilter_max_key_columns
-        Maximum number of columns from the join-key prefix to use for the
-        prefilter. Set to ``None`` to use the full join-key list. Default is 1.
-    join_prefilter_trace
-        Whether to collect input/output row counts around applied join
-        prefilters. Default is False.
     """
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
@@ -381,53 +396,12 @@ class DynamicPlanningOptions:
             f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
         )
     )
-    join_prefilter_threshold: float = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_THRESHOLD",
-            float,
-            default=0.5,
-        )
-    )
-    join_prefilter_max_key_columns: int | None = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-            _optional_int_converter,
-            default=1,
-        )
-    )
-    join_prefilter_trace: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_TRACE",
-            _bool_converter,
-            default=False,
-        )
-    )
 
     def __post_init__(self) -> None:  # noqa: D105
         if not isinstance(self.sample_chunk_count, int):
             raise TypeError("sample_chunk_count must be an int")
         if self.sample_chunk_count < 1:
             raise ValueError("sample_chunk_count must be at least 1")
-        join_prefilter_threshold = self.join_prefilter_threshold
-        if isinstance(join_prefilter_threshold, bool) or not isinstance(
-            join_prefilter_threshold, (int, float)
-        ):
-            raise TypeError("join_prefilter_threshold must be a float or int")
-        join_prefilter_threshold = float(join_prefilter_threshold)
-        object.__setattr__(self, "join_prefilter_threshold", join_prefilter_threshold)
-        if not 0.0 <= join_prefilter_threshold <= 1.0:
-            raise ValueError("join_prefilter_threshold must be between 0 and 1")
-        if self.join_prefilter_max_key_columns is not None:
-            if isinstance(self.join_prefilter_max_key_columns, bool) or not isinstance(
-                self.join_prefilter_max_key_columns, int
-            ):
-                raise TypeError("join_prefilter_max_key_columns must be an int or None")
-            if self.join_prefilter_max_key_columns < 1:
-                raise ValueError(
-                    "join_prefilter_max_key_columns must be at least 1 or None"
-                )
-        if not isinstance(self.join_prefilter_trace, bool):
-            raise TypeError("join_prefilter_trace must be a bool")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -727,7 +701,7 @@ class StreamingExecutor:
 
         This can be set via
 
-        - keyword argument to ``polars.GPUEngine``
+        - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`` environment variable
 
         By default, cudf-polars uses the minimum of 1.5GB or 2.5% of the minimum
@@ -752,17 +726,39 @@ class StreamingExecutor:
         Options controlling the logical join-domain prefilter rewrite. See
         :class:`~cudf_polars.utils.config.JoinFilterPushdownOptions` for more.
         ``None`` disables the rewrite.
-    max_io_threads
-        Maximum number of IO threads. Default is 4.
-        This controls the parallelism of IO operations when reading data.
-    spill_to_pinned_memory
-        Whether RapidsMPF should spill to pinned host memory when available,
-        or use regular pageable host memory. Pinned host memory offers higher
-        bandwidth and lower latency for device to host transfers compared to
-        regular pageable host memory.
+
+        Enable through environment variables with
+        ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
+    max_concurrent_io_tasks
+        Maximum number of concurrent IO tasks for each scan node. Default is 2.
+        This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment variable
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
+    kvikio_nthreads
+        Number of threads in the kvikio thread pool. Defaults to 256, which is
+        tuned for cloud object-store IO. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable
+        - the ``KVIKIO_NTHREADS`` environment variable (lower precedence)
+
+        .. warning::
+
+            kvikio uses a single process-wide thread pool. When a streaming
+            engine is created, it configures that pool to ``kvikio_nthreads``
+            threads. This operation blocks until all in-flight kvikio IO in the
+            process completes and then rebuilds the pool. As a result:
+
+            - Any code in the same process that is using kvikio concurrently at
+              engine creation time will be disrupted.
+            - Any ``kvikio.defaults.set("num_threads", N)`` call made before
+              engine creation will be overridden. Use the ``kvikio_nthreads``
+              executor option or ``KVIKIO_NTHREADS`` environment variable
+              instead.
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
@@ -824,20 +820,18 @@ class StreamingExecutor:
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
         default_factory=JoinFilterPushdownOptions
     )
-    max_io_threads: int = dataclasses.field(
+    max_concurrent_io_tasks: int = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_IO_THREADS", int, default=4
-        )
-    )
-    spill_to_pinned_memory: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__SPILL_TO_PINNED_MEMORY", bool, default=False
+            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS", int, default=2
         )
     )
     num_py_executors: int = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__NUM_PY_EXECUTORS", int, default=8
         )
+    )
+    kvikio_nthreads: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_nthreads({})
     )
 
     min_device_size: int | None = None
@@ -919,12 +913,14 @@ class StreamingExecutor:
             raise TypeError("sink_to_directory must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
-        if not isinstance(self.max_io_threads, int):
-            raise TypeError("max_io_threads must be an int")
-        if not isinstance(self.spill_to_pinned_memory, bool):
-            raise TypeError("spill_to_pinned_memory must be bool")
+        if not isinstance(self.max_concurrent_io_tasks, int):
+            raise TypeError("max_concurrent_io_tasks must be an int")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
+        if not isinstance(self.kvikio_nthreads, int):
+            raise TypeError("kvikio_nthreads must be an int")
+        if self.kvikio_nthreads <= 0:
+            raise ValueError("kvikio_nthreads must be positive")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it
@@ -1045,9 +1041,31 @@ class ConfigOptions(Generic[ExecutorType]):
         if user_parquet_options is None:
             user_parquet_options = {}
 
+        # Engine-dependent default: only prefetch for the streaming executor.
+        # Skipped if the user or the environment has already set a value.
+        prefetch_default = UNSPECIFIED if user_executor == "streaming" else False
+        prefetch_env_set = (
+            os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
+            is not None
+        )
+
         if isinstance(user_parquet_options, dict):
+            user_parquet_options = dict(user_parquet_options)
+            if (
+                "prefetch_file_metadata" not in user_parquet_options
+                and not prefetch_env_set
+            ):
+                user_parquet_options["prefetch_file_metadata"] = prefetch_default
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
+            if (
+                isinstance(user_parquet_options.prefetch_file_metadata, Unspecified)
+                and not prefetch_env_set
+            ):
+                user_parquet_options = dataclasses.replace(
+                    user_parquet_options,
+                    prefetch_file_metadata=prefetch_default,
+                )
             parquet_options = user_parquet_options
         # This is set in polars, and so can't be overridden by the environment
         user_raise_on_fail = engine.config.get("raise_on_fail", False)
@@ -1076,7 +1094,7 @@ class ConfigOptions(Generic[ExecutorType]):
         match user_executor:
             case "in-memory":
                 executor = InMemoryExecutor(**user_executor_options)
-                if parquet_options.prefetch_file_metadata:
+                if parquet_options.prefetch_file_metadata is True:
                     raise NotImplementedError(
                         "Prefetching is not supported for the in-memory executor."
                     )
@@ -1102,7 +1120,7 @@ class ConfigOptions(Generic[ExecutorType]):
                 )
                 if user_join_filter_pushdown is None:
                     env_join_filter_pushdown = os.environ.get(
-                        "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "1"
+                        "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "0"
                     )
                     if not _bool_converter(env_join_filter_pushdown):
                         user_executor_options["join_filter_pushdown"] = None

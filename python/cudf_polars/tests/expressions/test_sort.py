@@ -11,7 +11,7 @@ import polars as pl
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_140
+from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 
 @pytest.mark.parametrize("descending", [False, True])
@@ -69,11 +69,6 @@ def test_setsorted(engine: pl.GPUEngine, request, descending, nulls_last, with_n
                 "fixed in https://github.com/pola-rs/polars/pull/25250"
             )
         )
-    elif not POLARS_VERSION_LT_140:
-        # polars >= 1.40 keeps the hint_sorted node in the optimized plan for a
-        # bare set_sorted; we do not support it, so it raises. 1.36-1.39 pruned
-        # it during optimization and passed.
-        request.applymarker(pytest.mark.xfail(reason="Hint sorted unsupported"))
     sorted_values = sorted([1, 2, 3, 4, 5, 6, -2], reverse=descending)
     values: list[int | None] = [*sorted_values]
     if with_nulls == "nulls":

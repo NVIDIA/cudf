@@ -27,9 +27,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -53,7 +52,7 @@ groupby::groupby(table_view const& keys,
 // Select hash vs. sort groupby implementation
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::dispatch_aggregation(
   std::span<aggregation_request const> requests,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // If sort groupby has been called once on this groupby object, then
@@ -88,7 +87,7 @@ namespace {
 struct empty_column_constructor {
   column_view values;
   aggregation const& agg;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename ValuesType, aggregation::Kind k>
@@ -104,7 +103,7 @@ struct empty_column_constructor {
 
     if constexpr (k == aggregation::Kind::HISTOGRAM) {
       return make_lists_column(0,
-                               make_empty_column(type_to_id<size_type>()),
+                               make_empty_column(type_id::INT32),
                                cudf::reduction::detail::make_empty_histogram_like(values),
                                0,
                                {});
@@ -155,7 +154,7 @@ struct empty_column_constructor {
 /// Make an empty table with appropriate types for requested aggs
 template <typename RequestType>
 auto empty_results(std::span<RequestType const> requests,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
 {
   std::vector<aggregation_result> empty_results;
@@ -219,7 +218,7 @@ void verify_valid_requests(std::span<RequestType const> requests)
 // Compute aggregation requests
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggregate(
   std::span<aggregation_request const> requests,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -239,7 +238,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 // Compute scan requests
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan(
   std::span<scan_request const> requests,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -259,7 +258,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
 }
 
 groupby::groups groupby::get_groups(table_view values,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -285,7 +284,7 @@ groupby::groups groupby::get_groups(table_view values,
 std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::replace_nulls(
   table_view const& values,
   std::span<cudf::replace_policy const> replace_policies,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -329,7 +328,7 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
   table_view const& values,
   std::span<size_type const> offsets,
   std::vector<std::reference_wrapper<scalar const>> const& fill_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

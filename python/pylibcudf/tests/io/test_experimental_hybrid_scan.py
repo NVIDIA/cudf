@@ -716,8 +716,8 @@ def test_hybrid_scan_metadata_with_page_index(
 ) -> None:
     """Test that page index setup enables page-level filtering.
 
-    This test mirrors the C++ TestMetadata test. It verifies that:
-    1. Before setup_page_index(), methods requiring page index will fail
+    This test mirrors the C++ page-index filter tests. It verifies that:
+    1. Before setup_page_index(), filter column page pruning using page-statistics will fail
     2. After fetching page index bytes and calling setup_page_index(),
        the page index is available and page-level operations work correctly
     """
@@ -746,7 +746,7 @@ def test_hybrid_scan_metadata_with_page_index(
     assert len(all_row_groups) > 0
 
     # Try to use build_row_mask_with_page_index_stats BEFORE setup_page_index
-    # This should raise an error because page index is not set up yet
+    # This should raise an error because column and offset indexes are not set up yet
     try:
         simple_hybrid_scan_reader.build_row_mask_with_page_index_stats(
             all_row_groups, simple_parquet_options

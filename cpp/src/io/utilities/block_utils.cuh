@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +58,7 @@ inline __device__ T warp_reduce_pos(T pos, uint32_t t)
 }
 
 template <typename T>
-  requires(cuda::std::is_integral_v<T>)
+  requires(cuda::std::is_trivially_copyable_v<T>)
 inline __device__ T unaligned_load(uint8_t const* p)
 {
   T value;

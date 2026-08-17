@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,11 +16,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 
@@ -64,12 +64,12 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          bool build_null_mask,
                                          concatenate_null_policy null_policy,
                                          device_span<size_type const> row_null_counts,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // outgoing offsets.
   auto offsets = cudf::make_fixed_width_column(
-    data_type{type_to_id<size_type>()}, input.num_rows() + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_id::INT32}, input.num_rows() + 1, mask_state::UNALLOCATED, stream, mr);
 
   auto keys =
     thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -96,7 +96,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
         }
       }
       auto offsets =
-        input.column(col_index).child(lists_column_view::offsets_column_index).data<size_type>() +
+        input.column(col_index).child(lists_column_view::offsets_column_index).data<int32_t>() +
         input.column(col_index).offset();
       return offsets[row_index + 1] - offsets[row_index];
     }));
@@ -105,15 +105,15 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     keys + (input.num_rows() * input.num_columns()),
                                     values,
                                     cuda::make_discard_iterator(),
-                                    offsets->mutable_view().begin<size_type>(),
+                                    offsets->mutable_view().begin<int32_t>(),
                                     cuda::std::plus<size_type>(),
                                     stream);
 
   // convert to offsets
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         offsets->view().begin<size_type>(),
-                         offsets->view().begin<size_type>() + input.num_rows() + 1,
-                         offsets->mutable_view().begin<size_type>(),
+                         offsets->view().begin<int32_t>(),
+                         offsets->view().begin<int32_t>() + input.num_rows() + 1,
+                         offsets->mutable_view().begin<int32_t>(),
                          0);
 
   // generate appropriate null mask
@@ -148,7 +148,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
 }
 
 rmm::device_uvector<size_type> generate_null_counts(table_device_view const& input,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   rmm::device_uvector<size_type> null_counts(input.num_rows(), stream);
 
@@ -187,7 +187,7 @@ rmm::device_uvector<size_type> generate_null_counts(table_device_view const& inp
  */
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.num_columns() > 0, "The input table must have at least one column.");
@@ -304,7 +304,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
  */
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

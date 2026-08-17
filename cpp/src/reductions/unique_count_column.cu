@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,12 +13,12 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/type_traits>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 
@@ -48,7 +48,7 @@ struct check_nan {
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   auto const num_rows = input.size();
 
@@ -91,7 +91,7 @@ cudf::size_type unique_count(column_view const& input,
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::unique_count(input, null_handling, nan_handling, stream);

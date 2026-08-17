@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,7 +22,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <thrust/iterator/transform_output_iterator.h>
 
 namespace cudf::detail {
 
@@ -38,7 +37,7 @@ probe_join_hash_table(
   bool has_nulls,
   null_equality compare_nulls,
   std::optional<std::size_t> output_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   static_assert(Join == join_kind::INNER_JOIN || Join == join_kind::LEFT_JOIN ||
@@ -69,9 +68,9 @@ probe_join_hash_table(
 
   auto const left_table_num_rows = left_table.num_rows();
   auto const out_probe_begin =
-    thrust::make_transform_output_iterator(left_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(left_indices->begin(), output_fn{});
   auto const out_build_begin =
-    thrust::make_transform_output_iterator(right_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
   auto retrieve_results = [&](auto equality, auto d_hasher) {
     auto const iter = cudf::detail::make_counting_transform_iterator(0, pair_fn{d_hasher});
@@ -82,7 +81,7 @@ probe_join_hash_table(
                           hash_table.hash_function(),
                           out_probe_begin,
                           out_build_begin,
-                          stream.value());
+                          stream.get());
     } else {
       [[maybe_unused]] auto out_probe_end = hash_table
                                               .retrieve_outer(iter,
@@ -91,7 +90,7 @@ probe_join_hash_table(
                                                               hash_table.hash_function(),
                                                               out_probe_begin,
                                                               out_build_begin,
-                                                              stream.value())
+                                                              stream.get())
                                               .first;
 
       if constexpr (Join == join_kind::FULL_JOIN) {
@@ -123,7 +122,7 @@ void retrieve_left_join_build_indices(
   bool has_nulls,
   null_equality compare_nulls,
   RightOutputIterator out_build_begin,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto const left_table_num_rows = left_table.num_rows();
 
@@ -135,7 +134,7 @@ void retrieve_left_join_build_indices(
                               hash_table.hash_function(),
                               cuda::make_discard_iterator(),
                               out_build_begin,
-                              stream.value());
+                              stream.get());
   };
 
   dispatch_join_comparator(right_table,
@@ -153,7 +152,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                  std::optional<std::size_t> output_size,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();

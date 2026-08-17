@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace dictionary {
@@ -35,7 +35,7 @@ struct indices_handler_fn {
  * @brief Decode a column from a dictionary.
  */
 std::unique_ptr<column> decode(dictionary_column_view const& source,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   if (source.is_empty()) return make_empty_column(type_id::EMPTY);
@@ -66,7 +66,7 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
 }  // namespace detail
 
 std::unique_ptr<column> decode(dictionary_column_view const& source,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

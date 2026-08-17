@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import uuid
 from itertools import pairwise
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -14,13 +15,14 @@ import pytest
 
 import polars as pl
 from polars import polars as plrs  # type: ignore[attr-defined]
+from polars.testing import assert_frame_equal
 
 import rmm.mr
 from rapidsmpf.bootstrap import is_running_with_rrun
 from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 
 import cudf_polars.quent
-from cudf_polars.engine.core import _find_memory_error
+from cudf_polars.engine.core import _find_memory_error, all_gather_host_data
 from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import (
@@ -29,6 +31,7 @@ from cudf_polars.engine.spmd import (
 )
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import MemoryResourceConfig
 
 if TYPE_CHECKING:
@@ -703,6 +706,44 @@ def test_over_shared_group_ordering_multirank(
         assert global_result["result"].to_list() == expected_values
 
 
+def test_over_preserves_input_order_within_source_chunk(
+    comm: Communicator, tmp_path: Path
+) -> None:
+    n_rows = 64
+    make_partitioned_source(
+        pl.DataFrame(
+            {
+                "g": [0] * n_rows,
+                "x": list(range(n_rows)),
+            }
+        ),
+        tmp_path,
+        "parquet",
+        row_group_size=2,
+    )
+
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        if engine.nranks != 1:
+            pytest.skip("expected values are defined for exactly 1 rank")
+
+        q = (
+            pl.scan_parquet(tmp_path)
+            .sort("x")
+            .select(
+                "x",
+                pl.col("x").cum_sum().over("g").alias("result"),
+            )
+        )
+        assert_gpu_result_equal(q, engine=engine)
+
+
 def test_over_nonscalar_duplicated_input(
     comm: Communicator,
 ) -> None:
@@ -752,6 +793,64 @@ def test_over_nonscalar_duplicated_input(
                 f"coarse_g={cg}: expected dense ranks [1, 2, 3] "
                 f"but got {grp['rank_x'].to_list()}"
             )
+
+
+def test_groupby_sort_by_first_last_multirank(
+    comm: Communicator, tmp_path: Path
+) -> None:
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        source_path = tmp_path / "groupby-sort-by.parquet"
+        if engine.rank == 0:
+            make_partitioned_source(
+                pl.DataFrame(
+                    {
+                        "g": ["B", "A", "C", "A", "B", "C", "A", "B"],
+                        "idx": [2, 3, 2, 1, 1, 1, 2, 3],
+                        "tie": [1, 1, 1, 1, 1, 1, 1, 1],
+                        "val": [40, 30, 60, 10, 30, 50, 20, 50],
+                    }
+                ),
+                source_path,
+                "parquet",
+                row_group_size=2,
+            )
+            data = str(source_path).encode()
+        else:
+            data = b""
+
+        with reserve_op_id() as op_id:
+            source_paths = all_gather_host_data(
+                engine.comm, engine.context.br(), op_id, data
+            )
+        source_path = Path(source_paths[0].decode())
+
+        q = (
+            pl.scan_parquet(source_path)
+            .group_by("g")
+            .agg(
+                pl.col("val").sum().alias("volume"),
+                pl.col("val").sort_by("idx").first().alias("open"),
+                pl.col("val").sort_by("idx").last().alias("close"),
+                pl.col("val")
+                .sort_by("tie", maintain_order=True)
+                .first()
+                .alias("first_tie"),
+                pl.col("val")
+                .sort_by("tie", maintain_order=True)
+                .last()
+                .alias("last_tie"),
+            )
+        )
+        expected = q.collect()
+        got = q.collect(engine=engine)
+        assert_frame_equal(expected, got, check_row_order=False)
 
 
 def test_find_memory_error() -> None:

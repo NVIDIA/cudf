@@ -36,10 +36,12 @@
 #include <rapidsmpf/streaming/core/context.hpp>
 #include <rapidsmpf/utils/misc.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace {
 
@@ -189,29 +191,35 @@ static __device__ void calculate_charge(double *charge, double discprice, double
            )***";
 
     // disc_price
-    result.push_back(
-      cudf::transform_extended(std::vector<cudf::transform_input>{extendedprice, discount},
-                               udf_disc_price,
-                               cudf::data_type(cudf::type_id::FLOAT64),
-                               cudf::udf_source_type::CUDA,
-                               std::nullopt,
-                               cudf::null_aware::NO,
-                               std::nullopt,
-                               cudf::output_nullability::PRESERVE,
-                               chunk_stream,
-                               ctx->br()->device_mr()));
+    result.push_back(std::move(
+      cudf::transform(udf_disc_price,
+                      cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      std::vector<cudf::transform_input>{extendedprice, discount},
+                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT64),
+                                                        cudf::output_nullability::PRESERVE}},
+                      {},
+                      std::nullopt,
+                      chunk_stream,
+                      ctx->br()->device_mr())
+        ->release()
+        .front()));
     // charge
-    result.push_back(
-      cudf::transform_extended(std::vector<cudf::transform_input>{result.back()->view(), tax},
-                               udf_charge,
-                               cudf::data_type(cudf::type_id::FLOAT64),
-                               cudf::udf_source_type::CUDA,
-                               std::nullopt,
-                               cudf::null_aware::NO,
-                               std::nullopt,
-                               cudf::output_nullability::PRESERVE,
-                               chunk_stream,
-                               ctx->br()->device_mr()));
+    result.push_back(std::move(
+      cudf::transform(udf_charge,
+                      cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      std::vector<cudf::transform_input>{result.back()->view(), tax},
+                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT64),
+                                                        cudf::output_nullability::PRESERVE}},
+                      {},
+                      std::nullopt,
+                      chunk_stream,
+                      ctx->br()->device_mr())
+        ->release()
+        .front()));
     // l_discount
     result.push_back(
       std::make_unique<cudf::column>(discount, chunk_stream, ctx->br()->device_mr()));

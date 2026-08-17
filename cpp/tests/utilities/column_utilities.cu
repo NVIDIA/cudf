@@ -30,7 +30,7 @@
 #include <cuda/std/cmath>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/equal.h>
 #include <thrust/execution_policy.h>

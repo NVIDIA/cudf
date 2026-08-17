@@ -17,7 +17,7 @@
 
 #include <cuco/detail/open_addressing/kernels.cuh>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <cstdint>

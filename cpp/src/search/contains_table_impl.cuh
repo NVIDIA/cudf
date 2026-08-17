@@ -21,7 +21,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::detail {
 

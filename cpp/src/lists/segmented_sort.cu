@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,7 +40,7 @@ std::unique_ptr<column> build_output_offsets(lists_column_view const& input,
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     input.offsets_begin(),
                     input.offsets_end(),
-                    output_offset->mutable_view().begin<size_type>(),
+                    output_offset->mutable_view().begin<int32_t>(),
                     [first = input.offsets_begin()] __device__(auto offset_index) {
                       return offset_index - *first;
                     });

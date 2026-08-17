@@ -17,7 +17,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/atomic>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::detail {
 

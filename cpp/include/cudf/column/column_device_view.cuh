@@ -19,7 +19,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <functional>

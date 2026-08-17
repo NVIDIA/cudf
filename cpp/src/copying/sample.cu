@@ -17,7 +17,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/random.h>
 #include <thrust/random/uniform_int_distribution.h>
 #include <thrust/shuffle.h>

@@ -3446,7 +3446,7 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
 {
   auto num_rowgroups = chunks.size().first;
   dim3 dim_grid(num_columns, num_rowgroups);  // 1 threadblock per rowgroup
-  gpuInitPages<<<dim_grid, encode_block_size, 0, stream.value()>>>(chunks,
+  gpuInitPages<<<dim_grid, encode_block_size, 0, stream.get()>>>(chunks,
                                                                    pages,
                                                                    page_sizes,
                                                                    comp_page_sizes,

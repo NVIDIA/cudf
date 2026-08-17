@@ -128,7 +128,9 @@ files:
       - test_base
       - test_plotly
 
+# TODO: Can remove `conda-forge::xgboost` once https://github.com/rapidsai/build-planning/issues/312 is fully resolved
 channels:
+  - conda-forge::xgboost
   - rapidsai-nightly
   - rapidsai
   - conda-forge

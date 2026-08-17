@@ -13,7 +13,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace reduction {

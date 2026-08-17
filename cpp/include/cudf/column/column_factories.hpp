@@ -11,10 +11,8 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 /**
  * @file
@@ -368,7 +366,7 @@ std::unique_ptr<column> make_fixed_width_column(
  */
 std::unique_ptr<column> make_strings_column(
   cudf::device_span<cuda::std::pair<char const*, size_type> const> strings,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -388,7 +386,7 @@ std::unique_ptr<column> make_strings_column(
  */
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<cuda::std::pair<char const*, size_type> const>> const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -420,7 +418,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
 std::unique_ptr<column> make_strings_column(
   cudf::device_span<string_view const> string_views,
   string_view const null_placeholder,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -485,7 +483,10 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
  * @endcode
  *
  * @param num_rows The number of lists the column represents.
- * @param offsets_column The column of offset values for this column. Each value should
+ * @param offsets_column The column of offset values for this column. Must be of type
+ * `type_id::INT32` -- per the Arrow columnar format, a LIST column's offsets are always 32-bit
+ * (a 64-bit offsets variant would be a distinct LARGE_LIST type, which cudf does not have).
+ * This is deliberately independent of `cudf::size_type`. Each value should
  * represent the starting offset into the child elements that corresponds to the beginning of the
  * row, with the first row starting at 0. The length of row N can be determined by subtracting
  * `offsets[N+1] - offsets[N]`. The total number of offsets should be 1 longer than the
@@ -540,7 +541,7 @@ std::unique_ptr<cudf::column> make_structs_column(
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
   rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -574,7 +575,7 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
   rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

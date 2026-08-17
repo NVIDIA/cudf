@@ -20,7 +20,7 @@
 #include <cuda/atomic>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/reduce.h>
 
 namespace cudf::detail {

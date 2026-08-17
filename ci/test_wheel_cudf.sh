@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -13,7 +13,7 @@ LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_c
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
-rapids-logger "Install pylibcudf and its basic dependencies in a virtual environment"
+rapids-logger "Install libcudf and verify its runtime dependencies in a virtual environment"
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
 rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}"
@@ -22,9 +22,22 @@ RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
 mkdir -p "${RAPIDS_TESTS_DIR}"
 
+python -m venv libcudf-env
+. libcudf-env/bin/activate
+
+rapids-pip-retry install \
+    -v \
+    --prefer-binary \
+    --constraint "${PIP_CONSTRAINT}" \
+    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+python -c "import libcudf; assert libcudf.load_library() is not None"
+deactivate
+
 # To test pylibcudf without its optional dependencies, we create a virtual environment
-python -m venv env
-. env/bin/activate
+python -m venv pylibcudf-env
+. pylibcudf-env/bin/activate
+
+rapids-logger "Install pylibcudf and its basic dependencies"
 
 # notes:
 #

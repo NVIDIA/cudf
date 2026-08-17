@@ -15,7 +15,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/adjacent_difference.h>
 
 namespace cudf {

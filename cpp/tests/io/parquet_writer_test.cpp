@@ -305,20 +305,20 @@ class custom_test_data_sink : public cudf::io::data_sink {
 
   [[nodiscard]] bool supports_device_write() const override { return true; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     this->device_write_async(gpu_data, size, stream).get();
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     return std::async(std::launch::deferred, [=, this] {
       char* ptr = nullptr;
       CUDF_CUDA_TRY(cudaMallocHost(&ptr, size));
-      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.value()));
-      stream.synchronize();
+      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.get()));
+      stream.sync();
       outfile_.write(ptr, size);
       CUDF_CUDA_TRY(cudaFreeHost(ptr));
     });
@@ -2437,20 +2437,20 @@ class custom_test_memmap_sink : public cudf::io::data_sink {
 
   [[nodiscard]] bool supports_device_write() const override { return supports_device_writes; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     this->device_write_async(gpu_data, size, stream).get();
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     return std::async(std::launch::deferred, [=, this] {
       char* ptr = nullptr;
       CUDF_CUDA_TRY(cudaMallocHost(&ptr, size));
-      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.value()));
-      stream.synchronize();
+      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.get()));
+      stream.sync();
       mm_writer->host_write(ptr, size);
       CUDF_CUDA_TRY(cudaFreeHost(ptr));
     });

@@ -165,7 +165,7 @@ void hybrid_scan_reader_impl::setup_next_pass(
       }
     }
 
-    _stream.synchronize();
+    _stream.sync();
   }
 }
 

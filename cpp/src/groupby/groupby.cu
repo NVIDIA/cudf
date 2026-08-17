@@ -28,7 +28,7 @@
 #include <cudf/utilities/type_checks.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -103,7 +103,7 @@ struct empty_column_constructor {
 
     if constexpr (k == aggregation::Kind::HISTOGRAM) {
       return make_lists_column(0,
-                               make_empty_column(type_to_id<size_type>()),
+                               make_empty_column(type_id::INT32),
                                cudf::reduction::detail::make_empty_histogram_like(values),
                                0,
                                {});

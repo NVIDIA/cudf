@@ -12,13 +12,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -44,7 +44,7 @@ using string_index_pair = cuda::std::pair<char const*, size_type>;
 template <typename IndexPairIterator>
 std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
                                             IndexPairIterator end,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

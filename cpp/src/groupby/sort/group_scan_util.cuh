@@ -27,7 +27,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/scan.h>
 
 namespace cudf {

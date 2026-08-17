@@ -14,7 +14,7 @@
 #include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <stdexcept>

@@ -8,9 +8,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <span>
 
@@ -107,7 +105,7 @@ std::unique_ptr<scalar> make_fixed_width_scalar(
  */
 std::unique_ptr<scalar> make_string_scalar(
   std::string const& string,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

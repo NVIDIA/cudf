@@ -13,7 +13,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -21,6 +20,7 @@
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/optional>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -46,7 +46,7 @@ std::unique_ptr<table> build_table(
   cudf::device_span<size_type const> gather_map,
   cuda::std::optional<cudf::device_span<size_type const>> explode_col_gather_map,
   cuda::std::optional<rmm::device_uvector<size_type>> position_array,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto select_iter = cuda::transform_iterator(
@@ -100,7 +100,7 @@ std::unique_ptr<table> build_table(
 
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type const explode_column_idx,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
@@ -138,7 +138,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
 
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type const explode_column_idx,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
@@ -189,7 +189,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
 std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type const explode_column_idx,
                                      bool include_position,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
@@ -289,12 +289,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 }  // namespace detail
 
 /**
- * @copydoc cudf::explode(table_view const&, size_type, rmm::cuda_stream_view,
+ * @copydoc cudf::explode(table_view const&, size_type, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type explode_column_idx,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -304,12 +304,12 @@ std::unique_ptr<table> explode(table_view const& input_table,
 }
 
 /**
- * @copydoc cudf::explode_position(table_view const&, size_type, rmm::cuda_stream_view,
+ * @copydoc cudf::explode_position(table_view const&, size_type, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type explode_column_idx,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -319,12 +319,12 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
 }
 
 /**
- * @copydoc cudf::explode_outer(table_view const&, size_type, rmm::cuda_stream_view,
+ * @copydoc cudf::explode_outer(table_view const&, size_type, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type explode_column_idx,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -335,11 +335,11 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_outer_position(table_view const&, size_type,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode_outer_position(table_view const& input_table,
                                               size_type explode_column_idx,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

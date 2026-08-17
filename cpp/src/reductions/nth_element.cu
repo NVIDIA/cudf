@@ -15,7 +15,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/scan.h>
 

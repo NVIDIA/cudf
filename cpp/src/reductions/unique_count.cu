@@ -10,10 +10,10 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -23,7 +23,7 @@ namespace detail {
 
 cudf::size_type unique_count(table_view const& keys,
                              null_equality nulls_equal,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   auto const temp_mr  = cudf::get_current_device_resource_ref();
   auto const row_comp = cudf::detail::row::equality::self_comparator(keys, stream, temp_mr);
@@ -59,7 +59,7 @@ cudf::size_type unique_count(table_view const& keys,
 
 cudf::size_type unique_count(table_view const& input,
                              null_equality nulls_equal,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::unique_count(input, nulls_equal, stream);

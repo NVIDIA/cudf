@@ -15,7 +15,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <stdexcept>

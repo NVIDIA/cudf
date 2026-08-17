@@ -24,7 +24,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/transform_iterator.h>

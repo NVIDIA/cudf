@@ -28,7 +28,7 @@
 #include <cuda/atomic>
 #include <cuda/devices>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 

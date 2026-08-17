@@ -161,7 +161,7 @@ class UnaryFunction(Expr):
     _horizontal_fold_ops: ClassVar[dict[str, plc.binaryop.BinaryOperator]] = {
         "max_horizontal": plc.binaryop.BinaryOperator.NULL_MAX,
     }
-    _supported_horizontal_fns = frozenset({"max_horizontal"})
+    _supported_horizontal_fns = frozenset({"coalesce", "max_horizontal"})
     _supported_math_fns = frozenset(
         {
             "cot",
@@ -172,10 +172,10 @@ class UnaryFunction(Expr):
         }
     )
     _supported_fns = frozenset().union(
-        _supported_misc_fns,
         _supported_cum_aggs,
-        _supported_math_fns,
         _supported_horizontal_fns,
+        _supported_math_fns,
+        _supported_misc_fns,
         _OP_MAPPING.keys(),
     )
     _pointwise_fns = frozenset(
@@ -1160,6 +1160,32 @@ class UnaryFunction(Expr):
                 ),
                 dtype=self.dtype,
             )
+        elif self.name == "coalesce":
+            first_child, *other_children = self.children
+            first_col = first_child.evaluate(df, context=context).astype(
+                self.dtype, stream=df.stream
+            )
+            if first_col.is_scalar:
+                result = plc.filling.repeat(
+                    plc.Table([first_col.obj]),
+                    df.num_rows,
+                    stream=df.stream,
+                ).columns()[0]
+            else:
+                result = first_col.obj
+            for child in other_children:
+                if result.null_count() == 0:
+                    break
+                cast_candidate = child.evaluate(df, context=context).astype(
+                    self.dtype, stream=df.stream
+                )
+                fill = (
+                    cast_candidate.obj_scalar(stream=df.stream)
+                    if cast_candidate.is_scalar
+                    else cast_candidate.obj
+                )
+                result = plc.replace.replace_nulls(result, fill, stream=df.stream)
+            return Column(result, dtype=self.dtype)
         elif self.name == "rank":
             (column,) = (child.evaluate(df, context=context) for child in self.children)
             method_str, descending, _ = self.options

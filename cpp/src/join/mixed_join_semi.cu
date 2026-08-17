@@ -22,12 +22,12 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/fill.h>
 
 #include <optional>
@@ -43,7 +43,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   join_kind join_type,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS((join_type != join_kind::INNER_JOIN) and (join_type != join_kind::LEFT_JOIN) and
@@ -148,21 +148,22 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
                         {row_hash_right.device_hasher(right_nulls)},
                         {},
                         {},
-                        rmm::mr::polymorphic_allocator<char>{temp_mr},
-                        {stream.value()}};
+                        rmm::mr::polymorphic_allocator<char>{},
+                        {stream.get()}};
 
   auto iter = cuda::counting_iterator<cudf::size_type>{0};
 
   // skip rows that are null here.
   if ((compare_nulls == null_equality::EQUAL) or (not nullable(right))) {
-    row_set.insert_async(iter, iter + right_num_rows, stream.value());
+    row_set.insert_async(iter, iter + right_num_rows, stream.get());
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
-    auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
+    auto const [row_bitmask, _] =
+      cudf::detail::bitmask_and(right, stream, cudf::get_current_device_resource_ref());
     row_is_valid pred{static_cast<bitmask_type const*>(row_bitmask.data())};
 
     // insert valid rows
-    row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.value());
+    row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.get());
   }
 
   detail::grid_1d const config(outer_num_rows * hash_set_type::cg_size, DEFAULT_JOIN_BLOCK_SIZE);
@@ -176,7 +177,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   hash_set_ref_type const row_set_ref = row_set.ref(cuco::contains).rebind_hash_function(hash_left);
 
   // Vector used to indicate indices from the left table which are present in output
-  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
+  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream);
 
   launch_mixed_join_semi(has_nulls,
                          *left_conditional_view,
@@ -217,7 +218,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_semi_join(
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -239,7 +240,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_anti_join(
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

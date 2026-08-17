@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -73,10 +73,10 @@ auto generate_empty_output(strings_column_view const& input,
                            rmm::device_async_resource_ref mr)
 {
   auto offsets_column = make_numeric_column(
-    data_type{type_to_id<size_type>()}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
-  CUDF_CUDA_TRY(cudaMemsetAsync(offsets_column->mutable_view().template data<size_type>(),
+    data_type{type_id::INT32}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
+  CUDF_CUDA_TRY(cudaMemsetAsync(offsets_column->mutable_view().template data<int32_t>(),
                                 0,
-                                offsets_column->size() * sizeof(size_type),
+                                offsets_column->size() * sizeof(int32_t),
                                 stream.value()));
 
   return make_strings_column(strings_count,

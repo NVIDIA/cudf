@@ -16,7 +16,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuco/static_set.cuh>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 

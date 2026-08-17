@@ -128,9 +128,7 @@ files:
       - test_base
       - test_plotly
 
-# TODO: Can remove `conda-forge::xgboost` once https://github.com/rapidsai/build-planning/issues/312 is fully resolved
 channels:
-  - conda-forge::xgboost
   - rapidsai-nightly
   - rapidsai
   - conda-forge
@@ -319,12 +317,13 @@ dependencies:
       - output_types: conda
         packages:
         # TODO: Remove hypothesis pinning once https://github.com/HypothesisWorks/hypothesis/issues/4365 is resolved
+        # TODO: Can replace `conda-forge::xgboost` with `xgboost` once https://github.com/rapidsai/build-planning/issues/312 is fully resolved
           - hypothesis>=6.131.7
           - numpy
           - scipy
           - scikit-learn
           - pip
-          - xgboost>=2.0.1
+          - conda-forge::xgboost>=2.0.1
   test_catboost:
     common:
       - output_types: conda

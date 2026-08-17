@@ -11,7 +11,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
-import kvikio
+import kvikio.defaults
 
 import pylibcudf as plc
 import rmm.mr

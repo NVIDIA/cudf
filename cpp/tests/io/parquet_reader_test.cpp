@@ -1684,6 +1684,43 @@ TEST_F(ParquetReaderTest, NestedByteArray)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+// A binary column is read back as a strings column and then converted to `list<uint8>`.
+// A strings column may carry 64-bit offsets, but a LIST column's offsets child is always
+// 32-bit, so that conversion must not hand an INT64 offsets column to `make_lists_column`.
+TEST_F(ParquetReaderTest, BinaryAsListLargeStringsThreshold)
+{
+  // Force the intermediate strings column onto the 64-bit offsets path. The data below is far
+  // under `INT32_MAX` bytes, so every offset value stays representable as an int32_t.
+  tmp_env_var const large_strings_threshold{"LIBCUDF_LARGE_STRINGS_THRESHOLD", "8"};
+
+  cudf::test::lists_column_wrapper<uint8_t> list_int_col{
+    {'M', 'o', 'n', 'd', 'a', 'y'},
+    {'W', 'e', 'd', 'n', 'e', 's', 'd', 'a', 'y'},
+    {'F', 'r', 'i', 'd', 'a', 'y'},
+    {'F', 'u', 'n', 'd', 'a', 'y'}};
+
+  auto const expected = table_view{{list_int_col}};
+  cudf::io::table_input_metadata output_metadata(expected);
+  output_metadata.column_metadata[0].set_name("col_binary").set_output_as_binary(true);
+
+  auto filepath = temp_env->get_temp_filepath("BinaryAsListLargeStringsThreshold.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(std::move(output_metadata));
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .set_column_schema({cudf::io::reader_column_schema().set_convert_binary_to_strings(false)});
+  auto result = cudf::io::read_parquet(in_opts);
+
+  auto const col = result.tbl->view().column(0);
+  ASSERT_EQ(col.type().id(), cudf::type_id::LIST);
+  EXPECT_EQ(col.child(cudf::lists_column_view::offsets_column_index).type().id(),
+            cudf::type_id::INT32);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetReaderTest, StructByteArray)
 {
   constexpr auto num_rows = 100;

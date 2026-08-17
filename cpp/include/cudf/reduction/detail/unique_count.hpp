@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,25 +10,25 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::unique_count(column_view const&, null_policy, nan_policy, rmm::cuda_stream_view)
+ * @copydoc cudf::unique_count(column_view const&, null_policy, nan_policy, cuda::stream_ref)
  */
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             rmm::cuda_stream_view stream);
+                             cuda::stream_ref stream);
 
 /**
- * @copydoc cudf::unique_count(table_view const&, null_equality, rmm::cuda_stream_view)
+ * @copydoc cudf::unique_count(table_view const&, null_equality, cuda::stream_ref)
  */
 cudf::size_type unique_count(table_view const& input,
                              null_equality nulls_equal,
-                             rmm::cuda_stream_view stream);
+                             cuda::stream_ref stream);
 
 }  // namespace detail
 }  // namespace cudf

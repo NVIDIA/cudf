@@ -50,12 +50,13 @@ from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.nodebase import Node
 from cudf_polars.dsl.to_ast import _DECIMAL_IDS, to_ast, to_parquet_filter
 from cudf_polars.dsl.tracing import log_do_evaluate, nvtx_annotate_cudf_polars
+from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.dsl.utils.windows import (
     offsets_to_windows,
     range_window_bounds,
 )
-from cudf_polars.utils import dtypes
+from cudf_polars.utils import dtypes, sorting
 from cudf_polars.utils.cuda_stream import (
     get_cuda_stream,
     stream_ordered_after,
@@ -194,6 +195,14 @@ class IRExecutionContext:
             self.get_cuda_stream, upstreams=[df.stream for df in dfs]
         ) as result_stream:
             yield result_stream
+
+
+@dataclass(frozen=True)
+class _SortedAggRequest:
+    """Named sorted aggregation request."""
+
+    name: str
+    value: expr.SortedAgg
 
 
 def apply_predicate(df: DataFrame, predicate: expr.NamedExpr | None) -> DataFrame:
@@ -902,12 +911,7 @@ class Scan(IR):
     ) -> int:
         # Zero-width parquet files lose their row count when read through
         # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
-        if parquet_options.prefetch_file_metadata:
-            if cached_parquet_info is None:
-                raise AssertionError(
-                    "Cached parquet info is required when prefetching file metadata is enabled"
-                )
-
+        if cached_parquet_info is not None:
             Scan._validate_cached_parquet_info(paths, cached_parquet_info)
             parquet_metadatas = [
                 info.file_metadata for info in cached_parquet_info
@@ -1071,11 +1075,7 @@ class Scan(IR):
                     df,
                 )
         elif typ == "parquet":
-            if parquet_options.prefetch_file_metadata:
-                if cached_parquet_info is None:
-                    raise AssertionError(
-                        "Cached parquet info is required when prefetching file metadata is enabled"
-                    )
+            if cached_parquet_info is not None:
                 Scan._validate_cached_parquet_info(paths, cached_parquet_info)
                 filepath_sources = []
                 parquet_metadatas = []
@@ -2187,8 +2187,100 @@ class GroupBy(IR):
             column_order=[k.order for k in keys],
             null_precedence=[k.null_order for k in keys],
         )
+        requests: list[expr.NamedExpr] = []
+        sorted_requests: list[_SortedAggRequest] = []
+        for request in agg_requests:
+            value = request.value
+            if isinstance(value, expr.SortedAgg):
+                sorted_requests.append(_SortedAggRequest(request.name, value))
+            else:
+                requests.append(request)
+        group_keys, results = cls._evaluate_aggregation_requests(
+            schema, keys, grouper, requests, df
+        )
+        group_keys, sorted_results = cls._evaluate_sorted_aggregations(
+            sorted_requests, keys, df, target_group_keys=group_keys
+        )
+        if group_keys is None:
+            group_keys, _ = grouper.aggregate([], stream=df.stream)
+        results_by_name: dict[str, Column] = {
+            request.name: result
+            for request, result in zip(requests, results, strict=True)
+        }
+        results_by_name.update(
+            (request.name, result)
+            for request, result in zip(sorted_requests, sorted_results, strict=True)
+        )
+        results = [results_by_name[request.name] for request in agg_requests]
+        result_keys = [
+            Column(grouped_key, name=key.name, dtype=key.dtype)
+            for key, grouped_key in zip(keys, group_keys.columns(), strict=True)
+        ]
+        if keys_are_sorted:
+            result_keys = [
+                col.sorted_like(key) for col, key in zip(result_keys, keys, strict=True)
+            ]
+        broadcasted = broadcast(*result_keys, *results, stream=df.stream)
+        # Handle order preservation of groups
+        if maintain_order and not keys_are_sorted:
+            # The order we want
+            want = plc.stream_compaction.stable_distinct(
+                plc.Table([k.obj for k in keys]),
+                list(range(group_keys.num_columns())),
+                plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+                plc.types.NullEquality.EQUAL,
+                plc.types.NanEquality.ALL_EQUAL,
+                stream=df.stream,
+            )
+            have = plc.Table([key.obj for key in broadcasted[: len(keys)]])
+            right_order = cls._get_key_permutation_map(want, have, df.stream)
+            ordered_table = plc.copying.gather(
+                plc.Table([col.obj for col in broadcasted]),
+                right_order,
+                plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                stream=df.stream,
+            )
+            broadcasted = [
+                Column(reordered, name=old.name, dtype=old.dtype)
+                for reordered, old in zip(
+                    ordered_table.columns(), broadcasted, strict=True
+                )
+            ]
+        return DataFrame(broadcasted, stream=df.stream).slice(zlice)
+
+    @staticmethod
+    def _get_key_permutation_map(
+        target_keys: plc.Table,
+        source_keys: plc.Table,
+        stream: Any,
+    ) -> plc.Column:
+        """Return a source gather map for key tables that are permutations."""
+        target_order, source_order = plc.join.inner_join(
+            target_keys,
+            source_keys,
+            plc.types.NullEquality.EQUAL,
+            stream=stream,
+        )
+        (source_order,) = plc.sorting.sort_by_key(
+            plc.Table([source_order]),
+            plc.Table([target_order]),
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.AFTER],
+            stream=stream,
+        ).columns()
+        return source_order
+
+    @staticmethod
+    def _evaluate_aggregation_requests(
+        schema: Schema,
+        keys: Sequence[Column],
+        grouper: plc.groupby.GroupBy,
+        agg_requests: Sequence[expr.NamedExpr],
+        df: DataFrame,
+    ) -> tuple[plc.Table | None, list[Column]]:
+        """Evaluate ordinary grouped aggregation requests."""
         requests = []
-        names = []
+        names: list[str] = []
         cast_to_schema = []
         for request in agg_requests:
             should_cast = False
@@ -2219,6 +2311,11 @@ class GroupBy(IR):
             requests.append(plc.groupby.GroupByRequest(col, [value.agg_request]))
             names.append(name)
             cast_to_schema.append(should_cast)
+
+        if not requests:
+            # Defer empty requests in case we have sorted aggs
+            return None, []
+
         group_keys, raw_tables = grouper.aggregate(requests, stream=df.stream)
         results = [
             Column(column, name=name, dtype=schema[name])
@@ -2233,60 +2330,156 @@ class GroupBy(IR):
                 strict=True,
             )
         ]
-        result_keys = [
-            Column(grouped_key, name=key.name, dtype=key.dtype)
-            for key, grouped_key in zip(keys, group_keys.columns(), strict=True)
-        ]
-        if keys_are_sorted:
-            result_keys = [
-                col.sorted_like(key) for col, key in zip(result_keys, keys, strict=True)
-            ]
-        broadcasted = broadcast(*result_keys, *results, stream=df.stream)
-        # Handle order preservation of groups
-        if maintain_order and not keys_are_sorted:
-            # The order we want
-            want = plc.stream_compaction.stable_distinct(
-                plc.Table([k.obj for k in keys]),
-                list(range(group_keys.num_columns())),
-                plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
-                plc.types.NullEquality.EQUAL,
-                plc.types.NanEquality.ALL_EQUAL,
-                stream=df.stream,
-            )
-            # The order we have
-            have = plc.Table([key.obj for key in broadcasted[: len(keys)]])
+        return group_keys, results
 
-            # We know an inner join is OK because by construction
-            # want and have are permutations of each other.
-            left_order, right_order = plc.join.inner_join(
-                want, have, plc.types.NullEquality.EQUAL, stream=df.stream
+    @classmethod
+    def _evaluate_sorted_aggregations(
+        cls,
+        sorted_requests: Sequence[_SortedAggRequest],
+        keys: Sequence[Column],
+        df: DataFrame,
+        *,
+        target_group_keys: plc.Table | None = None,
+    ) -> tuple[plc.Table | None, list[Column]]:
+        """Evaluate grouped first/last aggregations with explicit ordering."""
+        if not sorted_requests:
+            return target_group_keys, []
+
+        request_groups: dict[
+            tuple[
+                tuple[bool, tuple[bool, ...], tuple[bool, ...]], tuple[expr.Expr, ...]
+            ],
+            list[_SortedAggRequest],
+        ] = {}
+        for request in sorted_requests:
+            sorted_agg = request.value
+            by_exprs = sorted_agg.children[1:]
+            request_groups.setdefault((sorted_agg.options, tuple(by_exprs)), []).append(
+                request
             )
-            # Now left_order is an arbitrary permutation of the ordering we
-            # want, and right_order is a matching permutation of the ordering
-            # we have. To get to the original ordering, we need
-            # left_order == iota(nrows), with right_order permuted
-            # appropriately. This can be obtained by sorting
-            # right_order by left_order.
-            (right_order,) = plc.sorting.sort_by_key(
-                plc.Table([right_order]),
-                plc.Table([left_order]),
-                [plc.types.Order.ASCENDING],
-                [plc.types.NullOrder.AFTER],
-                stream=df.stream,
-            ).columns()
-            ordered_table = plc.copying.gather(
-                plc.Table([col.obj for col in broadcasted]),
-                right_order,
-                plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+
+        common_group_keys = target_group_keys
+        results_by_name: dict[str, Column] = {}
+        key_order = [key.order for key in keys]
+        key_null_order = [key.null_order for key in keys]
+
+        for (options, by_exprs), group in request_groups.items():
+            value_exprs = [request.value.children[0] for request in group]
+            columns = broadcast(
+                *(
+                    child.evaluate(df, context=ExecutionContext.GROUPBY)
+                    for child in (*value_exprs, *by_exprs)
+                ),
+                target_length=keys[0].size,
                 stream=df.stream,
             )
-            broadcasted = [
-                Column(reordered, name=old.name, dtype=old.dtype)
-                for reordered, old in zip(
-                    ordered_table.columns(), broadcasted, strict=True
-                )
+            values = columns[: len(value_exprs)]
+            by = columns[len(value_exprs) :]
+            stable, nulls_last, descending = options
+            by_order, by_null_order = sorting.sort_order(
+                descending, nulls_last=nulls_last, num_keys=len(by_exprs)
+            )
+            do_sort = (
+                plc.sorting.stable_sort_by_key if stable else plc.sorting.sort_by_key
+            )
+            sorted_table = do_sort(
+                plc.Table(
+                    [*(key.obj for key in keys), *(value.obj for value in values)]
+                ),
+                plc.Table([*(key.obj for key in keys), *(col.obj for col in by)]),
+                [*key_order, *by_order],
+                [*key_null_order, *by_null_order],
+                stream=df.stream,
+            )
+            sorted_keys = plc.Table(sorted_table.columns()[: len(keys)])
+            sorted_key_columns = [
+                Column(column, name=key.name, dtype=key.dtype)
+                for key, column in zip(keys, sorted_keys.columns(), strict=True)
             ]
-        return DataFrame(broadcasted, stream=df.stream).slice(zlice)
+            value_names = unique_names(
+                (
+                    *(key.name for key in keys if key.name is not None),
+                    *(request.name for request in group),
+                )
+            )
+            sorted_values = []
+            ordinary_requests = []
+            schema = {}
+            for request, column in zip(
+                group,
+                sorted_table.columns()[len(keys) :],
+                strict=True,
+            ):
+                sorted_agg = request.value
+                value_name = next(value_names)
+                sorted_values.append(
+                    Column(column, name=value_name, dtype=sorted_agg.dtype)
+                )
+                ordinary_requests.append(
+                    expr.NamedExpr(
+                        request.name,
+                        expr.Agg(
+                            sorted_agg.dtype,
+                            sorted_agg.name,
+                            None,
+                            ExecutionContext.GROUPBY,
+                            expr.Col(sorted_agg.dtype, value_name),
+                        ),
+                    )
+                )
+                schema[request.name] = sorted_agg.dtype
+            sorted_df = DataFrame(
+                [*sorted_key_columns, *sorted_values],
+                stream=df.stream,
+                num_rows=sorted_table.num_rows(),
+            )
+            grouper = plc.groupby.GroupBy(
+                sorted_keys,
+                null_handling=plc.types.NullPolicy.INCLUDE,
+                keys_are_sorted=plc.types.Sorted.YES,
+                column_order=key_order,
+                null_precedence=key_null_order,
+            )
+            group_keys, results = cls._evaluate_aggregation_requests(
+                schema,
+                sorted_key_columns,
+                grouper,
+                ordinary_requests,
+                sorted_df,
+            )
+            assert group_keys is not None
+            if common_group_keys is None:
+                common_group_keys = group_keys
+            else:
+                source_order = cls._get_key_permutation_map(
+                    common_group_keys,
+                    group_keys,
+                    df.stream,
+                )
+                aligned_results = []
+                for result in results:
+                    (aligned_result,) = plc.copying.gather(
+                        plc.Table([result.obj]),
+                        source_order,
+                        plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                        stream=df.stream,
+                    ).columns()
+                    aligned_results.append(
+                        Column(
+                            aligned_result,
+                            name=result.name,
+                            dtype=result.dtype,
+                        )
+                    )
+                results = aligned_results
+            results_by_name.update(
+                (request.name, result)
+                for request, result in zip(group, results, strict=True)
+            )
+
+        return common_group_keys, [
+            results_by_name[request.name] for request in sorted_requests
+        ]
 
 
 def _strip_predicate_casts(node: expr.Expr) -> expr.Expr:

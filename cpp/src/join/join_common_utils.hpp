@@ -9,9 +9,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -48,7 +49,7 @@ using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
  * @return Join output indices vector pair
  */
 VectorPair get_trivial_left_join_indices(table_view const& left,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr);
 
 /**
@@ -73,7 +74,7 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
 VectorPair finalize_full_join(VectorPair&& indices,
                               size_type left_table_num_rows,
                               size_type right_table_num_rows,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 /**
@@ -100,7 +101,7 @@ VectorPair finalize_full_join(
   cudf::host_span<cudf::device_span<size_type const> const> right_partials,
   size_type left_table_num_rows,
   size_type right_table_num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::detail

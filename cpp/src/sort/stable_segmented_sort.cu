@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@ std::unique_ptr<column> stable_segmented_sorted_order(
   column_view const& segment_offsets,
   std::vector<order> const& column_order,
   std::vector<null_order> const& null_precedence,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return segmented_sorted_order_common<sort_method::STABLE>(
@@ -31,7 +31,7 @@ std::unique_ptr<table> stable_segmented_sort_by_key(table_view const& values,
                                                     column_view const& segment_offsets,
                                                     std::vector<order> const& column_order,
                                                     std::vector<null_order> const& null_precedence,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   return segmented_sort_by_key_common<sort_method::STABLE>(
@@ -45,7 +45,7 @@ std::unique_ptr<column> stable_segmented_sorted_order(
   column_view const& segment_offsets,
   std::vector<order> const& column_order,
   std::vector<null_order> const& null_precedence,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -58,7 +58,7 @@ std::unique_ptr<table> stable_segmented_sort_by_key(table_view const& values,
                                                     column_view const& segment_offsets,
                                                     std::vector<order> const& column_order,
                                                     std::vector<null_order> const& null_precedence,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

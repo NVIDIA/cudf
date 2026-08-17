@@ -401,7 +401,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     });
 
   // use this utility to gather the string parts into a contiguous chars column
-  auto chars      = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto chars      = cudf::make_strings_column(indices, stream, mr);
   auto chars_data = chars->release().data;
 
   // create offsets from the sizes

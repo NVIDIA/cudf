@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -100,7 +100,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
   // handle sliced columns
   size_type const shift =
     source_column.offset() > 0
-      ? cudf::detail::get_value<size_type>(source_column.offsets(), source_column.offset(), stream)
+      ? cudf::detail::get_value<int32_t>(source_column.offsets(), source_column.offset(), stream)
       : 0;
 
   // generate the base offsets

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -54,7 +54,7 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
   // Replace null indices with MAX_SIZE_TYPE, so that gather() returns null for them.
   auto const null_replaced_iter_begin =
     cudf::detail::make_null_replacement_iterator(*d_indices, std::numeric_limits<size_type>::max());
-  auto index_child = make_numeric_column(data_type{type_id::INT32},
+  auto index_child = make_numeric_column(data_type{type_to_id<size_type>()},
                                          indices.size(),
                                          mask_state::UNALLOCATED,
                                          stream,
@@ -80,7 +80,7 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
                                                rmm::cuda_stream_view stream)
 {
   auto index_child =  // [index, index, index, ..., index]
-    make_numeric_column(data_type{type_id::INT32},
+    make_numeric_column(data_type{type_to_id<size_type>()},
                         num_rows,
                         mask_state::UNALLOCATED,
                         stream,
@@ -103,7 +103,7 @@ std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists, rmm::cuda_
 {
   return cudf::detail::sequence(
     num_lists + 1,
-    cudf::scalar_type_t<size_type>(0, true, stream, cudf::get_current_device_resource_ref()),
+    cudf::scalar_type_t<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
     stream,
     cudf::get_current_device_resource_ref());
 }

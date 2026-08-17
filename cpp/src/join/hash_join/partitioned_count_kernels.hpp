@@ -7,7 +7,7 @@
 
 #include "kernels_common.cuh"
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::detail {
 

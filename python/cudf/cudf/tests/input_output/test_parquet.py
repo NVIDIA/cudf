@@ -4693,7 +4693,7 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     ],
 )
 def test_parquet_bloom_filter_negated_equality(datadir, bloom_filter_fname):
-    """`NOT(col == v)` must prune identically to `col != v`"""
+    """Negated equality predicates must prune identically to their rewrites"""
 
     import pylibcudf as plc
     from pylibcudf.expressions import (
@@ -4712,25 +4712,51 @@ def test_parquet_bloom_filter_negated_equality(datadir, bloom_filter_fname):
         options.set_filter(filter_expr)
         return plc.io.parquet.read_parquet(options)
 
-    negated_equality = read_with(
+    def assert_equivalent(lhs, rhs):
+        lhs_result = read_with(lhs)
+        rhs_result = read_with(rhs)
+        assert_eq(
+            lhs_result.num_row_groups_after_bloom_filter,
+            rhs_result.num_row_groups_after_bloom_filter,
+        )
+        assert_arrow_table_equal(
+            lhs_result.tbl.to_arrow(), rhs_result.tbl.to_arrow()
+        )
+        return lhs_result
+
+    str_col = ColumnNameReference("str")
+    str_eq = Operation(ASTOperator.EQUAL, str_col, needle)
+    str_ne = Operation(ASTOperator.NOT_EQUAL, str_col, needle)
+
+    negated_equality = assert_equivalent(
+        Operation(ASTOperator.NOT, str_eq),
+        str_ne,
+    )
+    # 998 of the 1000 rows are not "FINDME".
+    assert_eq(negated_equality.tbl.num_rows(), 998)
+
+    assert_equivalent(
+        Operation(ASTOperator.NOT, str_ne),
+        str_eq,
+    )
+
+    fp64_col = ColumnNameReference("fp64")
+    fp64_needle = Literal(plc.Scalar.from_arrow(pa.scalar(500.0)))
+    assert_equivalent(
         Operation(
             ASTOperator.NOT,
-            Operation(ASTOperator.EQUAL, ColumnNameReference("str"), needle),
-        )
+            Operation(
+                ASTOperator.LOGICAL_AND,
+                str_ne,
+                Operation(ASTOperator.NOT_EQUAL, fp64_col, fp64_needle),
+            ),
+        ),
+        Operation(
+            ASTOperator.LOGICAL_OR,
+            str_eq,
+            Operation(ASTOperator.EQUAL, fp64_col, fp64_needle),
+        ),
     )
-    not_equal = read_with(
-        Operation(ASTOperator.NOT_EQUAL, ColumnNameReference("str"), needle)
-    )
-
-    # The two spellings are the same predicate and must prune identically
-    assert (
-        negated_equality.num_row_groups_after_bloom_filter
-        == not_equal.num_row_groups_after_bloom_filter
-    )
-    assert negated_equality.tbl.to_arrow().equals(not_equal.tbl.to_arrow())
-
-    # 998 of the 1000 rows are not "FINDME".
-    assert negated_equality.tbl.num_rows() == 998
 
 
 @pytest.mark.skipif(

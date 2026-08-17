@@ -2005,6 +2005,18 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_lt), 1);
   }
 
+  // Double negation over a non-boolean operand must NOT be eliminated.
+  {
+    auto not_a     = cudf::ast::operation(cudf::ast::ast_operator::NOT, col_ref_a);
+    auto not_not_a = cudf::ast::operation(cudf::ast::ast_operator::NOT, not_a);
+
+    // Eliminating these would hand the reader an INT32 predicate instead of a BOOL8 one
+    expect_matches_unrewritten(not_not_a);
+
+    // Whereas the triple negation still folds, since NOT(col_a) is boolean
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_not_a));
+  }
+
   // NOT(col_a == 10) and NOT(col_a != 10) - complemented equality. col_a != 10 prunes nothing and
   // col_a == 10 keeps only the first row group
   expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, a_eq_10), 4);

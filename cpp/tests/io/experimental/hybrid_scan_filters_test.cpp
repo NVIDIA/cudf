@@ -488,17 +488,15 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithComplexExpressions)
     EXPECT_EQ(reader->total_rows_in_row_groups(stats_filtered), 2 * rows_per_row_group);
   }
 
-  // Filter: NOT(col0 > 50 AND col0 < 100)
-  // De Morgan returns col0 <= 50 OR col0 >= 100, stats transform: vmin <= 50 OR vmax >= 100. Every
-  // row group satisfies a disjunct, so nothing is pruned
+  // Filter: NOT(col0 != 50 AND col0 != 100) becomes col0 == 50 OR col0 == 100. Prunes RG0 and RG3.
   {
     auto literal_50_value  = cudf::numeric_scalar<T>(50, true, cudf::get_default_stream());
     auto literal_50        = cudf::ast::literal(literal_50_value);
     auto literal_100_value = cudf::numeric_scalar<T>(100, true, cudf::get_default_stream());
     auto literal_100       = cudf::ast::literal(literal_100_value);
-    auto gt_50  = cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref0, literal_50);
-    auto lt_100 = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref0, literal_100);
-    auto inner  = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, gt_50, lt_100);
+    auto ne_50  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref0, literal_50);
+    auto ne_100 = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref0, literal_100);
+    auto inner  = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, ne_50, ne_100);
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::NOT, inner);
     options.set_filter(filter);
     reader->reset_column_selection();
@@ -506,7 +504,7 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithComplexExpressions)
     auto input_row_group_indices = reader->all_row_groups(options);
     auto stats_filtered          = reader->filter_row_groups_with_stats(
       input_row_group_indices, options, cudf::get_default_stream());
-    EXPECT_EQ(stats_filtered.size(), 4);
+    EXPECT_EQ(stats_filtered.size(), 2);
   }
 
   // Filter: NOT(NOT(col0 < 100) OR col0 > 150)

@@ -33,7 +33,7 @@ operation::operation(ast_operator op, expression const& left, expression const& 
 
 std::vector<std::reference_wrapper<expression const>>
 detail::expression_transformer::visit_operands(
-  std::vector<std::reference_wrapper<expression const>> const& operands)
+  std::span<std::reference_wrapper<expression const> const> operands)
 {
   std::vector<std::reference_wrapper<expression const>> transformed_operands;
   transformed_operands.reserve(operands.size());

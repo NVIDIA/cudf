@@ -88,6 +88,38 @@ std::optional<ast::ast_operator> de_morgan_operator(ast::ast_operator op)
   }
 }
 
+bool is_boolean_valued(ast::expression const& expr)
+{
+  using cudf::ast::ast_operator;
+
+  // A literal knows its own type
+  if (auto const* literal = dynamic_cast<ast::literal const*>(&expr); literal != nullptr) {
+    return literal->get_data_type().id() == cudf::type_id::BOOL8;
+  }
+
+  // A column reference cannot be typed here - the normalizer runs before the output data types are
+  // known - so report it as not provably boolean
+  auto const* operation = dynamic_cast<ast::operation const*>(&expr);
+  if (operation == nullptr) { return false; }
+
+  switch (operation->get_operator()) {
+    case ast_operator::EQUAL: [[fallthrough]];
+    case ast_operator::NOT_EQUAL: [[fallthrough]];
+    case ast_operator::NULL_EQUAL: [[fallthrough]];
+    case ast_operator::LESS: [[fallthrough]];
+    case ast_operator::GREATER: [[fallthrough]];
+    case ast_operator::LESS_EQUAL: [[fallthrough]];
+    case ast_operator::GREATER_EQUAL: [[fallthrough]];
+    case ast_operator::LOGICAL_AND: [[fallthrough]];
+    case ast_operator::LOGICAL_OR: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_AND: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_OR: [[fallthrough]];
+    case ast_operator::IS_NULL: [[fallthrough]];
+    case ast_operator::NOT: return true;
+    default: return false;
+  }
+}
+
 unary_operand extract_unary_operand(ast::operation const& expr)
 {
   auto const& operands = expr.get_operands();
@@ -189,11 +221,13 @@ parquet_filter_normalizer::push_down_negation(ast::expression const& operand)
   auto const op       = child_operation->get_operator();
   auto const operands = child_operation->get_operands();
 
-  // `NOT(NOT(x))` is `x`, including when `x` is null
-  if (op == ast_operator::NOT) { return operands.front().get().accept(*this); }
+  // `NOT(NOT(x))` is `x`, including when `x` is null, but only when `x` is boolean.
+  if (op == ast_operator::NOT and is_boolean_valued(operands.front().get())) {
+    return operands.front().get().accept(*this);
+  }
 
-  // De Morgan's laws compute exact equivalences for both Kleene (`LOGICAL_*`) and `NULL_LOGICAL_*`
-  // operators, including when an operand is null
+  // De Morgan's laws compute exact equivalences for both the null-propagating (`LOGICAL_*`) and the
+  // Kleene (`NULL_LOGICAL_*`) operators, including when an operand is null
   if (auto const de_morgan_op = de_morgan_operator(op); de_morgan_op.has_value()) {
     // Negate both operands before emplacing the parent, as negating them appends to `_operators`
     auto const lhs = negate(operands.front().get());
@@ -327,6 +361,12 @@ offset_column_references::offset_column_references(
     return;
   }
   _converted_expr = expr.value().get().accept(*this);
+}
+
+std::optional<std::reference_wrapper<ast::expression const>>
+parquet_filter_normalizer::get_converted_expr() const
+{
+  return _converted_expr;
 }
 
 std::optional<std::reference_wrapper<ast::expression const>>

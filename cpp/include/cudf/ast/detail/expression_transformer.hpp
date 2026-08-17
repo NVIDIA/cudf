@@ -7,6 +7,8 @@
 
 #include <cudf/ast/expressions.hpp>
 
+#include <span>
+
 namespace CUDF_EXPORT cudf {
 namespace ast::detail {
 /**
@@ -59,7 +61,7 @@ class expression_transformer {
    * @return References to transformed expressions
    */
   [[nodiscard]] std::vector<std::reference_wrapper<expression const>> visit_operands(
-    std::vector<std::reference_wrapper<expression const>> const& operands);
+    std::span<std::reference_wrapper<expression const> const> operands);
 };
 
 }  // namespace ast::detail

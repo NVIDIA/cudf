@@ -99,6 +99,18 @@ template <operator_transform mode>
 [[nodiscard]] std::optional<ast::ast_operator> de_morgan_operator(ast::ast_operator op);
 
 /**
+ * @brief Returns whether an expression is boolean-valued
+ *
+ * Comparison, logical and null-checking operations always yield `BOOL8`, and a literal knows its
+ * own type. A column reference cannot be typed here, as the filter is normalized before the output
+ * data types are known, so it is reported as not boolean.
+ *
+ * @param expr Expression to classify
+ * @return Whether the expression yields `BOOL8`
+ */
+[[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
+
+/**
  * @brief Collects column names from the expression ignoring the `skip_names`
  */
 class names_from_expression : public ast::detail::expression_transformer {
@@ -193,7 +205,8 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
    * Only rewrites that are exact in every case cudf's AST evaluates are applied, as the converted
    * expression also filters the decoded rows:
    *
-   * - `NOT(NOT(x))` => `x`
+   * - `NOT(NOT(x))` => `x`, but only when `x` is provably boolean. `NOT` yields `bool` for any
+   *   operand, so for a non-boolean `x` the double negation means `x != 0` rather than `x`
    * - De Morgan forms: `NOT(a AND b)` => `NOT(a) OR NOT(b)` for both the null-propagating
    *   (`LOGICAL_*`) and the Kleene (`NULL_LOGICAL_*`) operators
    * - `NOT(a == b)` => `a != b` and vice versa

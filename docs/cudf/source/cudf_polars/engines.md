@@ -90,5 +90,5 @@ Rules of thumb for multi-machine `RayEngine` / `DaskEngine` runs:
 - {doc}`other_engines`: per-engine reference pages for DaskEngine and SPMDEngine.
 - {doc}`options`: the `StreamingOptions` configuration object and every field it surfaces.
 
-[ray-docs]: https://docs.ray.io/
-[dask]: https://distributed.dask.org/
+[ray-docs]: https://docs.ray.io/en/latest/
+[dask]: https://distributed.dask.org/en/stable/

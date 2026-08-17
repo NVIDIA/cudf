@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
@@ -58,3 +58,27 @@ def test_groupby_rank_fails():
     )
     with pytest.raises(NotImplementedError):
         gdf.groupby(["a"]).rank(method="min", axis=1)
+
+
+@pytest.mark.parametrize(
+    "dtype, expected_dtype",
+    [
+        ("int64", "float64"),
+        ("float32", "float64"),
+        ("Int64", "Float64"),
+        ("Float32", "Float64"),
+    ],
+)
+def test_rank_dtype_family(dtype, expected_dtype):
+    # pandas' groupby rank always returns floats within the value column's
+    # dtype family: numpy -> float64, masked -> Float64
+    pdf = pd.DataFrame(
+        {"key": ["a"] * 4, "val": pd.array([1, 2, 2, 3], dtype=dtype)}
+    )
+    gdf = cudf.from_pandas(pdf)
+
+    expect = pdf.groupby("key").rank()
+    got = gdf.groupby("key").rank()
+
+    assert str(got["val"].dtype) == expected_dtype
+    assert_groupby_results_equal(expect, got)

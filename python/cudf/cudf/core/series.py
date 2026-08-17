@@ -55,6 +55,7 @@ from cudf.core.indexed_frame import (
     IndexedFrame,
     _FrameIndexer,
     _indices_from_labels,
+    _unify_categorical_indexes,
     doc_reset_index_template,
 )
 from cudf.core.mixins import NoNewAttributesMixin
@@ -71,6 +72,7 @@ from cudf.utils.dtypes import (
     get_dtype_of_same_kind,
     is_mixed_with_object_dtype,
     is_pandas_nullable_extension_dtype,
+    is_pandas_nullable_numpy_dtype,
 )
 from cudf.utils.performance_tracking import _performance_tracking
 from cudf.utils.utils import _EQUALITY_OPS, _is_same_name
@@ -1091,16 +1093,22 @@ class Series(SingleColumnFrame, IndexedFrame):
             raise TypeError(
                 "Cannot reset_index inplace on a Series to create a DataFrame"
             )
-        data, index = self._reset_index(
-            level=level, drop=drop, allow_duplicates=allow_duplicates
-        )
         if not drop:
+            # pandas semantics are ``self.to_frame(name).reset_index()``:
+            # resolve ``name`` first so the columns-dtype provenance in
+            # ``_reset_index`` sees the final value-column label.
             if name is no_default:
                 name = 0 if self.name is None else self.name
-            data[name] = data.pop(self.name)
+            frame = self._to_frame(name, index=self.index)
+            data, index = frame._reset_index(
+                level=level, drop=drop, allow_duplicates=allow_duplicates
+            )
             return self._constructor_expanddim._from_data(
                 data, index, attrs=self.attrs
             )
+        data, index = self._reset_index(
+            level=level, drop=drop, allow_duplicates=allow_duplicates
+        )
         # For ``name`` behavior, see:
         # https://github.com/pandas-dev/pandas/issues/44575
         # ``name`` has to be ignored when `drop=True`
@@ -2611,7 +2619,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
         For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs.html>`__.
+        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -2744,7 +2752,7 @@ class Series(SingleColumnFrame, IndexedFrame):
 
         For a complete list of supported functions and methods that may be
         used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs.html>
+        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
 
         """
         if convert_dtype is not True:
@@ -2849,8 +2857,22 @@ class Series(SingleColumnFrame, IndexedFrame):
         if len(val_counts) > 0:
             val_counts = val_counts[val_counts == val_counts.iloc[0]]
 
+        # pandas sorts mode results on the underlying representation:
+        # NaT (INT64_MIN as i8) and the categorical null code (-1) sort
+        # before valid values, while float NaN and the <NA> of
+        # nullable/arrow dtypes (including arrow timestamps/durations)
+        # sort last.
+        na_position = (
+            "first"
+            if (
+                self.dtype.kind in "mM"
+                and isinstance(self.dtype, (np.dtype, pd.DatetimeTZDtype))
+            )
+            or isinstance(self.dtype, cudf.CategoricalDtype)
+            else "last"
+        )
         return Series._from_column(
-            val_counts.index.sort_values()._column,
+            val_counts.index.sort_values(na_position=na_position)._column,
             name=self.name,
             attrs=self.attrs,
         )
@@ -3480,6 +3502,23 @@ class Series(SingleColumnFrame, IndexedFrame):
 
         if return_scalar:
             return result
+
+        if (
+            is_pandas_nullable_numpy_dtype(self.dtype)
+            and self.dtype.kind in "iu"
+            and self._column.null_count
+        ):
+            # pandas keeps the masked integer dtype for quantile when the
+            # input has missing values: an all-NA input stays the integer
+            # dtype (all NA), and an otherwise all-integral result is cast
+            # back to the integer dtype (a fractional result stays Float64).
+            if self._column.null_count == len(self._column):
+                result = result.astype(self.dtype)
+            elif (
+                result.astype(self.dtype.numpy_dtype).astype(result.dtype)
+                == result
+            ).all():
+                result = result.astype(self.dtype)
 
         return Series._from_column(
             result,
@@ -5551,9 +5590,12 @@ def _align_indices(series_list, how="outer", allow_non_unique=False):
 
     combined_index = series_list[0].index
     for sr in series_list[1:]:
+        lhs_index, rhs_index = _unify_categorical_indexes(
+            sr.index, combined_index
+        )
         combined_index = (
-            cudf.DataFrame(index=sr.index).join(
-                cudf.DataFrame(index=combined_index),
+            cudf.DataFrame(index=lhs_index).join(
+                cudf.DataFrame(index=rhs_index),
                 sort=True,
                 how=how,
             )

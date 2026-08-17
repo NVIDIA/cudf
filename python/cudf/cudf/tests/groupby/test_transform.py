@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import itertools
 
@@ -77,3 +77,72 @@ def test_groupby_transform_maintain_index(by):
     assert_groupby_results_equal(
         pdf.groupby(by).transform("max"), gdf.groupby(by).transform("max")
     )
+
+
+def test_transform_size_returns_series():
+    # pandas broadcasts GroupBy.size() as a single Series: unnamed for
+    # DataFrameGroupBy, keeping the source name for SeriesGroupBy.
+    pdf = pd.DataFrame({"A": [1, 1, 2], "B": [4.0, 5.0, 6.0]})
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.groupby("A").transform("size"),
+        gdf.groupby("A").transform("size"),
+    )
+    assert_eq(
+        pdf.groupby("A")["B"].transform("size"),
+        gdf.groupby("A")["B"].transform("size"),
+    )
+
+
+@pytest.mark.parametrize("as_index", [True, False])
+def test_transform_as_index_no_change(as_index):
+    # as_index has no effect on transform (pandas GH#49834)
+    pdf = pd.DataFrame({"A": [1, 1, 2], "B": [4, 5, 6]})
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("A", as_index=as_index).transform("size")
+    got = gdf.groupby("A", as_index=as_index).transform("size")
+
+    assert_eq(expect, got)
+
+
+def test_transform_cumcount_series(dropna):
+    # transform("cumcount") is an unnamed Series over the original index,
+    # never a per-value-column result
+    pdf = pd.DataFrame(
+        {"A": [1, 1, None, 2], "B": [4.0, 5.0, 6.0, 7.0]},
+        index=[3, 2, 1, 0],
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("A", dropna=dropna).transform("cumcount")
+    got = gdf.groupby("A", dropna=dropna).transform("cumcount")
+    assert_eq(expect, got)
+
+
+def test_transform_scan_lambda():
+    # a named-aggregation lambda resolving to a scan must scan per group,
+    # not broadcast the group total
+    pdf = pd.DataFrame({"key": [0, 0, 1, 1], "val": [1.0, 2.0, 3.0, 4.0]})
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("key")["val"].transform(lambda x: x.cumsum())
+    got = gdf.groupby("key")["val"].transform(lambda x: x.cumsum())
+
+    assert_eq(expect, got)
+
+
+def test_transform_singleton_groups_index():
+    # every group a singleton with sort=True: the result must still be
+    # relabeled with the original index, not the group keys
+    pdf = pd.DataFrame(
+        {"id": [3.0, 1.0, 2.0], "val": [10.0, 20.0, 30.0]},
+        index=["r0", "r1", "r2"],
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("id", sort=True)["val"].transform("mean")
+    got = gdf.groupby("id", sort=True)["val"].transform("mean")
+
+    assert_eq(expect, got)

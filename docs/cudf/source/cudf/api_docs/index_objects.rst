@@ -304,6 +304,7 @@ Time-specific operations
    DatetimeIndex.floor
    DatetimeIndex.tz_convert
    DatetimeIndex.tz_localize
+   DatetimeIndex.indexer_between_time
 
 Conversion
 ~~~~~~~~~~

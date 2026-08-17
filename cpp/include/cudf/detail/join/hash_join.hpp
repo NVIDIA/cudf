@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,9 +13,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <cstddef>
 #include <memory>
@@ -59,14 +60,17 @@ class hash_join {
    *        any `left` table that will be used later for join.
    * @param compare_nulls Controls whether null join-key values should match or not.
    * @param stream CUDA stream used for device memory operations and kernel launches.
+   * @param mr Device memory resource used to allocate the internal hash table.
    */
   hash_join(cudf::table_view const& right,
             bool has_nulls,
             cudf::null_equality compare_nulls,
-            rmm::cuda_stream_view stream);
+            cuda::stream_ref stream,
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * @copydoc hash_join(cudf::table_view const&, bool, null_equality, rmm::cuda_stream_view)
+   * @copydoc hash_join(cudf::table_view const&, bool, null_equality, cuda::stream_ref,
+   * cuda::mr::any_resource<cuda::mr::device_accessible>)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
@@ -74,7 +78,8 @@ class hash_join {
             bool has_nulls,
             cudf::null_equality compare_nulls,
             double load_factor,
-            rmm::cuda_stream_view stream);
+            cuda::stream_ref stream,
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
    * @copydoc cudf::hash_join::inner_join
@@ -83,7 +88,7 @@ class hash_join {
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(cudf::table_view const& left,
              std::optional<std::size_t> output_size,
-             rmm::cuda_stream_view stream,
+             cuda::stream_ref stream,
              rmm::device_async_resource_ref mr) const;
 
   /**
@@ -93,7 +98,7 @@ class hash_join {
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(cudf::table_view const& left,
             std::optional<std::size_t> output_size,
-            rmm::cuda_stream_view stream,
+            cuda::stream_ref stream,
             rmm::device_async_resource_ref mr) const;
 
   /**
@@ -103,51 +108,45 @@ class hash_join {
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   full_join(cudf::table_view const& left,
             std::optional<std::size_t> output_size,
-            rmm::cuda_stream_view stream,
+            cuda::stream_ref stream,
             rmm::device_async_resource_ref mr) const;
 
   /**
    * @copydoc cudf::hash_join::inner_join_size
    */
   [[nodiscard]] std::size_t inner_join_size(cudf::table_view const& left,
-                                            rmm::cuda_stream_view stream) const;
+                                            cuda::stream_ref stream) const;
 
   /**
    * @copydoc cudf::hash_join::left_join_size
    */
   [[nodiscard]] std::size_t left_join_size(cudf::table_view const& left,
-                                           rmm::cuda_stream_view stream) const;
+                                           cuda::stream_ref stream) const;
 
   /**
    * @copydoc cudf::hash_join::full_join_size
    */
   [[nodiscard]] std::size_t full_join_size(cudf::table_view const& left,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const;
 
   /**
    * @copydoc cudf::hash_join::inner_join_match_context
    */
   [[nodiscard]] cudf::join_match_context inner_join_match_context(
-    cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   /**
    * @copydoc cudf::hash_join::left_join_match_context
    */
   [[nodiscard]] cudf::join_match_context left_join_match_context(
-    cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   /**
    * @copydoc cudf::hash_join::full_join_match_context
    */
   [[nodiscard]] cudf::join_match_context full_join_match_context(
-    cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   /**
    * @copydoc cudf::hash_join::partitioned_inner_join
@@ -155,7 +154,7 @@ class hash_join {
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(cudf::join_partition_context const& context,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr) const;
 
   /**
@@ -164,7 +163,7 @@ class hash_join {
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_left_join(cudf::join_partition_context const& context,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr) const;
 
   /**
@@ -173,7 +172,7 @@ class hash_join {
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_full_join(cudf::join_partition_context const& context,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr) const;
 
  private:
@@ -188,14 +187,14 @@ class hash_join {
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> make_match_counts(
     join_kind join,
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_join_retrieve(join_kind join,
                             cudf::join_partition_context const& context,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr) const;
 
   template <join_kind Join>
@@ -203,16 +202,15 @@ class hash_join {
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   join_retrieve(cudf::table_view const& probe,
                 std::optional<std::size_t> output_size,
-                rmm::cuda_stream_view stream,
+                cuda::stream_ref stream,
                 rmm::device_async_resource_ref mr) const;
 
   template <join_kind Join>
-  [[nodiscard]] std::size_t join_size(cudf::table_view const& left,
-                                      rmm::cuda_stream_view stream) const;
+  [[nodiscard]] std::size_t join_size(cudf::table_view const& left, cuda::stream_ref stream) const;
 
   template <join_kind Join>
   [[nodiscard]] std::size_t join_size(cudf::table_view const& left,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr) const;
 };
 

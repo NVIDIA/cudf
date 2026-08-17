@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -44,6 +44,8 @@ public class DeletionVector {
      */
     public final HostMemoryBuffer serializedBitmap;
 
+    public final boolean isRetention;
+
     /**
      * Row index offsets for each row group to read. Can be null to read all row groups.
      */
@@ -59,8 +61,9 @@ public class DeletionVector {
      */
     public final int totalNumRows;
 
-    public DeletionVectorInfo(HostMemoryBuffer serializedBitmap, long[] rowGroupOffsets, int[] rowGroupNumRows) {
+    public DeletionVectorInfo(HostMemoryBuffer serializedBitmap, boolean isRetention, long[] rowGroupOffsets, int[] rowGroupNumRows) {
       this.serializedBitmap = serializedBitmap;
+      this.isRetention = isRetention;
       this.rowGroupOffsets = rowGroupOffsets;
       this.rowGroupNumRows = rowGroupNumRows;
       this.totalNumRows = computeTotalNumRows();
@@ -79,6 +82,16 @@ public class DeletionVector {
       }
       return Arrays.stream(rowGroupNumRows).reduce(Math::addExact).orElse(0);
     }
+  }
+
+  private static boolean getDeletionVectorTypes(DeletionVectorInfo[] deletionVectorInfos) {
+    boolean isRetention = deletionVectorInfos[0].isRetention;
+    for (DeletionVectorInfo info : deletionVectorInfos) {
+      if (info.isRetention != isRetention) {
+        throw new IllegalArgumentException("All DeletionVectorInfo objects must have the same isRetention value.");
+      }
+    }
+    return isRetention;
   }
 
   /**
@@ -174,6 +187,7 @@ public class DeletionVector {
     List<Integer> deletionVectorRowCountsList = new ArrayList<>(deletionVectorInfos.length);
     List<Long> rowGroupOffsetsList = new ArrayList<>(deletionVectorInfos.length);
     List<Integer> rowGroupNumRowsList = new ArrayList<>(deletionVectorInfos.length);
+    boolean areRetentionVectors = getDeletionVectorTypes(deletionVectorInfos);
     if (deletionVectorInfos != null) {
       for (DeletionVectorInfo info : deletionVectorInfos) {
         serializedBitmapList.add(info.serializedBitmap);
@@ -202,7 +216,8 @@ public class DeletionVector {
                                             bitmapAddrsSizes,
                                             deletionVectorRowCounts,
                                             rowGroupOffsets,
-                                            rowGroupNumRows);
+                                            rowGroupNumRows,
+                                            areRetentionVectors);
     return new Table(columnHandles);
   }
 
@@ -325,6 +340,7 @@ public class DeletionVector {
       List<Integer> deletionVectorRowCountsList = new ArrayList<>(deletionVectorInfos.length);
       List<Long> rowGroupOffsetsList = new ArrayList<>(deletionVectorInfos.length);
       List<Integer> rowGroupNumRowsList = new ArrayList<>(deletionVectorInfos.length);
+      boolean areRetentionVectors = getDeletionVectorTypes(deletionVectorInfos);
       if (deletionVectorInfos != null) {
         for (DeletionVectorInfo info : deletionVectorInfos) {
           serializedBitmapList.add(info.serializedBitmap);
@@ -347,7 +363,7 @@ public class DeletionVector {
       long[] handles = createParquetChunkedReader(chunkSizeByteLimit, passReadLimit,
         opts.getIncludeColumnNames(), opts.getReadBinaryAsString(), inputFilePaths,
           dataBufferAddrsSizes, rowGroups, opts.timeUnit().typeId.getNativeId(),
-          bitmapAddrsSizes, deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows);
+          bitmapAddrsSizes, deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows, areRetentionVectors);
       readerHandle = handles[0];
       if (readerHandle == 0) {
         throw new IllegalStateException("Cannot create native chunked Parquet reader object.");
@@ -431,7 +447,8 @@ public class DeletionVector {
                                                 long[] serializedRoaring64,
                                                 int[] deletionVectorRowCounts,
                                                 long[] rowGroupOffsets,
-                                                int[] rowGroupNumRows)
+                                                int[] rowGroupNumRows,
+                                                boolean areRetentionVectors)
     throws CudfException;
 
   private static native long[] createParquetChunkedReader(long chunkReadLimit,
@@ -445,7 +462,8 @@ public class DeletionVector {
                                                                long[] serializedRoaringBitmaps,
                                                                int[] deletionVectorRowCounts,
                                                                long[] rowGroupOffsets,
-                                                               int[] rowGroupNumRows)
+                                                               int[] rowGroupNumRows,
+                                                               boolean areRetentionVectors)
     throws CudfException;
 
   private static native boolean parquetChunkedReaderHasNext(long readerHandle) throws CudfException;

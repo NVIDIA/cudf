@@ -36,6 +36,15 @@ The engine classes share a common base class:
    :members:
 ```
 
+## Persisted results
+
+Returned by `engine.execute()` to keep query results GPU-resident (see {doc}`execute`).
+
+```{eval-rst}
+.. autoclass:: cudf_polars.engine.persisted_result.PersistedQueryResult
+   :members: lazy, release
+```
+
 ## Configuration
 
 ```{eval-rst}
@@ -67,6 +76,7 @@ Most users interact with them through `StreamingOptions` fields rather than dire
 .. automodule:: cudf_polars.utils.config
    :members:
       DynamicPlanningOptions,
+      JoinFilterPushdownOptions,
       MemoryResourceConfig,
       ParquetOptions,
       StreamingExecutor,

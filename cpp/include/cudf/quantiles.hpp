@@ -100,7 +100,7 @@ std::unique_ptr<table> quantiles(
 /**
  * @brief Calculate approximate percentiles on an input tdigest column.
  *
- * tdigest (https://arxiv.org/pdf/1902.04023.pdf) columns are produced specifically
+ * tdigest (https://arxiv.org/pdf/1902.04023) columns are produced specifically
  * by the TDIGEST and MERGE_TDIGEST aggregations.  These columns represent
  * compressed representations of a very large input data set that can be
  * queried for quantile information.

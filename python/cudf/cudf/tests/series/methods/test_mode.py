@@ -1,7 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
+import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
@@ -83,3 +85,31 @@ def test_series_mode(gs, dropna):
         expected = expected.astype("float64")
 
     assert_eq(expected, actual, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "pdata",
+    [
+        pd.Series([1, 1, 2, None, None], dtype="datetime64[ns]"),
+        pd.Series([1, 1, 2, None, None], dtype="timedelta64[ns]"),
+        pd.Series(
+            pd.Categorical(
+                [1, 1, 2, 3, 3, np.nan, np.nan],
+                categories=[3, 2, 1],
+                ordered=True,
+            )
+        ),
+        pd.Series(pd.Categorical([1, 2, np.nan, np.nan])),
+        pd.Series([1, 1, None, None], dtype="Int64"),
+        pd.Series([1.0, 1.0, np.nan, np.nan]),
+        pd.Series([1, 1, None, None], dtype=pd.ArrowDtype(pa.timestamp("ns"))),
+        pd.Series([1, 1, None, None], dtype=pd.ArrowDtype(pa.duration("ns"))),
+    ],
+)
+def test_mode_null_position_matches_pandas(pdata, dropna):
+    # pandas sorts mode results on the underlying representation: NaT
+    # (INT64_MIN as i8) and the categorical null code (-1) sort before
+    # valid values, while float NaN and the <NA> of nullable and arrow
+    # dtypes (including arrow timestamps/durations) sort last.
+    gs = cudf.from_pandas(pdata)
+    assert_eq(pdata.mode(dropna=dropna), gs.mode(dropna=dropna))

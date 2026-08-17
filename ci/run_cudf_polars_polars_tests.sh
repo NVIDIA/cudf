@@ -4,6 +4,8 @@
 
 set -euo pipefail
 
+TIMEOUT_TOOL_PATH="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/timeout_with_stack.py
+
 # Support invoking run_cudf_polars_pytests.sh outside the script directory
 # Assumption, polars has been cloned in the root of the repo.
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../polars/
@@ -60,18 +62,19 @@ DESELECTED_TESTS_STR=$(printf -- " --deselect %s" "${DESELECTED_TESTS[@]}")
 # Don't quote the `DESELECTED_...` variable because `pytest` can't handle
 # multiple quoted arguments inline
 # shellcheck disable=SC2086
+# Fail fast (-x) rather than trying to continue because failed tests pollute the state
 echo "Run polars tests with injected in-memory GPU engine"
-python -m pytest \
+python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+   python -m pytest \
        --import-mode=importlib \
        --cache-clear \
+       -x \
        -m "" \
        -p cudf_polars.testing.inject_gpu_engine \
        -n 4 \
        --dist=worksteal \
        --tb=native \
-       --timeout=240 \
        --durations 10 --durations-min 10 \
-       -ra \
        $DESELECTED_TESTS_STR \
        "$@" \
        py-polars/tests \
@@ -81,19 +84,18 @@ python -m pytest \
 echo "Run polars tests with injected SPMD GPU engine, small blocksize"
 CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
 CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
-    python -m pytest \
+python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+   python -m pytest \
        --import-mode=importlib \
        --cache-clear \
-       -v \
+       -x \
        -m "" \
        -p cudf_polars.testing.inject_gpu_engine \
        -W ignore::ResourceWarning \
        -n 4 \
        --dist=worksteal \
        --tb=native \
-       --timeout=240 \
        --durations 10 --durations-min 10 \
-       -ra \
        $DESELECTED_TESTS_STR \
        "$@" \
        py-polars/tests \

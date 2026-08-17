@@ -23,9 +23,7 @@ rapids-logger "pytest cuml cuDF-compat subset"
 
 timeout 15m python -m pytest \
   --cache-clear \
-  "${CUML_TESTS_DIR}/test_array.py" \
   "${CUML_TESTS_DIR}/test_compose.py" \
-  "${CUML_TESTS_DIR}/test_input_utils.py" \
   "${CUML_TESTS_DIR}/test_kneighbors_classifier.py" \
   "${CUML_TESTS_DIR}/test_kneighbors_regressor.py" \
   "${CUML_TESTS_DIR}/test_label_encoder.py" \

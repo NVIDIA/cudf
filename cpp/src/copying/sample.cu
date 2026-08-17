@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/random.h>
 #include <thrust/random/uniform_int_distribution.h>
 #include <thrust/shuffle.h>
@@ -30,7 +29,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               size_type const n,
                               sample_with_replacement replacement,
                               int64_t const seed,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(n >= 0, "expected number of samples should be non-negative");
@@ -85,7 +84,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               size_type const n,
                               sample_with_replacement replacement,
                               int64_t const seed,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

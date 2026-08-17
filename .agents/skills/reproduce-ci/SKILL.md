@@ -94,7 +94,7 @@ Use this option when the user already knows the container image and CI script.
 
 The container image tag corresponds to the current RAPIDS version. Derive it from the `VERSION` file at the repo root:
 ```bash
-RAPIDS_VERSION=$(head -1 VERSION | cut -d. -f1,2)  # e.g., "26.08"
+RAPIDS_VERSION=$(head -1 VERSION | cut -d. -f1,2)
 ```
 
 All CI job definitions live in `.github/workflows/pr.yaml`. Each job specifies:
@@ -123,7 +123,7 @@ Invoke `run.sh` with the parameters determined in Step 1:
 Use `--dry-run` first to preview the exact docker command before executing:
 
 ```bash
-.agents/skills/reproduce-ci/run.sh rapidsai/ci-conda:26.08-latest ci/build_cpp.sh 22538 --dry-run
+.agents/skills/reproduce-ci/run.sh rapidsai/ci-conda:${RAPIDS_VERSION}-latest ci/build_cpp.sh 22538 --dry-run
 ```
 
 Examples:

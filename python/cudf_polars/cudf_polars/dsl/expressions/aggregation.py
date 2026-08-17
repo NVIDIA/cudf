@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers import DataFrame, DataType
 
-__all__ = ["Agg", "Item"]
+__all__ = ["Agg", "Item", "SortedAgg"]
 
 
 class Item(Expr):
@@ -73,6 +73,54 @@ class Item(Expr):
         return value
 
 
+class SortedAgg(Expr):
+    """
+    ``first``/``last`` aggregation ordered by one or more expressions.
+
+    Notes
+    -----
+    This expression is used by GroupBy infrastructure for ordered
+    first/last aggregations. The ordering may depend on columns other than
+    the value being aggregated, so this cannot be evaluated independently
+    nor can it be represented as a plain :class:`Agg` variant.
+    """
+
+    __slots__ = ("name", "options")
+    _non_child = ("dtype", "name", "options")
+
+    def __init__(
+        self,
+        dtype: DataType,
+        name: str,
+        options: tuple[Any, ...],
+        value: Expr,
+        *by: Expr,
+    ) -> None:
+        self.dtype = dtype
+        self.name = name
+        stable, nulls_last, descending = options
+        self.options = (stable, tuple(nulls_last), tuple(descending))
+        self.children = (value, *by)
+        self.is_pointwise = False
+        if name not in {"first", "last"}:
+            raise NotImplementedError(f"Sorted aggregation {name=}")
+        if not by:
+            raise NotImplementedError(
+                "Sorted aggregation requires order-by expressions"
+            )
+        if len(self.options[1]) != len(by) or len(self.options[2]) != len(by):
+            raise NotImplementedError(
+                "Sorted aggregation requires one null/descending option per order key"
+            )
+
+    @property
+    def agg_request(self) -> plc.aggregation.Aggregation:  # noqa: D102
+        raise NotImplementedError(
+            "Sorted aggregation cannot be represented as a pylibcudf "
+            "aggregation request"
+        )
+
+
 class Agg(Expr):
     __slots__ = ("context", "name", "op", "options", "request")
     _non_child = ("dtype", "name", "options", "context")
@@ -114,6 +162,8 @@ class Agg(Expr):
             )
         elif name in {"first", "last", "item", "first_non_null"}:
             req = None
+        elif name == "implode":
+            req = plc.aggregation.collect_list(plc.types.NullPolicy.INCLUDE)
         elif name == "mean":
             req = plc.aggregation.mean()
         elif name == "sum":
@@ -174,7 +224,15 @@ class Agg(Expr):
             op = partial(op, propagate_nans=options)
         elif name == "count":
             op = partial(op, include_nulls=options)
-        elif name in {"sum", "product", "first", "last", "item", "first_non_null"}:
+        elif name in {
+            "sum",
+            "product",
+            "first",
+            "last",
+            "item",
+            "first_non_null",
+            "implode",
+        }:
             pass
         else:
             raise NotImplementedError(
@@ -191,6 +249,7 @@ class Agg(Expr):
             "first",
             "first_non_null",
             "item",
+            "implode",
             "last",
             "mean",
             "m2",
@@ -205,7 +264,7 @@ class Agg(Expr):
     )
 
     interp_mapping: ClassVar[dict[str, plc.types.Interpolation]] = {
-        "nearest": plc.types.Interpolation.NEAREST,
+        "nearest": plc.types.Interpolation.NEAREST_HALF_UP,
         "higher": plc.types.Interpolation.HIGHER,
         "lower": plc.types.Interpolation.LOWER,
         "midpoint": plc.types.Interpolation.MIDPOINT,
@@ -371,6 +430,28 @@ class Agg(Expr):
             )
         return Column(
             plc_result,
+            name=column.name,
+            dtype=self.dtype,
+        )
+
+    def _implode(self, column: Column, stream: Stream) -> Column:
+        size_type = plc.DataType(plc.TypeId.INT32)
+        offsets = plc.filling.sequence(
+            2,
+            plc.Scalar.from_py(0, size_type, stream=stream),
+            plc.Scalar.from_py(column.size, size_type, stream=stream),
+            stream=stream,
+        )
+        return Column(
+            plc.Column(
+                self.dtype.plc_type,
+                1,
+                None,
+                None,
+                0,
+                0,
+                [offsets, column.obj],
+            ),
             name=column.name,
             dtype=self.dtype,
         )

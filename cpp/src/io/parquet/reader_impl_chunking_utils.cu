@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -46,7 +47,7 @@ using cudf::io::detail::decompression_info;
 void print_cumulative_page_info(device_span<PageInfo const> d_pages,
                                 device_span<ColumnChunkDesc const> d_chunks,
                                 device_span<cumulative_page_info const> d_c_info,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   auto const pages  = cudf::detail::make_host_vector(d_pages, stream);
   auto const chunks = cudf::detail::make_host_vector(d_chunks, stream);
@@ -249,7 +250,7 @@ int64_t find_next_split(int64_t cur_pos,
 std::pair<rmm::device_uvector<cumulative_page_info>, rmm::device_uvector<int32_t>>
 adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                         device_span<PageInfo const> pages,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   // sort by row count
   rmm::device_uvector<cumulative_page_info> c_info_sorted(c_info.size(), stream);
@@ -279,7 +280,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                                     c_info.size(),
                                     0,
                                     sizeof(size_t) * 8,
-                                    stream.value());
+                                    stream.get());
     auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
     cub::DeviceRadixSort::SortPairs(tmp_stg.data(),
                                     tmp_bytes,
@@ -290,7 +291,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                                     c_info.size(),
                                     0,
                                     sizeof(size_t) * 8,
-                                    stream.value());
+                                    stream.get());
 
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       sort_order.begin(),
@@ -355,8 +356,8 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
   size_t size_limit,
   size_t num_columns,
   bool is_first_subpass,
-  bool has_page_index,
-  rmm::cuda_stream_view stream)
+  bool has_offset_index,
+  cuda::stream_ref stream)
 {
   auto [aggregated_info, page_keys_by_split] = adjust_cumulative_sizes(c_info, pages, stream);
 
@@ -386,13 +387,17 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
   auto iter = cuda::counting_iterator{size_t{0}};
   auto page_row_index =
     cudf::detail::make_counting_transform_iterator(0, get_page_end_row_index{c_info});
-  thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    iter,
-    iter + num_columns,
-    page_bounds.begin(),
-    get_page_span{
-      page_offsets, chunks, page_row_index, start_row, end_row, is_first_subpass, has_page_index});
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    iter,
+                    iter + num_columns,
+                    page_bounds.begin(),
+                    get_page_span{page_offsets,
+                                  chunks,
+                                  page_row_index,
+                                  start_row,
+                                  end_row,
+                                  is_first_subpass,
+                                  has_offset_index});
 
   // total page count over all columns
   auto page_count_iter   = cuda::make_transform_iterator(page_bounds.begin(), get_span_size{});
@@ -408,7 +413,7 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
                                                   size_t skip_rows,
                                                   size_t num_rows,
                                                   size_t size_limit,
-                                                  rmm::cuda_stream_view stream)
+                                                  cuda::stream_ref stream)
 {
   auto [aggregated_info, page_keys_by_split] = adjust_cumulative_sizes(c_info, pages, stream);
 
@@ -449,7 +454,7 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
   host_span<PageInfo> pass_pages,
   host_span<PageInfo> subpass_pages,
   host_span<bool const> subpass_page_mask,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -616,13 +621,27 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
     start_pos += codec.num_pages;
   }
   // now copy the uncompressed V2 def and rep level data
-  if (not copy_in.empty()) {
+  if (curr_copy_page > 0) {
     auto const d_copy_in = cudf::detail::make_device_uvector_async(
       copy_in, stream, cudf::get_current_device_resource_ref());
     auto const d_copy_out = cudf::detail::make_device_uvector_async(
       copy_out, stream, cudf::get_current_device_resource_ref());
 
-    cudf::io::detail::gpu_copy_uncompressed_blocks(d_copy_in, d_copy_out, stream);
+    auto const src_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<uint8_t const*>(
+        [inputs = d_copy_in.data()] __device__(size_type i) { return inputs[i].data(); }));
+    auto const dst_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<uint8_t*>(
+        [outputs = d_copy_out.data()] __device__(size_type i) { return outputs[i].data(); }));
+    auto const size_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<size_t>(
+        [inputs = d_copy_in.data(), outputs = d_copy_out.data()] __device__(size_type i) {
+          return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
+        }));
+    cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, curr_copy_page, stream);
   }
 
   CUDF_EXPECTS(
@@ -640,7 +659,7 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
 void detect_malformed_pages(device_span<PageInfo const> pages,
                             device_span<ColumnChunkDesc const> chunks,
                             std::optional<size_t> expected_row_count,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -692,7 +711,7 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
 rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
   device_span<ColumnChunkDesc const> chunks,
   device_span<PageInfo const> pages,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto page_keys = make_page_key_iterator(pages);
 
@@ -814,7 +833,7 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
 
 void include_scratch_size(device_span<size_t const> temp_cost,
                           device_span<cumulative_page_info> c_info,
-                          rmm::cuda_stream_view stream)
+                          cuda::stream_ref stream)
 {
   auto iter = cuda::counting_iterator{size_t{0}};
   thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -901,7 +920,7 @@ rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
                                                         device_span<PageInfo const> pages,
                                                         size_t skip_rows,
                                                         size_t num_rows,
-                                                        rmm::cuda_stream_view stream,
+                                                        cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<size_t> string_offset_sizes(pages.size(), stream, mr);
@@ -920,7 +939,7 @@ rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
                                                        int level_type_size,
                                                        size_t skip_rows,
                                                        size_t num_rows,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<size_t> level_decode_sizes(pages.size(), stream, mr);
@@ -934,7 +953,7 @@ rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
   return level_decode_sizes;
 }
 
-row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info const> row_groups_info,
+row_group_pass_data compute_row_group_passes(std::span<row_group_size_info const> row_group_sizes,
                                              std::size_t comp_read_limit,
                                              int64_t skip_rows)
 {
@@ -951,14 +970,18 @@ row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info cons
   std::size_t cur_rg_start             = 0;
   std::size_t cur_row_count            = 0;
 
-  for (std::size_t cur_rg_index = 0; cur_rg_index < row_groups_info.size(); cur_rg_index++) {
-    auto const& rgi = row_groups_info[cur_rg_index];
+  for (std::size_t cur_rg_index = 0; cur_rg_index < row_group_sizes.size(); cur_rg_index++) {
+    auto const& rgi = row_group_sizes[cur_rg_index];
 
     // We must use the effective size of the first row group we are reading to accurately calculate
     // the first non-zero `input_pass_start_row_count` unless we are reading only one row group
-    auto const row_group_rows = (skip_rows and row_groups_info.size() > 1)
-                                  ? (rgi.start_row + rgi.unadjusted_num_rows - skip_rows)
-                                  : rgi.unadjusted_num_rows;
+    auto row_group_rows = rgi.unadjusted_num_rows;
+    if (row_group_sizes.size() > 1) {
+      CUDF_EXPECTS(std::cmp_greater_equal(rgi.unadjusted_num_rows, skip_rows),
+                   "Row groups must contribute non-negative effective rows",
+                   std::invalid_argument);
+      row_group_rows -= skip_rows;
+    }
 
     auto const compressed_rg_size    = rgi.compressed_size;
     auto const row_group_leaf_values = rgi.max_leaf_values;
@@ -1007,8 +1030,8 @@ row_group_pass_data compute_row_group_passes(cudf::host_span<row_group_info cons
   }
 
   // Add the last pass if necessary
-  if (result.pass_row_group_offsets.back() != row_groups_info.size()) {
-    result.pass_row_group_offsets.push_back(row_groups_info.size());
+  if (result.pass_row_group_offsets.back() != row_group_sizes.size()) {
+    result.pass_row_group_offsets.push_back(row_group_sizes.size());
     result.pass_start_row_counts.push_back(cur_row_count);
   }
 

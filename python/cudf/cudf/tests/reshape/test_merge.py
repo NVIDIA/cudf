@@ -427,6 +427,58 @@ def test_merge_suffixes_non_sequence_raises(suffixes):
         a.merge(b, left_index=True, right_index=True, suffixes=suffixes)
 
 
+@pytest.mark.parametrize("how", ["left", "right", "inner", "outer"])
+def test_merge_left_on_right_index_pandas_semantics(how):
+    # For left_on + right_index, the result index is the mapped left index
+    # (unmatched rows -> NaN, upcasting a numpy int index to float64 and
+    # dropping the name), and the key column is coalesced from the right index.
+    pl = pd.DataFrame({"a": [0, 1, 2], "key": [0, 1, 2]}, index=[10, 20, 30])
+    pr = pd.DataFrame({"b": [0, 1, 2, 3, 4, 5]})
+    gl = cudf.from_pandas(pl)
+    gr = cudf.from_pandas(pr)
+    expect = pl.merge(pr, left_on="key", right_index=True, how=how)
+    got = gl.merge(gr, left_on="key", right_index=True, how=how)
+    assert_eq(expect, got)
+
+
+def test_merge_numeric_vs_string_key_raises():
+    # pandas refuses to merge a numeric key against a string key.
+    left = cudf.DataFrame({"A": [0, 1, 2]})
+    right = cudf.DataFrame({"A": ["0", "1", "2"]})
+    with pytest.raises(ValueError, match="You are trying to merge on"):
+        left.merge(right, on="A")
+
+
+def test_merge_unmatched_rows_upcast_int_to_float():
+    # Unmatched rows introduce NaN, upcasting a numpy integer column to
+    # float64 (matching pandas).
+    left = cudf.DataFrame({"key": [1, 2, 3], "a": [1, 2, 3]})
+    right = cudf.DataFrame({"key": [1, 2], "b": [4, 5]})
+    got = left.merge(right, on="key", how="left")
+    assert got["b"].dtype == np.dtype("float64")
+    assert_eq(
+        left.to_pandas().merge(right.to_pandas(), on="key", how="left"), got
+    )
+
+
+def test_merge_differently_named_keys_keep_own_dtype():
+    # Each surviving key retains its own operand's dtype.
+    left = cudf.DataFrame({"X": [1, 2, 3]})
+    right = cudf.DataFrame({"Y": [1.0, 2.0, 3.0]})
+    got = left.merge(right, left_on="X", right_on="Y")
+    assert got["X"].dtype == np.dtype("int64")
+    assert got["Y"].dtype == np.dtype("float64")
+
+
+@pytest.mark.parametrize("suffixes", [("_dup", ""), ("", "_dup")])
+def test_merge_suffix_duplicate_columns_raises(suffixes):
+    # Suffixing that collides with a pre-existing column raises MergeError.
+    df1 = cudf.DataFrame({"col1": [1], "col2": [2]})
+    df2 = cudf.DataFrame({"col1": [1], "col2": [2], "col2_dup": [3]})
+    with pytest.raises(pd.errors.MergeError, match="duplicate columns"):
+        df1.merge(df2, on="col1", suffixes=suffixes)
+
+
 def test_merge_left_on_right_on():
     left = pd.DataFrame({"xx": [1, 2, 3, 4, 5, 6]})
     right = pd.DataFrame({"xx": [10, 20, 30, 6, 5, 4]})
@@ -828,7 +880,8 @@ def test_typecast_on_join_no_float_round():
     exp_join_data = [1, 2, 3, 4, 5]
     exp_Bx = ["a", "b", "c", "d", "e"]
     exp_By = ["a", "b", "c", None, None]
-    exp_join_col = cudf.Series(exp_join_data, dtype="float32")
+    # A left join keeps the left key's dtype (int8), matching pandas.
+    exp_join_col = cudf.Series(exp_join_data, dtype="int8")
 
     expect = cudf.DataFrame(
         {"join_col": exp_join_col, "B_x": exp_Bx, "B_y": exp_By}
@@ -1132,17 +1185,16 @@ def test_categorical_typecast_inner():
         result = left.merge(right, how="inner", on="key")
 
     # Unequal categories
-    # Neither ordered -> unordered categorical with intersection
+    # Neither ordered -> decategorized to the common categories dtype
+    # (matching pandas, which only keeps the result categorical when the
+    # category sets match).
     left = make_categorical_dataframe([1, 2, 3], ordered=False)
     right = make_categorical_dataframe([2, 3, 4], ordered=False)
 
     result = left.merge(right, how="inner", on="key")
 
-    expect_dtype = cudf.CategoricalDtype(categories=[2, 3], ordered=False)
-    expect_data = cudf.Series([2, 3], dtype=expect_dtype, name="key")
-    assert_join_results_equal(
-        expect_data, result["key"], how="inner", check_categorical=False
-    )
+    expect_data = cudf.Series([2, 3], dtype="int64", name="key")
+    assert_join_results_equal(expect_data, result["key"], how="inner")
 
     # One is ordered -> error
     left = make_categorical_dataframe([1, 2, 3], ordered=False)
@@ -1183,13 +1235,13 @@ def test_categorical_typecast_left():
     with pytest.raises(TypeError):
         result = right.merge(left, on="key", how="left")
 
-    # unequal categories neither ordered -> left dtype
+    # unequal categories neither ordered -> decategorized to the common
+    # categories dtype (matching pandas)
     left = make_categorical_dataframe([1, 2, 3], ordered=False)
     right = make_categorical_dataframe([2, 3, 4], ordered=False)
 
     result = left.merge(right, on="key", how="left")
-    expect_dtype = CategoricalDtype(categories=[1, 2, 3], ordered=False)
-    expect_data = cudf.Series([1, 2, 3], dtype=expect_dtype, name="key")
+    expect_data = cudf.Series([1, 2, 3], dtype="int64", name="key")
 
     assert_join_results_equal(expect_data, result["key"], how="left")
 
@@ -1247,13 +1299,13 @@ def test_categorical_typecast_outer():
     with pytest.raises(TypeError):
         result = right.merge(left, how="outer", on="key")
 
-    # unequal categories, neither ordered -> superset
+    # unequal categories, neither ordered -> decategorized to the common
+    # categories dtype (matching pandas)
     left = make_categorical_dataframe([1, 2, 3], ordered=False)
     right = make_categorical_dataframe([2, 3, 4], ordered=False)
     result = left.merge(right, on="key", how="outer")
 
-    expect_dtype = CategoricalDtype(categories=[1, 2, 3, 4], ordered=False)
-    expect_data = cudf.Series([1, 2, 3, 4], dtype=expect_dtype, name="key")
+    expect_data = cudf.Series([1, 2, 3, 4], dtype="int64", name="key")
 
     assert_join_results_equal(expect_data, result["key"], how="outer")
 
@@ -1292,7 +1344,8 @@ def test_categorical_typecast_left_one_cat(dtype):
     right = left.astype(left["key"].dtype.categories.dtype)
 
     result = left.merge(right, on="key", how="left")
-    assert result["key"].dtype == left["key"].dtype
+    # pandas decategorizes when only one side is categorical.
+    assert result["key"].dtype == left["key"].dtype.categories.dtype
 
 
 @pytest.mark.parametrize("dtype", [*NUMERIC_TYPES, "str"])
@@ -1329,7 +1382,9 @@ def test_merge_suffixes_duplicate_label_raises():
     expected = df_pd.merge(df_pd, on=["a"], suffixes=("", "_right"))
     assert_eq(result, expected)
 
-    with pytest.raises(NotImplementedError):
+    # Suffixing collides the new ``b`` -> ``b_right`` with the pre-existing
+    # ``b_right`` column, which pandas rejects with a ``MergeError``.
+    with pytest.raises(pd.errors.MergeError, match="duplicate columns"):
         result.merge(df_cudf, on=["a"], suffixes=("", "_right"))
 
 
@@ -1520,3 +1575,101 @@ def test_merge_invalid_input(param):
         left.merge(param)
     with pytest.raises(TypeError):
         cudf.merge(left["a"], param)
+
+
+@pytest.mark.parametrize("left_cols", [True, False])
+@pytest.mark.parametrize("right_cols", [True, False])
+def test_cross_merge_zero_column_operand(left_cols, right_cols):
+    # A cross merge where one or both operands have no columns must still
+    # produce ``len(left) * len(right)`` rows (matching pandas), rather than
+    # dropping the row count of the column-less operand.
+    ldata = {"x": [1, 2, 3]} if left_cols else {}
+    rdata = {"y": [10, 20, 30, 40]} if right_cols else {}
+    pleft = pd.DataFrame(ldata, index=range(3))
+    pright = pd.DataFrame(rdata, index=range(4))
+    gleft = cudf.DataFrame(ldata, index=range(3))
+    gright = cudf.DataFrame(rdata, index=range(4))
+
+    expected = pleft.merge(pright, how="cross")
+    result = gleft.merge(gright, how="cross")
+    assert_eq(result, expected)
+
+
+def test_merge_natural_join_key_order_matches_left_frame():
+    # A merge without ``on`` joins on the common columns in left-frame
+    # column order, like pandas. Building the key list from an unordered
+    # set made the sorted output of an outer merge (and hence positional
+    # comparisons against pandas) vary with the process hash seed.
+    pl = pd.DataFrame({"a": ["foo", "bar"], "b": [1, 2]})
+    pr = pd.DataFrame({"a": ["foo", "baz"], "b": [3, 4]})
+    gl = cudf.from_pandas(pl)
+    gr = cudf.from_pandas(pr)
+
+    expect = pl.merge(pr, how="outer", sort=True)
+    got = gl.merge(gr, how="outer", sort=True)
+    assert_eq(expect.reset_index(drop=True), got.reset_index(drop=True))
+
+
+@pytest.mark.parametrize("how", ["inner", "left", "right", "outer"])
+@pytest.mark.parametrize("sort", [True, False])
+def test_merge_natural_join_left_frame_order_any_how(how, sort):
+    # The inferred keys follow left-frame column order for every ``how``,
+    # including "right", which cuDF implements by swapping the operands:
+    # both the key column order and the multi-key sort priority must still
+    # come from the original left frame.
+    pl = pd.DataFrame({"v": [5, 6, 9], "b": [2, 1, 9], "a": [1, 2, 9]})
+    pr = pd.DataFrame({"w": [7, 8], "a": [2, 1], "b": [1, 2]})
+    gl = cudf.from_pandas(pl)
+    gr = cudf.from_pandas(pr)
+
+    expect = pl.merge(pr, how=how, sort=sort)
+    got = gl.merge(gr, how=how, sort=sort)
+    if not sort:
+        # unsorted row order is not guaranteed to match pandas
+        expect = expect.sort_values(list(expect.columns)).reset_index(
+            drop=True
+        )
+        got = got.sort_values(list(got.columns)).reset_index(drop=True)
+    assert_eq(expect.reset_index(drop=True), got.reset_index(drop=True))
+
+
+@pytest.mark.parametrize("how", ["left", "inner"])
+def test_merge_on_index_level_keeps_right_key_column(how):
+    # When ``on`` names an index level on the left but a column on the
+    # right, the right key column is not a duplicate of any left output
+    # column and must be kept (pandas keeps the key as a column and
+    # resets the index).
+    pl = pd.DataFrame(
+        {"outer": [1, 1, 2], "inner": [1, 2, 1], "v1": [0.1, 0.2, 0.3]}
+    ).set_index(["outer", "inner"])
+    pr = pd.DataFrame(
+        {"outer": [1, 1, 2], "inner": [1, 2, 2], "v2": [10.0, 11.0, 12.0]}
+    )
+    gl = cudf.from_pandas(pl)
+    gr = cudf.from_pandas(pr)
+
+    expect = pl.merge(pr, on=["inner"], how=how)
+    got = gl.merge(gr, on=["inner"], how=how)
+    assert sorted(got.to_pandas().columns) == sorted(expect.columns)
+    assert_eq(
+        expect.sort_values(list(expect.columns)).reset_index(drop=True),
+        got.sort_values(list(expect.columns))
+        .reset_index(drop=True)
+        .to_pandas()[expect.columns],
+        check_dtype=False,
+    )
+
+
+def test_left_merge_empty_right_preserves_key_dtype():
+    # The int64 key must not be promoted to float64 when the right side
+    # is an empty float64 column, matching pandas.
+    left = cudf.DataFrame({"key": [1], "value": [2]})
+    right = cudf.DataFrame({"key": []})
+
+    pleft = left.to_pandas()
+    pright = right.to_pandas()
+
+    assert_eq(
+        cudf.merge(left, right, on="key", how="left"),
+        pd.merge(pleft, pright, on="key", how="left"),
+    )

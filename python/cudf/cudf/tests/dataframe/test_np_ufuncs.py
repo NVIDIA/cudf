@@ -10,7 +10,10 @@ from packaging.version import parse
 
 import cudf
 from cudf.testing import assert_eq
-from cudf.testing._utils import set_random_null_mask_inplace
+from cudf.testing._utils import (
+    gen_rand_ufunc_input,
+    set_random_null_mask_inplace,
+)
 
 
 @pytest.mark.parametrize("has_nulls", [True, False])
@@ -58,7 +61,7 @@ def test_ufunc_dataframe(request, numpy_ufunc, has_nulls, indexed):
     rng = np.random.default_rng(0)
     pandas_args = args = [
         cudf.DataFrame(
-            {"foo": rng.integers(low=1, high=10, size=N)},
+            {"foo": gen_rand_ufunc_input(numpy_ufunc, rng, N)},
             index=rng.choice(range(N), N, False) if indexed else None,
         )
         for _ in range(numpy_ufunc.nin)

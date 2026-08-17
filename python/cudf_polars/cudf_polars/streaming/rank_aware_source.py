@@ -200,3 +200,28 @@ class RankAwareSource(abc.ABC):
         validation when `register_io_source(validate_schema=True)` is used, but that
         flag is not exposed to the GPU execution path.
         """
+
+    def output_duplicated(self, rank: int = 0, nranks: int = 1) -> bool:
+        """
+        Whether this rank's output is duplicated across ranks.
+
+        A duplicated output is an identical, complete copy held on every rank
+        (for example the result of a global sort/limit). The streaming scan node
+        advertises this as the output channel's ``duplicated`` flag so downstream
+        collectives (joins, aggregates) treat the copies as duplicates rather
+        than distinct partitions and do not double-count them.
+
+        By default, the output is not duplicated.
+
+        Parameters
+        ----------
+        rank
+            Rank running this scan function.
+        nranks
+            Total number of ranks (the world size).
+
+        Returns
+        -------
+        ``True`` if this rank's output is an identical copy held on every rank.
+        """
+        return False

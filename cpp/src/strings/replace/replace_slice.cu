@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,9 +16,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -70,7 +69,7 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
                                       string_scalar const& repl,
                                       size_type start,
                                       size_type stop,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -100,7 +99,7 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
                                       string_scalar const& repl,
                                       size_type start,
                                       size_type stop,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

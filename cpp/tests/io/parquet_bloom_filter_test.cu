@@ -11,12 +11,12 @@
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/xxhash_64.cuh>
+#include <cudf/reduction/bloom_filter.cuh>
 #include <cudf/utilities/default_stream.hpp>
 
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/bloom_filter.cuh>
-#include <cuco/bloom_filter_policies.cuh>
 
 #include <cstdint>
 
@@ -26,19 +26,8 @@ class ParquetBloomFilterTest : public cudf::test::BaseFixture {};
 
 TEST_F(ParquetBloomFilterTest, TestStrings)
 {
-  using key_type = StringType;
-  // Apache Arrow Block-Split Bloom Filter layout, hashing keys with cudf's `XXHash_64` (matching
-  // `cudf::io::parquet::detail::arrow_filter_policy`).
-  using policy_type = cuco::parametric_filter_policy<cudf::hashing::detail::XXHash_64<key_type>,
-                                                     std::uint32_t,
-                                                     8,
-                                                     8,
-                                                     8,
-                                                     1,
-                                                     1,
-                                                     8,
-                                                     false,
-                                                     false>;
+  using key_type    = StringType;
+  using policy_type = cudf::arrow_filter_policy<cudf::hashing::detail::XXHash_64<key_type>>;
   using word_type   = policy_type::word_type;
 
   std::size_t constexpr num_filter_blocks = 4;

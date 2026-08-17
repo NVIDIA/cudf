@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         "ceil",
         "floor",
         "abs",
+        "sign",
         "cot",
         "log1p",
         "degrees",
@@ -109,6 +111,18 @@ def test_negate(engine: pl.GPUEngine, ldf, col):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Int8, pl.Int64, pl.UInt8, pl.UInt32, pl.UInt64, pl.Float64],
+)
+def test_sign_dtypes(engine: pl.GPUEngine, dtype: pl.DataType) -> None:
+    values: list[float | None] = [0, 1, 2, 5, None]
+    if dtype in (pl.Int8, pl.Int64, pl.Float64):
+        values += [-1, -3]
+    q = pl.LazyFrame({"a": pl.Series(values, dtype=dtype)}).select(pl.col("a").sign())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_null_count(engine: pl.GPUEngine):
     lf = pl.LazyFrame(
         {
@@ -173,17 +187,66 @@ def test_round(engine: pl.GPUEngine, ldf: pl.LazyFrame, mode: RoundMethod) -> No
 
 
 @pytest.mark.parametrize(
-    "expr",
+    "dtype",
     [
-        pl.col("a").sign(),
-        pl.col("a").hash(),
+        pl.Date,
+        pl.Datetime("us"),
+        pl.Datetime("us", "America/New_York"),
+        pl.Duration("us"),
+        pl.Int64,
+        pl.Float64,
     ],
-    ids=["sign", "hash"],
 )
-def test_unary_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
-    df = pl.LazyFrame({"a": [1, 2, 3]})
-    q = df.select(expr)
+def test_to_physical(engine: pl.GPUEngine, dtype: pl.DataType) -> None:
+    values = [1, None, 3]
+    s = pl.Series(values, dtype=pl.Int64).cast(dtype)
+    df = pl.LazyFrame({"a": s})
+    q = df.select(pl.col("a").to_physical())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.List(pl.Date), pl.Struct({"d": pl.Date})],
+)
+def test_to_physical_nested_logical_unsupported(
+    engine: pl.GPUEngine, dtype: pl.DataType
+) -> None:
+    df = pl.LazyFrame({"a": pl.Series([None], dtype=dtype)})
+    q = df.select(pl.col("a").to_physical())
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "seeds",
+    [(0,), (10, 20, 30, 40)],
+)
+def test_hash(engine: pl.GPUEngine, seeds: tuple[int, ...]) -> None:
+    df = pl.LazyFrame(
+        {
+            "a": pl.Series([1, 2, None], dtype=pl.Int64),
+            "b": pl.Series(["x", None, "z"], dtype=pl.String),
+        }
+    )
+    q = df.select(pl.col("a").hash(*seeds), pl.col("b").hash(*seeds))
+    # CPU vs GPU hash implementations not guaranteed to be the same
+    # Check alignment of result type, stability across GPU collect calls
+    result = q.collect(engine=engine)
+    assert result.schema == {"a": pl.UInt64, "b": pl.UInt64}
+    next_result = q.collect(engine=engine)
+    assert_frame_equal(result, next_result)
+
+
+def test_hash_seed_sensitivity(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": pl.Series([1, 2, 3, None], dtype=pl.Int64)})
+    q = df.select(
+        same_a=pl.col("a").hash(0, 1, 2, 3),
+        same_b=pl.col("a").hash(0, 1, 2, 3),
+        diff_tail=pl.col("a").hash(0, 4, 5, 6),
+    )
+    result = q.collect(engine=engine)
+    assert result["same_a"].equals(result["same_b"])
+    assert not result["same_a"].equals(result["diff_tail"])
 
 
 def test_atan2_unsupported(engine: pl.GPUEngine) -> None:

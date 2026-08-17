@@ -680,13 +680,7 @@ def test_tupleize_cols_False_set():
         None,
     ],
 )
-def test_dataframe_assign_scalar(request, col_data, assign_val):
-    request.applymarker(
-        pytest.mark.xfail(
-            condition=len(col_data) == 0,
-            reason="https://github.com/pandas-dev/pandas/issues/56679",
-        )
-    )
+def test_dataframe_assign_scalar(col_data, assign_val):
     pdf = pd.DataFrame({"a": col_data})
     gdf = cudf.DataFrame({"a": col_data})
 

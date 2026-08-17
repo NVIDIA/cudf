@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,7 +35,6 @@
 #include <cuda/std/tuple>
 #include <thrust/for_each.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -206,8 +205,8 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
   auto output_device_view =
     cudf::mutable_column_device_view::create(output->mutable_view(), stream);
   auto input_device_view = cudf::column_device_view::create(input, stream);
-  auto scalar_zip_itr    = thrust::make_zip_iterator(
-    cuda::std::make_tuple(lo_itr, lo_replace_itr, hi_itr, hi_replace_itr));
+  auto scalar_zip_itr =
+    cuda::make_zip_iterator(cuda::std::make_tuple(lo_itr, lo_replace_itr, hi_itr, hi_replace_itr));
 
   auto trans =
     cuda::proclaim_return_type<T>([] __device__(auto element_optional, auto scalar_tuple) {

@@ -47,7 +47,7 @@ data larger than GPU memory in many cases, without CPU (Pandas) fallback.
 ```{note}
 CUDA Managed Memory on Windows, and more specifically Windows Subsystem for
 Linux (WSL2), [does not support oversubscription](
-https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#system-requirements-for-unified-memory),
+https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/understanding-memory.html),
 only unified addressing. Furthermore, managed memory on WSL2 has undesirable
 performance characteristics. Therefore, `cudf.pandas` uses a non-managed pool
 allocator on WSL2, so `cudf.pandas` is limited to the physical size of GPU memory.

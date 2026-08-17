@@ -208,7 +208,6 @@ def test_boolean_horizontal(engine: pl.GPUEngine, expr, has_nulls, wide):
     [
         pytest.param(
             pl.col("a").is_in(pl.col("b").implode()),
-            marks=pytest.mark.xfail(reason="Need to support implode agg"),
             id="implode",
         ),
         pytest.param(pl.col("a").is_in([1, 2, 3]), id="list_small"),
@@ -355,9 +354,8 @@ def test_boolean_is_sorted(
         pl.sum_horizontal("a", "b"),
         pl.mean_horizontal("a", "b"),
         pl.min_horizontal("a", "b"),
-        pl.max_horizontal("a", "b"),
     ],
-    ids=["sum_horizontal", "mean_horizontal", "min_horizontal", "max_horizontal"],
+    ids=["sum_horizontal", "mean_horizontal", "min_horizontal"],
 )
 def test_numeric_horizontal_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})

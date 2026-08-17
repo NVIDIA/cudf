@@ -1,11 +1,11 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 
 source rapids-configure-sccache
-source rapids-date-string
+source rapids-datetime-string
 
 export CMAKE_GENERATOR=Ninja
 
@@ -27,7 +27,7 @@ source rapids-rattler-channel-string
 
 # --no-build-id allows for caching with `sccache`
 # more info is available at
-# https://rattler.build/latest/tips_and_tricks/#using-sccache-or-ccache-with-rattler-build
+# https://rattler-build.prefix.dev/latest/tips_and_tricks/
 rapids-telemetry-record build-libcudf.log \
     rattler-build build --recipe conda/recipes/libcudf \
                     "${RATTLER_ARGS[@]}" \

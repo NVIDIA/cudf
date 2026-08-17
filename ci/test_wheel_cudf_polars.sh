@@ -89,12 +89,13 @@ for version in "${VERSIONS[@]}"; do
         COVERAGE_ARGS=(--no-cov)
     fi
 
+    # Fail fast (-x) rather than trying to continue because failed tests pollute the state
     ./ci/run_cudf_polars_pytests.sh \
-        -vv \
         "${COVERAGE_ARGS[@]}" \
         --numprocesses=4 \
         --dist=worksteal \
         --durations 10 --durations-min 10 \
+        -x \
         -ra \
         --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-${version}.xml"
 
@@ -106,6 +107,7 @@ for version in "${VERSIONS[@]}"; do
         EXITCODE=1
         FAILED+=("${version}")
         rapids-logger "Tests failed for polars ${version}.*"
+        break
     else
         PASSED+=("${version}")
         rapids-logger "Tests passed for polars ${version}.*"

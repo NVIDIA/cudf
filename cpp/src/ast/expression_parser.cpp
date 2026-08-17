@@ -265,6 +265,9 @@ cudf::size_type expression_parser::visit(operation const& expr)
   auto const output = [&]() {
     if (expression_index == 0) {
       // This expression is the root. Output should be directed to the output column.
+      CUDF_EXPECTS(data_type.id() != cudf::type_id::DECIMAL128,
+                   "decimal128 is not supported as an AST expression output.",
+                   cudf::data_type_error);
       return detail::device_data_reference(
         detail::device_data_reference_type::COLUMN, data_type, 0, table_reference::OUTPUT);
     } else {

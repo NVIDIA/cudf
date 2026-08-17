@@ -5,20 +5,25 @@
 
 #pragma once
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
+#include <cudf/io/parquet.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
+
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -91,7 +96,7 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
   multifile_inputs const& inputs,
   std::pair<std::vector<cudf::io::text::byte_range_info>, std::vector<cudf::size_type>> const&
     byte_ranges_and_source_map,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -105,7 +110,7 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
  */
 [[nodiscard]] std::unique_ptr<cudf::table> concatenate_tables(
   std::vector<std::unique_ptr<cudf::table>>&& tables,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -126,7 +131,15 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
  *
  * @param str_col_value Value for the constant string column used when IsConstantStrings is true
  * @param compression Compression type
+ * @param column_names Top-level column names assigned in `column_order` order (default
+ *        {"col0", "col1", "col2"})
+ * @param column_order Physical emit order of the base [col0, col1, col2] columns (default
+ *        {0, 1, 2}). Reordering emits the same logical columns at different schema positions, which
+ *        is used to build mismatched per-source schemas for the row-group filtering tests.
  * @param stream CUDA stream
+ *
+ * @note `column_order` must be a permutation of {0, 1, 2}; passing a non-permutation (e.g.
+ *       {0, 0, 1}) is undefined behavior.
  *
  * @return Tuple of table and Parquet host buffer
  */
@@ -135,6 +148,32 @@ template <typename T,
           bool IsConstantStrings = true,
           bool IsNullable        = false>
 [[nodiscard]] std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_stats(
-  cudf::size_type str_col_value          = 100,
-  cudf::io::compression_type compression = cudf::io::compression_type::AUTO,
-  rmm::cuda_stream_view stream           = cudf::get_default_stream());
+  cudf::size_type str_col_value             = 100,
+  cudf::io::compression_type compression    = cudf::io::compression_type::AUTO,
+  std::vector<std::string> column_names     = {"col0", "col1", "col2"},
+  std::vector<cudf::size_type> column_order = {0, 1, 2},
+  cuda::stream_ref stream                   = cudf::get_default_stream());
+
+/**
+ * @brief Prune row groups using column chunk dictionaries via the single-file hybrid scan reader
+ *
+ * @return Dictionary-filtered row group indices
+ */
+[[nodiscard]] std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
+  cudf::io::datasource& datasource,
+  cudf::io::parquet::experimental::hybrid_scan_reader const& reader,
+  cudf::io::parquet_reader_options const& options,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Prune row groups using column chunk dictionaries via the multi-file hybrid scan reader
+ *
+ * @return Per-source dictionary-filtered row group indices
+ */
+[[nodiscard]] std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
+  multifile_inputs const& inputs,
+  cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
+  cudf::io::parquet_reader_options const& options,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);

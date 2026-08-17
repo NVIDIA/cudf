@@ -122,7 +122,7 @@ When adding a new API, include the API name to the appropriate page.
 Python classes and the Sphinx plugins used in RAPIDS interact in nontrivial ways.
 `autosummary`'s default page generated for a class uses [`autodoc`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html) to automatically detect and document all methods of a class.
 That means that in addition to the manually created `autosummary` pages where class methods are grouped into sections of related features, there is another page for each class where all the methods of that class are automatically summarized in a table for quick access.
-However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/) extension, which offers the same feature.
+However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/en/latest/) extension, which offers the same feature.
 We use both in order to match the contents and style of the pandas documentation as closely as possible.
 
 pandas is also particular about what information is included in a class's documentation.

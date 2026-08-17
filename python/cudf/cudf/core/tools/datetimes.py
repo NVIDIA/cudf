@@ -408,7 +408,7 @@ def _process_col(
 ):
     if col.dtype.kind == "f":
         if unit not in (None, "ns"):
-            col = col * unit_to_nanoseconds_conversion[unit]  # type: ignore[index]
+            col = col * unit_to_nanoseconds_conversion[unit]
 
         if format is not None:
             # Converting to int because,

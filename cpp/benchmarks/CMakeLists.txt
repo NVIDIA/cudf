@@ -150,6 +150,7 @@ ConfigureNVBench(
 ConfigureNVBench(
   JOIN_NVBENCH
   join/conditional_join.cpp
+  join/direct_join.cu
   join/distinct_join.cpp
   join/filter_join_indices.cpp
   join/filter_join_indices_jit.cu
@@ -295,8 +296,8 @@ ConfigureNVBench(
 # ##################################################################################################
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_options.cpp
-  io/parquet/reader_common.cpp
+  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
+  io/parquet/parquet_reader_options.cpp io/parquet/reader_common.cpp
 )
 
 # ##################################################################################################
@@ -349,6 +350,11 @@ target_compile_definitions(
           CROARING_COMPILER_SUPPORTS_AVX512=0
 )
 target_link_libraries(PARQUET_DELETION_VECTORS_NVBENCH PRIVATE roaring)
+
+# ##################################################################################################
+# * parquet variant extract benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
 
 # ##################################################################################################
 # * parquet multithread reader benchmark

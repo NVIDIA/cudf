@@ -235,15 +235,14 @@ def set_device(device: int | None) -> Generator[int, None, None]:
                 f"A previous query used device-{SEEN_DEVICE}, "
                 f"the current query is using device-{to_use}."
             )
+        if to_use != current:
+            gpu.setDevice(to_use)
         SEEN_DEVICE = to_use
-    if to_use != current:
-        gpu.setDevice(to_use)
-        try:
-            yield to_use
-        finally:
-            gpu.setDevice(current)
-    else:
+    try:
         yield to_use
+    finally:
+        if to_use != current:
+            gpu.setDevice(current)
 
 
 @overload
@@ -363,22 +362,12 @@ def execute_with_cudf(
     with nvtx.annotate(message="ConvertIR", domain=CUDF_POLARS_NVTX_DOMAIN):
         translator = Translator(nt, config)
         ir = translator.translate_ir()
-        ir_translation_errors = translator.errors
         if timer is not None:
             timer.store(start, time.monotonic_ns(), "gpu-ir-translation")
 
-        if len(ir_translation_errors):
-            # TODO: Display these errors in user-friendly way.
-            # tracked in https://github.com/rapidsai/cudf/issues/17051
-            unique_errors = sorted(set(ir_translation_errors), key=str)
-            formatted_errors = "\n".join(
-                f"- {e.__class__.__name__}: {e}" for e in unique_errors
-            )
-            error_message = (
-                "Query execution with GPU not possible: unsupported operations."
-                f"\nThe errors were:\n{formatted_errors}"
-            )
-            exception = NotImplementedError(error_message, unique_errors)
+        exception = translator.unsupported_operations_error()
+        if exception is not None:
+            error_message = exception.args[0]
             if bool(int(os.environ.get("POLARS_VERBOSE", "0"))):
                 warnings.warn(error_message, PerformanceWarning, stacklevel=2)
             if translator.config_options.raise_on_fail:

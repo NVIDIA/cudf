@@ -1626,3 +1626,68 @@ def test_astype_aware_to_naive_raises():
         cudf_ser.astype("datetime64[ns]")
     with pytest.raises(TypeError):
         pd_ser.astype("datetime64[ns]")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["123_1"],
+        ["1_2", "1_000", "20_000"],
+        ["1_2_3"],
+        ["123", "456"],
+    ],
+)
+@pytest.mark.parametrize("dtype", ["int32", "int64", "uint64"])
+def test_string_astype_int_pep515_underscores(data, dtype):
+    # https://github.com/rapidsai/cudf/issues/12047
+    # Python (PEP 515) allows underscores between digits, so pandas
+    # parses "123_1" as 1231; cudf should match.
+    got = cudf.Series(data).astype(dtype)
+    expect = pd.Series(data).astype(dtype)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["_12"],
+        ["12_"],
+        ["1__2"],
+        ["1_2", "_3"],
+    ],
+)
+@pytest.mark.parametrize("dtype", ["int32", "int64", "uint64"])
+def test_string_astype_int_invalid_underscores_raises(data, dtype):
+    # https://github.com/rapidsai/cudf/issues/12047
+    # Underscores not surrounded by digits are invalid (PEP 515);
+    # both pandas and cudf must reject them.
+    assert_exceptions_equal(
+        lfunc=pd.Series(data).astype,
+        rfunc=cudf.Series(data).astype,
+        lfunc_args_and_kwargs=((), {"dtype": dtype}),
+        rfunc_args_and_kwargs=((), {"dtype": dtype}),
+    )
+
+
+@pytest.mark.parametrize(
+    "data, src_dtype, masked_dtype",
+    [
+        ([1.0, 2.0, float("nan")], "float64", pd.Float64Dtype()),
+        ([1, 2, 3], "int64", pd.Int64Dtype()),
+    ],
+)
+def test_astype_masked_equivalent_dtype_no_source_mutation(
+    data, src_dtype, masked_dtype
+):
+    # casting to the equivalent masked dtype takes a short-circuit path;
+    # it must not mutate the source column's dtype in place (the column
+    # is shared with the source Series/frame)
+    ser = cudf.Series(data, dtype=src_dtype)
+    result = ser.astype(masked_dtype)
+
+    assert ser.dtype == np.dtype(src_dtype)
+    assert result.dtype == masked_dtype
+    assert_eq(
+        result.to_pandas(),
+        pd.Series(data, dtype=src_dtype).astype(masked_dtype),
+    )

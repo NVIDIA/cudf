@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,11 +50,12 @@ struct dremel_data {
  *
  * Dremel is a query system created by Google for ad hoc data analysis. The Dremel engine is
  * described in depth in the paper "Dremel: Interactive Analysis of Web-Scale
- * Datasets" (https://research.google/pubs/pub36632/). One of the key components of Dremel
- * is an encoding that converts record-like data into a columnar store for efficient memory
- * accesses. The Parquet file format uses Dremel encoding to handle nested data, so libcudf
- * requires some facilities for working with this encoding. Furthermore, libcudf leverages
- * Dremel encoding as a means for performing lexicographic comparisons of nested columns.
+ * Datasets" (https://research.google/pubs/dremel-interactive-analysis-of-web-scale-datasets-2/).
+ * One of the key components of Dremel is an encoding that converts record-like data into a columnar
+ * store for efficient memory accesses. The Parquet file format uses Dremel encoding to handle
+ * nested data, so libcudf requires some facilities for working with this encoding. Furthermore,
+ * libcudf leverages Dremel encoding as a means for performing lexicographic comparisons of nested
+ * columns.
  *
  * Dremel encoding is built around two concepts, the repetition and definition levels.
  * Since describing them thoroughly is out of scope for this docstring, here are a couple of
@@ -185,7 +186,7 @@ struct dremel_data {
 dremel_data get_dremel_data(column_view input,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @brief Get Dremel offsets, repetition levels, and modified definition levels to be used for
@@ -203,6 +204,6 @@ dremel_data get_dremel_data(column_view input,
 dremel_data get_comparator_data(column_view input,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                rmm::cuda_stream_view stream);
+                                cuda::stream_ref stream);
 }  // namespace detail
 }  // namespace cudf

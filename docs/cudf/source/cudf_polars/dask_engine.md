@@ -192,7 +192,7 @@ with DaskEngine() as engine:
 {class}`~cudf_polars.engine.dask.DaskEngine` raises `RuntimeError` if
 created inside an `rrun` cluster.
 
-[dask-distributed]: https://distributed.dask.org/
+[dask-distributed]: https://distributed.dask.org/en/stable/
 [dask-cli]: https://docs.dask.org/en/latest/deploying-cli.html
 [dask-cuda]: https://docs.rapids.ai/api/dask-cuda/nightly/
 [dask-cuda-worker]: https://docs.rapids.ai/api/dask-cuda/nightly/quickstart/#dask-cuda-worker

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -47,7 +47,7 @@ struct gather_index_calculator {
   PrecedingIter preceding;
   FollowingIter following;
   size_type min_periods;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 
   static size_type constexpr NULL_INDEX =
     cuda::std::numeric_limits<size_type>::min();  // For nullifying with gather.
@@ -57,7 +57,7 @@ struct gather_index_calculator {
                           PrecedingIter preceding,
                           FollowingIter following,
                           size_type min_periods,
-                          rmm::cuda_stream_view stream)
+                          cuda::stream_ref stream)
     : n{n},
       input_nullmask{input.null_mask()},
       exclude_nulls{null_handling == null_policy::EXCLUDE and input.has_nulls()},
@@ -138,7 +138,7 @@ std::unique_ptr<column> nth_element(size_type n,
                                     PrecedingIter preceding,
                                     FollowingIter following,
                                     size_type min_periods,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   auto const gather_iter = cudf::detail::make_counting_transform_iterator(

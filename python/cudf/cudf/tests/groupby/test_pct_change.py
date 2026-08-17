@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
+import pandas as pd
 import pytest
 
 import cudf
@@ -84,5 +85,22 @@ def test_groupby_pct_change_empty_columns():
 
     actual = gdf.groupby("id").pct_change()
     expected = pdf.groupby("id").pct_change()
+
+    assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize("periods", [-1, 1])
+def test_groupby_pct_change_no_fill(periods):
+    # pandas 3.0 removed fill_method: values are not forward-filled, so
+    # NaN propagates into the percent change
+    data = {
+        "key": ["a"] * 5 + ["b"] * 5,
+        "vals": [3.0, None, None, 1.0, 2.0] * 2,
+    }
+    pdf = pd.DataFrame(data)
+    gdf = cudf.DataFrame(data)
+
+    expected = pdf.groupby("key")["vals"].pct_change(periods=periods)
+    actual = gdf.groupby("key")["vals"].pct_change(periods=periods)
 
     assert_eq(expected, actual)

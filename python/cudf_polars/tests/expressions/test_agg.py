@@ -58,7 +58,7 @@ def is_sorted(request):
 @pytest.fixture
 def xfail_if_sorted(is_sorted, request):
     # See https://github.com/rapidsai/cudf/pull/20791#issuecomment-3750528419
-    if is_sorted:
+    if is_sorted and POLARS_VERSION_LT_136:
         request.applymarker(
             pytest.mark.xfail(reason="See https://github.com/pola-rs/polars/pull/24981")
         )
@@ -133,6 +133,52 @@ def test_product(engine: pl.GPUEngine, data, dtype):
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
+def test_implode(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [1, 2, None, 3]})
+    q = df.select(pl.col("a").implode())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "data,allow_empty",
+    [
+        ([42], False),
+        ([], True),
+    ],
+)
+def test_item(engine: pl.GPUEngine, data, allow_empty) -> None:
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int64)})
+    q = df.select(pl.col("a").item(allow_empty=allow_empty))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_mode(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [1, 2, 2, None, 3, 1]})
+    q = df.select(pl.col("a").mode())
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_136, reason="maintain_order added in Polars 1.36.0"
+)
+def test_mode_maintain_order_unsupported(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [1, 2, 2, None, 3, 1]})
+    q = df.select(pl.col("a").mode(maintain_order=True))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("agg", ["arg_max", "arg_min"])
+def test_arg_max_min(engine: pl.GPUEngine, agg: str) -> None:
+    df = pl.LazyFrame(
+        {
+            "a": pl.Series([1, 2, 2, None, 3], dtype=pl.Int64),
+            "b": pl.Series([None, None, None, None, None], dtype=pl.Int64),
+        }
+    )
+    q = df.select(getattr(pl.col("a"), agg)(), getattr(pl.col("b"), agg)())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -149,12 +195,21 @@ def test_cum_count(engine: pl.GPUEngine, data):
 
 
 @pytest.mark.parametrize("cum_agg", sorted(expr.UnaryFunction._supported_cum_aggs))
-def test_cum_agg_reverse_unsupported(engine: pl.GPUEngine, cum_agg):
-    df = pl.LazyFrame({"a": [1, 2, 3]})
-    expr = getattr(pl.col("a"), cum_agg)(reverse=True)
-    q = df.select(expr)
-
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+@pytest.mark.parametrize(
+    "data,dtype",
+    [
+        ([1, 2, 3, 4, 5], pl.Int32),
+        ([1, None, 3, None, 5], pl.Int32),
+        ([None, None, None], pl.Int32),
+        ([2, 3, 4], pl.Int8),
+        ([1.5, 2.0, 0.5, 4.0], pl.Float64),
+        ([], pl.Int32),
+    ],
+)
+def test_cum_agg_reverse(engine: pl.GPUEngine, cum_agg, data, dtype):
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = df.select(getattr(pl.col("a"), cum_agg)(reverse=True))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
 @pytest.mark.parametrize("q", [0.5, pl.lit(0.5)])
@@ -213,19 +268,6 @@ def test_sum_empty_zero(engine: pl.GPUEngine, data):
     df = pl.LazyFrame({"a": pl.Series(values=data, dtype=pl.Int32())})
     q = df.select(pl.col("a").sum())
     assert_gpu_result_equal(q, engine=engine)
-
-
-def test_implode_agg_unsupported(engine: pl.GPUEngine):
-    df = pl.LazyFrame(
-        {
-            "a": pl.Series([1, 2, 3], dtype=pl.Int64()),
-            "b": pl.Series([3, 4, 2], dtype=pl.Int64()),
-            "c": pl.Series([1, None, 3], dtype=pl.Int64()),
-            "d": pl.Series([10, None, 11], dtype=pl.Int64()),
-        }
-    )
-    q = df.select(pl.col("b").implode())
-    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 def test_decimal_aggs(
@@ -289,24 +331,14 @@ def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
 @pytest.mark.parametrize(
     "expr",
     [
-        pl.col("a").mode(),
         pl.col("a").entropy(),
         pl.col("a").skew(),
         pl.col("a").kurtosis(),
-        pl.col("a").arg_min(),
-        pl.col("a").arg_max(),
-        pl.col("a").arg_sort(),
-        pl.col("a").arg_unique(),
     ],
     ids=[
-        "mode",
         "entropy",
         "skew",
         "kurtosis",
-        "arg_min",
-        "arg_max",
-        "arg_sort",
-        "arg_unique",
     ],
 )
 def test_agg_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:

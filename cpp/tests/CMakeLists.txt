@@ -176,6 +176,7 @@ ConfigureTest(
   join/cross_join_tests.cpp
   join/semi_anti_join_tests.cpp
   join/mixed_join_tests.cu
+  join/direct_join_tests.cpp
   join/distinct_join_tests.cpp
   join/key_remapping_tests.cpp
   GPUS 1
@@ -325,7 +326,7 @@ ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
 ConfigureTest(
   CSV_TEST io/csv_test.cpp
   GPUS 1
-  PERCENT 30 EXTRA_LIBS ${ARROW_LIBRARIES}
+  PERCENT 30
 )
 ConfigureTest(
   ORC_TEST io/orc_chunked_reader_test.cu io/orc_test.cpp
@@ -339,6 +340,7 @@ ConfigureTest(
   io/parquet_chunked_writer_test.cpp
   io/parquet_common.cpp
   io/parquet_misc_test.cpp
+  io/parquet_reader_dict_test.cpp
   io/parquet_reader_test.cpp
   io/parquet_test.cpp
   io/parquet_v2_test.cpp
@@ -376,7 +378,7 @@ ConfigureTest(
   JSON_TEST io/json/json_chunked_reader.cpp io/json/json_test.cpp io/json/json_type_cast_test.cpp
   io/json/json_utils.cu
   GPUS 1
-  PERCENT 30 EXTRA_LIBS ${ARROW_LIBRARIES}
+  PERCENT 30
 )
 ConfigureTest(JSON_WRITER_TEST io/json/json_writer.cpp)
 ConfigureTest(NESTED_JSON_TEST io/json/nested_json_test.cpp io/json/json_tree.cpp)

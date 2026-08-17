@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -10,9 +10,8 @@ import polars as pl
 
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
-    assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_140
+from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 
 @pytest.mark.parametrize("descending", [False, True])
@@ -70,11 +69,6 @@ def test_setsorted(engine: pl.GPUEngine, request, descending, nulls_last, with_n
                 "fixed in https://github.com/pola-rs/polars/pull/25250"
             )
         )
-    elif not POLARS_VERSION_LT_140:
-        # polars >= 1.40 keeps the hint_sorted node in the optimized plan for a
-        # bare set_sorted; we do not support it, so it raises. 1.36-1.39 pruned
-        # it during optimization and passed.
-        request.applymarker(pytest.mark.xfail(reason="Hint sorted unsupported"))
     sorted_values = sorted([1, 2, 3, 4, 5, 6, -2], reverse=descending)
     values: list[int | None] = [*sorted_values]
     if with_nulls == "nulls":
@@ -100,13 +94,21 @@ def test_setsorted_expr_with_nulls(engine: pl.GPUEngine, descending, nulls_last)
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_arg_sort_expression(engine: pl.GPUEngine, descending, nulls_last):
+    ldf = pl.LazyFrame(
+        {
+            "a": [5, -1, 3, 4, None, 8, 6, 7, None, 3],
+        }
+    )
+    query = ldf.select(
+        pl.col("a").arg_sort(descending=descending, nulls_last=nulls_last)
+    )
+    assert_gpu_result_equal(query, engine=engine)
+
+
 def test_sort_concat_filtered_to_empty(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3]})
     q = pl.concat([df.filter(pl.col("a") == 0), df.filter(pl.col("a") == 4)]).sort("a")
     assert_gpu_result_equal(q, engine=engine)
-
-
-def test_search_sorted_unsupported(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"a": [1, 2, 3, 4, 5]})
-    q = df.select(pl.col("a").search_sorted(3))
-    assert_ir_translation_raises(q, engine, NotImplementedError)

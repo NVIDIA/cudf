@@ -325,6 +325,13 @@ def test_can_cast_safely_same_kind():
     assert not data.can_cast_safely(to_dtype)
 
 
+def test_can_cast_safely_empty():
+    # An empty column can be cast to any numeric dtype losslessly.
+    data = cudf.Series([], dtype="float64")._column
+    for to_dtype in ["int8", "int64", "uint32", "float32", "bool"]:
+        assert data.can_cast_safely(np.dtype(to_dtype))
+
+
 def test_can_cast_safely_mixed_kind():
     data = cudf.Series([1, 2, 3], dtype="int32")._column
     to_dtype = np.dtype("float32")

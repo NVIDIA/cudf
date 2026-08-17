@@ -47,6 +47,7 @@ from ..fast_slow_proxy import (
     _FastSlowAttribute,
     _FunctionProxy,
     _maybe_wrap_result,
+    _setattr_fsproxy_no_mirror,
     _State,
     _Unusable,
     is_proxy_object,
@@ -535,6 +536,7 @@ SparseDtype = make_final_proxy_type(
     pd.SparseDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -605,6 +607,7 @@ CategoricalDtype = make_final_proxy_type(
     pd.CategoricalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -652,6 +655,7 @@ DatetimeTZDtype = make_final_proxy_type(
     pd.DatetimeTZDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
@@ -768,6 +772,7 @@ PeriodDtype = make_final_proxy_type(
     pd.PeriodDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -894,6 +899,7 @@ StringDtype = make_final_proxy_type(
     pd.StringDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "storage": _FastSlowAttribute("storage"),
@@ -1103,6 +1109,7 @@ IntervalDtype = make_final_proxy_type(
     pd.IntervalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         # ``_closed`` is a pandas-private attribute; source it from the slow
@@ -1166,6 +1173,17 @@ Float64Dtype = make_final_proxy_type(
     },
 )
 
+
+# ``GroupBy.nth`` is a property returning a selector object on both
+# sides; registering the selector pair as an intermediate proxy gives
+# ``gb.nth`` a proxied result whose ``__call__``/``__getitem__`` get the
+# usual call-time fast/slow dispatch (with the slow side re-derived from
+# the recorded ``getattr`` provenance on fallback).
+GroupByNthSelector = make_intermediate_proxy_type(
+    "GroupByNthSelector",
+    cudf.core.groupby.groupby.GroupByNthSelector,
+    pd.core.groupby.indexing.GroupByNthSelector,
+)
 
 SeriesGroupBy = make_intermediate_proxy_type(
     "SeriesGroupBy",
@@ -1324,6 +1342,36 @@ DatetimeIndexResampler = make_intermediate_proxy_type(
     "DatetimeIndexResampler",
     _Unusable,
     pd.core.resample.DatetimeIndexResampler,
+)
+
+PeriodIndexResampler = make_intermediate_proxy_type(
+    "PeriodIndexResampler",
+    _Unusable,
+    pd.core.resample.PeriodIndexResampler,
+)
+
+TimedeltaIndexResampler = make_intermediate_proxy_type(
+    "TimedeltaIndexResampler",
+    _Unusable,
+    pd.core.resample.TimedeltaIndexResampler,
+)
+
+DatetimeIndexResamplerGroupby = make_intermediate_proxy_type(
+    "DatetimeIndexResamplerGroupby",
+    _Unusable,
+    pd.core.resample.DatetimeIndexResamplerGroupby,
+)
+
+PeriodIndexResamplerGroupby = make_intermediate_proxy_type(
+    "PeriodIndexResamplerGroupby",
+    _Unusable,
+    pd.core.resample.PeriodIndexResamplerGroupby,
+)
+
+TimedeltaIndexResamplerGroupby = make_intermediate_proxy_type(
+    "TimedeltaIndexResamplerGroupby",
+    _Unusable,
+    pd.core.resample.TimedeltaIndexResamplerGroupby,
 )
 
 StataReader = make_final_proxy_type(
@@ -1650,8 +1698,10 @@ def _df_query_method(self, *args, local_dict=None, global_dict=None, **kwargs):
     )
 
 
-DataFrame.eval = _df_eval_method
-DataFrame.query = _df_query_method
+# These custom implementations are installed by cudf.pandas itself and must
+# not be mirrored onto (and clobber) the real ``pandas.DataFrame``.
+_setattr_fsproxy_no_mirror(DataFrame, "eval", _df_eval_method)
+_setattr_fsproxy_no_mirror(DataFrame, "query", _df_query_method)
 
 _JsonReader = make_intermediate_proxy_type(
     "_JsonReader",

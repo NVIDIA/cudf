@@ -14,7 +14,7 @@
  *
  *  base64 encoding and decoding with C++.
  *  More information at
- *    https://renenyffenegger.ch/notes/development/Base64/Encoding-and-decoding-base-64-with-cpp
+ *    https://renenyffenegger.ch/notes/development/Base64/Encoding-and-decoding-base-64-with-cpp/
  *
  *  Version: 2.rc.09 (release candidate)
  *

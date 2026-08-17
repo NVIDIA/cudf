@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def test_parallel_dataframescan(
     )
     qir = Translator(df._ldf.visit(), _engine).translate_ir()
     config_options = ConfigOptions.from_polars_engine(_engine)
-    ir, info = lower_ir_graph(
+    lowering = lower_ir_graph(
         qir,
         config_options,
         collect_statistics(
@@ -68,6 +68,8 @@ def test_parallel_dataframescan(
             parquet_stats_executor,
         ),
     )
+    ir = lowering.lowered
+    info = lowering.partition_info
     count = info[ir].count
     if max_rows_per_partition < total_row_count:
         assert count > 1
@@ -106,7 +108,7 @@ def test_join_in_memory_lazy_stable_id_pickle(
     right = pl.LazyFrame({"k": [2, 3, 4], "y": [1, 2, 3]}).collect(engine=engine).lazy()
     qir = Translator(left.join(right, on="k")._ldf.visit(), engine).translate_ir()
     config_options = ConfigOptions.from_polars_engine(engine)
-    ir, _ = lower_ir_graph(
+    lowering = lower_ir_graph(
         qir,
         config_options,
         collect_statistics(
@@ -115,6 +117,7 @@ def test_join_in_memory_lazy_stable_id_pickle(
             parquet_stats_executor,
         ),
     )
+    ir = lowering.lowered
     _assert_stable_ids_match(ir, pickle.loads(pickle.dumps(ir)))
 
 
@@ -128,7 +131,7 @@ def test_dataframescan_pickle(
     )
     qir = Translator(df._ldf.visit(), _engine).translate_ir()
     config_options = ConfigOptions.from_polars_engine(_engine)
-    ir, _ = lower_ir_graph(
+    lowering = lower_ir_graph(
         qir,
         config_options,
         collect_statistics(
@@ -137,6 +140,7 @@ def test_dataframescan_pickle(
             parquet_stats_executor,
         ),
     )
+    ir = lowering.lowered
 
     # Pickle and unpickle the IR (which contains DataFrameScan)
     pickled = pickle.dumps(ir)

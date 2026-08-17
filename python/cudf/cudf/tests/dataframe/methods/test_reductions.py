@@ -89,6 +89,24 @@ def test_with_index():
     assert_eq(pdf_q, gdf_q, check_index_type=False)
 
 
+@pytest.mark.parametrize("method", ["single", "table"])
+def test_quantile_columns_subset(method):
+    # The cudf-specific ``columns`` argument restricts the computation in
+    # both the per-column and the row-selecting table methods.
+    q = [0, 0.5, 1]
+
+    pdf = pd.DataFrame({"a": [4, 24, 13, 8, 7], "b": [1, 2, 3, 4, 5]})
+    gdf = cudf.from_pandas(pdf)
+
+    pdf_q = pdf[["a"]].quantile(q, interpolation="nearest")
+    gdf_q = gdf.quantile(
+        q, interpolation="nearest", method=method, columns=["a"]
+    )
+
+    assert list(gdf_q._column_names) == ["a"]
+    assert_eq(pdf_q, gdf_q, check_index_type=False)
+
+
 def test_with_multiindex():
     q = [0, 0.5, 1]
 
@@ -437,12 +455,11 @@ def test_decimal_quantile(q, interpolation, decimal_type):
     gdf["val"] = gdf["val"].astype(decimal_type(7, 2))
     pdf = gdf.to_pandas()
 
+    # Scalar q would require a Series result, which is not possible for
+    # this mix of float64 and decimal columns.
+    q = q if isinstance(q, list) else [q]
     got = gdf.quantile(q, numeric_only=False, interpolation=interpolation)
-    expected = pdf.quantile(
-        q if isinstance(q, list) else [q],
-        numeric_only=False,
-        interpolation=interpolation,
-    )
+    expected = pdf.quantile(q, numeric_only=False, interpolation=interpolation)
 
     assert_eq(got, expected)
 
@@ -455,6 +472,72 @@ def test_empty_quantile():
     expected = pdf.quantile()
 
     assert_eq(actual, expected)
+
+
+def test_quantile_q_scalar_datetime():
+    # For a scalar q, a Series is returned when the columns share a
+    # common dtype, matching pandas.
+    ts = pd.date_range("2018-08-24", periods=5, freq="D")
+    pdf = pd.DataFrame({"a": ts, "b": ts + pd.Timedelta(hours=1)})
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.quantile(0.5, numeric_only=False),
+        gdf.quantile(0.5, numeric_only=False),
+    )
+
+
+def test_quantile_q_scalar_mixed_dtypes_raises():
+    gdf = cudf.DataFrame(
+        {"a": [1.0, 2.0], "b": pd.to_datetime(["2010", "2011"])}
+    )
+    with pytest.raises(cudf.errors.MixedTypeError):
+        gdf.quantile(0.5, numeric_only=False)
+
+
+def test_quantile_table_method_tz_metadata():
+    dti = pd.date_range("2016-01-01", periods=3, tz="US/Pacific")
+    pdf = pd.DataFrame({"a": dti})
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.quantile(0.5, numeric_only=False, interpolation="nearest"),
+        gdf.quantile(0.5, interpolation="nearest", method="table"),
+    )
+
+
+def test_quantile_table_method_numeric_only():
+    pdf = pd.DataFrame(
+        {
+            "date": pd.date_range("2018-08-24", periods=3, freq="D"),
+            "val": [1, 2, 3],
+        }
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.quantile(0.5, numeric_only=True, interpolation="nearest"),
+        gdf.quantile(
+            0.5,
+            numeric_only=True,
+            interpolation="nearest",
+            method="table",
+        ),
+    )
+
+
+def test_quantile_table_method_empty():
+    pdf = pd.DataFrame({"x": [], "y": []})
+    gdf = cudf.DataFrame({"x": [], "y": []})
+
+    assert_eq(
+        pdf.quantile(0.5, interpolation="nearest"),
+        gdf.quantile(0.5, interpolation="nearest", method="table"),
+    )
+    assert_eq(
+        pdf.quantile([0.5], interpolation="nearest"),
+        gdf.quantile([0.5], interpolation="nearest", method="table"),
+    )
 
 
 @pytest.mark.parametrize(

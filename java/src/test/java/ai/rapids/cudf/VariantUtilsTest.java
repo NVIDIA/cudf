@@ -411,9 +411,9 @@ public class VariantUtilsTest extends CudfTestBase {
   void malformedPathThrows() {
     try (ColumnVector variant = makeXyzVariantColumn()) {
       assertThrows(CudfException.class,
-          () -> VariantUtils.getVariantFieldValue(variant, "$.x[0]"));
+          () -> VariantUtils.getVariantFieldValue(variant, "$.x["));
       assertThrows(CudfException.class,
-          () -> VariantUtils.extractVariantField(variant, "$.x[0]", DType.INT32));
+          () -> VariantUtils.extractVariantField(variant, "$.x[", DType.INT32));
     }
   }
 

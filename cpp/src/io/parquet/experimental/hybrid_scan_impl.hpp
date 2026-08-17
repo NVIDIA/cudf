@@ -19,8 +19,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <memory>
@@ -106,7 +105,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_stats(
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::secondary_filters_byte_ranges
@@ -116,13 +115,20 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                 parquet_reader_options const& options);
 
   /**
+   * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::dictionary_pages_byte_ranges
+   */
+  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+  dictionary_pages_byte_ranges(cudf::host_span<std::vector<size_type> const> row_group_indices,
+                               parquet_reader_options const& options);
+
+  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan::filter_row_groups_with_dictionary_pages
    */
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_dictionary_pages(
     std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan::filter_row_groups_with_bloom_filters
@@ -131,14 +137,14 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::build_all_true_row_mask
    */
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     std::span<std::vector<size_type> const> row_group_indices,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -148,7 +154,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] std::unique_ptr<cudf::column> build_row_mask_with_page_index_stats(
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -172,7 +178,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cudf::mutable_column_view& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -196,7 +202,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cudf::column_view const& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -213,7 +219,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -228,7 +234,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     use_data_page_mask mask_data_pages,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -250,7 +256,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     use_data_page_mask mask_data_pages,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -269,7 +275,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -283,7 +289,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @throws std::invalid_argument if @p row_group_indices.size() is all empty or not equal to the
    * number of input datasources
    *
-   * @param row_group_indices Input row group indices, one per source
+   * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param total_row_groups Total number of row groups across all sources
    * @param pass_read_limit Memory limit to read and decompress row
    * group data
@@ -324,7 +330,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    */
   void initialize_options(parquet_reader_options const& options,
                           std::size_t num_sources,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr);
 
   /**
@@ -383,7 +389,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   void prepare_materialization(read_columns_mode read_columns_mode,
                                std::size_t num_sources,
                                parquet_reader_options const& options,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
   /**
@@ -423,7 +429,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                        std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
                        std::span<int const> dictionary_col_schemas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream);
 
   /**
    * @brief Prepares the select input row groups and associated chunk information
@@ -521,7 +527,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @return True if all rows are pruned
    */
   [[nodiscard]] bool are_all_rows_pruned(cudf::column_view const& row_mask,
-                                         rmm::cuda_stream_view stream) const;
+                                         cuda::stream_ref stream) const;
 
   /**
    * @brief Updates the output row mask such that out_row_mask[i + out_row_mask_offset] = true if
@@ -538,7 +544,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   void update_row_mask(cudf::column_view const& in_row_mask,
                        cudf::mutable_column_view& out_row_mask,
                        cudf::size_type out_row_mask_offset,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream);
 
   /**
    * @brief Check if this is the first output chunk

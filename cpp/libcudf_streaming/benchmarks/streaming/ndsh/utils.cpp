@@ -195,10 +195,10 @@ std::pair<std::shared_ptr<streaming::Context>, std::shared_ptr<Communicator>> cr
     "noting that this may significantly degrade spilling performance.",
     std::invalid_argument);
 
+  auto pinned_pool_properties =
+    arguments.no_pinned_host_memory ? PinnedMemoryDisabled : PinnedPoolProperties{};
   auto br                              = BufferResource::create(std::move(mr),
-                                   arguments.no_pinned_host_memory
-                                                                  ? PinnedMemoryResource::Disabled
-                                                                  : PinnedMemoryResource::make_if_available(),
+                                   std::move(pinned_pool_properties),
                                    std::move(memory_limits),
                                    arguments.periodic_spill,
                                    std::make_shared<rmm::cuda_stream_pool>(

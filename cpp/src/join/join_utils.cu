@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
@@ -23,8 +22,7 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/transform_output_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
+#include <cuda/stream>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -36,8 +34,16 @@
 namespace cudf {
 namespace detail {
 
+double checked_load_factor(double load_factor)
+{
+  CUDF_EXPECTS(load_factor > 0.0 && load_factor <= 1.0,
+               "Invalid load factor: must be greater than 0 and less than or equal to 1.",
+               std::invalid_argument);
+  return load_factor;
+}
+
 VectorPair get_trivial_left_join_indices(table_view const& left,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
@@ -80,7 +86,7 @@ struct to_no_match_pair {
 VectorPair finalize_full_join(VectorPair&& indices,
                               size_type left_table_num_rows,
                               size_type right_table_num_rows,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   auto [left_out, right_out] = std::move(indices);
@@ -133,8 +139,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // Fused compaction: for each unmatched right row, emit (JoinNoMatch, right_idx) into
   // (left_out_tail, right_out_tail) in a single CUB DeviceSelect pass.
   auto zip_tail =
-    thrust::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
-  auto out_iter = thrust::make_transform_output_iterator(zip_tail, to_no_match_pair{});
+    cuda::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
+  auto out_iter = cuda::make_transform_output_iterator(zip_tail, to_no_match_pair{});
 
   auto const new_end =
     cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
@@ -155,7 +161,7 @@ VectorPair finalize_full_join(
   cudf::host_span<cudf::device_span<size_type const> const> right_partials,
   size_type left_table_num_rows,
   size_type right_table_num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(left_partials.size() == right_partials.size(),

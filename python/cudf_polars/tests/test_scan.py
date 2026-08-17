@@ -22,7 +22,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import ConfigOptions, ParquetOptions
 from cudf_polars.utils.versions import (
@@ -805,15 +804,9 @@ def test_scan_tiny_file_not_compressed(engine: pl.GPUEngine, tmp_path):
 )
 @pytest.mark.parametrize("custom_engine", [None, NO_CHUNK_ENGINE])
 def test_scan_parquet_zero_width_with_limit(
-    engine: pl.GPUEngine, tmp_path, custom_engine, request
+    engine: pl.GPUEngine, tmp_path, custom_engine
 ):
     active_engine = custom_engine if custom_engine is not None else engine
-    request.applymarker(
-        pytest.mark.xfail(
-            is_streaming_engine(active_engine),
-            reason="https://github.com/rapidsai/cudf/issues/21644",
-        )
-    )
     path = tmp_path / "zero_width.parquet"
     pl.LazyFrame(height=20).sink_parquet(path)
     q = pl.scan_parquet(path).head(5)

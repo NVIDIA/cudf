@@ -24,9 +24,9 @@ namespace CUDF_EXPORT cudf {
  * @brief An enumeration of error codes that can occur during operations.
  */
 enum class [[nodiscard]] errc : cuda::std::int8_t {
-  SUCCESS          = 0,
-  OVERFLOW         = 1,
-  DIVISION_BY_ZERO = 2,
+  SUCCESS             = 0,
+  ARITHMETIC_OVERFLOW = 1,
+  DIVISION_BY_ZERO    = 2,
 };
 
 /**
@@ -38,7 +38,7 @@ enum class [[nodiscard]] errc : cuda::std::int8_t {
 {
   switch (error) {
     case errc::SUCCESS: return "SUCCESS";
-    case errc::OVERFLOW: return "OVERFLOW";
+    case errc::ARITHMETIC_OVERFLOW: return "ARITHMETIC_OVERFLOW";
     case errc::DIVISION_BY_ZERO: return "DIVISION_BY_ZERO";
     default: return "UNKNOWN_ERROR";
   }

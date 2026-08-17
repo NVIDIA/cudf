@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -753,7 +753,7 @@ preprocessed_table::create(table_view const& lhs,
         transform_lists_of_structs(
           lhs_col,
           rhs_col,
-          null_precedence.empty() ? null_order::BEFORE : null_precedence[col_idx],
+          null_precedence.empty() ? null_order::BEFORE : new_null_precedence_lhs[col_idx],
           stream,
           cudf::get_current_device_resource_ref());
 

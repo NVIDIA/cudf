@@ -253,6 +253,25 @@ def test_century_millennium_date_extreme_years(engine: pl.GPUEngine, method, day
 
 
 @pytest.mark.parametrize(
+    "dtype", [pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
+)
+def test_datetime_date(engine: pl.GPUEngine, dtype):
+    data = pl.Series(
+        [
+            datetime.datetime(1978, 1, 1, 1, 1, 1),
+            datetime.datetime(1969, 12, 31, 23, 59, 59),  # pre-epoch (floors down)
+            datetime.datetime(2024, 10, 13, 5, 30, 14, 500_000),
+            datetime.datetime(2065, 1, 1, 10, 20, 30, 60_000),
+            None,
+        ],
+        dtype=dtype,
+    )
+    ldf = pl.LazyFrame({"datetimes": data})
+    q = ldf.select(pl.col("datetimes").dt.date())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
     "dtype", [pl.Date(), pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
 )
 def test_datetime_month_start(engine: pl.GPUEngine, dtype):
@@ -490,6 +509,48 @@ def test_datetime_from_integer(engine: pl.GPUEngine, datetime_dtype, integer_dty
             q.collect(engine=engine)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype", [pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
+)
+# ``every`` finer than a column's storage unit panics in CPU polars, so only
+# use frequencies that are coarser-or-equal to every tested resolution.
+@pytest.mark.parametrize("every", ["1ms", "1s", "1m", "1h", "1d"])
+def test_datetime_round(engine: pl.GPUEngine, dtype, every):
+    # Use an irregular step so no timestamp lands exactly on a half-way point:
+    # libcudf rounds half-to-even while polars rounds half-away, so only the
+    # exact-tie behaviour differs.
+    ldf = pl.LazyFrame(
+        {
+            "datetimes": pl.datetime_range(
+                datetime.datetime(2020, 1, 1),
+                datetime.datetime(2020, 1, 2),
+                "3h14m15s11ms33us999ns",
+                eager=True,
+            ).cast(dtype)
+        }
+    )
+
+    q = ldf.select(pl.col("datetimes").dt.round(every))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("every", ["30m", "1mo"])
+def test_datetime_round_unsupported(engine: pl.GPUEngine, every: str):
+    ldf = pl.LazyFrame(
+        {
+            "datetimes": pl.datetime_range(
+                datetime.datetime(2020, 1, 1),
+                datetime.datetime(2020, 1, 2),
+                "30m",
+                eager=True,
+            )
+        }
+    )
+
+    q = ldf.select(pl.col("datetimes").dt.round(every))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(

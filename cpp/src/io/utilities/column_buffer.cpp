@@ -234,10 +234,8 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
           auto offsets_col =
             std::move(col_content.children[strings_column_view::offsets_column_index]);
           if (offsets_col->type().id() != type_id::INT32) {
-            offsets_col = cudf::detail::cast(offsets_col->view(),
-                                             data_type{type_id::INT32},
-                                             stream,
-                                             cudf::get_current_device_resource_ref());
+            offsets_col = cudf::detail::cast(
+              offsets_col->view(), data_type{type_id::INT32}, stream, buffer._mr);
           }
 
           return make_lists_column(num_rows,

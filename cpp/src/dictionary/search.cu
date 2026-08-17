@@ -16,7 +16,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cub/device/device_find.cuh>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace dictionary {

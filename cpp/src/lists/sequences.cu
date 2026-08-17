@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,7 @@ struct tabulator {
 
   T const* const starts;
   T const* const steps;
-  size_type const* const offsets;
+  int32_t const* const offsets;
 
   template <typename U>
   static T __device__ multiply(U x, size_type times)
@@ -80,7 +80,7 @@ struct sequences_dispatcher {
                                      size_type n_elements,
                                      column_view const& starts,
                                      std::optional<column_view> const& steps,
-                                     size_type const* offsets,
+                                     int32_t const* offsets,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
   {
@@ -100,7 +100,7 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
                                         size_type n_elements,
                                         column_view const& starts,
                                         std::optional<column_view> const& steps,
-                                        size_type const* offsets,
+                                        int32_t const* offsets,
                                         rmm::cuda_stream_view stream,
                                         rmm::device_async_resource_ref mr)
   {
@@ -156,7 +156,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
   // Generate list offsets for the output.
   auto [list_offsets, n_elements] = cudf::detail::make_offsets_child_column(
     sizes_input_it, sizes_input_it + sizes.size(), stream, mr);
-  auto const offsets_begin = list_offsets->view().template begin<size_type>();
+  auto const offsets_begin = list_offsets->view().template begin<int32_t>();
 
   auto child = type_dispatcher(starts.type(),
                                sequences_dispatcher{},

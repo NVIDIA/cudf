@@ -25,7 +25,6 @@
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>
-#include <cuda/stream_ref>
 
 namespace cudf {
 namespace detail {

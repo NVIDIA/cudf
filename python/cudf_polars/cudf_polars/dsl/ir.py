@@ -911,12 +911,7 @@ class Scan(IR):
     ) -> int:
         # Zero-width parquet files lose their row count when read through
         # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
-        if parquet_options.prefetch_file_metadata:
-            if cached_parquet_info is None:
-                raise AssertionError(
-                    "Cached parquet info is required when prefetching file metadata is enabled"
-                )
-
+        if cached_parquet_info is not None:
             Scan._validate_cached_parquet_info(paths, cached_parquet_info)
             parquet_metadatas = [
                 info.file_metadata for info in cached_parquet_info
@@ -1080,11 +1075,7 @@ class Scan(IR):
                     df,
                 )
         elif typ == "parquet":
-            if parquet_options.prefetch_file_metadata:
-                if cached_parquet_info is None:
-                    raise AssertionError(
-                        "Cached parquet info is required when prefetching file metadata is enabled"
-                    )
+            if cached_parquet_info is not None:
                 Scan._validate_cached_parquet_info(paths, cached_parquet_info)
                 filepath_sources = []
                 parquet_metadatas = []

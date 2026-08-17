@@ -23,7 +23,7 @@
 
 #include <cuda/functional>
 #include <cuda/std/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/find.h>
 #include <thrust/scan.h>
 

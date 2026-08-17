@@ -17,6 +17,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/iterator.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/strings/convert/convert_fixed_point.hpp>
@@ -3445,6 +3446,41 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected0, result.tbl->get_column(0).view());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected1, result.tbl->get_column(1).view());
   }
+}
+
+TEST_F(JsonReaderTest, JsonDictionaryDtypeAllNullColumn)
+{
+  std::string json_string = R"({"a": 1}
+{"a": 2}
+{"a": 3})";
+
+  cudf::io::json_reader_options in_options =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(json_string.data()), json_string.size()}})
+      .prune_columns(true)
+      .lines(true);
+
+  // "d" is declared by the schema but never appears in the input
+  cudf::io::schema_element dtype_schema{
+    data_type{cudf::type_id::STRUCT},
+    {
+      {"a", {dtype<int32_t>()}},
+      {"d", {data_type{cudf::type_id::DICTIONARY32}, {{"keys", {dtype<int32_t>()}}}}},
+    },
+    {{"a", "d"}}};
+  in_options.set_dtypes(dtype_schema);
+
+  cudf::io::table_with_metadata result = cudf::io::read_json(in_options);
+
+  ASSERT_EQ(result.tbl->num_columns(), 2);
+  auto const col = result.tbl->get_column(1).view();
+  EXPECT_EQ(col.type().id(), cudf::type_id::DICTIONARY32);
+  EXPECT_EQ(col.size(), 3);
+  EXPECT_EQ(col.null_count(), 3);
+  // a dictionary column must carry its keys; a bare fixed-width column has no children
+  ASSERT_EQ(col.num_children(), 2);
+  EXPECT_EQ(cudf::dictionary_column_view(col).keys().type().id(), cudf::type_id::INT32);
 }
 
 TEST_F(JsonReaderTest, NullifyMixedList)

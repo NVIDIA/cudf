@@ -344,6 +344,8 @@ cdef class ParquetReaderOptions:
         return self.c_obj.is_enabled_case_sensitive_names()
 
 cdef class ParquetReaderOptionsBuilder:
+    """Builder to build options for ``read_parquet``."""
+
     cpdef ParquetReaderOptionsBuilder convert_strings_to_categories(self, bool val):
         """
         Sets enable/disable conversion of strings to categories.
@@ -874,6 +876,8 @@ cdef class ChunkedParquetWriterOptions:
 
 
 cdef class ChunkedParquetWriterOptionsBuilder:
+    """Builder to build options for chunked Parquet writing."""
+
     cpdef ChunkedParquetWriterOptionsBuilder metadata(
         self,
         TableInputMetadata metadata
@@ -1186,6 +1190,7 @@ cdef class ParquetWriterOptions:
 
 
 cdef class ParquetWriterOptionsBuilder:
+    """Builder to build options for ``write_parquet``."""
 
     cpdef ParquetWriterOptionsBuilder metadata(self, TableInputMetadata metadata):
         """

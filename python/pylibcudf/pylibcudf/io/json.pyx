@@ -362,6 +362,8 @@ cdef class JsonReaderOptions:
 
 
 cdef class JsonReaderOptionsBuilder:
+    """Builder to build options for ``read_json``."""
+
     cpdef JsonReaderOptionsBuilder byte_range_offset(self, size_t byte_range_offset):
         """
         Set number of bytes to skip from source start.
@@ -996,6 +998,8 @@ cdef class JsonWriterOptions:
         self.c_obj.set_compression(comptype)
 
 cdef class JsonWriterOptionsBuilder:
+    """Builder to build options for ``write_json``."""
+
     cpdef JsonWriterOptionsBuilder metadata(self, TableWithMetadata tbl_w_meta):
         """
         Sets optional metadata (with column names).

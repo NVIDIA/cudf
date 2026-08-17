@@ -423,6 +423,8 @@ cdef class OrcReaderOptions:
         self.c_obj.set_source(src.c_obj)
 
 cdef class OrcReaderOptionsBuilder:
+    """Builder to build options for ``read_orc``."""
+
     cpdef OrcReaderOptionsBuilder use_index(self, bool use):
         """
         Enable/Disable use of row index to speed-up reading.
@@ -591,6 +593,8 @@ cdef class OrcWriterOptions:
 
 
 cdef class OrcWriterOptionsBuilder:
+    """Builder to build options for ``write_orc``."""
+
     cpdef OrcWriterOptionsBuilder compression(self, compression_type comp):
         """
         Sets compression type.
@@ -834,6 +838,8 @@ cdef class ChunkedOrcWriterOptions:
 
 
 cdef class ChunkedOrcWriterOptionsBuilder:
+    """Builder to build options for chunked ORC writing."""
+
     cpdef ChunkedOrcWriterOptionsBuilder compression(self, compression_type comp):
         """
         Sets compression type.

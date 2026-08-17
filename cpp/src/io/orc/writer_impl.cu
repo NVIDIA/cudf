@@ -27,6 +27,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/aligned.hpp>
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
@@ -61,6 +62,9 @@
 #include <utility>
 
 namespace cudf::io::orc::detail {
+
+// Alignment of every non-empty extent within the encoded and gathered arenas.
+constexpr size_t extent_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
 
 template <typename T>
 [[nodiscard]] CUDF_HOST_DEVICE constexpr int varint_size(T val)
@@ -849,13 +853,40 @@ struct segmented_valid_cnt_input {
   std::vector<size_type> indices;
 };
 
-encoded_data encode_columns(orc_table_view const& orc_table,
-                            encoder_decimal_info&& dec_chunk_sizes,
-                            file_segmentation const& segmentation,
-                            orc_streams const& streams,
-                            uint32_t uncomp_block_align,
-                            rmm::cuda_stream_view stream)
+/**
+ * @brief Storage of one (stripe, stream) pair within an encoded arena.
+ */
+struct extent_info {
+  size_t size{0};            ///< upper bound on what the encoder writes
+  size_t offset{0};          ///< byte offset within the arena
+  bool has_slack{false};     ///< whether `size` is a strict upper bound rather than exact
+  bool is_transient{false};  ///< placed in `encoded_data::transient_buffer`
+};
+
+/**
+ * @brief Encodes the columns' data into the ORC stream layout.
+ *
+ * @param[in] orc_table Table to be written, with ORC-related information
+ * @param[in] dec_chunk_sizes Sizes of encoded decimal elements
+ * @param[in] segmentation stripe and rowgroup ranges
+ * @param[in] streams List of stream descriptors
+ * @param[in] uncomp_block_align Required alignment of the codec's chunks
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches
+ * @return The encoded data, along with a [stripe][strm_id] description of every extent, flattened
+ * with `streams.size()` elements per row
+ */
+std::pair<encoded_data, std::vector<extent_info>> encode_columns(
+  orc_table_view const& orc_table,
+  encoder_decimal_info&& dec_chunk_sizes,
+  file_segmentation const& segmentation,
+  orc_streams const& streams,
+  uint32_t uncomp_block_align,
+  rmm::cuda_stream_view stream)
 {
+  CUDF_EXPECTS(uncomp_block_align > 0 and extent_alignment % uncomp_block_align == 0,
+               "Internal ORC writer error: extent alignment is not a multiple of the codec's chunk "
+               "alignment");
+
   auto const num_columns = orc_table.num_columns();
   hostdevice_2dvector<encoder_chunk> chunks(num_columns, segmentation.num_rowgroups(), stream);
 
@@ -939,13 +970,13 @@ encoded_data encode_columns(orc_table_view const& orc_table,
 
   hostdevice_2dvector<encoder_chunk_streams> chunk_streams(
     num_columns, segmentation.num_rowgroups(), stream);
-  // per-stripe, per-stream owning buffers
-  std::vector<std::vector<rmm::device_uvector<uint8_t>>> encoded_data(segmentation.num_stripes());
-  for (auto const& stripe : segmentation.stripes) {
-    std::generate_n(std::back_inserter(encoded_data[stripe.id]), streams.size(), [stream]() {
-      return rmm::device_uvector<uint8_t>(0, stream);
-    });
 
+  // Compute per-rowgroup stream lengths and per-(stripe, strm_id) extent sizes, along with
+  // whether an extent size may exceed what the encoder ends up writing.
+  auto const num_streams = streams.size();
+  std::vector<extent_info> extent_storage(segmentation.num_stripes() * num_streams);
+  auto const extents = host_2dspan<extent_info>{extent_storage, num_streams};
+  for (auto const& stripe : segmentation.stripes) {
     for (size_t col_idx = 0; col_idx < num_columns; col_idx++) {
       for (int strm_type = 0; strm_type < CI_NUM_STREAMS; ++strm_type) {
         auto const& column = orc_table.column(col_idx);
@@ -957,51 +988,100 @@ encoded_data encode_columns(orc_table_view const& orc_table,
           col_streams[rg_idx].lengths[strm_type] = 0;
         });
 
-        // Calculate rowgroup sizes and stripe size
-        if (strm_id >= 0) {
-          size_t stripe_size = 0;
-          std::for_each(stripe.cbegin(), stripe.cend(), [&](auto rg_idx) {
+        if (strm_id < 0) { continue; }
+
+        size_t stripe_size = 0;
+        // Alignment padding leaves a gap after every rowgroup's chunk, so it is slack in itself.
+        bool has_slack = uncomp_block_align > 1;
+        std::for_each(stripe.cbegin(), stripe.cend(), [&](auto rg_idx) {
 #if defined(__GNUC__) && (__GNUC__ >= 14)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdangling-reference"
 #endif
-            auto const& ck = chunks[col_idx][rg_idx];
+          auto const& ck = chunks[col_idx][rg_idx];
 #if defined(__GNUC__) && (__GNUC__ >= 14)
 #pragma GCC diagnostic pop
 #endif
-            auto& strm = col_streams[rg_idx];
+          auto& strm = col_streams[rg_idx];
 
-            if ((strm_type == CI_DICTIONARY) ||
-                (strm_type == CI_DATA2 && ck.encoding_kind == DICTIONARY_V2)) {
-              if (rg_idx == *stripe.cbegin()) {
-                auto const stripe_dict = column.host_stripe_dict(stripe.id);
-                strm.lengths[strm_type] =
-                  (strm_type == CI_DICTIONARY)
-                    ? stripe_dict.char_count
-                    : (((stripe_dict.entry_count + 0x1ff) >> 9) * (512 * 4 + 2));
-              } else {
-                strm.lengths[strm_type] = 0;
-              }
-            } else if (strm_type == CI_DATA && ck.type_kind == TypeKind::STRING &&
-                       ck.encoding_kind == DIRECT_V2) {
-              strm.lengths[strm_type] = std::max(column.rowgroup_char_count(rg_idx), 1);
-            } else if (strm_type == CI_DATA && streams[strm_id].length == 0 &&
-                       (ck.type_kind == DOUBLE || ck.type_kind == FLOAT)) {
-              // Pass-through
-              strm.lengths[strm_type] = ck.num_rows * ck.dtype_len;
-            } else if (ck.type_kind == DECIMAL && strm_type == CI_DATA) {
-              strm.lengths[strm_type] = dec_chunk_sizes.rg_sizes.at(col_idx)[rg_idx];
+          if ((strm_type == CI_DICTIONARY) ||
+              (strm_type == CI_DATA2 && ck.encoding_kind == DICTIONARY_V2)) {
+            if (rg_idx == *stripe.cbegin()) {
+              auto const stripe_dict = column.host_stripe_dict(stripe.id);
+              strm.lengths[strm_type] =
+                (strm_type == CI_DICTIONARY)
+                  ? stripe_dict.char_count
+                  : (((stripe_dict.entry_count + 0x1ff) >> 9) * (512 * 4 + 2));
+              // Only the size of RLE-encoded lengths is an estimate
+              has_slack |= (strm_type != CI_DICTIONARY);
             } else {
-              strm.lengths[strm_type] = rle_stream_size(streams.type(strm_id), ck.num_rows);
+              strm.lengths[strm_type] = 0;
             }
-            // Allow extra space for alignment
-            stripe_size += strm.lengths[strm_type] + uncomp_block_align - 1;
-          });
+          } else if (strm_type == CI_DATA && ck.type_kind == TypeKind::STRING &&
+                     ck.encoding_kind == DIRECT_V2) {
+            auto const char_count   = column.rowgroup_char_count(rg_idx);
+            strm.lengths[strm_type] = std::max(char_count, 1);
+            // The `max` reserves a byte the encoder does not write
+            has_slack |= (char_count == 0);
+          } else if (strm_type == CI_DATA && streams[strm_id].length == 0 &&
+                     (ck.type_kind == DOUBLE || ck.type_kind == FLOAT)) {
+            // Pass-through. The encoder reports this length back unchanged, so it is exact.
+            strm.lengths[strm_type] = ck.num_rows * ck.dtype_len;
+          } else if (ck.type_kind == DECIMAL && strm_type == CI_DATA) {
+            strm.lengths[strm_type] = dec_chunk_sizes.rg_sizes.at(col_idx)[rg_idx];
+          } else {
+            strm.lengths[strm_type] = rle_stream_size(streams.type(strm_id), ck.num_rows);
+            has_slack               = true;
+          }
+          // Allow extra space for alignment
+          stripe_size += strm.lengths[strm_type] + uncomp_block_align - 1;
+        });
 
-          encoded_data[stripe.id][strm_id] = rmm::device_uvector<uint8_t>(stripe_size, stream);
-        }
+        auto& extent     = extents[stripe.id][strm_id];
+        extent.size      = stripe_size;
+        extent.has_slack = has_slack;
+      }
+    }
+  }
 
-        // Set offsets
+  // Extents that `gather_stripes` is certain to compact go into `transient_buffer`, so that arena
+  // can be freed as soon as gathering completes.
+  size_t persistent_arena_size = 0;
+  size_t transient_arena_size  = 0;
+  for (size_t s = 0; s < segmentation.num_stripes(); ++s) {
+    for (size_t strm_id = 0; strm_id < num_streams; ++strm_id) {
+      auto& extent = extents[s][strm_id];
+      if (extent.size == 0) { continue; }
+      extent.is_transient = segmentation.stripes[s].size > 1 and extent.has_slack;
+      auto& arena_size    = extent.is_transient ? transient_arena_size : persistent_arena_size;
+      arena_size          = util::round_up_unsafe<size_t>(arena_size, extent_alignment);
+      extent.offset       = arena_size;
+      arena_size += extent.size;
+    }
+  }
+
+  rmm::device_uvector<uint8_t> persistent_buffer(persistent_arena_size, stream);
+  rmm::device_uvector<uint8_t> transient_buffer(transient_arena_size, stream);
+
+  std::vector<std::vector<device_span<uint8_t>>> encoded_views(
+    segmentation.num_stripes(), std::vector<device_span<uint8_t>>(num_streams));
+  for (size_t s = 0; s < segmentation.num_stripes(); ++s) {
+    for (size_t strm_id = 0; strm_id < num_streams; ++strm_id) {
+      auto const extent = extents[s][strm_id];
+      // Zero-size extents keep a null pointer, matching the empty device_uvector they replaced.
+      if (extent.size == 0) { continue; }
+      auto& arena               = extent.is_transient ? transient_buffer : persistent_buffer;
+      encoded_views[s][strm_id] = device_span<uint8_t>{arena.data() + extent.offset, extent.size};
+    }
+  }
+
+  // Point each rowgroup's chunk at its place within the extent, rounded up to the codec alignment.
+  for (auto const& stripe : segmentation.stripes) {
+    for (size_t col_idx = 0; col_idx < num_columns; col_idx++) {
+      for (int strm_type = 0; strm_type < CI_NUM_STREAMS; ++strm_type) {
+        auto col_streams   = chunk_streams[col_idx];
+        auto const strm_id = streams.id(col_idx * CI_NUM_STREAMS + strm_type);
+
         for (auto rg_idx_it = stripe.cbegin(); rg_idx_it < stripe.cend(); ++rg_idx_it) {
           auto const rg_idx = *rg_idx_it;
 #if defined(__GNUC__) && (__GNUC__ >= 14)
@@ -1020,10 +1100,10 @@ encoded_data encode_columns(orc_table_view const& orc_table,
           } else {
             if ((strm_type == CI_DICTIONARY) ||
                 (strm_type == CI_DATA2 && ck.encoding_kind == DICTIONARY_V2)) {
-              strm.data_ptrs[strm_type] = encoded_data[stripe.id][strm_id].data();
+              strm.data_ptrs[strm_type] = encoded_views[stripe.id][strm_id].data();
             } else {
               strm.data_ptrs[strm_type] = (rg_idx_it == stripe.cbegin())
-                                            ? encoded_data[stripe.id][strm_id].data()
+                                            ? encoded_views[stripe.id][strm_id].data()
                                             : (col_streams[rg_idx - 1].data_ptrs[strm_type] +
                                                col_streams[rg_idx - 1].lengths[strm_type]);
             }
@@ -1056,7 +1136,12 @@ encoded_data encode_columns(orc_table_view const& orc_table,
   }
   chunk_streams.device_to_host(stream);
 
-  return {std::move(encoded_data), std::move(chunk_streams)};
+  return {encoded_data{std::move(persistent_buffer),
+                       std::move(transient_buffer),
+                       rmm::device_uvector<uint8_t>{0, stream},  // filled by gather_stripes
+                       std::move(encoded_views),
+                       std::move(chunk_streams)},
+          std::move(extent_storage)};
 }
 
 // TODO: remove StripeInformation from this function and return strm_desc instead
@@ -1066,6 +1151,8 @@ encoded_data encode_columns(orc_table_view const& orc_table,
  *
  * @param[in] num_index_streams Total number of index streams
  * @param[in] segmentation stripe and rowgroup ranges
+ * @param[in] extents Extent descriptions [stripe][data_stream]; extents marked transient are held
+ * in `enc_data->transient_buffer` and must all be gathered
  * @param[in,out] enc_data ORC per-chunk streams of encoded data
  * @param[in,out] strm_desc List of stream descriptors [stripe][data_stream]
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
@@ -1073,53 +1160,95 @@ encoded_data encode_columns(orc_table_view const& orc_table,
  */
 std::vector<StripeInformation> gather_stripes(size_t num_index_streams,
                                               file_segmentation const& segmentation,
+                                              host_2dspan<extent_info const> extents,
                                               encoded_data* enc_data,
                                               hostdevice_2dvector<stripe_stream>* strm_desc,
                                               rmm::cuda_stream_view stream)
 {
   if (segmentation.num_stripes() == 0) { return {}; }
 
-  // gathered stripes - per-stripe, per-stream (same as encoded_data.data)
-  std::vector<std::vector<rmm::device_uvector<uint8_t>>> gathered_stripes(enc_data->data.size());
-  for (auto& stripe_data : gathered_stripes) {
-    std::generate_n(std::back_inserter(stripe_data), enc_data->data[0].size(), [&]() {
-      return rmm::device_uvector<uint8_t>(0, stream);
-    });
+  auto const num_streams_in_data = enc_data->data[0].size();
+
+  // Compaction destination of one (stripe, stream) pair within the gather arena.
+  struct gather_extent {
+    size_t size{0};    // what the encoder actually wrote
+    size_t offset{0};  // byte offset within the arena
+    bool gathered{false};
+    device_span<uint8_t> view{};
+  };
+  std::vector<gather_extent> gather_storage(segmentation.num_stripes() * num_streams_in_data);
+  auto const gather_extents = host_2dspan<gather_extent>{gather_storage, num_streams_in_data};
+
+  // Compute per-(stripe, stream) actual sizes and decide which need a gathered copy.
+  for (auto const& stripe : segmentation.stripes) {
+    for (size_t col_idx = 0; col_idx < enc_data->streams.size().first; col_idx++) {
+      auto const& col_streams = (enc_data->streams)[col_idx];
+      for (int k = 0; k < CI_INDEX; k++) {
+        auto const stream_id = col_streams[0].ids[k];
+        if (stream_id == -1) { continue; }
+
+        auto const actual_stripe_size =
+          std::accumulate(col_streams.begin() + stripe.first,
+                          col_streams.begin() + stripe.first + stripe.size,
+                          0ul,
+                          [&](auto const& sum, auto const& strm) { return sum + strm.lengths[k]; });
+
+        auto const allocated_stripe_size = enc_data->data[stripe.id][stream_id].size();
+        CUDF_EXPECTS(allocated_stripe_size >= actual_stripe_size,
+                     "Internal ORC writer error: insufficient allocation size for encoded data");
+
+        // Compact when the chunks are not already contiguous, i.e. when the encoder wrote less
+        // than the extent was sized for. Extents in `transient_buffer` are compacted regardless,
+        // so that arena can be released below.
+        bool const gathered = (stripe.size > 1 and (extents[stripe.id][stream_id].is_transient or
+                                                    allocated_stripe_size > actual_stripe_size));
+
+        auto& extent    = gather_extents[stripe.id][stream_id];
+        extent.size     = actual_stripe_size;
+        extent.gathered = gathered;
+      }
+    }
   }
+
+  // Lay out gather destinations in a single arena, with the same alignment as the encoded arenas.
+  size_t gather_total = 0;
+  for (size_t s = 0; s < segmentation.num_stripes(); ++s) {
+    for (size_t strm_id = 0; strm_id < num_streams_in_data; ++strm_id) {
+      auto& extent = gather_extents[s][strm_id];
+      if (!extent.gathered) { continue; }
+      gather_total  = util::round_up_unsafe<size_t>(gather_total, extent_alignment);
+      extent.offset = gather_total;
+      gather_total += extent.size;
+    }
+  }
+  rmm::device_uvector<uint8_t> gather_buffer(std::max<size_t>(gather_total, 1), stream);
+
+  // Build strm_desc entries and record gather destination spans.
   std::vector<StripeInformation> stripes(segmentation.num_stripes());
   for (auto const& stripe : segmentation.stripes) {
     for (size_t col_idx = 0; col_idx < enc_data->streams.size().first; col_idx++) {
       auto const& col_streams = (enc_data->streams)[col_idx];
-      // Assign stream data of column data stream(s)
       for (int k = 0; k < CI_INDEX; k++) {
         auto const stream_id = col_streams[0].ids[k];
-        if (stream_id != -1) {
-          auto const actual_stripe_size = std::accumulate(
-            col_streams.begin() + stripe.first,
-            col_streams.begin() + stripe.first + stripe.size,
-            0ul,
-            [&](auto const& sum, auto const& strm) { return sum + strm.lengths[k]; });
+        if (stream_id == -1) { continue; }
 
-          auto const& allocated_stripe_size = enc_data->data[stripe.id][stream_id].size();
-          CUDF_EXPECTS(allocated_stripe_size >= actual_stripe_size,
-                       "Internal ORC writer error: insufficient allocation size for encoded data");
-          // Allocate buffers of the exact size as encoded data, smaller than the original buffers.
-          // Don't copying the data to exactly sized buffer when only one chunk is present to avoid
-          // performance overhead from the additional copy. When there are multiple chunks, they are
-          // copied anyway, to make them contiguous (i.e. gather them).
-          if (stripe.size > 1 and allocated_stripe_size > actual_stripe_size) {
-            gathered_stripes[stripe.id][stream_id] =
-              rmm::device_uvector<uint8_t>(actual_stripe_size, stream);
-          }
-
-          auto* ss           = &(*strm_desc)[stripe.id][stream_id - num_index_streams];
-          ss->data_ptr       = gathered_stripes[stripe.id][stream_id].data();
-          ss->stream_size    = actual_stripe_size;
-          ss->first_chunk_id = stripe.first;
-          ss->num_chunks     = stripe.size;
-          ss->column_id      = col_idx;
-          ss->stream_type    = k;
+        auto& extent     = gather_extents[stripe.id][stream_id];
+        uint8_t* dst_ptr = nullptr;
+        if (extent.gathered) {
+          // Non-null even when the extent is empty, unlike the empty device_uvector this replaced.
+          // `init_batched_memcpy_kernel` repoints the per-rowgroup data_ptrs at this arena, which
+          // is what lets `transient_buffer` be released without leaving them dangling.
+          dst_ptr     = gather_buffer.data() + extent.offset;
+          extent.view = device_span<uint8_t>{dst_ptr, extent.size};
         }
+
+        auto* ss           = &(*strm_desc)[stripe.id][stream_id - num_index_streams];
+        ss->data_ptr       = dst_ptr;  // null when not gathered; init_batched_memcpy_kernel skips
+        ss->stream_size    = extent.size;
+        ss->first_chunk_id = stripe.first;
+        ss->num_chunks     = stripe.size;
+        ss->column_id      = col_idx;
+        ss->stream_type    = k;
       }
     }
 
@@ -1135,13 +1264,18 @@ std::vector<StripeInformation> gather_stripes(size_t num_index_streams,
   strm_desc->device_to_host_async(stream);
   enc_data->streams.device_to_host(stream);
 
-  // move the gathered stripes to encoded_data.data for lifetime management
-  for (auto stripe_id = 0ul; stripe_id < enc_data->data.size(); ++stripe_id) {
-    for (auto stream_id = 0ul; stream_id < enc_data->data[0].size(); ++stream_id) {
-      if (not gathered_stripes[stripe_id][stream_id].is_empty())
-        enc_data->data[stripe_id][stream_id] = std::move(gathered_stripes[stripe_id][stream_id]);
+  // Replace data views for gathered (stripe, stream) with the gathered-arena
+  // spans, so consumers that read enc_data->data observe the post-gather state.
+  for (size_t stripe_id = 0; stripe_id < enc_data->data.size(); ++stripe_id) {
+    for (size_t stream_id = 0; stream_id < num_streams_in_data; ++stream_id) {
+      auto const extent = gather_extents[stripe_id][stream_id];
+      if (extent.gathered) { enc_data->data[stripe_id][stream_id] = extent.view; }
     }
   }
+
+  // Hold the gathered arena for lifetime management, and release the arena it copied from.
+  enc_data->gathered_buffer  = std::move(gather_buffer);
+  enc_data->transient_buffer = rmm::device_uvector<uint8_t>{0, stream};
 
   return stripes;
 }
@@ -1703,8 +1837,8 @@ void pushdown_lists_null_mask(orc_column_view const& col,
       auto const is_row_valid = d_col.is_valid(idx) and bit_value_or(parent_pd_mask, idx, true);
       if (not is_row_valid) {
         auto offsets                = d_col.child(lists_column_view::offsets_column_index);
-        auto const child_rows_begin = offsets.element<size_type>(idx + d_col.offset());
-        auto const child_rows_end   = offsets.element<size_type>(idx + 1 + d_col.offset());
+        auto const child_rows_begin = offsets.element<int32_t>(idx + d_col.offset());
+        auto const child_rows_end   = offsets.element<int32_t>(idx + 1 + d_col.offset());
         for (auto child_row = child_rows_begin; child_row < child_rows_end; ++child_row)
           clear_bit(out_mask.data(), child_row);
       }
@@ -1953,9 +2087,9 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
 
             auto offsets = parent_col.child(lists_column_view::offsets_column_index);
             auto const rows_begin =
-              offsets.element<size_type>(parent_rg.begin + parent_col.offset()) - col.offset();
+              offsets.element<int32_t>(parent_rg.begin + parent_col.offset()) - col.offset();
             auto const rows_end =
-              offsets.element<size_type>(parent_rg.end + parent_col.offset()) - col.offset();
+              offsets.element<int32_t>(parent_rg.end + parent_col.offset()) - col.offset();
 
             return rowgroup_rows{rows_begin, rows_end};
           }
@@ -2375,13 +2509,14 @@ auto convert_table_to_orc_data(table_view const& input,
 
   auto const block_align = compress_required_chunk_alignment(compression);
 
-  auto streams  = create_streams(orc_table.columns,
+  auto streams = create_streams(orc_table.columns,
                                 segmentation,
                                 decimal_column_sizes(dec_chunk_sizes.rg_sizes),
                                 enable_dictionary,
                                 compression,
                                 write_mode);
-  auto enc_data = encode_columns(
+
+  auto [enc_data, extents] = encode_columns(
     orc_table, std::move(dec_chunk_sizes), segmentation, streams, block_align, stream);
 
   stripe_dicts.on_encode_complete(stream);
@@ -2393,7 +2528,12 @@ auto convert_table_to_orc_data(table_view const& input,
   auto const num_data_streams       = streams.size() - num_index_streams;
   hostdevice_2dvector<stripe_stream> strm_descs(
     segmentation.num_stripes(), num_data_streams, stream);
-  auto stripes = gather_stripes(num_index_streams, segmentation, &enc_data, &strm_descs, stream);
+  auto stripes = gather_stripes(num_index_streams,
+                                segmentation,
+                                host_2dspan<extent_info const>{extents, streams.size()},
+                                &enc_data,
+                                &strm_descs,
+                                stream);
 
   if (num_rows == 0) {
     return std::tuple{std::move(enc_data),
@@ -2459,7 +2599,10 @@ auto convert_table_to_orc_data(table_view const& input,
                                                   comp_results,
                                                   stream);
 
-    // deallocate encoded data as it is not needed anymore
+    // deallocate encoded data as it is not needed anymore. Frees the arenas that outlived the
+    // gather and clears the spans that referenced them.
+    enc_data.persistent_buffer = rmm::device_uvector<uint8_t>{0, stream};
+    enc_data.gathered_buffer   = rmm::device_uvector<uint8_t>{0, stream};
     enc_data.data.clear();
 
     strm_descs.device_to_host_async(stream);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -63,14 +63,14 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
       // handle sliced columns
       int const local_shift =
         shift -
-        (c.offset() > 0 ? cudf::detail::get_value<size_type>(c.offsets(), c.offset(), stream) : 0);
+        (c.offset() > 0 ? cudf::detail::get_value<int32_t>(c.offsets(), c.offset(), stream) : 0);
       column_device_view offsets(c.offsets(), nullptr, nullptr);
       thrust::transform(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        offsets.begin<size_type>() + c.offset(),
-        offsets.begin<size_type>() + c.offset() + c.size() + 1,
-        d_merged_offsets.begin<size_type>() + count,
-        [local_shift] __device__(size_type offset) { return offset + local_shift; });
+        offsets.begin<int32_t>() + c.offset(),
+        offsets.begin<int32_t>() + c.offset() + c.size() + 1,
+        d_merged_offsets.begin<int32_t>() + count,
+        [local_shift] __device__(int32_t offset) -> int32_t { return offset + local_shift; });
 
       shift += c.get_sliced_child(stream).size();
       count += c.size();

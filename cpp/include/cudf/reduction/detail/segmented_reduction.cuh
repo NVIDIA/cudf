@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,12 +10,12 @@
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -52,7 +52,7 @@ void segmented_reduce(InputIterator d_in,
                       OutputIterator d_out,
                       BinaryOp op,
                       OutputType initial_value,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
   requires(is_fixed_width<OutputType>() && !cudf::is_fixed_point<OutputType>())
 {
   auto const num_segments = static_cast<size_type>(std::distance(d_offset_begin, d_offset_end)) - 1;
@@ -68,7 +68,7 @@ void segmented_reduce(InputIterator d_in,
                                      d_offset_begin + 1,
                                      binary_op,
                                      initial_value,
-                                     stream.value());
+                                     stream.get());
   auto d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
 
   // Run reduction
@@ -81,7 +81,7 @@ void segmented_reduce(InputIterator d_in,
                                      d_offset_begin + 1,
                                      binary_op,
                                      initial_value,
-                                     stream.value());
+                                     stream.get());
 }
 
 template <typename InputIterator,
@@ -95,7 +95,7 @@ void segmented_reduce(InputIterator,
                       OutputIterator,
                       BinaryOp,
                       OutputType,
-                      rmm::cuda_stream_view)
+                      cuda::stream_ref)
   requires(!(is_fixed_width<OutputType>() && !cudf::is_fixed_point<OutputType>()))
 {
   CUDF_FAIL(
@@ -132,7 +132,7 @@ void segmented_reduce(InputIterator d_in,
                       op::compound_op<Op> op,
                       size_type ddof,
                       size_type* d_valid_counts,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   using OutputType       = cuda::std::iter_value_t<OutputIterator>;
   using IntermediateType = cuda::std::iter_value_t<InputIterator>;
@@ -154,7 +154,7 @@ void segmented_reduce(InputIterator d_in,
                                      d_offset_begin + 1,
                                      binary_op,
                                      initial_value,
-                                     stream.value());
+                                     stream.get());
   auto d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
 
   // Run reduction
@@ -167,7 +167,7 @@ void segmented_reduce(InputIterator d_in,
                                      d_offset_begin + 1,
                                      binary_op,
                                      initial_value,
-                                     stream.value());
+                                     stream.get());
 
   // compute the result value from intermediate value in device
   thrust::transform(

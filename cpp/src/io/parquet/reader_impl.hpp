@@ -189,6 +189,27 @@ class reader_impl {
   void preprocess_chunk_strings(read_mode mode, row_range const& read_info);
 
   /**
+   * @brief Detect per-column eligibility for direct Parquet-dict → DICTIONARY32 transcode, and
+   * apply the required host-side mutations to `_output_buffers` and `subpass.pages`.
+   *
+   * Must be called after `prepare_data()`. Populates `_dict_transcode_eligible` with a bool per
+   * input column indicating whether the column will be assembled as a DICTIONARY32 output later in
+   * `assemble_dict_transcoded_columns`. That member is the sole signal of whether the fast path is
+   * active: `assemble_dict_transcoded_columns` no-ops when no column is eligible.
+   *
+   * @param mode Value indicating if the data sources are read all at once or chunk by chunk
+   */
+  void prepare_dict_transcode(read_mode mode);
+
+  /**
+   * @brief Assemble DICTIONARY32 output columns for input columns that were marked eligible by
+   * `prepare_dict_transcode`.
+   *
+   * @param out_columns The output columns vector to transcode in place.
+   */
+  void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns);
+
+  /**
    * @brief Copies over the relevant page mask information for the subpass
    */
   void set_subpass_page_mask();
@@ -542,6 +563,8 @@ class reader_impl {
     bool prepend_source_index_column = false;
     // Whether to prepend the file-local row index column to the output
     bool prepend_row_index_column = false;
+    // Whether to try outputting DICTIONARY32 columns for fully dict-encoded string columns
+    bool output_dict_columns = false;
   } _options;
 
   // name to reference converter to extract AST output filter
@@ -600,6 +623,10 @@ class reader_impl {
 
   std::size_t _output_chunk_read_limit{0};  // output chunk size limit in bytes
   std::size_t _input_pass_read_limit{0};    // input pass memory usage limit in bytes
+
+  // Per-input-column flag indicating whether that column was selected for direct
+  // Parquet-dict → DICTIONARY32 transcode.
+  std::vector<bool> _dict_transcode_eligible;
 };
 
 }  // namespace cudf::io::parquet::detail

@@ -17,6 +17,10 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 )
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -31,7 +35,7 @@ cdef class BPEMergePairs:
     def __cinit__(
         self,
         Column merge_pairs,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         cdef column_view c_pairs = merge_pairs.view()
@@ -49,7 +53,7 @@ cpdef Column byte_pair_encoding(
     Column input,
     BPEMergePairs merge_pairs,
     Scalar separator=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

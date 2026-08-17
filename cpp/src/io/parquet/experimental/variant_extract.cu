@@ -723,12 +723,10 @@ struct cast_variant_fn {
     requires(is_variant_numerical<T>)
   {
     rmm::device_buffer data{num_rows * sizeof(T), stream, mr};
-
     auto grid = cudf::detail::grid_1d{num_rows, block_size};
     cast_variant_primitive_kernel<T><<<grid.num_blocks, block_size, 0, stream.value()>>>(
       values, {static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)}, d_null_mask);
     CUDF_CUDA_TRY(cudaGetLastError());
-
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return std::make_unique<column>(desired_type,
@@ -774,7 +772,6 @@ struct cast_variant_fn {
     cast_variant_string_fn fn{values, d_null_mask, nullptr, nullptr, {}};
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(fn, num_rows, stream, mr);
-
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return make_strings_column(num_rows,
@@ -791,6 +788,47 @@ struct cast_variant_fn {
     CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
   }
 };
+
+/**
+ * @brief Classifies only the first (value_metadata) byte of enc; does not validate the remaining
+ * payload. A recognized header returns its logical type even when the payload is truncated. Returns
+ * nullopt for an empty blob or an unrecognized primitive type ID.
+ */
+__device__ cuda::std::optional<variant_logical_type> logical_type_of(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return cuda::std::nullopt; }
+  auto const value_metadata = enc[0];
+  auto const btype          = decode_basic_type(value_metadata);
+
+  if (btype == basic_type::SHORT_STRING) { return variant_logical_type::STRING; }
+  if (btype == basic_type::OBJECT) { return variant_logical_type::OBJECT; }
+  if (btype == basic_type::ARRAY) { return variant_logical_type::ARRAY; }
+
+  switch (static_cast<primitive_type>(variant_value_header(value_metadata))) {
+    case primitive_type::NULLVAL: return variant_logical_type::NULL_VALUE;
+    case primitive_type::BOOLEAN_TRUE:
+    case primitive_type::BOOLEAN_FALSE: return variant_logical_type::BOOLEAN;
+    case primitive_type::INT8:
+    case primitive_type::INT16:
+    case primitive_type::INT32:
+    case primitive_type::INT64: return variant_logical_type::LONG_VALUE;
+    case primitive_type::FLOAT64: return variant_logical_type::DOUBLE_VALUE;
+    case primitive_type::DECIMAL4:
+    case primitive_type::DECIMAL8:
+    case primitive_type::DECIMAL16: return variant_logical_type::DECIMAL;
+    case primitive_type::DATE: return variant_logical_type::DATE;
+    case primitive_type::TIMESTAMP_MICROS:
+    case primitive_type::TIMESTAMP_NANOS: return variant_logical_type::TIMESTAMP;
+    case primitive_type::TIMESTAMP_NTZ_MICROS:
+    case primitive_type::TIMESTAMP_NTZ_NANOS: return variant_logical_type::TIMESTAMP_NTZ;
+    case primitive_type::FLOAT32: return variant_logical_type::FLOAT_VALUE;
+    case primitive_type::BINARY: return variant_logical_type::BINARY;
+    case primitive_type::LONG_STRING: return variant_logical_type::STRING;
+    case primitive_type::TIME_NTZ_MICROS: return variant_logical_type::TIME_NTZ;
+    case primitive_type::UUID: return variant_logical_type::UUID;
+    default: return cuda::std::nullopt;
+  }
+}
 
 std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> steps,
                                           rmm::cuda_stream_view stream,
@@ -926,6 +964,19 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                                      rmm::device_async_resource_ref mr)
 {
   validate_variant_child(values);
+
+  switch (desired_type.id()) {
+    case type_id::INT8:
+    case type_id::INT16:
+    case type_id::INT32:
+    case type_id::INT64:
+    case type_id::FLOAT32:
+    case type_id::FLOAT64:
+    case type_id::BOOL8:
+    case type_id::STRING: break;
+    default: CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
+  }
+
   size_type const num_rows = values.size();
   if (num_rows == 0) { return make_empty_column(desired_type); }
 
@@ -948,6 +999,45 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                                                mr});
 }
 
+std::unique_ptr<column> get_variant_type_id(column_view const& values,
+                                            rmm::cuda_stream_view stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  validate_variant_child(values);
+  size_type const num_rows = values.size();
+  if (num_rows == 0) { return make_empty_column(data_type{type_id::UINT8}); }
+
+  auto val_device_view = column_device_view::create(values, stream);
+  cudf::lists_column_device_view val_lists_device_view(*val_device_view);
+
+  auto null_mask    = values.nullable()
+                        ? cudf::detail::copy_bitmask(values, stream, mr)
+                        : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
+  auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
+
+  rmm::device_buffer data{static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr};
+
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>(0),
+    cuda::counting_iterator<size_type>(num_rows),
+    static_cast<uint8_t*>(data.data()),
+    [values = val_lists_device_view, d_null_mask] __device__(size_type row) -> uint8_t {
+      if (!cudf::bit_is_set(d_null_mask, row)) { return 0; }
+      auto const ltype = logical_type_of(list_row_span(values, row));
+      if (ltype.has_value()) { return static_cast<uint8_t>(ltype.value()); }
+      cudf::clear_bit(d_null_mask, row);
+      return 0;
+    });
+
+  auto const null_count = num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
+  return std::make_unique<column>(data_type{type_id::UINT8},
+                                  num_rows,
+                                  std::move(data),
+                                  null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                  null_count);
+}
+
 }  // namespace detail
 
 std::unique_ptr<column> get_variant_field(column_view const& variant_column,
@@ -966,6 +1056,14 @@ std::unique_ptr<column> cast_variant(column_view const& values,
 {
   CUDF_FUNC_RANGE();
   return detail::cast_variant(values, desired_type, stream, mr);
+}
+
+std::unique_ptr<column> get_variant_type_id(column_view const& values,
+                                            rmm::cuda_stream_view stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::get_variant_type_id(values, stream, mr);
 }
 
 std::unique_ptr<column> extract_variant_field(column_view const& variant_column,

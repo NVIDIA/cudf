@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "join_common_utils.hpp"
@@ -15,9 +15,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -29,7 +30,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 inner_join(table_view const& left_input,
            table_view const& right_input,
            null_equality compare_nulls,
-           rmm::cuda_stream_view stream,
+           cuda::stream_ref stream,
            rmm::device_async_resource_ref mr)
 {
   // Make sure any dictionary columns have matched key sets.
@@ -64,7 +65,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 left_join(table_view const& left_input,
           table_view const& right_input,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
+          cuda::stream_ref stream,
           rmm::device_async_resource_ref mr)
 {
   // Make sure any dictionary columns have matched key sets.
@@ -89,7 +90,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 full_join(table_view const& left_input,
           table_view const& right_input,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
+          cuda::stream_ref stream,
           rmm::device_async_resource_ref mr)
 {
   // Make sure any dictionary columns have matched key sets.
@@ -116,7 +117,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 inner_join(table_view const& left,
            table_view const& right,
            null_equality compare_nulls,
-           rmm::cuda_stream_view stream,
+           cuda::stream_ref stream,
            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -128,7 +129,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 left_join(table_view const& left,
           table_view const& right,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
+          cuda::stream_ref stream,
           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -140,7 +141,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 full_join(table_view const& left,
           table_view const& right,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
+          cuda::stream_ref stream,
           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

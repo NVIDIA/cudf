@@ -9,6 +9,7 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -26,6 +27,7 @@
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
+#include <thrust/copy.h>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -120,10 +122,15 @@ std::vector<std::string> copy_strings_to_host_sync(
     auto const scv     = cudf::strings_column_view(col);
     auto const h_chars = cudf::detail::make_host_vector_async<char>(
       cudf::device_span<char const>(scv.chars_begin(stream), scv.chars_size(stream)), stream);
+    auto d_offsets = rmm::device_uvector<int64_t>(scv.size() + 1, stream);
+    auto offset_itr =
+      cudf::detail::offsetalator_factory::make_input_iterator(scv.offsets(), scv.offset());
+    thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                 offset_itr,
+                 offset_itr + scv.size() + 1,
+                 d_offsets.begin());
     auto const h_offsets = cudf::detail::make_host_vector_async(
-      cudf::device_span<cudf::size_type const>(scv.offsets().data<cudf::size_type>() + scv.offset(),
-                                               scv.size() + 1),
-      stream);
+      cudf::device_span<int64_t const>(d_offsets.data(), d_offsets.size()), stream);
     stream.synchronize();
 
     // build std::string vector from chars and offsets
@@ -213,7 +220,7 @@ struct json_column_data {
   using row_offset_t = json_column::row_offset_t;
   row_offset_t* string_offsets;
   row_offset_t* string_lengths;
-  row_offset_t* child_offsets;
+  int32_t* child_offsets;
   bitmask_type* validity;
 };
 
@@ -1154,7 +1161,7 @@ void scatter_offsets(tree_meta_t const& tree,
         col.child_offsets.begin(),
         col.child_offsets.end(),
         col.child_offsets.begin(),
-        cuda::maximum<json_column::row_offset_t>{});
+        cuda::maximum<int32_t>{});
     }
   }
   stream.synchronize();

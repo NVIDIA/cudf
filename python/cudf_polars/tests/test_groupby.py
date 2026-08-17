@@ -236,7 +236,7 @@ def test_groupby_filtered_item_allow_empty(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-def test_groupby_filtered_item_missing_cell_raise(engine_raise_on_fail):
+def test_groupby_filtered_item_missing_cell_raise(engine):
     lf = pl.LazyFrame(
         {
             "bucket": [1],
@@ -248,11 +248,15 @@ def test_groupby_filtered_item_missing_cell_raise(engine_raise_on_fail):
         A=pl.col("value").filter(pl.col("exchange") == "A").item(),
     )
 
-    with pytest.raises(
-        pl.exceptions.ComputeError,
-        match="aggregation 'item' expected a single value, got none",
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = "aggregation 'item' expected a single value, got none"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.ComputeError, match=match)
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError, match=match):
+            q.collect(engine=engine)
 
 
 def test_groupby_filtered_item_nested_agg_raises(engine: pl.GPUEngine):
@@ -324,7 +328,7 @@ def test_groupby_pivot_item(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-def test_groupby_filtered_item_duplicate_cells_raise(engine_raise_on_fail):
+def test_groupby_filtered_item_duplicate_cells_raise(engine):
     lf = pl.LazyFrame(
         {
             "bucket": [1, 1],
@@ -336,11 +340,15 @@ def test_groupby_filtered_item_duplicate_cells_raise(engine_raise_on_fail):
         A=pl.col("value").filter(pl.col("exchange") == "A").item(allow_empty=True),
     )
 
-    with pytest.raises(
-        pl.exceptions.ComputeError,
-        match="aggregation 'item' expected no or a single value",
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = "aggregation 'item' expected no or a single value"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.ComputeError, match=match)
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError, match=match):
+            q.collect(engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -350,11 +358,11 @@ def test_groupby_filtered_item_duplicate_cells_raise(engine_raise_on_fail):
         ([], pl.col("value").item(allow_empty=True)),
     ],
 )
-def test_select_item(engine_raise_on_fail, values, expr):
+def test_select_item(engine, values, expr):
     lf = pl.LazyFrame({"value": pl.Series(values, dtype=pl.Float64)})
     q = lf.select(expr)
 
-    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -364,12 +372,18 @@ def test_select_item(engine_raise_on_fail, values, expr):
         ([10.0, 20.0], "aggregation 'item' expected a single value, got 2 values"),
     ],
 )
-def test_select_item_raises(engine_raise_on_fail, values, match):
+def test_select_item_raises(engine, values, match):
     lf = pl.LazyFrame({"value": pl.Series(values, dtype=pl.Float64)})
     q = lf.select(pl.col("value").item())
 
-    with pytest.raises(pl.exceptions.ComputeError, match=match):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.ComputeError, match=match)
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError, match=match):
+            q.collect(engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -380,11 +394,11 @@ def test_select_item_raises(engine_raise_on_fail, values, match):
         [None, 10.0, 20.0],
     ],
 )
-def test_select_first_non_null(engine_raise_on_fail, values):
+def test_select_first_non_null(engine, values):
     lf = pl.LazyFrame({"value": pl.Series(values, dtype=pl.Float64)})
     q = lf.select(pl.col("value").drop_nulls().first())
 
-    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(

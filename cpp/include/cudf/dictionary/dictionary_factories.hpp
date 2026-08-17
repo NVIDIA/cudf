@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 /**
  * @file

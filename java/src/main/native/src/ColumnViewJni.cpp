@@ -2298,7 +2298,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
           new cudf::column_view(cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0));
       } else {
         JNI_NULL_CHECK(env, j_offset, "offset is null", 0);
-        cudf::size_type* offsets = reinterpret_cast<cudf::size_type*>(j_offset);
+        int32_t* offsets = reinterpret_cast<int32_t*>(j_offset);
         cudf::column_view offsets_column(
           cudf::data_type{cudf::type_id::INT32}, size + 1, offsets, nullptr, 0);
         return ptr_as_jlong(new cudf::column_view(cudf::data_type{cudf::type_id::STRING},
@@ -2314,11 +2314,11 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
       cudf::jni::native_jpointerArray<cudf::column_view> children(env, j_children);
       JNI_ARG_CHECK(env, (children.size() == 1), "LIST children size is not 1", 0);
       cudf::size_type offsets_size = 0;
-      cudf::size_type* offsets     = nullptr;
+      int32_t* offsets             = nullptr;
       if (size != 0) {
         JNI_NULL_CHECK(env, j_offset, "offset is null", 0);
         offsets_size = size + 1;
-        offsets      = reinterpret_cast<cudf::size_type*>(j_offset);
+        offsets      = reinterpret_cast<int32_t*>(j_offset);
       }
       cudf::column_view offsets_column(
         cudf::data_type{cudf::type_id::INT32}, offsets_size, offsets, nullptr, 0);

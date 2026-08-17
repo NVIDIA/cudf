@@ -16,7 +16,7 @@
 #include <cuco/hyperloglog_ref.cuh>
 #include <cuda/functional>
 #include <cuda/std/span>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>

@@ -39,7 +39,7 @@ namespace {
  * @brief Copy fixed-width column data to a host vector
  */
 template <typename T>
-auto host_row_mask_data(cudf::column_view const& column, rmm::cuda_stream_view stream)
+auto host_row_mask_data(cudf::column_view const& column, cuda::stream_ref stream)
 {
   return cudf::detail::make_host_vector<T>(
     cudf::device_span<T const>(column.data<T>(), static_cast<size_t>(column.size())), stream);
@@ -74,7 +74,7 @@ std::vector<char> create_empty_parquet_with_stats()
  * @brief Build a scalar literal matching a filter column type
  */
 template <typename T>
-auto make_scalar(cudf::size_type value, rmm::cuda_stream_view stream)
+auto make_scalar(cudf::size_type value, cuda::stream_ref stream)
 {
   if constexpr (cudf::is_timestamp<T>()) {
     return cudf::timestamp_scalar<T>(T(typename T::duration(value)), true, stream);

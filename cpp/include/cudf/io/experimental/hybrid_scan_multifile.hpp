@@ -13,8 +13,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>
@@ -153,7 +154,7 @@ class hybrid_scan_multifile {
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_stats(
     cudf::host_span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Get byte ranges of bloom filters and dictionary pages (secondary filters) for row group
@@ -182,7 +183,7 @@ class hybrid_scan_multifile {
    */
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     cudf::host_span<std::vector<size_type> const> row_group_indices,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -199,7 +200,7 @@ class hybrid_scan_multifile {
   [[nodiscard]] std::unique_ptr<cudf::column> build_row_mask_with_page_index_stats(
     cudf::host_span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -240,7 +241,7 @@ class hybrid_scan_multifile {
     cudf::mutable_column_view& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -280,7 +281,7 @@ class hybrid_scan_multifile {
     cudf::column_view const& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -310,7 +311,7 @@ class hybrid_scan_multifile {
     cudf::host_span<std::vector<size_type> const> row_group_indices,
     cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -338,7 +339,7 @@ class hybrid_scan_multifile {
     use_data_page_mask mask_data_pages,
     cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -380,7 +381,7 @@ class hybrid_scan_multifile {
     use_data_page_mask mask_data_pages,
     cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -416,7 +417,7 @@ class hybrid_scan_multifile {
     cudf::host_span<std::vector<size_type> const> row_group_indices,
     cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -481,7 +482,7 @@ class hybrid_scan_multifile {
     cudf::host_span<cudf::device_span<uint8_t const> const> dictionary_page_data,
     cudf::host_span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
  private:
   std::unique_ptr<detail::hybrid_scan_reader_impl> _impl;

@@ -108,6 +108,7 @@ class UnaryFunction(Expr):
     }
     _supported_misc_fns = frozenset(
         {
+            "approx_n_unique",
             "argwhere",
             "as_struct",
             "arg_max",
@@ -134,6 +135,7 @@ class UnaryFunction(Expr):
             "repeat_by",
             "replace",
             "replace_strict",
+            "reverse",
             "round",
             "round_sig_figs",
             "search_sorted",
@@ -161,7 +163,7 @@ class UnaryFunction(Expr):
     _horizontal_fold_ops: ClassVar[dict[str, plc.binaryop.BinaryOperator]] = {
         "max_horizontal": plc.binaryop.BinaryOperator.NULL_MAX,
     }
-    _supported_horizontal_fns = frozenset({"max_horizontal"})
+    _supported_horizontal_fns = frozenset({"coalesce", "max_horizontal"})
     _supported_math_fns = frozenset(
         {
             "cot",
@@ -172,10 +174,10 @@ class UnaryFunction(Expr):
         }
     )
     _supported_fns = frozenset().union(
-        _supported_misc_fns,
         _supported_cum_aggs,
-        _supported_math_fns,
         _supported_horizontal_fns,
+        _supported_math_fns,
+        _supported_misc_fns,
         _OP_MAPPING.keys(),
     )
     _pointwise_fns = frozenset(
@@ -207,12 +209,6 @@ class UnaryFunction(Expr):
 
         if self.name not in UnaryFunction._supported_fns:
             raise NotImplementedError(f"Unary function {name=}")  # pragma: no cover
-        if self.name in UnaryFunction._supported_cum_aggs:
-            (reverse,) = self.options
-            if reverse:
-                raise NotImplementedError(
-                    "reverse=True is not supported for cumulative aggregations"
-                )
         if self.name == "index_of" and plc.traits.is_nested(children[0].dtype.plc_type):
             raise NotImplementedError("index_of on nested types is not supported")
         if self.name == "fill_null_with_strategy" and self.options[1] not in {0, None}:
@@ -889,6 +885,23 @@ class UnaryFunction(Expr):
                 order=order,
                 null_order=null_order,
             )
+        elif self.name == "approx_n_unique":
+            (column,) = (child.evaluate(df, context=context) for child in self.children)
+            sketch = plc.reduce.ApproxDistinctCount(
+                plc.Table([column.obj]),
+                null_handling=plc.types.NullPolicy.INCLUDE,
+                nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+                stream=df.stream,
+            )
+            nunique = sketch.estimate(stream=df.stream)
+            return Column(
+                plc.Column.from_scalar(
+                    plc.Scalar.from_py(nunique, self.dtype.plc_type, stream=df.stream),
+                    1,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
         elif self.name == "value_counts":
             (sort, _, _, normalize) = self.options
             count_agg = [plc.aggregation.count(plc.types.NullPolicy.INCLUDE)]
@@ -1160,6 +1173,32 @@ class UnaryFunction(Expr):
                 ),
                 dtype=self.dtype,
             )
+        elif self.name == "coalesce":
+            first_child, *other_children = self.children
+            first_col = first_child.evaluate(df, context=context).astype(
+                self.dtype, stream=df.stream
+            )
+            if first_col.is_scalar:
+                result = plc.filling.repeat(
+                    plc.Table([first_col.obj]),
+                    df.num_rows,
+                    stream=df.stream,
+                ).columns()[0]
+            else:
+                result = first_col.obj
+            for child in other_children:
+                if result.null_count() == 0:
+                    break
+                cast_candidate = child.evaluate(df, context=context).astype(
+                    self.dtype, stream=df.stream
+                )
+                fill = (
+                    cast_candidate.obj_scalar(stream=df.stream)
+                    if cast_candidate.is_scalar
+                    else cast_candidate.obj
+                )
+                result = plc.replace.replace_nulls(result, fill, stream=df.stream)
+            return Column(result, dtype=self.dtype)
         elif self.name == "rank":
             (column,) = (child.evaluate(df, context=context) for child in self.children)
             method_str, descending, _ = self.options
@@ -1369,6 +1408,12 @@ class UnaryFunction(Expr):
                     fill_scalar = fill_col.obj_scalar(stream=df.stream)
             return Column(
                 plc.copying.shift(column.obj, offset, fill_scalar, stream=df.stream),
+                dtype=self.dtype,
+            )
+        elif self.name == "reverse":
+            column = self.children[0].evaluate(df, context=context)
+            return Column(
+                plc.copying.reverse(column.obj, stream=df.stream),
                 dtype=self.dtype,
             )
         elif self.name == "reinterpret":
@@ -1621,6 +1666,8 @@ class UnaryFunction(Expr):
             )
         elif self.name in UnaryFunction._supported_cum_aggs:
             column = self.children[0].evaluate(df, context=context)
+            (reverse,) = self.options
+            # https://github.com/rapidsai/cudf/issues/23208 for a native reverse scan
             if self.name == "cum_count":
                 # cum_count is the cumulative count of non-null values.
                 counts = plc.unary.cast(
@@ -1628,16 +1675,24 @@ class UnaryFunction(Expr):
                     self.dtype.plc_type,
                     stream=df.stream,
                 )
-                return Column(
-                    plc.reduce.scan(
-                        counts,
-                        plc.aggregation.sum(),
-                        plc.reduce.ScanType.INCLUSIVE,
-                        stream=df.stream,
-                    ),
-                    dtype=self.dtype,
+                if reverse:
+                    # A reverse cumulative aggregation is a forward one over
+                    # the reversed column, reversed back into place.
+                    counts = plc.copying.reverse(counts, stream=df.stream)
+                result = plc.reduce.scan(
+                    counts,
+                    plc.aggregation.sum(),
+                    plc.reduce.ScanType.INCLUSIVE,
+                    stream=df.stream,
                 )
+                if reverse:
+                    result = plc.copying.reverse(result, stream=df.stream)
+                return Column(result, dtype=self.dtype)
             plc_col = column.obj
+            if reverse:
+                # A reverse cumulative aggregation is a forward one over the
+                # reversed column, reversed back into place.
+                plc_col = plc.copying.reverse(plc_col, stream=df.stream)
             col_type = column.dtype.plc_type
             # cum_sum casts
             # Int8, UInt8, Int16, UInt16 -> Int64 for overflow prevention
@@ -1678,12 +1733,12 @@ class UnaryFunction(Expr):
             elif self.name == "cum_max":
                 agg = plc.aggregation.max()
 
-            return Column(
-                plc.reduce.scan(
-                    plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
-                ),
-                dtype=self.dtype,
+            result = plc.reduce.scan(
+                plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
             )
+            if reverse:
+                result = plc.copying.reverse(result, stream=df.stream)
+            return Column(result, dtype=self.dtype)
         raise NotImplementedError(
             f"Unimplemented unary function {self.name=}"
         )  # pragma: no cover; init trips first

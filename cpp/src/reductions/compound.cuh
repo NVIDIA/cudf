@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,7 +42,7 @@ template <typename ElementType, typename ResultType, typename Op>
 std::unique_ptr<scalar> compound_reduction(column_view const& col,
                                            data_type const output_dtype,
                                            size_type ddof,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   auto const valid_count = col.size() - col.null_count();
@@ -99,7 +99,7 @@ struct result_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_v<ResultType>())
   {
@@ -110,7 +110,7 @@ struct result_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(not is_supported_v<ResultType>())
   {
@@ -134,7 +134,7 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_v<ElementType>())
   {
@@ -147,7 +147,7 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(not is_supported_v<ElementType>())
   {

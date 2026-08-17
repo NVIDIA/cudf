@@ -1402,11 +1402,14 @@ dependencies:
             packages:
               - *numba_cuda
   depends_on_numba_cuda_mlir:
-    # numba-cuda-mlir is the MLIR-based numba-cuda compiler used by the cudf
-    # UDF backend. Currently only published to PyPI; conda packaging is a
-    # tracked feature request (see TODOs in conda/recipes/cudf/recipe.yaml).
-    # Once a conda package exists, add an `output_types: [conda]` entry here
-    # mirroring `depends_on_numba_cuda`.
+    common:
+      - output_types: [conda, requirements, pyproject]
+        packages:
+          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
+          - numba>=0.60.0,<0.65.0
+      - output_types: [conda]
+        packages:
+          - &numba_cuda_mlir numba-cuda-mlir>=0.3.0
     specific:
       - output_types: [requirements, pyproject]
         matrices:
@@ -1425,7 +1428,7 @@ dependencies:
           - matrix:
               cuda_suffixed: "false"
             packages:
-              - numba-cuda-mlir>=0.3.0
+              - *numba_cuda_mlir
   depends_on_pylibcudf:
     common:
       - output_types: conda
@@ -1792,7 +1795,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, pyproject]
         packages:
-          - rapids-logger==0.2.*,>=0.0.0a0
+          - rapids-logger==0.3.*
       - output_types: requirements
         packages:
           # pip recognizes the index as a global option for the requirements.txt file

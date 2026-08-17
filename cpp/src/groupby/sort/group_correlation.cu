@@ -16,11 +16,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <type_traits>
@@ -107,7 +107,7 @@ std::unique_ptr<column> group_covariance(column_view const& values_0,
                                          column_view const& mean_1,
                                          size_type min_periods,
                                          size_type ddof,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   using result_type = id_to_type<type_id::FLOAT64>;
@@ -169,7 +169,7 @@ std::unique_ptr<column> group_covariance(column_view const& values_0,
 std::unique_ptr<column> group_correlation(column_view const& covariance,
                                           column_view const& stddev_0,
                                           column_view const& stddev_1,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   using result_type = id_to_type<type_id::FLOAT64>;

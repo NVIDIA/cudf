@@ -194,7 +194,7 @@ CUDF_KERNEL void minhash_ngrams_kernel(cudf::lists_column_device_view const d_in
   if (d_input.is_null(row_idx)) { return; }
 
   // retrieve this row's offset to locate the output position in d_hashes
-  auto const offsets_itr = d_input.offsets().data<cudf::size_type>() + d_input.offset();
+  auto const offsets_itr = d_input.offsets().data<int32_t>() + d_input.offset();
   auto const offset      = offsets_itr[row_idx];
   auto const size_row    = offsets_itr[row_idx + 1] - offset;
   if (size_row == 0) { return; }

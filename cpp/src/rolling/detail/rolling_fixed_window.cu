@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,7 +22,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        size_type following_window,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

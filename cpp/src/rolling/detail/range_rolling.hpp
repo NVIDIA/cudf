@@ -13,8 +13,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -42,7 +43,7 @@ namespace cudf::detail {
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -67,7 +68,7 @@ namespace cudf::detail {
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
   scalar const* row_delta,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -92,7 +93,7 @@ namespace cudf::detail {
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
   scalar const* row_delta,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -117,7 +118,7 @@ namespace cudf::detail {
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
   scalar const* row_delta,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -142,7 +143,7 @@ namespace cudf::detail {
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
   scalar const* row_delta,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::detail

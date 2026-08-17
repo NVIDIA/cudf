@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "UNSPECIFIED",
     "Cluster",
     "ConfigOptions",
     "DaskContext",
@@ -60,7 +61,43 @@ __all__ = [
     "SPMDContext",
     "StreamingExecutor",
     "StreamingFallbackMode",
+    "Unspecified",
 ]
+
+
+class Unspecified:
+    """
+    Sentinel value meaning "no value was explicitly provided".
+
+    The singleton instance :data:`UNSPECIFIED` is used as the default for every
+    :class:`StreamingOptions` field, as well as for
+    ``ParquetOptions.prefetch_file_metadata``. When a field is still
+    ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
+    matching environment variable was provided), the consuming component decides
+    on the semantics.
+    """
+
+    _instance: Unspecified | None = None
+
+    def __new__(cls) -> Unspecified:
+        """Return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        """Return ``"UNSPECIFIED"``."""
+        return "UNSPECIFIED"
+
+
+UNSPECIFIED = Unspecified()
+"""Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
+``ParquetOptions.prefetch_file_metadata``.
+
+A field set to ``UNSPECIFIED`` after construction means no explicit value and no
+matching environment variable was found; the consuming component decides on the
+semantics.
+"""
 
 
 def _env_get_int(name: str, default: int) -> int:
@@ -221,7 +258,10 @@ class ParquetOptions:
         will also be skipped if ``max_footer_samples`` is 0.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
-        `parquet_metadatas` to avoid rereading file footers.
+        `parquet_metadatas` to avoid rereading file footers. Not supported
+        by the in-memory executor, where it defaults to disabled. For the
+        streaming executor, it defaults to being enabled for remote URIs
+        (e.g. ``s3://``) only; pass ``True`` to also prefetch local files.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
@@ -261,11 +301,11 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    prefetch_file_metadata: bool = dataclasses.field(
+    prefetch_file_metadata: bool | Unspecified = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__PREFETCH_FILE_METADATA",
             _bool_converter,
-            default=False,
+            default=UNSPECIFIED,
         )
     )
     use_jit_filter: bool = dataclasses.field(
@@ -289,8 +329,8 @@ class ParquetOptions:
             raise TypeError("max_footer_samples must be an int")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.prefetch_file_metadata, bool):
-            raise TypeError("prefetch_file_metadata must be a bool")
+        if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
+            raise TypeError("prefetch_file_metadata must be a bool when specified")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -960,9 +1000,31 @@ class ConfigOptions(Generic[ExecutorType]):
         if user_parquet_options is None:
             user_parquet_options = {}
 
+        # Engine-dependent default: only prefetch for the streaming executor.
+        # Skipped if the user or the environment has already set a value.
+        prefetch_default = UNSPECIFIED if user_executor == "streaming" else False
+        prefetch_env_set = (
+            os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
+            is not None
+        )
+
         if isinstance(user_parquet_options, dict):
+            user_parquet_options = dict(user_parquet_options)
+            if (
+                "prefetch_file_metadata" not in user_parquet_options
+                and not prefetch_env_set
+            ):
+                user_parquet_options["prefetch_file_metadata"] = prefetch_default
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
+            if (
+                isinstance(user_parquet_options.prefetch_file_metadata, Unspecified)
+                and not prefetch_env_set
+            ):
+                user_parquet_options = dataclasses.replace(
+                    user_parquet_options,
+                    prefetch_file_metadata=prefetch_default,
+                )
             parquet_options = user_parquet_options
         # This is set in polars, and so can't be overridden by the environment
         user_raise_on_fail = engine.config.get("raise_on_fail", False)
@@ -991,7 +1053,7 @@ class ConfigOptions(Generic[ExecutorType]):
         match user_executor:
             case "in-memory":
                 executor = InMemoryExecutor(**user_executor_options)
-                if parquet_options.prefetch_file_metadata:
+                if parquet_options.prefetch_file_metadata is True:
                     raise NotImplementedError(
                         "Prefetching is not supported for the in-memory executor."
                     )

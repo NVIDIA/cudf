@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,10 +12,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/scan.h>
 
 namespace cudf {
@@ -24,7 +24,7 @@ namespace detail {
 std::unique_ptr<column> count_scan(column_view const& values,
                                    null_policy nulls,
                                    cudf::device_span<size_type const> group_labels,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   std::unique_ptr<column> result = make_fixed_width_column(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,9 +15,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -43,7 +42,7 @@ struct is_unique_fn {
 std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   // only support non-nested types

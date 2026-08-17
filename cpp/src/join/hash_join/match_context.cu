@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,7 +28,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> make_join_match_counts(
   null_equality compare_nulls,
   join_kind join,
   table_view const& left,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto match_counts = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
@@ -80,7 +80,7 @@ template <typename Hasher>
 std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_counts(
   join_kind join,
   cudf::table_view const& left,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   return make_join_match_counts(_right,
@@ -98,7 +98,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_co
 template std::unique_ptr<rmm::device_uvector<size_type>>
 hash_join<hash_join_hasher>::make_match_counts(join_kind,
                                                cudf::table_view const&,
-                                               rmm::cuda_stream_view,
+                                               cuda::stream_ref,
                                                rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

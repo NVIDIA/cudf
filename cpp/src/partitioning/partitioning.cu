@@ -12,7 +12,6 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/scatter.hpp>
-#include <cudf/detail/utilities/alignment.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -583,7 +582,7 @@ struct staged_scatter_smem {
 };
 
 /**
- * @brief Copies the fixed-width payload columns described by `descriptors` in one kernel launch.
+ * @brief Copies one batch of fixed-width payload columns.
  *
  * Each CTA computes the partitioned output position of every row it owns. For each descriptor, it
  * stages the column values in partition order in shared memory and writes each partition as a
@@ -591,8 +590,9 @@ struct staged_scatter_smem {
  *
  * @tparam BlockSize Number of threads in the CTA
  * @tparam PartitionMetadataView Device-accessible partition metadata view
- * @param columns Fixed-width input/output column descriptors
- * @param batches Consecutive ranges of column descriptors
+ * @param columns Fixed-width input/output column descriptors for this batch
+ * @param num_columns Number of column descriptors in this batch
+ * @param max_element_width Widest element in this batch
  * @param num_rows Number of input rows
  * @param num_partitions Number of partitions
  * @param rows_per_thread Number of grid-stride iterations per thread
@@ -603,7 +603,8 @@ struct staged_scatter_smem {
  */
 template <size_type BlockSize, typename PartitionMetadataView>
 CUDF_KERNEL void copy_fixed_width_columns(fixed_width_column_descriptor const* columns,
-                                          fixed_width_copy_batch const* batches,
+                                          size_type num_columns,
+                                          size_type max_element_width,
                                           size_type num_rows,
                                           size_type num_partitions,
                                           size_type rows_per_thread,
@@ -613,10 +614,8 @@ CUDF_KERNEL void copy_fixed_width_columns(fixed_width_column_descriptor const* c
 {
   extern __shared__ __align__(16)
     std::uint8_t shared_memory[];  // align to the maximum supported element width
-  auto const batch         = batches[blockIdx.y];
-  auto const batch_columns = columns + batch.first_column;
   auto const smem =
-    staged_scatter_smem<BlockSize>{num_partitions, rows_per_thread, batch.max_element_width};
+    staged_scatter_smem<BlockSize>{num_partitions, rows_per_thread, max_element_width};
   auto* payload     = shared_memory;
   auto* local_slots = reinterpret_cast<size_type*>(shared_memory + smem.local_slots_offset);
   auto* local_partition_offsets =
@@ -638,8 +637,8 @@ CUDF_KERNEL void copy_fixed_width_columns(fixed_width_column_descriptor const* c
 
   // Copy each column through the shared payload buffer, reusing the row slots and partition
   // offsets.
-  for (size_type column_index = 0; column_index < batch.num_columns; ++column_index) {
-    auto const descriptor = batch_columns[column_index];
+  for (size_type column_index = 0; column_index < num_columns; ++column_index) {
+    auto const descriptor = columns[column_index];
     /** @brief Copies one descriptor using its physical storage-word type. */
     auto const copy_column = [&]<typename Word>() {
       copy_partitioned_values(block,
@@ -1133,20 +1132,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
       rows_per_thread,
       num_partitions,
       column_groups.max_element_width);
-    CUDF_EXPECTS(batches.size() <= std::numeric_limits<std::uint16_t>::max(),
-                 "Fixed-width column batch count exceeds the CUDA grid y limit");
-
-    // Pack the logically separate column and batch arrays into one allocation and upload.
-    auto const columns_bytes =
-      column_groups.fixed_width_indices.size() * sizeof(fixed_width_column_descriptor);
-    auto const batches_bytes  = batches.size() * sizeof(fixed_width_copy_batch);
-    auto const metadata_bytes = columns_bytes + batches_bytes;
-    auto const padded_bytes   = metadata_bytes + alignof(fixed_width_column_descriptor) - 1;
-    auto host_metadata = cudf::detail::make_pinned_vector_async<std::uint8_t>(padded_bytes, stream);
-    auto* host_columns =
-      cudf::detail::align_ptr_for_type<fixed_width_column_descriptor>(host_metadata.data());
-    auto* host_batches = reinterpret_cast<fixed_width_copy_batch*>(
-      reinterpret_cast<std::uint8_t*>(host_columns) + columns_bytes);
+    auto host_columns = cudf::detail::make_pinned_vector_async<fixed_width_column_descriptor>(
+      column_groups.fixed_width_indices.size(), stream);
 
     for (std::size_t descriptor_index = 0;
          descriptor_index < column_groups.fixed_width_indices.size();
@@ -1167,39 +1154,34 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
                                       element_width};
       fixed_width_outputs.push_back(std::move(output));
     }
-    std::copy(batches.begin(), batches.end(), host_batches);
 
-    auto device_metadata =
-      rmm::device_buffer(padded_bytes, stream, cudf::get_current_device_resource_ref());
-    auto* device_columns =
-      cudf::detail::align_ptr_for_type<fixed_width_column_descriptor>(device_metadata.data());
-    auto* device_batches = reinterpret_cast<fixed_width_copy_batch*>(
-      reinterpret_cast<std::uint8_t*>(device_columns) + columns_bytes);
-    cudf::detail::cuda_memcpy_async<std::uint8_t>(
-      device_span<std::uint8_t>{reinterpret_cast<std::uint8_t*>(device_columns), metadata_bytes},
-      host_span<std::uint8_t const>{reinterpret_cast<std::uint8_t const*>(host_columns),
-                                    metadata_bytes},
+    auto device_columns = rmm::device_uvector<fixed_width_column_descriptor>(
+      host_columns.size(), stream, cudf::get_current_device_resource_ref());
+    cudf::detail::cuda_memcpy_async<fixed_width_column_descriptor>(
+      device_span<fixed_width_column_descriptor>{device_columns},
+      host_span<fixed_width_column_descriptor const>{host_columns},
       stream);
 
     auto const copy_shared_memory =
       staged_scatter_smem<BlockSize>{
         num_partitions, rows_per_thread, column_groups.max_element_width}
         .bytes;
-    // The target GPUs rasterize CTAs along x before advancing y. Mapping rows to x and column
-    // batches to y keeps each batch contiguous in launch order, approximating separate launches.
-    auto const copy_grid =
-      dim3{static_cast<unsigned int>(grid_size), static_cast<unsigned int>(batches.size())};
-    copy_fixed_width_columns<BlockSize, PartitionMetadataView>
-      <<<copy_grid, BlockSize, copy_shared_memory, stream.value()>>>(
-        device_columns,
-        device_batches,
-        num_rows,
-        num_partitions,
-        rows_per_thread,
-        partition_metadata,
-        block_partition_sizes.data(),
-        scanned_block_partition_sizes.data());
-    CUDF_CUDA_TRY(cudaGetLastError());
+    // Launching one batch at a time bounds the active output footprint without relying on CTA
+    // rasterization across a two-dimensional grid.
+    for (auto const& batch : batches) {
+      copy_fixed_width_columns<BlockSize, PartitionMetadataView>
+        <<<grid_size, BlockSize, copy_shared_memory, stream.value()>>>(
+          device_columns.data() + batch.first_column,
+          batch.num_columns,
+          batch.max_element_width,
+          num_rows,
+          num_partitions,
+          rows_per_thread,
+          partition_metadata,
+          block_partition_sizes.data(),
+          scanned_block_partition_sizes.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
+    }
   }
 
   // Build one output-to-input map shared by all gathered columns and staged validity masks.

@@ -44,11 +44,11 @@ struct gather_data {
 };
 
 /**
- * @copydoc cudf::make_gather_data(cudf::lists_column_view const& source_column,
+ * @copydoc cudf::lists::detail::make_gather_data(cudf::lists_column_view const& source_column,
  *                                 MapItType gather_map,
  *                                 size_type gather_map_size,
  *                                 rmm::cuda_stream_view stream,
- *                                 rmm::device_async_resource_ref mr)
+ *                                 cudf::memory_resources mr)
  *
  * @param prev_base_offsets The buffer backing the base offsets used in the gather map. We can
  *                          free this buffer before allocating the new one to keep peak memory
@@ -60,8 +60,10 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              size_type gather_map_size,
                              rmm::device_uvector<int32_t>&& prev_base_offsets,
                              rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
+
   // size of the gather map is the # of output rows
   size_type output_count = gather_map_size;
 
@@ -104,9 +106,9 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
       : 0;
 
   // generate the base offsets
-  rmm::device_uvector<int32_t> base_offsets = rmm::device_uvector<int32_t>(output_count, stream);
+  rmm::device_uvector<int32_t> base_offsets(output_count, stream, temp_mr);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     gather_map,
     gather_map + output_count,
     base_offsets.data(),
@@ -231,7 +233,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
  * @param gather_map Iterator access to the gather map for `source_column` map
  * @param gather_map_size Size of the gather map.
  * @param stream CUDA stream on which to execute kernels
- * @param mr Memory resource to use for all allocations
+ * @param mr Memory resources used for temporary allocations and returned columns
  *
  * @returns The gather_data struct needed to construct the gather map for the
  *          next level of recursion.
@@ -241,13 +243,13 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              MapItType gather_map,
                              size_type gather_map_size,
                              rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   return make_gather_data<NullifyOutOfBounds, MapItType>(
     source_column,
     gather_map,
     gather_map_size,
-    rmm::device_uvector<int32_t>{0, stream, mr},
+    rmm::device_uvector<int32_t>{0, stream, mr.get_temporary_mr()},
     stream,
     mr);
 }
@@ -260,14 +262,14 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
  * @param list View into the list column to gather from
  * @param gd The gather_data needed to construct a gather map iterator for this level
  * @param stream CUDA stream on which to execute kernels
- * @param mr Memory resource to use for all allocations
+ * @param mr Memory resources used for temporary allocations and the returned column
  *
  * @returns column with elements gathered based on `gather_data`
  */
 std::unique_ptr<column> gather_list_nested(lists_column_view const& list,
                                            gather_data& gd,
                                            rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cudf::memory_resources mr);
 
 /**
  * @brief Gather a leaf column from a hierarchy of list columns.
@@ -277,20 +279,21 @@ std::unique_ptr<column> gather_list_nested(lists_column_view const& list,
  * @param column View into the column to gather from
  * @param gd The gather_data needed to construct a gather map iterator for this level
  * @param stream CUDA stream on which to execute kernels
- * @param mr Memory resource to use for all allocations
+ * @param mr Memory resources used for temporary allocations and the returned column
  *
  * @returns column with elements gathered based on `gather_data`
  */
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
                                          rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::segmented_gather(lists_column_view const& source_column,
  *                                        lists_column_view const& gather_map_list,
  *                                        out_of_bounds_policy bounds_policy,
- *                                        rmm::device_async_resource_ref mr)
+ *                                        rmm::cuda_stream_view stream,
+ *                                        cudf::memory_resources mr)
  *
  * @param stream CUDA stream on which to execute kernels
  */
@@ -298,7 +301,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& source_column,
                                          lists_column_view const& gather_map_list,
                                          out_of_bounds_policy bounds_policy,
                                          rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace lists

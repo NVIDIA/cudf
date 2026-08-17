@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/detail/copy.hpp>
@@ -28,7 +28,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
                                          lists_column_view const& gather_map,
                                          out_of_bounds_policy bounds_policy,
                                          rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_index_type(gather_map.child().type()),
                "Gather map should be list column of index type");
@@ -37,12 +37,15 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
                "Gather map and list column should be same size");
   if (value_column.is_empty()) { return empty_like(value_column.parent()); }
 
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+
   auto const gather_map_sliced_child = gather_map.get_sliced_child(stream);
   auto const gather_map_size         = gather_map_sliced_child.size();
   auto const gather_index_begin      = gather_map.offsets_begin() + 1;
   auto const gather_index_end        = gather_map.offsets_end();
   auto const value_offsets           = value_column.offsets_begin();
-  auto const value_device_view       = column_device_view::create(value_column.parent(), stream);
+  auto const value_device_view = column_device_view::create(value_column.parent(), stream, temp_mr);
   auto const map_begin =
     cudf::detail::indexalator_factory::make_input_iterator(gather_map_sliced_child);
   auto const out_of_bounds = [] __device__(auto const index, auto const list_size) {
@@ -88,7 +91,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
 
   // Create list offsets from gather_map.
   auto output_offset = cudf::detail::allocate_like(
-    gather_map.offsets(), gather_map.size() + 1, mask_allocation_policy::RETAIN, stream, mr);
+    gather_map.offsets(), gather_map.size() + 1, mask_allocation_policy::RETAIN, stream, output_mr);
   auto output_offset_view = output_offset->mutable_view();
   cudf::detail::copy_range_in_place(gather_map.offsets(),
                                     output_offset_view,
@@ -97,7 +100,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
                                     0,
                                     stream);
   // Assemble list column & return
-  auto null_mask       = cudf::detail::copy_bitmask(value_column.parent(), stream, mr);
+  auto null_mask       = cudf::detail::copy_bitmask(value_column.parent(), stream, output_mr);
   size_type null_count = value_column.null_count();
   return make_lists_column(gather_map.size(),
                            std::move(output_offset),
@@ -112,7 +115,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& source_column,
                                          lists_column_view const& gather_map_list,
                                          out_of_bounds_policy bounds_policy,
                                          rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::segmented_gather(source_column, gather_map_list, bounds_policy, stream, mr);

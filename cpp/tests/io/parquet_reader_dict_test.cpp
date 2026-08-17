@@ -17,6 +17,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/reduction/distinct_count.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table_view.hpp>
@@ -485,4 +486,35 @@ TEST_F(ParquetReaderDictTest, MultiColumnMixedEligibility)
   auto const read_key = read_table->view().column(2);
   ASSERT_EQ(read_key.type().id(), cudf::type_id::INT32);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(key_col, read_key);
+}
+
+// A low-cardinality flat string column spanning multiple row groups must transcode to a
+// DICTIONARY32 whose keys are unique: the per-row-group dictionaries are deduplicated during
+// assembly, not merely stacked. Without dedup the keys would carry up to one copy per row group.
+TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
+{
+  auto input_col = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{input_col}};
+  auto const filepath  = temp_env->get_temp_filepath("MultiRowGroupKeysAreUnique.parquet");
+  write_parquet(input_tbl, filepath);  // row_group_size rows/group -> multiple row groups
+
+  auto const read_table = read_parquet_as_dict(filepath).tbl;
+  ASSERT_EQ(read_table->num_columns(), 1);
+  auto const read_col = read_table->view().column(0);
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::DICTIONARY32);
+
+  cudf::dictionary_column_view const dict_view(read_col);
+  auto const keys = dict_view.keys();
+
+  // Keys must be unique and no larger than the source cardinality; a stacked-but-not-deduplicated
+  // dictionary would carry up to (number of row groups) times more keys.
+  auto const num_distinct =
+    cudf::distinct_count(keys, cudf::null_policy::INCLUDE, cudf::nan_policy::NAN_IS_VALID);
+  EXPECT_EQ(num_distinct, keys.size());
+  EXPECT_LE(keys.size(), cardinality);
+
+  // And it still decodes to the original input.
+  auto const decoded = cudf::dictionary::decode(dict_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
 }

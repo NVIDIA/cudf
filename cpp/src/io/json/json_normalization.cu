@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -23,6 +22,7 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/gather.h>
 #include <thrust/reduce.h>
@@ -295,7 +295,7 @@ namespace detail {
 
 void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& indata,
                              char delimiter,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -328,7 +328,7 @@ std::
   normalize_whitespace(device_span<char const> d_input,
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
 {
   /*
@@ -376,7 +376,7 @@ std::
                              output_it,
                              inbuf_lengths.begin(),
                              inbuf_lengths_size,
-                             stream.value());
+                             stream.get());
     rmm::device_buffer temp_storage(temp_storage_bytes, stream);
     cub::DeviceCopy::Batched(temp_storage.data(),
                              temp_storage_bytes,
@@ -384,7 +384,7 @@ std::
                              output_it,
                              inbuf_lengths.begin(),
                              inbuf_lengths_size,
-                             stream.value());
+                             stream.get());
   }
 
   // whitespace normalization : get the indices of the unquoted whitespace characters
@@ -443,7 +443,7 @@ std::
                          inbuf_offsets.begin(),
                          0);
 
-  stream.synchronize();
+  stream.sync();
   return std::tuple{std::move(inbuf), std::move(inbuf_offsets), std::move(inbuf_lengths)};
 }
 

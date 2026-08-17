@@ -69,7 +69,7 @@ dremel_data get_encoding(column_view h_col,
                          std::vector<uint8_t> nullability,
                          bool output_as_byte_array,
                          bool always_nullable,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   auto get_list_level = [](column_view col) {
     while (col.type().id() == type_id::STRUCT) {
@@ -126,7 +126,7 @@ dremel_data get_encoding(column_view h_col,
                                                     stream,
                                                     cudf::get_current_device_resource_ref());
     CUDF_CUDA_TRY(cudaMemsetAsync(
-      empty_list_offset_col->mutable_view().head(), 0, sizeof(int32_t), stream.value()));
+      empty_list_offset_col->mutable_view().head(), 0, sizeof(int32_t), stream.get()));
     std::function<column_view(column_view const&)> normalize_col = [&](column_view const& col) {
       auto children = [&]() -> std::vector<column_view> {
         if (col.type().id() == type_id::LIST) {
@@ -255,7 +255,7 @@ dremel_data get_encoding(column_view h_col,
 
   auto column_offsets = cudf::detail::make_host_vector_async(d_column_offsets, stream);
   auto column_ends    = cudf::detail::make_host_vector_async(d_column_ends, stream);
-  stream.synchronize();
+  stream.sync();
 
   size_t max_vals_size = 0;
   for (size_t l = 0; l < column_offsets.size(); ++l) {
@@ -462,7 +462,7 @@ dremel_data get_encoding(column_view h_col,
   rep_level.resize(level_vals_size, stream);
   def_level.resize(level_vals_size, stream);
 
-  stream.synchronize();
+  stream.sync();
 
   size_type leaf_data_size = column_ends.back() - column_offsets.back();
 
@@ -477,7 +477,7 @@ dremel_data get_encoding(column_view h_col,
 dremel_data get_dremel_data(column_view h_col,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   return get_encoding(h_col, nullability, output_as_byte_array, false, stream);
 }
@@ -485,7 +485,7 @@ dremel_data get_dremel_data(column_view h_col,
 dremel_data get_comparator_data(column_view h_col,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   return get_encoding(h_col, nullability, output_as_byte_array, true, stream);
 }

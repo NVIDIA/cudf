@@ -4,7 +4,7 @@
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
-cdef extern from "<cuda/stream_ref>" namespace "cuda" nogil:
+cdef extern from "<cuda/stream>" namespace "cuda" nogil:
     cdef cppclass stream_ref:
         stream_ref() noexcept
         stream_ref(cudaStream_t) noexcept

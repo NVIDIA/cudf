@@ -15,7 +15,7 @@
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <benchmark/benchmark.h>
 #include <rapidsmpf/memory/cuda_memcpy_async.hpp>
@@ -71,7 +71,7 @@ static void BM_Pack_device(benchmark::State& state)
 {
   auto const table_size_mb = static_cast<std::size_t>(state.range(0));
 
-  cuda::stream_ref stream = cuda::stream_ref{};
+  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
 
   // Create memory resources
   rmm::mr::pool_memory_resource pool_mr{rmm::mr::cuda_async_memory_resource{},
@@ -92,7 +92,7 @@ static void BM_Pack_pinned(benchmark::State& state)
 
   auto const table_size_mb = static_cast<std::size_t>(state.range(0));
 
-  cuda::stream_ref stream = cuda::stream_ref{};
+  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
 
   // Create memory resources
   rmm::mr::pool_memory_resource pool_mr{
@@ -179,7 +179,7 @@ static void BM_ChunkedPack_device(benchmark::State& state)
   // Bounce buffer size: max(1MB, table_size / 10)
   auto const bounce_buffer_size = std::max(MB, table_size_bytes / 10);
 
-  cuda::stream_ref stream = cuda::stream_ref{};
+  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
 
   rmm::mr::pool_memory_resource pool_mr{rmm::mr::cuda_async_memory_resource{},
                                         rmm::percent_of_free_device_memory(40)};
@@ -204,7 +204,7 @@ static void BM_ChunkedPack_pinned(benchmark::State& state)
   // Bounce buffer size: max(1MB, table_size / 10)
   auto const bounce_buffer_size = std::max(MB, table_size_bytes / 10);
 
-  cuda::stream_ref stream = cuda::stream_ref{};
+  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
 
   rmm::mr::pool_memory_resource pool_mr{
     rmm::mr::cuda_async_memory_resource{}, rmm::percent_of_free_device_memory(40)
@@ -248,7 +248,7 @@ static void BM_ChunkedPack_fixed_table_device(benchmark::State& state)
   auto const bounce_buffer_size          = static_cast<std::size_t>(state.range(0)) * MB;
   constexpr std::size_t table_size_bytes = 1024 * MB;
 
-  cuda::stream_ref stream = cuda::stream_ref{};
+  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
 
   // Create memory resources
   rmm::mr::pool_memory_resource pool_mr{rmm::mr::cuda_async_memory_resource{},
@@ -272,7 +272,7 @@ static void BM_ChunkedPack_fixed_table_pinned(benchmark::State& state)
   auto const bounce_buffer_size = static_cast<std::size_t>(state.range(0)) * MB;
   constexpr std::size_t table_size_bytes = 1024 * MB;
 
-  cuda::stream_ref stream = cuda::stream_ref{};
+  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
 
   rmm::mr::pool_memory_resource pool_mr{
     rmm::mr::cuda_async_memory_resource{}, rmm::percent_of_free_device_memory(40)

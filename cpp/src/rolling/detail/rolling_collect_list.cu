@@ -42,8 +42,7 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
   //   scatter result == [0, 0, 1, 0, 0, 2, 0, 0, 1, 0, 0, 1, 0]
   //
 
-  auto const num_child_rows{
-    cudf::detail::get_value<size_type>(offsets, offsets.size() - 1, stream)};
+  auto const num_child_rows{cudf::detail::get_value<int32_t>(offsets, offsets.size() - 1, stream)};
   auto per_row_mapping       = make_fixed_width_column(data_type{type_to_id<size_type>()},
                                                  num_child_rows,
                                                  mask_state::UNALLOCATED,
@@ -59,10 +58,10 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
   thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      begin,
                      begin + offsets.size() - 1,
-                     offsets.begin<size_type>(),
+                     offsets.begin<int32_t>(),
                      begin,  // stencil iterator
                      per_row_mapping_begin,
-                     [offset = offsets.begin<size_type>()] __device__(auto i) {
+                     [offset = offsets.begin<int32_t>()] __device__(auto i) {
                        return offset[i] != offset[i + 1];
                      });  // [0,0,1,0,0,3,...]
 
@@ -141,7 +140,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                    new_sizes->mutable_view().template begin<size_type>(),
                    new_sizes->mutable_view().template end<size_type>(),
                    [d_gather_map  = gather_map.template begin<size_type>(),
-                    d_old_offsets = offsets.template begin<size_type>(),
+                    d_old_offsets = offsets.template begin<int32_t>(),
                     input_row_not_null] __device__(auto i) {
                      return thrust::count_if(thrust::seq,
                                              d_gather_map + d_old_offsets[i],

@@ -21,7 +21,7 @@
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/gather.h>
 
 namespace cudf {

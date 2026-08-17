@@ -12,7 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/span>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>

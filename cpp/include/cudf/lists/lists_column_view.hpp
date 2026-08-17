@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -62,7 +62,7 @@ class lists_column_view : private column_view {
   using column_view::null_mask;
   using column_view::offset;
   using column_view::size;
-  using offset_iterator = size_type const*;  ///< Iterator type for offsets
+  using offset_iterator = int32_t const*;  ///< Iterator type for offsets
 
   /**
    * @brief Returns the parent column.
@@ -108,7 +108,7 @@ class lists_column_view : private column_view {
    */
   [[nodiscard]] offset_iterator offsets_begin() const noexcept
   {
-    return offsets().begin<size_type>() + offset();
+    return offsets().begin<int32_t>() + offset();
   }
 
   /**

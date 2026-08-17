@@ -462,6 +462,7 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
         }
       }
 
+      warp.sync();
       if (lane_id == 0) { db->setup_next_mini_block(true); }
       warp.sync();
     }
@@ -782,6 +783,7 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
         }
       }
 
+      warp.sync();
       if (t == 0) { string_lengths.setup_next_mini_block(true); }
       warp.sync();
     }

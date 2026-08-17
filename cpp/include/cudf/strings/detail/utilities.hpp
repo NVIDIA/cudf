@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,8 +11,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace strings::detail {
@@ -32,7 +33,7 @@ namespace strings::detail {
  */
 std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     size_type count,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -45,7 +46,7 @@ std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
  */
 rmm::device_uvector<string_view> create_string_vector_from_column(
   cudf::strings_column_view const strings,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -83,7 +84,7 @@ bool is_large_strings_enabled();
  */
 int64_t get_offset_value(cudf::column_view const& offsets,
                          size_type index,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Return the first and last offset in the given strings column
@@ -95,7 +96,7 @@ int64_t get_offset_value(cudf::column_view const& offsets,
  * @return First and last offset values
  */
 std::pair<int64_t, int64_t> get_first_and_last_offset(cudf::strings_column_view const& input,
-                                                      rmm::cuda_stream_view stream);
+                                                      cuda::stream_ref stream);
 
 }  // namespace strings::detail
 }  // namespace CUDF_EXPORT cudf

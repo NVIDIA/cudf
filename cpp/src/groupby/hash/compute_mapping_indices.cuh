@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,11 +12,10 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cooperative_groups.h>
 #include <cuco/static_set_ref.cuh>
 #include <cuda/std/atomic>
+#include <cuda/stream>
 
 #include <algorithm>
 
@@ -169,9 +168,9 @@ void compute_mapping_indices(size_type grid_size,
                              size_type* global_mapping_indices,
                              size_type* block_cardinality,
                              cuda::std::atomic_flag* needs_global_memory_fallback,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
-  mapping_indices_kernel<<<grid_size, GROUPBY_BLOCK_SIZE, 0, stream>>>(
+  mapping_indices_kernel<<<grid_size, GROUPBY_BLOCK_SIZE, 0, stream.get()>>>(
     num_rows,
     global_set,
     row_bitmask,

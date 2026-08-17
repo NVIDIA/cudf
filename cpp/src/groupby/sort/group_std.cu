@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,11 +17,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
@@ -65,7 +65,7 @@ void reduce_by_key_fn(column_device_view const& values,
                       size_type const* d_group_sizes,
                       size_type ddof,
                       ResultType* d_result,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   auto var_fn = var_transform<ResultType, decltype(values_iter)>{
     values, values_iter, d_means, d_group_sizes, group_labels.data(), ddof};
@@ -96,7 +96,7 @@ struct var_functor {
                                      column_view const& group_sizes,
                                      cudf::device_span<size_type const> group_labels,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<T>)
   {
@@ -169,7 +169,7 @@ std::unique_ptr<column> group_var(column_view const& values,
                                   column_view const& group_sizes,
                                   cudf::device_span<size_type const> group_labels,
                                   size_type ddof,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   auto values_type = cudf::is_dictionary(values.type())

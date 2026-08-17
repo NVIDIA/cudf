@@ -653,6 +653,71 @@ TEST_F(OrcWriterTest, negTimestampsNano)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+template <typename T>
+void test_timestamp_roundtrip(std::vector<typename T::rep> const& values,
+                              std::vector<typename T::rep> const& expected_values)
+{
+  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const input(values.begin(),
+                                                                         values.end());
+  cudf::test::fixed_width_column_wrapper<T, typename T::rep> const expected(expected_values.begin(),
+                                                                            expected_values.end());
+  cudf::table_view const input_table({input});
+
+  std::vector<char> out_buffer;
+  cudf::io::orc_writer_options const out_opts =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, input_table);
+  cudf::io::write_orc(out_opts);
+
+  cudf::io::orc_reader_options const in_opts =
+    cudf::io::orc_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size()}})
+      .use_index(false)
+      .timestamp_type(cudf::data_type{cudf::type_to_id<T>()});
+  auto const result = cudf::io::read_orc(in_opts);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected, result.tbl->view().column(0), cudf::test::debug_output_level::ALL_ERRORS);
+}
+
+TEST_F(OrcWriterTest, NegativeFractionalTimestamps)
+{
+  // ORC readers handle remainders of >= 1 ms above the lower second differently, so cover both
+  auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{
+    -54'218'791'351'223'251L,  // 776.749 ms above the lower second, so >= 1 ms
+    -5'999'999L,               // 1 us above the lower second, so < 1 ms
+  };
+  test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, timestamps_us);
+
+  auto const timestamps_ns = std::vector<cudf::timestamp_ns::rep>{
+    -131'968'727'238'000'000L,  // 762 ms above the lower second, so >= 1 ms
+    -5'999'999'999L,            // 1 ns above the lower second, so < 1 ms
+  };
+  test_timestamp_roundtrip<cudf::timestamp_ns>(timestamps_ns, timestamps_ns);
+
+  // Millisecond timestamps cannot have a < 1 ms remainder
+  auto const timestamps_ms = std::vector<cudf::timestamp_ms::rep>{
+    -123'456L,  // 544 ms above the lower second
+    -5'999L,    // 1 ms above the lower second, the smallest remainder at this resolution
+  };
+  test_timestamp_roundtrip<cudf::timestamp_ms>(timestamps_ms, timestamps_ms);
+}
+
+// Timestamps in the last 999 ms before the epoch are not representable in ORC; they are read back
+// one second later, as with the Apache ORC writer, whose own tests assert the same values (ORC-763,
+// ORC-771).
+TEST_F(OrcWriterTest, NegativeTimestampsNearEpoch)
+{
+  auto const timestamps_us = std::vector<cudf::timestamp_us::rep>{-1L, -500L, -500'000L, -999'000L};
+  auto const read_back_us =
+    std::vector<cudf::timestamp_us::rep>{999'999L, 999'500L, 500'000L, 1'000L};
+  test_timestamp_roundtrip<cudf::timestamp_us>(timestamps_us, read_back_us);
+
+  test_timestamp_roundtrip<cudf::timestamp_ns>({-1L, -999'000'000L}, {999'999'999L, 1'000'000L});
+
+  test_timestamp_roundtrip<cudf::timestamp_ms>({-1L, -999L}, {999L, 1L});
+}
+
 TEST_F(OrcWriterTest, Slice)
 {
   int32_col col{{1, 2, 3, 4, 5}, cudf::test::iterators::null_at(3)};

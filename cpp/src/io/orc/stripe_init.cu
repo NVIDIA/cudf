@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,10 +9,9 @@
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/io/orc_types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cub/cub.cuh>
 #include <cuda/std/array>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 
@@ -549,11 +548,11 @@ void __host__ parse_compressed_stripe_data(compressed_stream_info* strm_info,
                                            int32_t num_streams,
                                            uint64_t compression_block_size,
                                            uint32_t log2maxcr,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   auto const num_blocks = (num_streams + 3) >> 2;  // 1 stream per warp, 4 warps per block
   if (num_blocks > 0) {
-    parse_compressed_stripe_data_kernel<<<num_blocks, 128, 0, stream.value()>>>(
+    parse_compressed_stripe_data_kernel<<<num_blocks, 128, 0, stream.get()>>>(
       strm_info, num_streams, compression_block_size, log2maxcr);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -561,12 +560,12 @@ void __host__ parse_compressed_stripe_data(compressed_stream_info* strm_info,
 
 void __host__ post_decompression_reassemble(compressed_stream_info* strm_info,
                                             int32_t num_streams,
-                                            rmm::cuda_stream_view stream)
+                                            cuda::stream_ref stream)
 {
   auto const num_blocks = (num_streams + 3) >> 2;  // 1 stream per warp, 4 warps per block
   if (num_blocks > 0) {
-    post_decompression_reassemble_kernel<<<num_blocks, 128, 0, stream.value()>>>(strm_info,
-                                                                                 num_streams);
+    post_decompression_reassemble_kernel<<<num_blocks, 128, 0, stream.get()>>>(strm_info,
+                                                                               num_streams);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }
@@ -578,10 +577,10 @@ void __host__ parse_row_group_index(row_group* row_groups,
                                     size_type num_stripes,
                                     size_type rowidx_stride,
                                     bool use_base_stride,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   auto const num_blocks = num_columns * num_stripes;
-  parse_row_group_index_kernel<<<num_blocks, 128, 0, stream.value()>>>(
+  parse_row_group_index_kernel<<<num_blocks, 128, 0, stream.get()>>>(
     row_groups, strm_info, chunks, num_columns, num_stripes, rowidx_stride, use_base_stride);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -589,12 +588,12 @@ void __host__ parse_row_group_index(row_group* row_groups,
 void __host__ reduce_pushdown_masks(device_span<orc_column_device_view const> columns,
                                     device_2dspan<rowgroup_rows const> rowgroups,
                                     device_2dspan<cudf::size_type> valid_counts,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   auto const num_blocks    = columns.size() * rowgroups.size().first;  // 1 block per rowgroup
   constexpr int block_size = 128;
   reduce_pushdown_masks_kernel<block_size>
-    <<<num_blocks, block_size, 0, stream.value()>>>(columns, rowgroups, valid_counts);
+    <<<num_blocks, block_size, 0, stream.get()>>>(columns, rowgroups, valid_counts);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

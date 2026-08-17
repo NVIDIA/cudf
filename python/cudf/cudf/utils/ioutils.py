@@ -579,6 +579,12 @@ index : bool, default None
     doesn't require much space and is faster. Other indexes will
     be included as columns in the file output.
 
+Notes
+-----
+Timestamps in the last 999 milliseconds before the UNIX epoch are not
+representable in ORC; they are read back one second later, as with the Apache
+ORC writer (ORC-763, ORC-771).
+
 See Also
 --------
 cudf.read_orc

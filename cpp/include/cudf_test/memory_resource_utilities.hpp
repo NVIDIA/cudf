@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/default_stream.hpp>
 
@@ -15,8 +16,9 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
+#include <concepts>
 #include <cstddef>
 #include <functional>
 #include <utility>
@@ -155,6 +157,24 @@ class memory_resource_test_harness {
 };
 
 /**
+ * @brief Callable that accepts a statistics resource and returns a column wrapper.
+ */
+template <typename Factory>
+concept column_wrapper_statistics_resource_factory =
+  requires(Factory& factory, rmm::mr::statistics_resource_adaptor& mr) {
+    { std::invoke(factory, mr) } -> std::derived_from<detail::column_wrapper>;
+  };
+
+/**
+ * @brief Callable that accepts `cudf::memory_resources` and returns a column wrapper.
+ */
+template <typename Factory>
+concept column_wrapper_memory_resources_factory =
+  requires(Factory& factory, cudf::memory_resources mr) {
+    { std::invoke(factory, mr) } -> std::derived_from<detail::column_wrapper>;
+  };
+
+/**
  * @brief Verify that an owning result uses one explicitly supplied output resource.
  *
  * `factory` receives a statistics resource and returns a column wrapper. The helper releases the
@@ -169,7 +189,7 @@ class memory_resource_test_harness {
  * @param output_expectation Expected relationship between live and total output bytes
  * @param stream Stream to synchronize before inspecting allocation counters
  */
-template <typename Factory>
+template <column_wrapper_statistics_resource_factory Factory>
 void expect_output_uses_resource(
   Factory&& factory,
   output_allocation_expectation output_expectation = output_allocation_expectation::EXACT,
@@ -207,7 +227,7 @@ void expect_output_uses_resource(
  * @param expectations Expected output and temporary allocation behavior
  * @param stream Stream to synchronize before inspecting allocation counters
  */
-template <typename Factory>
+template <column_wrapper_memory_resources_factory Factory>
 void expect_output_uses_distinct_resources(
   Factory&& factory,
   memory_resource_expectations expectations = {},

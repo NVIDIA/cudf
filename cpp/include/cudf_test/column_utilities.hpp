@@ -18,8 +18,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 #include <thrust/iterator/transform_iterator.h>
 
@@ -57,7 +56,7 @@ bool expect_column_properties_equal(
   cudf::column_view const& lhs,
   cudf::column_view const& rhs,
   debug_output_level verbosity = debug_output_level::FIRST_ERROR,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+  cuda::stream_ref stream      = cudf::test::get_default_stream(),
   cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -82,7 +81,7 @@ bool expect_column_properties_equivalent(
   cudf::column_view const& lhs,
   cudf::column_view const& rhs,
   debug_output_level verbosity = debug_output_level::FIRST_ERROR,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+  cuda::stream_ref stream      = cudf::test::get_default_stream(),
   cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -104,7 +103,7 @@ bool expect_column_properties_equivalent(
 bool expect_columns_equal(cudf::column_view const& lhs,
                           cudf::column_view const& rhs,
                           debug_output_level verbosity = debug_output_level::FIRST_ERROR,
-                          rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                          cuda::stream_ref stream      = cudf::test::get_default_stream(),
                           cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -130,7 +129,7 @@ bool expect_columns_equivalent(cudf::column_view const& lhs,
                                cudf::column_view const& rhs,
                                debug_output_level verbosity = debug_output_level::FIRST_ERROR,
                                size_type fp_ulps            = cudf::test::default_ulp,
-                               rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                               cuda::stream_ref stream      = cudf::test::get_default_stream(),
                                cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -147,8 +146,8 @@ bool expect_columns_equivalent(cudf::column_view const& lhs,
 void expect_equal_buffers(void const* lhs,
                           void const* rhs,
                           std::size_t size_bytes,
-                          rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                          cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+                          cuda::stream_ref stream   = cudf::test::get_default_stream(),
+                          cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace detail
 
@@ -169,8 +168,8 @@ void expect_column_empty(cudf::column_view const& col);
  */
 std::vector<bitmask_type> bitmask_to_host(
   cudf::column_view const& c,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::test::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Validates bitmask situated in host as per `number_of_elements`
@@ -200,8 +199,8 @@ bool validate_host_masks(std::vector<bitmask_type> const& expected_mask,
 template <typename T, std::enable_if_t<not cudf::is_fixed_point<T>()>* = nullptr>
 std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
   column_view c,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream   = cudf::test::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto col_span  = cudf::device_span<T const>(c.data<T>(), c.size());
   auto host_data = cudf::detail::make_host_vector(col_span, stream);
@@ -227,8 +226,8 @@ std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
 template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* = nullptr>
 CUDF_EXPORT std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
   column_view c,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::test::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Copies the data and bitmask of a `column_view` of strings
@@ -244,7 +243,7 @@ CUDF_EXPORT std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host
  */
 template <>
 CUDF_EXPORT std::pair<thrust::host_vector<std::string>, std::vector<bitmask_type>> to_host(
-  column_view c, rmm::cuda_stream_view stream, cudf::memory_resources mr);
+  column_view c, cuda::stream_ref stream, cudf::memory_resources mr);
 //! @endcond
 
 /**

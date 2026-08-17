@@ -93,7 +93,8 @@ namespace {
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {
-  auto data = cudf::detail::make_device_uvector_async(values, stream, mr);
+  auto data = cudf::detail::make_device_uvector_async(
+    host_span<size_type const>{values.data(), values.size()}, stream, mr);
   stream.synchronize();
   return std::make_unique<column>(data_type{type_id::INT32},
                                   static_cast<size_type>(values.size()),

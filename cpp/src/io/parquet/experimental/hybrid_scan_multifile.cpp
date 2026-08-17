@@ -142,7 +142,7 @@ hybrid_scan_multifile::payload_pages_byte_ranges(
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   CUDF_FUNC_RANGE();
   return _impl->payload_pages_byte_ranges(row_group_indices, row_mask, options, stream);
@@ -242,7 +242,7 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
   cudf::column_view const& row_mask,
   cudf::host_span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();

@@ -200,7 +200,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   payload_pages_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
                             cudf::column_view const& row_mask,
                             parquet_reader_options const& options,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::materialize_payload_columns
@@ -279,7 +279,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cudf::column_view const& row_mask,
     std::span<cudf::device_span<uint8_t const> const> page_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**

@@ -517,7 +517,7 @@ hybrid_scan_reader_impl::payload_pages_byte_ranges(
   std::span<std::vector<size_type> const> row_group_indices,
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(row_group_indices.size() == _extended_metadata->get_num_sources(),
                "Row group source count must match the number of input sources");
@@ -855,7 +855,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
   cudf::column_view const& row_mask,
   std::span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),

@@ -100,7 +100,7 @@ chunked_sparse_hybrid_scan_multifile(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**

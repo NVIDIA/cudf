@@ -26,7 +26,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <algorithm>
 #include <functional>
@@ -183,9 +182,9 @@ void remap_dict_indices_by_chunk(int32_t* d_indices,
                                  rmm::cuda_stream_view stream)
 {
   thrust::for_each(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator(size_type{0}),
-    thrust::make_counting_iterator(num_rows),
+    rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
+    cuda::counting_iterator{num_rows},
     [row_offsets, key_counts_prefix, stacked_to_unique, d_indices] __device__(size_type row) {
       // Chunk owning `row` is the last offset <= row.
       auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);

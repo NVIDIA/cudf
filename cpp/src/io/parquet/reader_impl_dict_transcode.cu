@@ -23,7 +23,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -162,39 +161,38 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
 /**
  * @brief Remap each row's dictionary index onto the deduplicated key space (in place).
  *
- * Row `r` belongs to the chunk whose row range contains it; its local index is first shifted into
- * that chunk's region of the stacked (non-deduplicated) key space, then translated through
- * `stacked_to_unique` -- the position->index map produced by encoding the stacked keys -- so it
- * points at the correct entry in the compact, unique keys column. This lets multi-row-group
- * assembly avoid `cudf::dictionary::detail::concatenate`, which would re-copy the already-contiguous
- * per-chunk indices into a fresh buffer. Defined as a free function because extended `__device__`
- * lambdas cannot appear in a private member function.
+ * If output_dict_columns is set, the transcode fast path copies the dictionary indices as is on
+ * Parquet, into a new INT32 column. These indices (d_indices) were indexing the keys for the local
+ * row group. This function shifts the indices into the chunk's region of the stacked
+ * (non-deduplicated) key space, and remaps them onto the deduplicated key space spanning all row
+ * groups. Remapping is done in place. Used in-lieu of `cudf::dictionary::detail::concatenate`.
  *
  * @param d_indices Device pointer to the INT32 index buffer, mutated in place
  * @param num_rows Number of index values
  * @param row_offsets Per-chunk row boundaries `[offsets[k], offsets[k+1])`, size num_chunks+1
- * @param key_prefix Per-chunk key-prefix offsets into the stacked key space, size num_chunks+1
+ * @param key_counts_prefix Per-chunk key-prefix offsets into the stacked key space, size
+ * num_chunks+1
  * @param stacked_to_unique Map from stacked-key position to compact unique-key index
  * @param stream CUDA stream used for the kernel launch
  */
 void remap_dict_indices_by_chunk(int32_t* d_indices,
                                  size_type num_rows,
                                  cudf::device_span<size_type const> row_offsets,
-                                 cudf::device_span<size_type const> key_prefix,
+                                 cudf::device_span<size_type const> key_counts_prefix,
                                  cudf::device_span<int32_t const> stacked_to_unique,
                                  rmm::cuda_stream_view stream)
 {
-  thrust::for_each(rmm::exec_policy_nosync(stream),
-                   thrust::make_counting_iterator(size_type{0}),
-                   thrust::make_counting_iterator(num_rows),
-                   [row_offsets, key_prefix, stacked_to_unique, d_indices] __device__(size_type row) {
-                     // Chunk owning `row` is the last offset <= row.
-                     auto const it = thrust::upper_bound(
-                       thrust::seq, row_offsets.begin(), row_offsets.end(), row);
-                     auto const k = static_cast<size_type>(it - row_offsets.begin() - 1);
-                     auto const stacked_pos = key_prefix[k] + d_indices[row];
-                     d_indices[row]         = stacked_to_unique[stacked_pos];
-                   });
+  thrust::for_each(
+    rmm::exec_policy_nosync(stream),
+    thrust::make_counting_iterator(size_type{0}),
+    thrust::make_counting_iterator(num_rows),
+    [row_offsets, key_counts_prefix, stacked_to_unique, d_indices] __device__(size_type row) {
+      // Chunk owning `row` is the last offset <= row.
+      auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);
+      auto const k  = static_cast<size_type>(it - row_offsets.begin() - 1);
+      auto const stacked_pos = key_counts_prefix[k] + d_indices[row];
+      d_indices[row]         = stacked_to_unique[stacked_pos];
+    });
 }
 
 }  // namespace
@@ -293,11 +291,10 @@ void reader_impl::assemble_dict_transcoded_columns(
 
   auto const& pass = *_pass_itm_data;
 
-  // Batched keys: every string chunk's dictionary entries live contiguously in
-  // `pass.str_dict_index` (each `chunk.str_dict_index` is a pointer into that one buffer). So all
-  // per-chunk keys can be materialized by a single `make_strings_column` instead of one launch per
-  // chunk. Build that column lazily on first multi-row-group use -- columns that all take the
-  // single-row-group fast path never need it -- and hand out zero-copy slices below.
+  // Every string chunk's dictionary entries live contiguously in one buffer in
+  // `pass.str_dict_index` (each `chunk.str_dict_index` is a pointer into that one buffer).
+  // Materialize all keys into a single column using `make_strings_column` (contains duplicates).
+  // All keys stores keys of all columns, and not just column i.
   std::unique_ptr<column> all_keys;
   auto ensure_all_keys = [&]() -> column_view {
     if (all_keys == nullptr) {
@@ -313,10 +310,10 @@ void reader_impl::assemble_dict_transcoded_columns(
   // For each eligible input column, collect its chunks in row-group order, build a per-chunk
   // DICTIONARY32 segment (local 0-based indices + per-chunk keys column), and concatenate.
   //
-  // IMPORTANT: Each segment carries row-group-local indices into its own keys column. We do NOT
-  // pre-shift indices into a global keyspace, because `cudf::dictionary::detail::concatenate`
-  // already re-maps the indices using `compute_children_offsets_fn`. Pre-shifting would cause
-  // double-offsetting and out-of-bounds reads in the `dispatch_compute_indices` kernel.
+  // A single-row-group column takes a zero-copy fast path (keys + decoded indices stapled
+  // together). A multi-row-group column stacks the per-chunk keys, deduplicates them, and remaps
+  // the decoded indices onto the compact key space in place,  avoiding
+  // `cudf::dictionary::detail::concatenate` and its redundant per-chunk index copy.
   std::for_each(
     cuda::counting_iterator<size_t>{0},
     cuda::counting_iterator{_input_columns.size()},
@@ -336,7 +333,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       // ordinal: a nested struct/list column contributes one entry to `_output_buffers` but one
       // entry per leaf to `_input_columns`, so `i` and the corresponding root index can diverge
       // as soon as any nested column precedes this one. Eligibility requires a flat (depth-1)
-      // column, so `nesting[0]` is the correct, and only, output-buffer index to use here.
+      // column, so `nesting[0]` is the correct, and only, output-buffer index to use.
       auto const out_idx = static_cast<size_t>(_input_columns[i].nesting[0]);
 
       // Per-chunk key counts from the dictionary page's `num_input_values`, mirrored back to
@@ -359,6 +356,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       auto& indices_col = out_columns[out_idx];
       CUDF_EXPECTS(indices_col != nullptr and indices_col->type().id() == type_id::INT32,
                    "Expected INT32 indices column for dict-transcoded flat string column");
+      // Claim ownership of the indices column. (output_columns vectoris now empty.)
       auto indices_owner = std::move(indices_col);
 
       // Single row group fast path: the Parquet dictionary page's entries become the keys as-is,
@@ -384,14 +382,14 @@ void reader_impl::assemble_dict_transcoded_columns(
         // Keys were not distinct: fall through to the multi-row-group path, which deduplicates.
       }
 
-      // Multi-row-group path (dedup-and-shift): stack every chunk's keys, deduplicate the (small)
-      // key set once, then remap each row's index onto the compact key space IN PLACE. This avoids
-      // `cudf::dictionary::detail::concatenate`, which would re-copy the already-contiguous per-chunk
-      // indices (`indices_owner`) into a fresh buffer -- an O(num_rows) copy the transcode does not
-      // need. Only the keys (O(total_keys)) are deduplicated; the row-sized index work is one pass.
+      // Multi-row-group path (dedup-and-shift): stack every chunk's keys into a single column,
+      // deduplicate the ( key set once, then remap each row's index onto the compact key space in
+      // place. This avoids `cudf::dictionary::detail::concatenate`, which would re-copy the
+      // already-contiguous per-chunk indices (`indices_owner`) into a fresh buffer.
       auto const num_row_vals = static_cast<size_type>(indices_owner->size());
 
-      // Per-chunk row boundaries: chunk k occupies rows [chunk_row_offsets[k], chunk_row_offsets[k+1]).
+      // Per-chunk row boundaries: chunk k occupies rows [chunk_row_offsets[k],
+      // chunk_row_offsets[k+1]).
       std::vector<size_type> chunk_row_offsets(chunk_indices.size() + 1, 0);
       std::transform(
         chunk_indices.begin(),
@@ -404,49 +402,51 @@ void reader_impl::assemble_dict_transcoded_columns(
                    "Row counts on pass chunks must sum to the indices column size");
 
       // Per-chunk key prefix offsets into the stacked key space: chunk k's keys occupy
-      // [key_prefix[k], key_prefix[k+1]).
-      std::vector<size_type> key_prefix(chunk_indices.size() + 1, 0);
-      std::inclusive_scan(chunk_key_counts.begin(), chunk_key_counts.end(), key_prefix.begin() + 1);
+      // [key_counts_prefix[k], key_counts_prefix[k+1]).
+      std::vector<size_type> key_counts_prefix(chunk_indices.size() + 1, 0);
+      std::inclusive_scan(
+        chunk_key_counts.begin(), chunk_key_counts.end(), key_counts_prefix.begin() + 1);
 
       // Stack keys: concatenate every chunk's key slice from the batched `all_keys` (not yet
       // deduplicated). `all_keys` owns the data and outlives this concatenate, so the slices stay
       // valid. Chunk `k`'s entries occupy `[key_offset, key_offset + chunk_key_counts[k])` in
       // `pass.str_dict_index`, where `key_offset` is recovered from the chunk's stored pointer.
-      auto const keys_base = ensure_all_keys();
+      auto const all_keys_column = ensure_all_keys();
       std::vector<column_view> key_slices(chunk_indices.size());
       std::transform(cuda::counting_iterator<size_t>{0},
                      cuda::counting_iterator{chunk_indices.size()},
                      key_slices.begin(),
                      [&](size_t k) {
-                       auto const& chunk     = pass.chunks[chunk_indices[k]];
-                       auto const key_offset = static_cast<size_type>(chunk.str_dict_index -
-                                                                      pass.str_dict_index.data());
+                       auto const& chunk = pass.chunks[chunk_indices[k]];
+                       auto const key_offset =
+                         static_cast<size_type>(chunk.str_dict_index - pass.str_dict_index.data());
                        return cudf::detail::slice(
-                         keys_base, key_offset, key_offset + chunk_key_counts[k], _stream);
+                         all_keys_column, key_offset, key_offset + chunk_key_counts[k], _stream);
                      });
       auto const stacked_keys =
         cudf::detail::concatenate(key_slices, _stream, get_current_device_resource_ref());
 
       // Deduplicate the stacked keys. `encode` yields the compact unique keys (on `_mr`, the output
       // keys child) plus an INT32 map from each stacked-key position to its compact index.
-      auto encoded          = cudf::dictionary::detail::encode(
+      auto encoded = cudf::dictionary::detail::encode(
         stacked_keys->view(), data_type{type_id::INT32}, _stream, _mr);
-      auto encoded_contents  = encoded->release();
-      auto stacked_to_unique = std::move(encoded_contents.children[0]);  // INT32 map (keep for kernel)
-      auto unique_keys       = std::move(encoded_contents.children[1]);  // compact keys, owned on _mr
+      auto encoded_contents = encoded->release();
+      auto stacked_to_unique =
+        std::move(encoded_contents.children[0]);                   // INT32 map (keep for kernel)
+      auto unique_keys = std::move(encoded_contents.children[1]);  // compact keys, owned on _mr
 
       // Remap every row's index onto the compact key space in place. Null rows carry a zero index
       // (fill_pruned_offsets); the shift keeps them in range and the null mask (carried by
       // `indices_owner`) still nullifies them in `decode`.
       auto const d_row_offsets = cudf::detail::make_device_uvector_async(
         chunk_row_offsets, _stream, get_current_device_resource_ref());
-      auto const d_key_prefix = cudf::detail::make_device_uvector_async(
-        key_prefix, _stream, get_current_device_resource_ref());
+      auto const d_key_counts_prefix = cudf::detail::make_device_uvector_async(
+        key_counts_prefix, _stream, get_current_device_resource_ref());
       remap_dict_indices_by_chunk(
         indices_owner->mutable_view().data<int32_t>(),
         num_row_vals,
         cudf::device_span<size_type const>{d_row_offsets.data(), d_row_offsets.size()},
-        cudf::device_span<size_type const>{d_key_prefix.data(), d_key_prefix.size()},
+        cudf::device_span<size_type const>{d_key_counts_prefix.data(), d_key_counts_prefix.size()},
         cudf::device_span<int32_t const>{stacked_to_unique->view().data<int32_t>(),
                                          static_cast<std::size_t>(stacked_to_unique->size())},
         _stream);

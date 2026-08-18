@@ -863,7 +863,6 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
   CUDF_EXPECTS(row_mask.null_count() == 0,
                "Row mask must not have any nulls when materializing payload column");
 
-  reset_column_selection();
   prepare_materialization(
     read_columns_mode::PAYLOAD_COLUMNS, row_group_indices.size(), options, stream, mr);
 

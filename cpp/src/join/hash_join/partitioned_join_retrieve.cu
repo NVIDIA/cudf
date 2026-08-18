@@ -106,8 +106,9 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
   validate_hash_join_probe(_right, left_partition_view, _has_nulls);
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream);
+    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream, temp_mr);
 
   // For FULL_JOIN, probe with LEFT_JOIN semantics (no complement here)
   bool const is_outer = (join != join_kind::INNER_JOIN);
@@ -123,8 +124,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
   auto retrieve_partition = [&](auto equality, auto d_hasher) {
     // Precompute left keys for this partition slice.
-    rmm::device_uvector<probe_key_type> left_keys(n, stream);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::device_uvector<probe_key_type> left_keys(n, stream, temp_mr);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(partition_size),
                       left_keys.begin(),

@@ -24,7 +24,7 @@ namespace {
 std::size_t compute_left_join_complement_size(cudf::device_span<size_type const> right_indices,
                                               size_type left_table_row_count,
                                               size_type right_table_row_count,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   if (left_table_row_count == 0) { return right_table_row_count; }
 
@@ -59,7 +59,7 @@ std::size_t get_full_join_size(
   cudf::detail::hash_table_t const& hash_table,
   bool has_nulls,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   std::size_t join_size = compute_join_output_size<join_kind::LEFT_JOIN>(right_table,

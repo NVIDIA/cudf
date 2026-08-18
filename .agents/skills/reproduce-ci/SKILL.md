@@ -39,7 +39,7 @@ You need three arguments for `run.sh`: **container image**, **CI script**, and *
 ### Option A: Discover from a GitHub Actions Job URL
 
 Use this option when the user provides a URL like:
-`https://github.com/rapidsai/cudf/actions/runs/<run_id>/job/<job_id>?pr=<pr_number>`
+`https://github.com/NVIDIA/cudf/actions/runs/<run_id>/job/<job_id>?pr=<pr_number>`
 
 **Parse the Job URL:**
 
@@ -66,7 +66,7 @@ If the script is unavailable, extract manually:
 Use the extracted IDs to get job details:
 
 ```bash
-gh api repos/rapidsai/cudf/actions/runs/$RUN_ID/jobs \
+gh api repos/NVIDIA/cudf/actions/runs/$RUN_ID/jobs \
   --jq ".jobs[] | select(.id == $JOB_ID)"
 ```
 
@@ -77,7 +77,7 @@ From the job JSON, note:
 Download the full job log:
 
 ```bash
-gh run view "$RUN_ID" --repo rapidsai/cudf --job "$JOB_ID" --log > /tmp/ci_job_log.txt
+gh run view "$RUN_ID" --repo NVIDIA/cudf --job "$JOB_ID" --log > /tmp/ci_job_log.txt
 ```
 
 Read through the log to identify:
@@ -139,7 +139,7 @@ The script automatically detects `RAPIDS_SHA` (the PR's head commit) using `gh p
 This is required by CI helper scripts inside the container to locate build artifacts.
 If auto-detection fails (e.g., `gh` is not authenticated), set it manually:
 ```bash
-export RAPIDS_SHA=$(gh pr view <pr-number> --repo rapidsai/cudf --json commits --jq '.commits[-1].oid')
+export RAPIDS_SHA=$(gh pr view <pr-number> --repo NVIDIA/cudf --json commits --jq '.commits[-1].oid')
 ```
 The script launches a detached container, runs the CI script, and leaves the container running for inspection.
 After `--timeout` minutes of idle (default: 30), the container is automatically removed.
@@ -173,7 +173,7 @@ After `run.sh` completes, analyze the local output against the CI outcome:
 
 | Problem | Fix |
 |---------|-----|
-| `GIT_DESCRIBE_NUMBER is undefined` | `git fetch https://github.com/rapidsai/cudf.git --tags` |
+| `GIT_DESCRIBE_NUMBER is undefined` | `git fetch https://github.com/NVIDIA/cudf.git --tags` |
 | Interactive GitHub auth prompt inside container | Ensure `GH_TOKEN` is set — `run.sh` passes it through automatically via `gh auth token` |
 | GPU driver mismatch causing test differences | Note driver version from CI log; compare with local `nvidia-smi` |
 | Log download returns empty or 403 | Verify `gh auth status` has `repo` scope; re-auth with `gh auth login` if needed |

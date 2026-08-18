@@ -171,7 +171,7 @@ def test_select_parquet_fast_count(tmp_path, df, engine):
 
 
 def test_select_literal(engine):
-    # See: https://github.com/rapidsai/cudf/issues/19147
+    # See: https://github.com/NVIDIA/cudf/issues/19147
     ldf = pl.LazyFrame({"a": list(range(10))})
     q = ldf.select(pl.lit(2).pow(pl.lit(-3, dtype=pl.Float32)))
     assert_gpu_result_equal(q, engine=engine)

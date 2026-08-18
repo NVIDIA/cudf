@@ -166,7 +166,7 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
   std::vector<cudf::size_type> const& payload_column_indices,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr)
 {

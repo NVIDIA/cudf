@@ -148,8 +148,8 @@ void hybrid_scan_reader_impl::setup_next_pass(
     // store off how much memory we've used so far. This includes the compressed page data and the
     // decompressed dictionary data. we will subtract this from the available total memory for the
     // subpasses
-    auto chunk_iter = thrust::make_transform_iterator(pass.chunks.d_begin(),
-                                                      parquet::detail::get_chunk_compressed_size{});
+    auto chunk_iter =
+      cuda::transform_iterator(pass.chunks.d_begin(), parquet::detail::get_chunk_compressed_size{});
     pass.base_mem_size =
       decomp_dict_data_size +
       cudf::detail::reduce(
@@ -165,7 +165,7 @@ void hybrid_scan_reader_impl::setup_next_pass(
       }
     }
 
-    _stream.synchronize();
+    _stream.sync();
   }
 }
 

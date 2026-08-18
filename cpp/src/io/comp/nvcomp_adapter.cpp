@@ -363,7 +363,7 @@ void batched_compress_async(compression_type compression,
                                                      device_compressed_bytes,
                                                      nvcompBatchedGzipCompressDefaultOpts,
                                                      device_nvcomp_statuses,
-                                                     stream.value());
+                                                     stream.get());
       break;
 #endif
     default: UNSUPPORTED_COMPRESSION(compression);

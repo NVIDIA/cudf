@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,7 @@ namespace detail {
 std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                    lists_column_view const& boolean_mask,
                                    cudf::detail::mask_type mask_kind,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(boolean_mask.child().type().id() == type_id::BOOL8, "Mask must be of type BOOL8.");
@@ -89,9 +89,9 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
     thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            sizes_begin,
                            sizes_end,
-                           output_offsets_view.begin<size_type>() + 1);
-    CUDF_CUDA_TRY(cudaMemsetAsync(
-      output_offsets_view.begin<size_type>(), 0, sizeof(size_type), stream.value()));
+                           output_offsets_view.begin<int32_t>() + 1);
+    CUDF_CUDA_TRY(
+      cudaMemsetAsync(output_offsets_view.begin<int32_t>(), 0, sizeof(int32_t), stream.get()));
     return output_offsets;
   };
 
@@ -105,7 +105,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
 std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
                                            lists_column_view const& boolean_mask,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -114,7 +114,7 @@ std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
 
 std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
                                             lists_column_view const& deletion_mask,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -131,7 +131,7 @@ TEST_F(ParquetReaderTest, UserBounds)
 TEST_F(ParquetReaderTest, ZeroColumnsPreservesRowCount)
 {
   GTEST_SKIP() << "Zero-column / N-row parquet reads are not yet supported. See "
-                  "https://github.com/rapidsai/cudf/issues/22935).";
+                  "https://github.com/NVIDIA/cudf/issues/22935).";
 
   srand(31337);
   auto const num_rows = 8;
@@ -2841,7 +2841,7 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
   CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), expected);
 }
 
-// Regression test for https://github.com/rapidsai/cudf/issues/22541.
+// Regression test for https://github.com/NVIDIA/cudf/issues/22541.
 // Schema (single-field inner repeated group must decode as list<struct<someId>>):
 //   required group root {
 //     optional int32 primitive;
@@ -4070,7 +4070,7 @@ void filter_unary_operation_typed_test()
     auto const expected = cudf::apply_boolean_mask(written_table, *predicate);
 
     // JIT does not support nullness-dependent operators such as IS_NULL
-    // Ref: https://github.com/rapidsai/cudf/issues/20177
+    // Ref: https://github.com/NVIDIA/cudf/issues/20177
     auto constexpr use_jit = false;
 
     // Reading with Predicate Pushdown
@@ -4391,8 +4391,8 @@ TYPED_TEST(ParquetPredicatePushdownTestJIT, FilterTyped)
   filter_typed_test<TypeParam, true>();
   // JIT does not support decimals and nullness-dependent operators (IS_NULL) so we can't test:
   // `filter_unary_operation_typed_test<TypeParam>()` and `decimal_stats_filter_test<TypeParam>()`.
-  // Refs: https://github.com/rapidsai/cudf/issues/20177 and
-  // https://github.com/rapidsai/cudf/issues/21584
+  // Refs: https://github.com/NVIDIA/cudf/issues/20177 and
+  // https://github.com/NVIDIA/cudf/issues/21584
 }
 
 TEST_P(ParquetDecompressionTest, RoundTripBasic)

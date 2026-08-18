@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -149,4 +149,28 @@ def test_reset_index_dup_level_name_exceptions():
             [],
             {"level": [None], "drop": False, "inplace": True},
         ),
+    )
+
+
+@pytest.mark.parametrize("level", [-1, -2, [-1], [0, -1]])
+def test_reset_index_negative_level_multiindex(level, drop):
+    # Negative levels count from the end of the MultiIndex.
+    midx = pd.MultiIndex.from_tuples([("a", 1), ("b", 2)], names=["l0", "l1"])
+    ps = pd.Series([1, 2], index=midx)
+    gs = cudf.from_pandas(ps)
+    assert_eq(
+        ps.reset_index(level=level, drop=drop),
+        gs.reset_index(level=level, drop=drop),
+    )
+
+
+@pytest.mark.parametrize("level", [-2, -5])
+def test_reset_index_level_underflow(level, drop):
+    ps = pd.Series([1, 2], index=pd.Index([10, 20], name="x"))
+    gs = cudf.from_pandas(ps)
+    assert_exceptions_equal(
+        lfunc=ps.reset_index,
+        rfunc=gs.reset_index,
+        lfunc_args_and_kwargs=([], {"level": level, "drop": drop}),
+        rfunc_args_and_kwargs=([], {"level": level, "drop": drop}),
     )

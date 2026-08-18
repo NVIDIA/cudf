@@ -8,7 +8,7 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {

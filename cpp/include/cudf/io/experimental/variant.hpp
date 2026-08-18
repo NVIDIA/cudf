@@ -7,11 +7,12 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <string_view>
@@ -60,7 +61,7 @@ namespace io::parquet::experimental {
 [[nodiscard]] std::unique_ptr<column> get_variant_field(
   column_view const& variant_column,
   std::string_view path,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -83,7 +84,7 @@ namespace io::parquet::experimental {
 [[nodiscard]] std::unique_ptr<column> cast_variant(
   column_view const& values,
   data_type desired_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -106,7 +107,27 @@ namespace io::parquet::experimental {
   column_view const& variant_column,
   std::string_view path,
   data_type desired_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Return the logical type of each VARIANT value blob in a `list<uint8>` column.
+ *
+ * Classifies only the value_metadata header byte; does not validate the remaining payload.
+ * A recognized header returns its logical type even when the payload is truncated. A null output
+ * row is produced when the input row is null, the blob is empty, or the header carries an
+ * unrecognized type. An encoded Variant null (NULLVAL) produces a valid `NULL_VALUE` row.
+ *
+ * @param values `list<uint8>` column of VARIANT-encoded value bytes
+ * @param stream CUDA stream
+ * @param mr Device memory resource
+ * @return `UINT8` column of `variant_logical_type` values cast to `uint8_t`
+ *
+ * @throws std::invalid_argument if `values` is not a `list<uint8>` column
+ */
+[[nodiscard]] std::unique_ptr<column> get_variant_type_id(
+  column_view const& values,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */

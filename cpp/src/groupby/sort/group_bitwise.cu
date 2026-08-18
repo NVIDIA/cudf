@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,11 +14,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/stream>
 
 namespace cudf::groupby::detail {
 
@@ -30,7 +30,7 @@ struct bitwise_group_reduction_functor {
                                      column_view const& values,
                                      device_span<size_type const> group_labels,
                                      size_type num_groups,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
 
   {
@@ -93,7 +93,7 @@ std::unique_ptr<column> group_bitwise(bitwise_op bit_op,
                                       column_view const& values,
                                       device_span<size_type const> group_labels,
                                       size_type num_groups,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(values.type(),

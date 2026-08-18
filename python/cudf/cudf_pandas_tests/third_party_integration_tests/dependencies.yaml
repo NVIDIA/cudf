@@ -63,7 +63,7 @@ files:
       - py_version
       - test_base
       - test_stumpy
-  # TODO: Re-enable https://github.com/rapidsai/cudf/issues/21875
+  # TODO: Re-enable https://github.com/NVIDIA/cudf/issues/21875
   # test_tensorflow:
   #   output: none
   #   includes:

@@ -37,6 +37,7 @@ requirements:
     - python
     - pylibcudf =${{ version }}
     - rapidsmpf =${{ minor_version }}
+    - kvikio =${{ minor_version }}
     - cudf-streaming =${{ version }}
     - polars>=1.35,<1.43
     - packaging

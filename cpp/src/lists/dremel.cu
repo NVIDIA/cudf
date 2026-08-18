@@ -69,7 +69,7 @@ dremel_data get_encoding(column_view h_col,
                          std::vector<uint8_t> nullability,
                          bool output_as_byte_array,
                          bool always_nullable,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   auto get_list_level = [](column_view col) {
     while (col.type().id() == type_id::STRUCT) {
@@ -82,7 +82,7 @@ dremel_data get_encoding(column_view h_col,
     auto lcv = lists_column_view(get_list_level(col));
     rmm::device_uvector<size_type> empties_idx(lcv.size(), stream);
     rmm::device_uvector<size_type> empties(lcv.size(), stream);
-    auto d_off = lcv.offsets().data<size_type>();
+    auto d_off = lcv.offsets().data<int32_t>();
 
     auto empties_idx_end = cudf::detail::copy_if(
       cuda::counting_iterator<size_type>{start},
@@ -94,7 +94,7 @@ dremel_data get_encoding(column_view h_col,
       thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      empties_idx.begin(),
                      empties_idx_end,
-                     lcv.offsets().begin<size_type>(),
+                     lcv.offsets().begin<int32_t>(),
                      empties.begin());
 
     auto empties_size = empties_end - empties.begin();
@@ -120,13 +120,13 @@ dremel_data get_encoding(column_view h_col,
   }
   std::unique_ptr<column> empty_list_offset_col;
   if (has_empty_list_offsets) {
-    empty_list_offset_col = make_fixed_width_column(data_type(type_to_id<size_type>()),
+    empty_list_offset_col = make_fixed_width_column(data_type(type_id::INT32),
                                                     1,
                                                     mask_state::UNALLOCATED,
                                                     stream,
                                                     cudf::get_current_device_resource_ref());
     CUDF_CUDA_TRY(cudaMemsetAsync(
-      empty_list_offset_col->mutable_view().head(), 0, sizeof(size_type), stream.value()));
+      empty_list_offset_col->mutable_view().head(), 0, sizeof(int32_t), stream.get()));
     std::function<column_view(column_view const&)> normalize_col = [&](column_view const& col) {
       auto children = [&]() -> std::vector<column_view> {
         if (col.type().id() == type_id::LIST) {
@@ -238,8 +238,8 @@ dremel_data get_encoding(column_view h_col,
       // Skip doing the following for any structs we encounter in between.
       while (curr_col.type().id() == type_id::LIST or curr_col.type().id() == type_id::STRUCT) {
         if (curr_col.type().id() == type_id::LIST) {
-          off = curr_col.child(lists_column_view::offsets_column_index).element<size_type>(off);
-          end = curr_col.child(lists_column_view::offsets_column_index).element<size_type>(end);
+          off = curr_col.child(lists_column_view::offsets_column_index).element<int32_t>(off);
+          end = curr_col.child(lists_column_view::offsets_column_index).element<int32_t>(end);
           if (level < level_max) {
             offset_at_level[level]  = off;
             end_idx_at_level[level] = end;
@@ -255,7 +255,7 @@ dremel_data get_encoding(column_view h_col,
 
   auto column_offsets = cudf::detail::make_host_vector_async(d_column_offsets, stream);
   auto column_ends    = cudf::detail::make_host_vector_async(d_column_ends, stream);
-  stream.synchronize();
+  stream.sync();
 
   size_t max_vals_size = 0;
   for (size_t l = 0; l < column_offsets.size(); ++l) {
@@ -291,23 +291,22 @@ dremel_data get_encoding(column_view h_col,
     // Merge empty at deepest parent level with the rep, def level vals at leaf level
 
     auto input_parent_rep_it = cuda::make_constant_iterator(level);
-    auto input_parent_def_it =
-      thrust::make_transform_iterator(empties_idx.begin(),
-                                      def_level_fn{d_nesting_levels + level,
-                                                   d_nullability.data(),
-                                                   start_at_sub_level[level],
-                                                   def_at_level[level],
-                                                   always_nullable});
+    auto input_parent_def_it = cuda::transform_iterator(empties_idx.begin(),
+                                                        def_level_fn{d_nesting_levels + level,
+                                                                     d_nullability.data(),
+                                                                     start_at_sub_level[level],
+                                                                     def_at_level[level],
+                                                                     always_nullable});
 
     // `nesting_levels.size()` == no of list levels + leaf. Max repetition level = no of list levels
     auto input_child_rep_it = cuda::make_constant_iterator(nesting_levels.size() - 1);
     auto input_child_def_it =
-      thrust::make_transform_iterator(cuda::counting_iterator{column_offsets[level + 1]},
-                                      def_level_fn{d_nesting_levels + level + 1,
-                                                   d_nullability.data(),
-                                                   start_at_sub_level[level + 1],
-                                                   def_at_level[level + 1],
-                                                   always_nullable});
+      cuda::transform_iterator(cuda::counting_iterator{column_offsets[level + 1]},
+                               def_level_fn{d_nesting_levels + level + 1,
+                                            d_nullability.data(),
+                                            start_at_sub_level[level + 1],
+                                            def_at_level[level + 1],
+                                            always_nullable});
 
     // Zip the input and output value iterators so that merge operation is done only once
     auto input_parent_zip_it =
@@ -335,7 +334,7 @@ dremel_data get_encoding(column_view h_col,
     // Scan to get distance by which each offset value is shifted due to the insertion of empties
     auto scan_it = cudf::detail::make_counting_transform_iterator(
       column_offsets[level],
-      cuda::proclaim_return_type<int>([off  = lcv.offsets().data<size_type>(),
+      cuda::proclaim_return_type<int>([off  = lcv.offsets().data<int32_t>(),
                                        size = lcv.offsets().size()] __device__(auto i) -> int {
         return (i + 1 < size) && (off[i] == off[i + 1]);
       }));
@@ -350,7 +349,7 @@ dremel_data get_encoding(column_view h_col,
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
-                       [off      = lcv.offsets().data<size_type>() + column_offsets[level],
+                       [off      = lcv.offsets().data<int32_t>() + column_offsets[level],
                         scan_out = scan_out.data(),
                         new_off  = new_offsets.data()] __device__(auto i) {
                          new_off[i] = off[i] - off[0] + scan_out[i];
@@ -388,16 +387,15 @@ dremel_data get_encoding(column_view h_col,
     std::swap(temp_def_vals, def_level);
 
     // Merge empty at parent level with the rep, def level vals at current level
-    auto transformed_empties = thrust::make_transform_iterator(empties.begin(), offset_transformer);
+    auto transformed_empties = cuda::transform_iterator(empties.begin(), offset_transformer);
 
     auto input_parent_rep_it = cuda::make_constant_iterator(level);
-    auto input_parent_def_it =
-      thrust::make_transform_iterator(empties_idx.begin(),
-                                      def_level_fn{d_nesting_levels + level,
-                                                   d_nullability.data(),
-                                                   start_at_sub_level[level],
-                                                   def_at_level[level],
-                                                   always_nullable});
+    auto input_parent_def_it = cuda::transform_iterator(empties_idx.begin(),
+                                                        def_level_fn{d_nesting_levels + level,
+                                                                     d_nullability.data(),
+                                                                     start_at_sub_level[level],
+                                                                     def_at_level[level],
+                                                                     always_nullable});
 
     // Zip the input and output value iterators so that merge operation is done only once
     auto input_parent_zip_it =
@@ -426,7 +424,7 @@ dremel_data get_encoding(column_view h_col,
     // level value fof an empty list
     auto scan_it = cudf::detail::make_counting_transform_iterator(
       column_offsets[level],
-      cuda::proclaim_return_type<int>([off  = lcv.offsets().data<size_type>(),
+      cuda::proclaim_return_type<int>([off  = lcv.offsets().data<int32_t>(),
                                        size = lcv.offsets().size()] __device__(auto i) -> int {
         return (i + 1 < size) && (off[i] == off[i + 1]);
       }));
@@ -441,7 +439,7 @@ dremel_data get_encoding(column_view h_col,
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
-                       [off      = lcv.offsets().data<size_type>() + column_offsets[level],
+                       [off      = lcv.offsets().data<int32_t>() + column_offsets[level],
                         scan_out = scan_out.data(),
                         new_off  = temp_new_offsets.data(),
                         offset_transformer] __device__(auto i) {
@@ -462,7 +460,7 @@ dremel_data get_encoding(column_view h_col,
   rep_level.resize(level_vals_size, stream);
   def_level.resize(level_vals_size, stream);
 
-  stream.synchronize();
+  stream.sync();
 
   size_type leaf_data_size = column_ends.back() - column_offsets.back();
 
@@ -477,7 +475,7 @@ dremel_data get_encoding(column_view h_col,
 dremel_data get_dremel_data(column_view h_col,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   return get_encoding(h_col, nullability, output_as_byte_array, false, stream);
 }
@@ -485,7 +483,7 @@ dremel_data get_dremel_data(column_view h_col,
 dremel_data get_comparator_data(column_view h_col,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   return get_encoding(h_col, nullability, output_as_byte_array, true, stream);
 }

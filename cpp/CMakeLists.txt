@@ -68,14 +68,7 @@ set(CUDF_BUILD_STATIC_DEPS
 )
 set_property(CACHE CUDF_BUILD_STATIC_DEPS PROPERTY STRINGS "ON" "OFF" "FORCE")
 
-# cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic linking
-option(CUDA_STATIC_RUNTIME "Statically link the CUDA runtime" OFF)
-# FORCE mode implies static CUDA runtime
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
-  set(CUDA_STATIC_RUNTIME
-      ON
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       ON
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -85,10 +78,6 @@ if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
       CACHE BOOL "Use static linking for nvJitLink" FORCE
   )
 else()
-  set(CUDA_STATIC_RUNTIME
-      OFF
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       OFF
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -981,6 +970,11 @@ add_library(
   src/rolling/detail/rolling_variable_window.cu
   src/rolling/grouped_rolling.cu
   src/rolling/range_rolling.cu
+  src/rolling/range_rolling_bounded_closed.cu
+  src/rolling/range_rolling_bounded_open.cu
+  src/rolling/range_rolling_current_row.cu
+  src/rolling/range_rolling_multi_column.cu
+  src/rolling/range_rolling_unbounded.cu
   src/rolling/range_window_bounds.cpp
   src/rolling/rolling.cpp
   src/round/round.cu

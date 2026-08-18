@@ -60,14 +60,15 @@ std::unique_ptr<column> rank_generator(column_view const& order_by,
                                        rmm::device_async_resource_ref mr)
 {
   auto const order_by_tview = table_view{{order_by}};
-  auto comp                 = cudf::detail::row::equality::self_comparator(order_by_tview, stream);
+  auto const temp_mr        = cudf::get_current_device_resource_ref();
+  auto comp = cudf::detail::row::equality::self_comparator(order_by_tview, stream, temp_mr);
 
   auto ranks = make_fixed_width_column(
     data_type{type_to_id<size_type>()}, order_by.size(), mask_state::UNALLOCATED, stream, mr);
   auto mutable_ranks = ranks->mutable_view();
 
   auto const comparator_helper = [&](auto const device_comparator) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(order_by.size()),
                       mutable_ranks.begin<size_type>(),
@@ -85,7 +86,7 @@ std::unique_ptr<column> rank_generator(column_view const& order_by,
     comparator_helper(device_comparator);
   }
 
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          mutable_ranks.begin<size_type>(),
                          mutable_ranks.end<size_type>(),
                          mutable_ranks.begin<size_type>(),

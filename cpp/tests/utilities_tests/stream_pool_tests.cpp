@@ -88,9 +88,9 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
   });
   first.join();
 
-  // Requesting more streams than the pool can hold cycles through all of them, so a thread that
-  // adopted its predecessor's retired pool observes every stream that predecessor used. One that
-  // created a fresh pool would observe entirely different streams.
+  // A request this large grows the pool to its maximum and then cycles through every stream in it.
+  // Growth only appends, so a thread that adopted its predecessor's retired pool observes every
+  // stream that predecessor used, whereas one that created a fresh pool observes none of them.
   std::unordered_set<cudaStream_t> second_thread_streams;
   std::thread second([&] {
     auto const streams = get_streams_from_pool(256);

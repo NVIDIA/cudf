@@ -5,7 +5,7 @@
 # Parse a GitHub Actions job URL and emit shell-friendly variable assignments.
 #
 # Usage:
-#    python parse-job-url.py "https://github.com/rapidsai/cudf/actions/runs/<run_id>/job/<job_id>?pr=<pr_number>"
+#    python parse-job-url.py "https://github.com/NVIDIA/cudf/actions/runs/<run_id>/job/<job_id>?pr=<pr_number>"
 #
 # Output (eval-able):
 #    RUN_ID=XXXXXXXXXX

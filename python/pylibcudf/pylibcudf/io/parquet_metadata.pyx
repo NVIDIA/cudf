@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from cython.operator cimport dereference
 from libc.stdint cimport uint8_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.string cimport string
+from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
 from pylibcudf.io.types cimport SourceInfo
@@ -23,6 +25,11 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
 )
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.types cimport DataType
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing_extensions import Buffer
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 
@@ -284,17 +291,17 @@ cdef class SortingColumn:
         return result
 
     @property
-    def column_idx(self):
+    def column_idx(self) -> int:
         """Column index (within the row group)."""
         return self.c_obj.column_idx
 
     @property
-    def descending(self):
+    def descending(self) -> bool:
         """Whether this column is sorted in descending order."""
         return self.c_obj.descending
 
     @property
-    def nulls_first(self):
+    def nulls_first(self) -> bool:
         """Whether null values are ordered before non-null values."""
         return self.c_obj.nulls_first
 
@@ -312,42 +319,42 @@ cdef class ColumnChunk:
         return result
 
     @property
-    def file_path(self):
+    def file_path(self) -> str:
         """Relative file path for this column chunk."""
         return self.c_obj.file_path.decode("utf-8")
 
     @property
-    def file_offset(self):
+    def file_offset(self) -> int:
         """Deprecated byte offset to column metadata."""
         return self.c_obj.file_offset
 
     @property
-    def offset_index_offset(self):
+    def offset_index_offset(self) -> int:
         """File offset of the chunk's OffsetIndex."""
         return self.c_obj.offset_index_offset
 
     @property
-    def offset_index_length(self):
+    def offset_index_length(self) -> int:
         """Size of the chunk's OffsetIndex, in bytes."""
         return self.c_obj.offset_index_length
 
     @property
-    def column_index_offset(self):
+    def column_index_offset(self) -> int:
         """File offset of the chunk's ColumnIndex."""
         return self.c_obj.column_index_offset
 
     @property
-    def column_index_length(self):
+    def column_index_length(self) -> int:
         """Size of the chunk's ColumnIndex, in bytes."""
         return self.c_obj.column_index_length
 
     @property
-    def schema_idx(self):
+    def schema_idx(self) -> int:
         """Derived index in the flattened schema."""
         return self.c_obj.schema_idx
 
     @property
-    def meta_data(self):
+    def meta_data(self) -> ColumnChunkMetaData:
         """Column metadata for this chunk."""
         return ColumnChunkMetaData.from_cpp(self.c_obj.meta_data)
 
@@ -367,23 +374,23 @@ cdef class ColumnChunkMetaData:
         return result
 
     @property
-    def path_in_schema(self):
+    def path_in_schema(self) -> list[str]:
         """Column path components in the flattened schema."""
         cdef string path
         return [path.decode("utf-8") for path in self.c_obj.path_in_schema]
 
     @property
-    def num_values(self):
+    def num_values(self) -> int:
         """Number of values in this chunk."""
         return self.c_obj.num_values
 
     @property
-    def total_uncompressed_size(self):
+    def total_uncompressed_size(self) -> int:
         """Total uncompressed page bytes for this chunk."""
         return self.c_obj.total_uncompressed_size
 
     @property
-    def total_compressed_size(self):
+    def total_compressed_size(self) -> int:
         """Total compressed page bytes for this chunk."""
         return self.c_obj.total_compressed_size
 
@@ -401,7 +408,7 @@ cdef class RowGroup:
         return result
 
     @property
-    def columns(self):
+    def columns(self) -> list[ColumnChunk]:
         """Column chunk metadata for each column in this row group."""
         cdef cpp_ColumnChunk column_chunk
         return [
@@ -409,17 +416,17 @@ cdef class RowGroup:
         ]
 
     @property
-    def total_byte_size(self):
+    def total_byte_size(self) -> int:
         """Total uncompressed byte size in this row group."""
         return self.c_obj.total_byte_size
 
     @property
-    def num_rows(self):
+    def num_rows(self) -> int:
         """Number of rows in this row group."""
         return self.c_obj.num_rows
 
     @property
-    def sorting_columns(self):
+    def sorting_columns(self) -> list[SortingColumn] | None:
         """Optional row sort order metadata."""
         cdef cpp_SortingColumn sorting_column
         if not self.c_obj.sorting_columns.has_value():
@@ -430,21 +437,21 @@ cdef class RowGroup:
         ]
 
     @property
-    def file_offset(self):
+    def file_offset(self) -> int | None:
         """Optional byte offset to first page in this row group."""
         if not self.c_obj.file_offset.has_value():
             return None
         return self.c_obj.file_offset.value()
 
     @property
-    def total_compressed_size(self):
+    def total_compressed_size(self) -> int | None:
         """Optional total compressed bytes for this row group."""
         if not self.c_obj.total_compressed_size.has_value():
             return None
         return self.c_obj.total_compressed_size.value()
 
     @property
-    def ordinal(self):
+    def ordinal(self) -> int | None:
         """Optional row group ordinal within the file."""
         if not self.c_obj.ordinal.has_value():
             return None
@@ -467,34 +474,37 @@ cdef class FileMetaData:
         raise ValueError("FileMetaData cannot be constructed directly")
 
     @staticmethod
-    cdef FileMetaData from_cpp(cpp_FileMetaData metadata):
+    cdef FileMetaData from_libcudf(unique_ptr[cpp_FileMetaData] metadata):
         cdef FileMetaData result = FileMetaData.__new__(FileMetaData)
-        result.c_obj = metadata
+        result.c_obj = move(metadata)
         return result
 
     @property
-    def version(self):
+    def version(self) -> int:
         """Get the file format version."""
-        return self.c_obj.version
+        return dereference(self.c_obj).version
 
     @property
-    def num_rows(self):
+    def num_rows(self) -> int:
         """Get the total number of rows."""
-        return self.c_obj.num_rows
+        return dereference(self.c_obj).num_rows
 
     @property
-    def created_by(self):
+    def created_by(self) -> str:
         """Get the application that created the file."""
-        return self.c_obj.created_by.decode("utf-8")
+        return dereference(self.c_obj).created_by.decode("utf-8")
 
     @property
-    def row_groups(self):
+    def row_groups(self) -> list[RowGroup]:
         """Get row group metadata in this file."""
         cdef cpp_RowGroup row_group
-        return [RowGroup.from_cpp(row_group) for row_group in self.c_obj.row_groups]
+        return [
+            RowGroup.from_cpp(row_group)
+            for row_group in dereference(self.c_obj).row_groups
+        ]
 
     @property
-    def row_group_num_rows(self):
+    def row_group_num_rows(self) -> list[int]:
         """
         Get row counts for each row group in this file.
 
@@ -512,11 +522,13 @@ cdef class FileMetaData:
            >>> [rg.num_rows for rg in file_metadata.row_groups]
         """
         cdef Py_ssize_t i
-        cdef Py_ssize_t n = self.c_obj.row_groups.size()
-        return [self.c_obj.row_groups[i].num_rows for i in range(n)]
+        cdef Py_ssize_t n = dereference(self.c_obj).row_groups.size()
+        return [
+            dereference(self.c_obj).row_groups[i].num_rows for i in range(n)
+        ]
 
     @property
-    def columnchunk_metadata(self):
+    def columnchunk_metadata(self) -> dict[str, list[int]]:
         """
         Get a map of dotted column paths to lists of
         `total_uncompressed_size` values from every column chunk in
@@ -544,26 +556,40 @@ cdef class FileMetaData:
            ...         )
         """
         cdef Py_ssize_t i, j, k, n_path, n_col
-        cdef Py_ssize_t n_rg = self.c_obj.row_groups.size()
+        cdef Py_ssize_t n_rg = dereference(self.c_obj).row_groups.size()
         cdef dict result = {}
         cdef str name
         cdef list path_parts
         for i in range(n_rg):
-            n_col = self.c_obj.row_groups[i].columns.size()
+            n_col = dereference(self.c_obj).row_groups[i].columns.size()
             for j in range(n_col):
-                n_path = self.c_obj.row_groups[i].columns[j].meta_data.path_in_schema.size()
+                n_path = (
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.path_in_schema.size()
+                )
                 path_parts = [
-                    self.c_obj.row_groups[i].columns[j].meta_data.path_in_schema[k].decode("utf-8")
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.path_in_schema[k]
+                    .decode("utf-8")
                     for k in range(n_path)
                 ]
                 name = ".".join(path_parts)
                 result.setdefault(name, []).append(
-                    self.c_obj.row_groups[i].columns[j].meta_data.total_uncompressed_size
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.total_uncompressed_size
                 )
         return result
 
     @classmethod
-    def from_bytes(cls, const uint8_t[::1] footer_bytes):
+    def from_bytes(
+        cls, const uint8_t[::1] footer_bytes: Buffer
+    ) -> FileMetaData:
         """Build ``FileMetaData`` from parquet footer bytes.
 
         Parameters
@@ -583,7 +609,7 @@ cdef class FileMetaData:
         """
         cdef parquet_reader_options options = parquet_reader_options()
         cdef unique_ptr[cpp_hybrid_scan_reader] reader
-        cdef cpp_FileMetaData metadata
+        cdef unique_ptr[cpp_FileMetaData] metadata
         cdef const uint8_t* footer_ptr = <const uint8_t*>0
 
         if len(footer_bytes) > 0:
@@ -594,9 +620,11 @@ cdef class FileMetaData:
                 host_span[const_uint8_t](footer_ptr, len(footer_bytes)),
                 options,
             )
-            metadata = reader.get()[0].parquet_metadata()
+            metadata = make_unique[cpp_FileMetaData](
+                reader.get()[0].parquet_metadata()
+            )
 
-        return FileMetaData.from_cpp(metadata)
+        return FileMetaData.from_libcudf(move(metadata))
 
 
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
@@ -644,7 +672,8 @@ cpdef list read_parquet_footers(SourceInfo src_info):
     """
     cdef vector[unique_ptr[datasource]] sources
     cdef vector[cpp_FileMetaData] c_result
-    cdef cpp_FileMetaData metadata
+    cdef vector[unique_ptr[cpp_FileMetaData]] owned
+    cdef size_t i, n
     with nogil:
         sources = make_datasources(src_info.c_obj)
         c_result = cpp_parquet_metadata.read_parquet_footers(
@@ -653,5 +682,12 @@ cpdef list read_parquet_footers(SourceInfo src_info):
                 sources.size(),
             )
         )
+        n = c_result.size()
+        owned.reserve(n)
+        for i in range(n):
+            owned.push_back(
+                move(make_unique[cpp_FileMetaData](move(c_result[i])))
+            )
 
-    return [FileMetaData.from_cpp(metadata) for metadata in c_result]
+    # GIL held only for Python object allocation + list build
+    return [FileMetaData.from_libcudf(move(owned[i])) for i in range(n)]

@@ -9,16 +9,15 @@
 #include <cudf/io/orc_types.hpp>
 #include <cudf/strings/detail/convert/fixed_point_to_string.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 namespace cudf::io::orc::detail {
 
 using strings::detail::fixed_point_string_size;
 
 // Nanosecond statistics should not be enabled until the spec version is set correctly in the output
-// files. See https://github.com/rapidsai/cudf/issues/14325 for more details
+// files. See https://github.com/NVIDIA/cudf/issues/14325 for more details
 constexpr bool enable_nanosecond_statistics = true;
 
 constexpr unsigned int init_threads_per_group = 32;
@@ -442,14 +441,14 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
 void orc_init_statistics_groups(statistics_group* groups,
                                 stats_column_desc const* cols,
                                 device_2dspan<rowgroup_rows const> rowgroup_bounds,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   auto const num_blocks =
     cudf::util::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first, init_groups_per_block) *
     rowgroup_bounds.size().second;
 
   dim3 dim_block(init_threads_per_group, init_groups_per_block);
-  gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.value()>>>(
+  gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.get()>>>(
     groups, cols, rowgroup_bounds);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -465,10 +464,10 @@ void orc_init_statistics_groups(statistics_group* groups,
 void orc_init_statistics_buffersize(statistics_merge_group* groups,
                                     statistics_chunk const* chunks,
                                     uint32_t statistics_count,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   gpu_init_statistics_buffersize<block_size>
-    <<<1, block_size, 0, stream.value()>>>(groups, chunks, statistics_count);
+    <<<1, block_size, 0, stream.get()>>>(groups, chunks, statistics_count);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -485,12 +484,12 @@ void orc_encode_statistics(uint8_t* blob_bfr,
                            statistics_merge_group* groups,
                            statistics_chunk const* chunks,
                            uint32_t statistics_count,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   auto const num_blocks =
     cudf::util::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
   dim3 dim_block(encode_threads_per_chunk, encode_chunks_per_block);
-  gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.value()>>>(
+  gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.get()>>>(
     blob_bfr, groups, chunks, statistics_count);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

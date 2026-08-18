@@ -17,13 +17,13 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/reduce.h>
 
 #include <memory>
@@ -49,7 +49,7 @@ struct group_sum_overflow_fn {
   std::unique_ptr<column> operator()(column_view const& values,
                                      size_type num_groups,
                                      cudf::device_span<size_type const> group_labels,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     using DeviceType = cudf::device_storage_type_t<Source>;
@@ -117,7 +117,7 @@ struct group_sum_overflow_fn {
 std::unique_ptr<column> group_sum_overflow(column_view const& values,
                                            size_type num_groups,
                                            cudf::device_span<size_type const> group_labels,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(

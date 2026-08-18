@@ -8,11 +8,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <memory>
@@ -115,11 +115,11 @@ class distinct_hash_join {
    */
   distinct_hash_join(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * @copydoc distinct_hash_join(cudf::table_view const&, null_equality, rmm::cuda_stream_view,
+   * @copydoc distinct_hash_join(cudf::table_view const&, null_equality, cuda::stream_ref,
    * cuda::mr::any_resource<cuda::mr::device_accessible>)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
@@ -127,7 +127,7 @@ class distinct_hash_join {
   distinct_hash_join(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
                      double load_factor,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
@@ -136,16 +136,14 @@ class distinct_hash_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(cudf::table_view const& left,
-             rmm::cuda_stream_view stream,
+             cuda::stream_ref stream,
              rmm::device_async_resource_ref mr) const;
 
   /**
    * @copydoc cudf::distinct_hash_join::left_join
    */
   std::unique_ptr<rmm::device_uvector<size_type>> left_join(
-    cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
  private:
   using probing_scheme_type = cuco::linear_probing<1, hasher>;

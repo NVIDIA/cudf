@@ -1371,7 +1371,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       cudf::device_span<size_t> initial_str_offsets,
                       cudf::device_span<size_t const> page_string_offset_indices,
                       kernel_error::pointer error_code,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   // No template parameters on lambdas until C++20, so use type tags instead
   auto launch_kernel = [&](auto block_size_tag, auto kernel_mask_tag) {
@@ -1383,25 +1383,25 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
     if (level_type_size == 1) {
       decode_page_data_generic<uint8_t, decode_block_size, mask>
-        <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                     chunks,
-                                                     min_row,
-                                                     num_rows,
-                                                     page_mask,
-                                                     initial_str_offsets,
-                                                     page_string_offset_indices,
-                                                     error_code);
+        <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                   chunks,
+                                                   min_row,
+                                                   num_rows,
+                                                   page_mask,
+                                                   initial_str_offsets,
+                                                   page_string_offset_indices,
+                                                   error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       decode_page_data_generic<uint16_t, decode_block_size, mask>
-        <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                     chunks,
-                                                     min_row,
-                                                     num_rows,
-                                                     page_mask,
-                                                     initial_str_offsets,
-                                                     page_string_offset_indices,
-                                                     error_code);
+        <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                   chunks,
+                                                   min_row,
+                                                   num_rows,
+                                                   page_mask,
+                                                   initial_str_offsets,
+                                                   page_string_offset_indices,
+                                                   error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
   };

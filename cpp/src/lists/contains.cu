@@ -158,7 +158,7 @@ void index_of(InputIterator input_it,
               column_view const& search_keys,
               duplicate_find_option find_option,
               DeviceComp d_comp,
-              rmm::cuda_stream_view stream)
+              cuda::stream_ref stream)
 {
   auto const keys_dv_ptr       = column_device_view::create(search_keys, stream);
   auto const key_validity_iter = cudf::detail::make_validity_iterator<true>(*keys_dv_ptr);
@@ -176,7 +176,7 @@ void index_of(InputIterator input_it,
 std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
                                           column_view const& search_keys,
                                           duplicate_find_option find_option,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::type_dispatcher(search_keys.type(), is_supported_type_fn{}),
@@ -237,7 +237,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
  * the search key(s) were found.
  */
 std::unique_ptr<column> to_contains(std::unique_ptr<column>&& key_positions,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(key_positions->type().id() == type_to_id<size_type>(),
@@ -266,7 +266,7 @@ namespace detail {
 std::unique_ptr<column> index_of(lists_column_view const& lists,
                                  cudf::scalar const& search_key,
                                  duplicate_find_option find_option,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (!search_key.is_valid(stream)) {
@@ -290,7 +290,7 @@ std::unique_ptr<column> index_of(lists_column_view const& lists,
 std::unique_ptr<column> index_of(lists_column_view const& lists,
                                  column_view const& search_keys,
                                  duplicate_find_option find_option,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(search_keys.size() == lists.size(),
@@ -300,7 +300,7 @@ std::unique_ptr<column> index_of(lists_column_view const& lists,
 
 std::unique_ptr<column> contains(lists_column_view const& lists,
                                  cudf::scalar const& search_key,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto key_indices = detail::index_of(lists,
@@ -313,7 +313,7 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
 
 std::unique_ptr<column> contains(lists_column_view const& lists,
                                  column_view const& search_keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(search_keys.size() == lists.size(),
@@ -328,7 +328,7 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
 }
 
 std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto const lists_cv      = lists.parent();
@@ -362,7 +362,7 @@ std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
 
 std::unique_ptr<column> contains(lists_column_view const& lists,
                                  cudf::scalar const& search_key,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -371,7 +371,7 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
 
 std::unique_ptr<column> contains(lists_column_view const& lists,
                                  column_view const& search_keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -379,7 +379,7 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
 }
 
 std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -389,7 +389,7 @@ std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
 std::unique_ptr<column> index_of(lists_column_view const& lists,
                                  cudf::scalar const& search_key,
                                  duplicate_find_option find_option,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -399,7 +399,7 @@ std::unique_ptr<column> index_of(lists_column_view const& lists,
 std::unique_ptr<column> index_of(lists_column_view const& lists,
                                  column_view const& search_keys,
                                  duplicate_find_option find_option,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

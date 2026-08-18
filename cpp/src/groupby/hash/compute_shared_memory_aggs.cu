@@ -21,13 +21,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cooperative_groups.h>
 #include <cuda/std/algorithm>
 #include <cuda/std/cstddef>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -384,7 +383,7 @@ void compute_shared_memory_aggs(cudf::size_type grid_size,
                                 cudf::table_device_view input_values,
                                 cudf::mutable_table_device_view output_values,
                                 cudf::aggregation::Kind const* d_agg_kinds,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   // For each aggregation, need one offset determining where the aggregation is
   // performed, another indicating the validity of the aggregation
@@ -393,17 +392,19 @@ void compute_shared_memory_aggs(cudf::size_type grid_size,
   CUDF_EXPECTS(available_shmem_size > offsets_size * 2,
                "No enough space for shared memory aggregations");
   auto const shmem_agg_size = available_shmem_size - offsets_size * 2;
-  single_pass_shmem_aggs_kernel<<<grid_size, GROUPBY_BLOCK_SIZE, available_shmem_size, stream>>>(
-    num_input_rows,
-    row_bitmask,
-    local_mapping_index,
-    global_mapping_index,
-    block_cardinality,
-    input_values,
-    output_values,
-    d_agg_kinds,
-    shmem_agg_size,
-    offsets_size);
+  single_pass_shmem_aggs_kernel<<<grid_size,
+                                  GROUPBY_BLOCK_SIZE,
+                                  available_shmem_size,
+                                  stream.get()>>>(num_input_rows,
+                                                  row_bitmask,
+                                                  local_mapping_index,
+                                                  global_mapping_index,
+                                                  block_cardinality,
+                                                  input_values,
+                                                  output_values,
+                                                  d_agg_kinds,
+                                                  shmem_agg_size,
+                                                  offsets_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 }  // namespace cudf::groupby::detail::hash

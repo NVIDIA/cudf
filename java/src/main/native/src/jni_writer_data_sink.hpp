@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -72,7 +72,7 @@ class jni_writer_data_sink final : public cudf::io::data_sink {
 
   bool supports_device_write() const override { return true; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     JNIEnv* env           = cudf::jni::get_jni_env(jvm);
     long left_to_copy     = static_cast<long>(size);
@@ -81,7 +81,7 @@ class jni_writer_data_sink final : public cudf::io::data_sink {
       long buffer_amount_available = current_buffer_len - current_buffer_written;
       if (buffer_amount_available <= 0) {
         // should never be < 0, but just to be safe
-        stream.synchronize();
+        stream.sync();
         rotate_buffer(env);
         buffer_amount_available = current_buffer_len - current_buffer_written;
       }
@@ -89,20 +89,20 @@ class jni_writer_data_sink final : public cudf::io::data_sink {
         left_to_copy < buffer_amount_available ? left_to_copy : buffer_amount_available;
       char* copy_to = current_buffer_data + current_buffer_written;
 
-      CUDF_CUDA_TRY(cudaMemcpyAsync(
-        copy_to, copy_from, amount_to_copy, cudaMemcpyDeviceToHost, stream.value()));
+      CUDF_CUDA_TRY(
+        cudaMemcpyAsync(copy_to, copy_from, amount_to_copy, cudaMemcpyDeviceToHost, stream.get()));
 
       copy_from = copy_from + amount_to_copy;
       current_buffer_written += amount_to_copy;
       total_written += amount_to_copy;
       left_to_copy -= amount_to_copy;
     }
-    stream.synchronize();
+    stream.sync();
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     // Call the sync version until figuring out how to write asynchronously.
     device_write(gpu_data, size, stream);

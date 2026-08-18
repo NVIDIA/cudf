@@ -45,7 +45,7 @@ repos:
           "polars>=1.35,<1.43",
           "numpy>=1.26",
           "pyarrow-stubs>=19.0",
-          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/rapidsai/cudf/issues/22229
+          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
           "pytest>=8.0.0,<9.1.0",
           "types-cachetools>=5.5.0",
           "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'",
@@ -110,6 +110,12 @@ repos:
         name: use-exec-policy-nosync
         description: 'Enforce that rmm::exec_policy_nosync is used instead of rmm::exec_policy (see developer guide)'
         entry: 'rmm::exec_policy\('
+        language: pygrep
+        types_or: [c, c++, cuda]
+      - id: use-cuda-iterators
+        name: use-cuda-iterators
+        description: 'Enforce that CUDA iterators are used instead of equivalent Thrust iterators'
+        entry: 'thrust::(?:make_)?(?:constant|counting|discard|permutation|reverse|strided|tabulate_output|transform|transform_input_output|transform_output|zip)_iterator'
         language: pygrep
         types_or: [c, c++, cuda]
       - id: exec-policy-nosync-memory-resource

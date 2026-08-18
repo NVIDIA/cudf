@@ -129,7 +129,7 @@ class NightlyRole:
 
     type: Literal["nightly"] = dataclasses.field(default="nightly", init=False)
     date: str = dataclasses.field(
-        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
+        default_factory=lambda: datetime.now(UTC).date().isoformat()
     )
 
 
@@ -355,7 +355,7 @@ class GPUInfo:
         except pynvml.NVMLError_NotSupported:
             # Happens on systems without traditional GPU memory (e.g., Grace Hopper),
             # where nvmlDeviceGetMemoryInfo is not supported.
-            # See: https://github.com/rapidsai/cudf/issues/19427
+            # See: https://github.com/NVIDIA/cudf/issues/19427
             return cls(
                 name=pynvml.nvmlDeviceGetName(handle),
                 index=index,
@@ -684,7 +684,9 @@ class RunConfig:
             config_options = config_options.drop_unserializable()
             rapidsmpf_options = engine.rapidsmpf_options.get_strings()
             result["config_options"] = {
-                "config_options": dataclasses.asdict(config_options),
+                "config_options": dataclasses.asdict(
+                    config_options, dict_factory=ConfigOptions.dict_factory
+                ),
                 "rapidsmpf_options": rapidsmpf_options,
             }
             # discard unserializable / unnecessary UUIDs

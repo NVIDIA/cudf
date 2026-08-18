@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 
@@ -234,7 +234,7 @@ def test_series_arith_masked_vs_constant(request, arithmetic_op, constant):
                 constant is cudf.NA
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_series(func, data, check_dtype=False)
@@ -258,7 +258,7 @@ def test_series_arith_masked_vs_constant_reflected(
                 constant in {1}
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_series(func, data, check_dtype=False)

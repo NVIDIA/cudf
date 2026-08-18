@@ -35,7 +35,7 @@ from pylibcudf.libcudf.strings cimport combine as cpp_combine
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 
 from pylibcudf.libcudf.io.types cimport (
-    compression_type,
+    compression_type as compression_type_t,
     table_with_metadata,
 )
 
@@ -96,7 +96,7 @@ cdef map[string, schema_element] _generate_schema_map(list dtypes):
 cpdef JsonReaderOptions _setup_json_reader_options(
         SourceInfo source_info,
         list dtypes,
-        compression_type compression = compression_type.AUTO,
+        compression_type_t compression = compression_type_t.AUTO,
         bool lines = False,
         size_t byte_range_offset = 0,
         size_t byte_range_size = 0,
@@ -404,7 +404,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Parameters
         ----------
-        compression : CompressionType
+        compression_type : CompressionType
             The compression type to use
 
         Returns
@@ -824,7 +824,7 @@ cpdef TableWithMetadata read_json_from_string_column(
     Scalar separator,
     Scalar narep,
     list dtypes = None,
-    compression_type compression = compression_type.NONE,
+    compression_type_t compression = compression_type_t.NONE,
     json_recovery_mode_t recovery_mode = json_recovery_mode_t.RECOVER_WITH_NULL,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None
@@ -984,7 +984,7 @@ cdef class JsonWriterOptions:
         """
         self.c_obj.set_false_value(val.encode())
 
-    cpdef void set_compression(self, compression_type comptype):
+    cpdef void set_compression(self, compression_type_t comptype):
         """
         Sets compression type to be used
 
@@ -1066,7 +1066,7 @@ cdef class JsonWriterOptionsBuilder:
         self.c_obj.lines(val)
         return self
 
-    cpdef JsonWriterOptionsBuilder compression(self, compression_type comptype):
+    cpdef JsonWriterOptionsBuilder compression(self, compression_type_t comptype):
         """
         Sets compression type of output sink.
 

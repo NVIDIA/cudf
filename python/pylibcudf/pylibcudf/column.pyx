@@ -829,7 +829,7 @@ cdef class Column:
 
     @staticmethod
     def from_scalar(
-        Scalar slr,
+        Scalar scalar,
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
@@ -838,7 +838,7 @@ cdef class Column:
 
         Parameters
         ----------
-        slr : Scalar
+        scalar : Scalar
             The scalar to create a column from.
         size : size_type
             The number of elements in the column.
@@ -1539,10 +1539,10 @@ cdef class Column:
 
 cdef class ListsColumnView:
     """Accessor for methods of a Column that are specific to lists."""
-    def __init__(self, Column col):
-        if col.type().id() != type_id.LIST:
+    def __init__(self, Column column):
+        if column.type().id() != type_id.LIST:
             raise TypeError("Column is not a list type")
-        self._column = col
+        self._column = column
 
     __hash__ = None
 
@@ -1585,10 +1585,10 @@ cdef class ListsColumnView:
 
 cdef class StructsColumnView:
     """Accessor for methods of a Column that are specific to structs."""
-    def __init__(self, Column col):
-        if col.type().id() != type_id.STRUCT:
+    def __init__(self, Column column):
+        if column.type().id() != type_id.STRUCT:
             raise TypeError("Column is not a struct type")
-        self._column = col
+        self._column = column
 
     __hash__ = None
 

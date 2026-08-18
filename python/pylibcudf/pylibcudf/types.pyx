@@ -275,13 +275,13 @@ cdef class DataType:
         return _from_arrow(pa_typ)
 
     @staticmethod
-    def from_py(typ: type) -> DataType:
+    def from_py(type: type) -> DataType:
         """
         Construct a DataType from a Python type.
 
         Parameters
         ----------
-        typ : type
+        type : type
             A Python type (eg. int, str, list)
 
         Returns
@@ -294,20 +294,20 @@ cdef class DataType:
         TypeError
             If the Python type is not supported.
         """
-        if typ is bool:
+        if type is bool:
             return DataType(type_id.BOOL8)
-        elif typ is int:
+        elif type is int:
             return DataType(type_id.INT64)
-        elif typ is float:
+        elif type is float:
             return DataType(type_id.FLOAT64)
-        elif typ is str:
+        elif type is str:
             return DataType(type_id.STRING)
-        elif typ is list:
+        elif type is list:
             return DataType(type_id.LIST)
-        elif typ is dict:
+        elif type is dict:
             return DataType(type_id.STRUCT)
         else:
-            raise TypeError(f"Cannot infer DataType from Python type {typ}")
+            raise TypeError(f"Cannot infer DataType from Python type {type}")
 
 cpdef size_t size_of(DataType t):
     """Returns the size in bytes of elements of the specified data_type.

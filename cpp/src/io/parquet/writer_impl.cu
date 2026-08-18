@@ -1916,7 +1916,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
     auto finish_row_group = [&] {
       auto& rg    = agg_meta->file(p).row_groups.emplace_back();
       rg.num_rows = curr_rg_num_rows;
-      num_rowgroups++;
+      ++num_rowgroups;
       num_rg_in_part[p]++;
     };
     for (auto f = first_frag_in_rg; f <= last_frag_in_part; ++f) {

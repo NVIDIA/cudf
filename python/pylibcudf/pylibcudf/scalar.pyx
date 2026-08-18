@@ -311,7 +311,9 @@ cdef class Scalar:
         mr = _get_memory_resource(mr)
         return _from_numpy(np_val, _stream, mr)
 
-    def to_py(self, stream: Stream | None = None) -> None | int | float | str | bool:
+    def to_py(
+        self, stream: Stream | None = None
+    ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.
 

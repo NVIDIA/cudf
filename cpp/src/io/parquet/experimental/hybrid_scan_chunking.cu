@@ -164,7 +164,7 @@ void hybrid_scan_reader_impl::setup_next_pass(
                                [](auto size, auto const& page) { return size + page.size(); });
       }
       auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(),
-                                                      parquet::detail::get_chunk_compressed_size{});
+                                                 parquet::detail::get_chunk_compressed_size{});
       return cudf::detail::reduce(
         chunk_iter, chunk_iter + pass.chunks.size(), size_t{0}, cuda::std::plus<size_t>{}, _stream);
     }();

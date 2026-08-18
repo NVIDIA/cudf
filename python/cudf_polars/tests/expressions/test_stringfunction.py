@@ -545,6 +545,23 @@ def test_string_to_float(engine: pl.GPUEngine, str_to_float_data, floating_type)
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("scale", [0, 1, 2, 4])
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["1.23", "-4.5", None, "0", "123456789.01", "abc", "1.234"],
+        [],
+        [None, None],
+        ["1.23"],
+    ],
+    ids=["mixed", "empty", "all-null", "single-row"],
+)
+def test_string_to_decimal(engine: pl.GPUEngine, scale, values):
+    ldf = pl.LazyFrame({"a": pl.Series(values, dtype=pl.String)})
+    q = ldf.select(pl.col("a").str.to_decimal(scale=scale))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_string_from_float(engine: pl.GPUEngine, request, str_from_float_data):
     if str_from_float_data.collect_schema()["a"] == pl.Float32:
         # libcudf will return a string representing the precision out to
@@ -854,8 +871,15 @@ def test_count_matches(engine: pl.GPUEngine, ldf):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_count_matches_literal_unsupported(engine: pl.GPUEngine, ldf):
-    q = ldf.select(pl.col("a").str.count_matches("a", literal=True))
+@pytest.mark.parametrize("pattern", ["a", ".", "a+", "+", "L"])
+def test_count_matches_literal(engine: pl.GPUEngine, pattern):
+    df = pl.LazyFrame({"a": ["a.b.c", "a1b2", "...", "", None, "a+a+a", "kLm"]})
+    q = df.select(pl.col("a").str.count_matches(pattern, literal=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_count_matches_literal_empty_unsupported(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.count_matches("", literal=True))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -967,15 +991,15 @@ def ldf_extract():
     return pl.LazyFrame({"a": ["?!. 123 foo", None]})
 
 
-@pytest.mark.parametrize("group_index", [1, 2])
+@pytest.mark.parametrize("group_index", [0, 1, 2])
 def test_extract(engine: pl.GPUEngine, ldf_extract, group_index):
     q = ldf_extract.select(pl.col("a").str.extract(r"(\S+) (\d+) (.+)", group_index))
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_extract_group_index_0_unsupported(engine: pl.GPUEngine, ldf_extract):
-    q = ldf_extract.select(pl.col("a").str.extract(r"(\S+) (\d+) (.+)", 0))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+def test_extract_group_index_0_no_capture_group(engine: pl.GPUEngine, ldf_extract):
+    q = ldf_extract.select(pl.col("a").str.extract(r"\d+", 0))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_extract_groups(engine: pl.GPUEngine, ldf_extract):

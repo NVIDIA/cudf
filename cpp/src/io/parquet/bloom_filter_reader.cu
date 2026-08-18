@@ -22,12 +22,12 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 #include <functional>
@@ -71,7 +71,7 @@ struct bloom_filter_caster {
   std::unique_ptr<cudf::column> query_bloom_filter(cudf::size_type equality_col_idx,
                                                    cudf::data_type dtype,
                                                    ast::literal const* const literal,
-                                                   rmm::cuda_stream_view stream) const
+                                                   cuda::stream_ref stream) const
     requires(not std::is_same_v<T, bool> and
              not(cudf::is_compound<T>() and not std::is_same_v<T, string_view>))
   {
@@ -151,7 +151,7 @@ struct bloom_filter_caster {
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type dtype,
                                            ast::literal const* const literal,
-                                           rmm::cuda_stream_view stream) const
+                                           cuda::stream_ref stream) const
   {
     // Boolean, List, Struct, Dictionary types are not supported
     if constexpr (std::is_same_v<T, bool> or
@@ -183,7 +183,7 @@ class bloom_filter_expression_converter : public equality_literals_collector {
     ast::expression const& expr,
     cudf::host_span<cudf::data_type const> output_dtypes,
     cudf::host_span<std::vector<ast::literal*> const> equality_literals,
-    rmm::cuda_stream_view stream)
+    cuda::stream_ref stream)
     : _equality_literals{equality_literals},
       _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
       _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
@@ -326,7 +326,7 @@ aggregate_reader_metadata::read_bloom_filters(
   host_span<std::vector<size_type> const> row_group_indices,
   host_span<int const> column_schemas,
   size_type total_row_groups,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   // Descriptors for all the chunks that make up the selected columns
@@ -408,7 +408,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   host_span<data_type const> output_dtypes,
   host_span<cudf::size_type const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Number of input table columns
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());

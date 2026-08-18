@@ -2888,7 +2888,7 @@ public class ColumnVectorTest extends CudfTestBase {
       }
     }
 
-    // Edge cases: empty/null outer rows — inner column has 0 rows (rapidsai/cudf#22146).
+    // Edge cases: empty/null outer rows — inner column has 0 rows (NVIDIA/cudf#22146).
     // These exercise the child.size()==0 early-exit guard added to concatenate_list_elements.
 
     // flatten([]) — 1 row: valid but empty list-of-lists; child.size()==0 triggers guard.
@@ -3580,7 +3580,7 @@ public class ColumnVectorTest extends CudfTestBase {
    * We can not simply create decimal string via `String.valueOf`, because castStringToDecimal doesn't
    * support scientific notations so far.
    *
-   * issue for scientific notation: https://github.com/rapidsai/cudf/issues/7665
+   * issue for scientific notation: https://github.com/NVIDIA/cudf/issues/7665
    */
   private static String dumpDecimal(Long unscaledValue, int scale) {
     if (unscaledValue == null) return null;

@@ -28,7 +28,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -470,7 +469,7 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
 
   // Transfer the updated chunks to device
   pass.chunks.host_to_device_async(_stream);
-  _stream.synchronize();
+  _stream.sync();
 
   // Pre-process string offsets for non-dictionary string columns
   kernel_error error_code(_stream);
@@ -688,8 +687,8 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
                      pass.pages.d_begin(),
                      pass.pages.d_end(),
                      set_list_row_count_estimate{pass.chunks});
-    auto key_input  = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
-    auto page_input = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
+    auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
+    auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
     thrust::exclusive_scan_by_key(
       rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
       key_input,
@@ -717,7 +716,7 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
 
   pass.chunks.device_to_host_async(_stream);
   pass.pages.device_to_host_async(_stream);
-  _stream.synchronize();
+  _stream.sync();
 }
 
 void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_limit)
@@ -802,8 +801,8 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // field in ColumnChunkDesc is the absolute row index for the whole file. chunk_row in PageInfo is
   // relative to the beginning of the chunk. so in the kernels, chunk.start_row + page.chunk_row
   // gives us the absolute row index
-  auto key_input  = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
-  auto page_input = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
+  auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
+  auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
   thrust::exclusive_scan_by_key(
     rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
     key_input,
@@ -870,7 +869,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // retrieve pages back
   pass.pages.device_to_host_async(_stream);
   if (!subpass.single_subpass) { subpass.pages.device_to_host_async(_stream); }
-  _stream.synchronize();
+  _stream.sync();
 
   // at this point we have an accurate row count so we can compute how many rows we will actually be
   // able to decode for this pass. we will have selected a set of pages for each column in the
@@ -1036,7 +1035,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           d_cols_info.data(), max_depth, subpass.pages.size(), subpass.pages.device_begin()});
 
       // Manually create a size_t `key_start` compatible counting_transform_iterator.
-      auto const reduction_keys = thrust::make_transform_iterator(
+      auto const reduction_keys = cuda::transform_iterator(
         cuda::counting_iterator<std::size_t>{key_start}, get_reduction_key{subpass.pages.size()});
 
       // Find the size of each column
@@ -1139,8 +1138,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
   rmm::device_uvector<size_t> d_col_sizes(_input_columns.size(), _stream);
 
   // use page_index to fetch page string sizes in the proper order
-  auto val_iter = thrust::make_transform_iterator(subpass.pages.device_begin(),
-                                                  page_to_string_size{pass.chunks.d_begin()});
+  auto val_iter = cuda::transform_iterator(subpass.pages.device_begin(),
+                                           page_to_string_size{pass.chunks.d_begin()});
 
   // do scan by key to calculate string offsets for each page
   thrust::exclusive_scan_by_key(
@@ -1188,7 +1187,7 @@ struct map_global_to_local_row_index {
 }  // namespace
 
 std::unique_ptr<column> reader_impl::synthesize_row_index_column(row_range const& read_info,
-                                                                 rmm::cuda_stream_view stream,
+                                                                 cuda::stream_ref stream,
                                                                  rmm::device_async_resource_ref mr)
 {
   using column_type = size_t;
@@ -1226,8 +1225,8 @@ std::unique_ptr<column> reader_impl::synthesize_row_index_column(row_range const
       read_info.num_rows,
       map_global_to_local_row_index{
         rg_global_offsets.data(), rg_local_offsets.data(), rg_global_offsets.size()},
-      stream.value()));
-    stream.synchronize();
+      stream.get()));
+    stream.sync();
   }
 
   return std::make_unique<cudf::column>(std::move(col_data), rmm::device_buffer{0, stream, mr}, 0);
@@ -1235,7 +1234,7 @@ std::unique_ptr<column> reader_impl::synthesize_row_index_column(row_range const
 
 std::unique_ptr<column> reader_impl::synthesize_source_index_column(
   std::span<std::size_t const> num_rows_per_source,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   using column_type = cudf::size_type;
@@ -1271,7 +1270,7 @@ std::unique_ptr<column> reader_impl::synthesize_source_index_column(
       host_row_offsets, stream, cudf::get_current_device_resource_ref());
     cudf::detail::label_segments(
       row_offsets.begin(), row_offsets.end(), col_data.begin(), col_data.end(), stream);
-    stream.synchronize();
+    stream.sync();
   }
 
   return std::make_unique<cudf::column>(std::move(col_data), rmm::device_buffer{0, stream, mr}, 0);

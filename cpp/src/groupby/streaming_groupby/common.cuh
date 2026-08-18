@@ -19,12 +19,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>
@@ -220,7 +220,7 @@ auto build_cross_comparators(
   std::vector<std::shared_ptr<cudf::detail::row::equality::preprocessed_table>> const&
     preprocessed_batches,
   cudf::nullate::DYNAMIC has_null,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   using eq_t = cudf::detail::row::equality::device_row_comparator<
     has_nested_columns,
@@ -309,8 +309,8 @@ struct streaming_groupby::impl {
        null_policy null_handling,
        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
-  void initialize(table_view const& data, rmm::cuda_stream_view stream);
-  void create_key_set(rmm::cuda_stream_view stream);
+  void initialize(table_view const& data, cuda::stream_ref stream);
+  void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);
 
   struct batch_insert_result {
@@ -319,15 +319,14 @@ struct streaming_groupby::impl {
     rmm::device_buffer bitmask_buffer;
   };
 
-  batch_insert_result probe_and_insert(table_view const& batch_keys, rmm::cuda_stream_view stream);
+  batch_insert_result probe_and_insert(table_view const& batch_keys, cuda::stream_ref stream);
 
   /*
    * Template implementation of probe_and_insert, split by has_nested.
    * Defined in insert.cuh, instantiated in insert.cu and insert_nested.cu.
    */
   template <bool has_nested>
-  batch_insert_result probe_and_insert_impl(table_view const& batch_keys,
-                                            rmm::cuda_stream_view stream);
+  batch_insert_result probe_and_insert_impl(table_view const& batch_keys, cuda::stream_ref stream);
 
   /*
    * Two helpers split off probe_and_insert_impl for compile-time parallelism.
@@ -348,7 +347,7 @@ struct streaming_groupby::impl {
     size_type* target_indices,
     size_type* slot_offsets,
     size_type* batch_local_indices,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   template <bool has_nested>
   size_type probe_and_insert_subsequent(
@@ -360,19 +359,19 @@ struct streaming_groupby::impl {
     size_type* target_indices,
     size_type* slot_offsets,
     size_type* batch_local_indices,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
-  void do_aggregate(table_view const& data, rmm::cuda_stream_view stream);
+  void do_aggregate(table_view const& data, cuda::stream_ref stream);
 
-  [[nodiscard]] std::unique_ptr<table> gather_agg_results(rmm::cuda_stream_view stream,
+  [[nodiscard]] std::unique_ptr<table> gather_agg_results(cuda::stream_ref stream,
                                                           rmm::device_async_resource_ref mr) const;
   [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
-  void do_merge(impl const& other, rmm::cuda_stream_view stream);
+  void do_merge(impl const& other, cuda::stream_ref stream);
 };
 
 }  // namespace cudf::groupby

@@ -15,7 +15,7 @@
 #include <cudf/strings/wrap.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -25,9 +25,9 @@ TEST_F(StringsPadTest, Padding)
 {
   std::vector<char const*> h_strings{"eee ddd", "bb cc", nullptr, "", "aa", "bbb", "ééé", "o"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   cudf::size_type width = 6;
   std::string phil      = "+";
   auto strings_view     = cudf::strings_column_view(strings);
@@ -40,7 +40,7 @@ TEST_F(StringsPadTest, Padding)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
@@ -51,7 +51,7 @@ TEST_F(StringsPadTest, Padding)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
@@ -62,7 +62,7 @@ TEST_F(StringsPadTest, Padding)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }
@@ -205,9 +205,9 @@ TEST_F(StringsPadTest, Wrap1)
 {
   std::vector<char const*> h_strings{"12345", "thesé", nullptr, "ARE THE", "tést strings", ""};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   cudf::size_type width = 3;
 
   auto strings_view = cudf::strings_column_view(strings);
@@ -218,7 +218,7 @@ TEST_F(StringsPadTest, Wrap1)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -227,9 +227,9 @@ TEST_F(StringsPadTest, Wrap2)
   std::vector<char const*> h_strings{"the quick brown fox jumped over the lazy brown dog",
                                      "hello, world"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   cudf::size_type width = 12;
 
   auto strings_view = cudf::strings_column_view(strings);
@@ -241,7 +241,7 @@ TEST_F(StringsPadTest, Wrap2)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -249,9 +249,9 @@ TEST_F(StringsPadTest, WrapExpectFailure)
 {
   std::vector<char const*> h_strings{"12345", "thesé", nullptr, "ARE THE", "tést strings", ""};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   cudf::size_type width = 0;  // this should trigger failure
 

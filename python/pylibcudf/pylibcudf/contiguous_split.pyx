@@ -307,7 +307,7 @@ cdef class ChunkedPack:
                     dereference(h_buf).data() + offset,
                     d_span.data(),
                     size,
-                    cudaMemcpyKind.cudaMemcpyDeviceToHost,
+                    cudaMemcpyKind.cudaMemcpyDefault,
                     stream,
                 )
                 offset += size

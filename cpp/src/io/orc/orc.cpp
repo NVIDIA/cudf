@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -465,7 +465,7 @@ host_span<uint8_t const> orc_decompressor::decompress_blocks(host_span<uint8_t c
   return m_buf;
 }
 
-metadata::metadata(datasource* const src, rmm::cuda_stream_view stream) : source(src)
+metadata::metadata(datasource* const src, cuda::stream_ref stream) : source(src)
 {
   auto const len         = source->size();
   auto const max_ps_size = std::min(len, static_cast<size_t>(256));

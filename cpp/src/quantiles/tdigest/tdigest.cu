@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 
@@ -59,7 +58,7 @@ struct make_centroid {
 
 // kernel for computing percentiles on input tdigest (mean, weight) centroid data.
 template <typename CentroidIter>
-CUDF_KERNEL void compute_percentiles_kernel(device_span<size_type const> tdigest_offsets,
+CUDF_KERNEL void compute_percentiles_kernel(device_span<int32_t const> tdigest_offsets,
                                             column_device_view percentiles,
                                             CentroidIter centroids_,
                                             double const* min_,
@@ -193,8 +192,8 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
   auto keys               = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<std::ptrdiff_t>(
-      [offsets_begin = offsets.begin<size_type>(),
-       offsets_end   = offsets.end<size_type>()] __device__(size_type i) {
+      [offsets_begin = offsets.begin<int32_t>(),
+       offsets_end   = offsets.end<int32_t>()] __device__(size_type i) {
         return cuda::std::distance(
           offsets_begin,
           cuda::std::prev(thrust::upper_bound(thrust::seq, offsets_begin, offsets_end, i)));
@@ -234,7 +233,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
   constexpr size_type block_size = 256;
   cudf::detail::grid_1d const grid(percentiles.size() * input.size(), block_size);
   compute_percentiles_kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(
-    {offsets.begin<size_type>(), static_cast<size_t>(offsets.size())},
+    {offsets.begin<int32_t>(), static_cast<size_t>(offsets.size())},
     *percentiles_cdv,
     centroids,
     tdv.min_begin(),
@@ -291,8 +290,8 @@ std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
   auto offsets = cudf::make_fixed_width_column(
     data_type(type_id::INT32), num_rows + 1, mask_state::UNALLOCATED, stream, mr);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               offsets->mutable_view().begin<size_type>(),
-               offsets->mutable_view().end<size_type>(),
+               offsets->mutable_view().begin<int32_t>(),
+               offsets->mutable_view().end<int32_t>(),
                0);
 
   auto min_col = cudf::make_numeric_column(
@@ -359,7 +358,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          row_size_iter,
                          row_size_iter + input.size() + 1,
-                         offsets->mutable_view().begin<size_type>());
+                         offsets->mutable_view().begin<int32_t>());
 
   if (percentiles.size() == 0 || all_empty_rows) {
     return cudf::make_lists_column(
@@ -374,7 +373,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
   // if any of the input digests are empty, nullify the corresponding output rows (values will be
   // uninitialized)
   auto [bitmask, null_count] = [stream, mr, &tdv]() {
-    auto tdigest_is_empty = thrust::make_transform_iterator(
+    auto tdigest_is_empty = cuda::transform_iterator(
       detail::size_begin(tdv),
       cuda::proclaim_return_type<size_type>(
         [] __device__(size_type tdigest_size) -> size_type { return tdigest_size == 0; }));

@@ -10,7 +10,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <functional>
@@ -223,7 +223,7 @@ cudf::size_type expression_parser::visit(operation const& expr)
   auto const operand_data_ref_indices = visit_operands(expr.get_operands());
   // Resolve operand types
   auto data_ref = [this](auto const& index) { return _data_references[index].data_type; };
-  auto begin    = thrust::make_transform_iterator(operand_data_ref_indices.cbegin(), data_ref);
+  auto begin    = cuda::transform_iterator(operand_data_ref_indices.cbegin(), data_ref);
   auto end      = begin + operand_data_ref_indices.size();
   auto const operand_types = std::vector<cudf::data_type>(begin, end);
 

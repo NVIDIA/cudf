@@ -48,7 +48,7 @@ struct row_group_stats_caster : public stats_caster_base {
     tuple<std::unique_ptr<column>, std::unique_ptr<column>, std::optional<std::unique_ptr<column>>>
     operator()(host_span<int const> per_source_schema_indices,
                cudf::data_type dtype,
-               rmm::cuda_stream_view stream,
+               cuda::stream_ref stream,
                rmm::device_async_resource_ref mr) const
   {
     // List, Struct, Dictionary types are not supported
@@ -162,7 +162,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   host_span<data_type const> output_dtypes,
   host_span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   auto mr = cudf::get_current_device_resource_ref();
 
@@ -264,7 +264,7 @@ aggregate_reader_metadata::filter_row_groups(
   host_span<data_type const> output_dtypes,
   host_span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Apply stats filtering on input row groups
   auto const stats_filtered_row_groups = apply_stats_filters(input_row_group_indices,

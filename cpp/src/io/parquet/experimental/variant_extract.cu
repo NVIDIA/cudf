@@ -774,7 +774,6 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
       if (s != op_status::SUCCESS) {
         d_output[row] = T{};
         if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
-        d_status[row] = s;
         continue;
       }
       if (!cudf::bit_is_set(d_null_mask, row)) {
@@ -858,7 +857,7 @@ struct cast_variant_string_fn {
     // Status is only written on the sizing pass (d_chars == nullptr). On the writing pass the
     // null mask may already be cleared from the sizing pass, so we must not re-inspect it to
     // write status (that would misidentify a decode-failed row as a SQL-null row).
-    bool const sizing = (d_chars == nullptr);
+    bool const is_sizing_pass = (d_chars == nullptr);
 
     if (d_status) {
       // Status column is always non-nullable; row_null replaces the null bit.
@@ -866,7 +865,6 @@ struct cast_variant_string_fn {
       if (s != op_status::SUCCESS) {
         if (sizing) { d_sizes[row] = 0; }
         if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
-        if (sizing) { d_status[row] = s; }
         return;
       }
       if (!cudf::bit_is_set(d_null_mask, row)) {
@@ -965,36 +963,19 @@ struct cast_variant_fn {
                       d_out = static_cast<bool*>(data.data()),
                       dnm   = this->d_null_mask,
                       dp_s] __device__(size_type row) {
-                       // Status column is always non-nullable; row_null replaces the null bit.
-                       if (dp_s) {
-                         auto const s = dp_s[row];
-                         if (s != op_status::SUCCESS) {
-                           d_out[row] = false;
-                           if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
-                           dp_s[row] = s;
-                           return;
-                         }
-                         if (!cudf::bit_is_set(dnm, row)) {
-                           d_out[row] = false;
-                           dp_s[row]  = op_status::ROW_NULL;
-                           return;
-                         }
-                       } else {
-                         if (!cudf::bit_is_set(dnm, row)) {
-                           d_out[row] = false;
-                           return;
-                         }
-                       }
-                       auto const val     = list_row_span(vals, row);
-                       auto const decoded = decode_bool(val);
-                       if (decoded.has_value()) {
-                         d_out[row] = *decoded;
-                         if (dp_s) { dp_s[row] = op_status::SUCCESS; }
-                       } else {
-                         d_out[row] = false;
-                         cudf::clear_bit(dnm, row);
-                         if (dp_s) { dp_s[row] = cast_status_for_bool(val); }
-                       }
+                   auto const fail = [&](op_status s) {
+                     d_out[row] = false;
+                     if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
+                     if (dp_s) { dp_s[row] = s; }
+                   };
+                   if (dp_s and dp_s[row] != op_status::SUCCESS) { return fail(dp_s[row]); }
+                   // Status column is always non-nullable; ROW_NULL replaces the null bit.
+                   if (!cudf::bit_is_set(dnm, row)) { return fail(op_status::ROW_NULL); }
+                   auto const val     = list_row_span(vals, row);
+                   auto const decoded = decode_bool(val);
+                   if (!decoded) { return fail(cast_status_for_bool(val)); }
+                   d_out[row] = *decoded;
+                   if (dp_s) { dp_s[row] = op_status::SUCCESS; }
                      });
 
     auto const null_count =

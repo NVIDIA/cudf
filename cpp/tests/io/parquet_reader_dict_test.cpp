@@ -527,7 +527,7 @@ TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
 TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
 {
   auto col_a = make_low_cardinality_strings();                  // default seed
-  auto col_b = make_low_cardinality_strings(seed ^ 0xBEEF01u);  // distinct data
+  auto col_b = make_low_cardinality_strings(seed ^ 0xBE'EF01u);  // distinct data
 
   auto const input_tbl = cudf::table_view{{col_a, col_b}};
   auto const filepath  = temp_env->get_temp_filepath("MultiStringColumnsDictTranscode.parquet");

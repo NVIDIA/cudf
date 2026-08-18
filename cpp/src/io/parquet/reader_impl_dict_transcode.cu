@@ -160,11 +160,11 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
 /**
  * @brief Remap each row's dictionary index onto the deduplicated key space (in place).
  *
- * If output_dict_columns is set, the transcode fast path copies the dictionary indices as is on
- * Parquet, into a new INT32 column. These indices (d_indices) were indexing the keys for the local
- * row group. This function shifts the indices into the chunk's region of the stacked
- * (non-deduplicated) key space, and remaps them onto the deduplicated key space spanning all row
- * groups. Remapping is done in place. Used in-lieu of `cudf::dictionary::detail::concatenate`.
+ * Each row's decoded index is local to its own row group's dictionary. This shifts that index into
+ * the row group's region of the stacked (non-deduplicated) key space, then translates it through
+ * `stacked_to_unique` -- the position-to-index map produced by encoding the stacked keys -- so it
+ * points at the correct entry in the compact, unique keys column. Done in place, in one pass over
+ * the rows, in lieu of `cudf::dictionary::detail::concatenate`.
  *
  * @param d_indices Device pointer to the INT32 index buffer, mutated in place
  * @param num_rows Number of index values
@@ -185,7 +185,7 @@ void remap_dict_indices_by_chunk(int32_t* d_indices,
     rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator{num_rows},
-    [row_offsets, key_counts_prefix, stacked_to_unique, d_indices] __device__(size_type row) {
+    [row_offsets, key_counts_prefix, stacked_to_unique, d_indices] __device__(size_type row) -> void {
       // Chunk owning `row` is the last offset <= row.
       auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);
       auto const k  = static_cast<size_type>(it - row_offsets.begin() - 1);
@@ -306,12 +306,12 @@ void reader_impl::assemble_dict_transcoded_columns(
     return all_keys->view();
   };
 
-  // For each eligible input column, collect its chunks in row-group order, build a per-chunk
-  // DICTIONARY32 segment (local 0-based indices + per-chunk keys column), and concatenate.
+  // For each eligible input column, collect its chunks in row-group order and assemble a
+  // DICTIONARY32 output.
   //
   // A single-row-group column takes a zero-copy fast path (keys + decoded indices stapled
   // together). A multi-row-group column stacks the per-chunk keys, deduplicates them, and remaps
-  // the decoded indices onto the compact key space in place,  avoiding
+  // the decoded indices onto the compact key space in place -- avoiding
   // `cudf::dictionary::detail::concatenate` and its redundant per-chunk index copy.
   std::for_each(
     cuda::counting_iterator<size_t>{0},

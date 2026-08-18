@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <iterator>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace cudf {
@@ -183,7 +184,6 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
   // Process the mask such that each thread in warp handles different words
   for (size_type destination_word_index = lane; destination_word_index < destination_size;
        destination_word_index += warp.size()) {
-        
     bitmask_type destination_word = identity;
 
     // Apply the binary operation with each source mask in the segment
@@ -410,7 +410,7 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   CUDF_EXPECTS(std::is_sorted(segment_offsets.begin(), segment_offsets.end()),
                "Segment offsets must be non-decreasing");
   CUDF_EXPECTS(
-    segment_offsets.front() >= 0 && segment_offsets.back() <= static_cast<size_type>(masks.size()),
+    segment_offsets.front() >= 0 && std::cmp_less_equal(segment_offsets.back(), masks.size()),
     "Segment offsets are out of the bounds of the mask array");
 
   auto const num_segments = static_cast<size_type>(segment_offsets.size() - 1);

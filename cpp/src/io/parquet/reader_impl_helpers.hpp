@@ -357,7 +357,7 @@ class aggregate_reader_metadata {
    * Returns true iff at least one column chunk referenced by `filter_column_schemas` in the first
    * selected row group of any source carries any of `min` / `max` / `min_value` / `max_value` /
    * `null_count`. Inspecting one row group per source is sufficient; see
-   * https://github.com/rapidsai/cudf/pull/22664#issuecomment-4557500237.
+   * https://github.com/NVIDIA/cudf/pull/22664#issuecomment-4557500237.
    *
    * @param input_row_group_indices Selected row group indices, one vector per source
    * @param filter_column_schemas Zeroth-source schema indices of the columns referenced by the

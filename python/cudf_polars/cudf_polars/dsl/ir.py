@@ -447,7 +447,7 @@ class PythonScan(IR):
         # We pass predicate=None and apply any pushed predicate on the
         # GPU in process_chunk.
         # TODO: forward the pushed predicate to a RankAwareSource so a GPU-aware source
-        # can apply it at read time. See https://github.com/rapidsai/cudf/issues/22917.
+        # can apply it at read time. See https://github.com/NVIDIA/cudf/issues/22917.
         if rank_aware_source is not None:
             source_chunks = rank_aware_source(
                 with_columns, None, None, None, rank=rank, nranks=nranks
@@ -519,7 +519,7 @@ class PythonScan(IR):
         # Validate against the declared (output) schema. Polars performs this
         # check for register_io_source(..., validate_schema=True), but the flag is
         # not exposed to the GPU plan, so we always validate.
-        # See https://github.com/rapidsai/cudf/issues/23043
+        # See https://github.com/NVIDIA/cudf/issues/23043
         declared = pl.Schema(
             {name: dtype.polars_type for name, dtype in schema.items()}
         )
@@ -582,7 +582,7 @@ def _parquet_physical_types(
     paths: list[str], columns: list[str] | None
 ) -> dict[str, plc.DataType]:
     # TODO: Use prefetched metadata
-    # https://github.com/rapidsai/cudf/issues/22940
+    # https://github.com/NVIDIA/cudf/issues/22940
     metadata = plc.io.parquet_metadata.read_parquet_metadata(plc.io.SourceInfo(paths))
     column_types = metadata.schema().column_types()
 
@@ -910,7 +910,7 @@ class Scan(IR):
         cached_parquet_info: list[CachedParquetInfo] | None,
     ) -> int:
         # Zero-width parquet files lose their row count when read through
-        # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
+        # pylibcudf. See https://github.com/NVIDIA/cudf/issues/21428
         if cached_parquet_info is not None:
             Scan._validate_cached_parquet_info(paths, cached_parquet_info)
             parquet_metadatas = [
@@ -965,6 +965,7 @@ class Scan(IR):
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
         stream = context.get_cuda_stream()
+        effective_predicate = predicate
         if typ == "csv":
 
             def read_csv_header(
@@ -1092,12 +1093,18 @@ class Scan(IR):
             filters = None
             if predicate is not None and row_index is None:
                 # Can't apply filters during read if we have a row index.
-                filters = to_parquet_filter(
+                filters, residual_expr = to_parquet_filter(
                     _prepare_parquet_predicate(
                         predicate.value, paths, schema, with_columns
                     ),
                     stream=stream,
                 )
+                if filters is not None:
+                    effective_predicate = (
+                        expr.NamedExpr(predicate.name, residual_expr)
+                        if residual_expr is not None
+                        else None
+                    )
             builder = plc.io.parquet.ParquetReaderOptions.builder(source_info)
             if filters is not None and parquet_options.use_jit_filter:
                 builder.use_jit_filter(use_jit_filter=True)
@@ -1189,8 +1196,7 @@ class Scan(IR):
                     df = Scan.add_file_paths(
                         include_file_paths, paths, tbl_w_meta.num_rows_per_source, df
                     )
-            if filters is not None:
-                # Mask must have been applied.
+            if filters is not None and effective_predicate is None:
                 return df
         elif typ == "ndjson":
             json_schema: list[plc.io.json.NameAndType] = [
@@ -1241,7 +1247,7 @@ class Scan(IR):
         assert all(
             c.obj.type() == schema[name].plc_type for name, c in df.column_map.items()
         )
-        return apply_predicate(df, predicate)
+        return apply_predicate(df, effective_predicate)
 
 
 class Sink(IR):
@@ -1736,7 +1742,7 @@ class DataFrameScan(IR):
             df = df.select(projection)
 
         # Zero-width dataframes lose their row count when converted through
-        # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
+        # pylibcudf. See https://github.com/NVIDIA/cudf/issues/21428
         if len(schema) == 0:
             return DataFrame([], stream=context.get_cuda_stream(), num_rows=height)
 

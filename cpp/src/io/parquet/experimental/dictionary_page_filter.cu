@@ -198,7 +198,7 @@ __device__ __forceinline__ bool is_error_set(kernel_error::pointer error)
 __device__ __forceinline__ int32_t get_int32_type_len(LogicalType const& logical_type)
 {
   // Note: This function has been extracted from the snippet at:
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
 
   // Check for smaller bitwidths
   if (logical_type.type == LogicalType::INTEGER) {
@@ -223,7 +223,7 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
                                                       int64_t* timestamp64)
 {
   // Note: This function has been modified from the original at
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
 
   int64_t nanos = cudf::io::unaligned_load<uint64_t>(int96_ptr);
   int64_t days  = cudf::io::unaligned_load<uint32_t>(int96_ptr + sizeof(int64_t));
@@ -447,7 +447,7 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
       // Handle durations
       else if constexpr (cudf::is_duration<T>()) {
         // Note: This function has been extracted from the snippet at:
-        // https://github.com/rapidsai/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
+        // https://github.com/NVIDIA/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
 
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
         // TIME_MILLIS is the only duration type stored as int32:

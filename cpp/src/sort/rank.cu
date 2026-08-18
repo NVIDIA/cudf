@@ -26,7 +26,6 @@
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -136,7 +135,7 @@ void tie_break_ranks_transform(cudf::device_span<size_type const> dense_rank_sor
                         tie_breaker);
   using TransformerReturnType =
     cuda::std::decay_t<cuda::std::invoke_result_t<Transformer, TieType>>;
-  auto sorted_tied_rank = thrust::make_transform_iterator(
+  auto sorted_tied_rank = cuda::transform_iterator(
     dense_rank_sorted.begin(),
     cuda::proclaim_return_type<TransformerReturnType>(
       [tied_rank = tie_sorted.begin(), transformer] __device__(auto dense_pos) {

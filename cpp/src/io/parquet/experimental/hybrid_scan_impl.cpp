@@ -147,7 +147,7 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
 
     // Select only columns required by the options and filter.
     // Using as is from:
-    // https://github.com/rapidsai/cudf/blob/a8b25cd205dc5d04b9918dcb0b3abd6b8c4e4a74/cpp/src/io/parquet/reader_impl.cpp#L556-L569
+    // https://github.com/NVIDIA/cudf/blob/a8b25cd205dc5d04b9918dcb0b3abd6b8c4e4a74/cpp/src/io/parquet/reader_impl.cpp#L556-L569
     std::optional<std::vector<std::string>> filter_only_columns_names;
     if (options.get_filter().has_value() and select_column_names.has_value()) {
       filter_only_columns_names = parquet::detail::get_column_names_in_expression(

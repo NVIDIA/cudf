@@ -115,7 +115,7 @@ def test_with_row_index_defaults(engine: pl.GPUEngine):
 
 
 def test_unique_hash():
-    # https://github.com/rapidsai/cudf/pull/19121#issuecomment-2959305678
+    # https://github.com/NVIDIA/cudf/pull/19121#issuecomment-2959305678
     a = pl.LazyFrame({"a": [1, 2, 3]}).rename({"a": "A"})
     b = pl.LazyFrame({"a": [4, 5, 6]}).rename({"a": "A"})
     ir_a = Translator(a._ldf.visit(), pl.GPUEngine()).translate_ir()

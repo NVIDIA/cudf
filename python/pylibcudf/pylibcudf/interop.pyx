@@ -76,8 +76,8 @@ cpdef Table from_dlpack(
     # Note: A copy is always performed when converting the dlpack
     # data to a libcudf table. We also delete the dlpack_tensor pointer
     # as the pointer is not deleted by libcudf's from_dlpack function.
-    # TODO: https://github.com/rapidsai/cudf/issues/10874
-    # TODO: https://github.com/rapidsai/cudf/issues/10849
+    # TODO: https://github.com/NVIDIA/cudf/issues/10874
+    # TODO: https://github.com/NVIDIA/cudf/issues/10849
     with nogil:
         c_result = cpp_from_dlpack(dlpack_tensor, _cs, mr.get_mr())
 

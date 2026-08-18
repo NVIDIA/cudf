@@ -631,7 +631,7 @@ TYPED_TEST(ListsColumnTest, ListsSlicedColumnViewConstructorWithNulls)
 
   // TODO: null mask equality is being checked separately because
   // expect_columns_equal doesn't do the check for lists columns.
-  // This is fixed in https://github.com/rapidsai/cudf/pull/5904,
+  // This is fixed in https://github.com/NVIDIA/cudf/pull/5904,
   // so we should remove this check after that's merged:
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     cudf::mask_to_bools(result->view().null_mask(), 0, 4)->view(),

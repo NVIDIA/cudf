@@ -429,11 +429,9 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
   auto const chars_span1 = cudf::device_span<char const>(d_input_chars1, chars_size1);
   auto const chars_span2 = cudf::device_span<char const>(d_input_chars2, chars_size2);
 
-  auto const itr1 =
-    thrust::make_transform_iterator(indices1.begin(), index_to_prefix_fn{chars_span1});
+  auto const itr1 = cuda::transform_iterator(indices1.begin(), index_to_prefix_fn{chars_span1});
   auto const end1 = itr1 + indices1.size();
-  auto const itr2 =
-    thrust::make_transform_iterator(indices2.begin(), index_to_string_fn{chars_span2});
+  auto const itr2 = cuda::transform_iterator(indices2.begin(), index_to_string_fn{chars_span2});
   auto const end2 = itr2 + indices2.size();
 
   // vectorized lower-bound and upper-bound of prefix strings improves performance of the

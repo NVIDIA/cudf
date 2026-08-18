@@ -29,7 +29,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 #include <limits>

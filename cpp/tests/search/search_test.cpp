@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,8 +14,8 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/iterator>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <limits>
 #include <numeric>
@@ -647,14 +647,12 @@ TEST_F(SearchTest, empty_table_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -676,14 +674,12 @@ TEST_F(SearchTest, empty_values_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{};
 
@@ -706,14 +702,12 @@ TEST_F(SearchTest, non_null_column__find_first_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{0, 0, 0, 1, 2, 3, 3, 4, 4, 5};
 
@@ -736,14 +730,12 @@ TEST_F(SearchTest, non_null_column__find_last_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{0, 0, 1, 1, 3, 3, 4, 4, 5, 5};
 
@@ -766,14 +758,12 @@ TEST_F(SearchTest, non_null_column_desc__find_first_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{5, 5, 4, 4, 2, 2, 1, 1, 0, 0};
 
@@ -796,14 +786,12 @@ TEST_F(SearchTest, non_null_column_desc__find_last_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{5, 5, 5, 4, 3, 2, 2, 1, 1, 0};
 
@@ -826,14 +814,12 @@ TEST_F(SearchTest, nullable_column__find_last__nulls_as_smallest_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{2, 2, 3, 3, 5, 5, 6, 6, 7, 7};
 
@@ -856,14 +842,12 @@ TEST_F(SearchTest, nullable_column__find_first__nulls_as_smallest_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{0, 2, 2, 3, 4, 5, 5, 6, 6, 7};
 
@@ -886,14 +870,12 @@ TEST_F(SearchTest, nullable_column__find_last__nulls_as_largest_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{0, 1, 1, 3, 3, 4, 4, 5, 5, 7};
 
@@ -935,14 +917,12 @@ TEST_F(SearchTest, nullable_column__find_first__nulls_as_largest_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values(
     h_val_strings.begin(),
     h_val_strings.end(),
-    thrust::make_transform_iterator(h_val_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_strings.begin(), [](auto str) { return str != nullptr; }));
 
   fixed_width_column_wrapper<size_type> expect{0, 0, 1, 2, 3, 3, 4, 4, 5, 5};
 
@@ -978,26 +958,22 @@ TEST_F(SearchTest, table__find_first_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1047,26 +1023,22 @@ TEST_F(SearchTest, table__find_last_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1116,26 +1088,22 @@ TEST_F(SearchTest, table_partial_desc__find_first_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1186,26 +1154,22 @@ TEST_F(SearchTest, table_partial_desc__find_last_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1253,26 +1217,22 @@ TEST_F(SearchTest, table__find_first__nulls_as_smallest_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1320,26 +1280,22 @@ TEST_F(SearchTest, table__find_last__nulls_as_smallest_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1387,26 +1343,22 @@ TEST_F(SearchTest, table__find_first__nulls_as_largest_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1454,26 +1406,22 @@ TEST_F(SearchTest, table__find_last__nulls_as_largest_string)
   cudf::test::strings_column_wrapper column_0(
     h_col_0_strings.begin(),
     h_col_0_strings.end(),
-    thrust::make_transform_iterator(h_col_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper column_2(
     h_col_2_strings.begin(),
     h_col_2_strings.end(),
-    thrust::make_transform_iterator(h_col_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_0(
     h_val_0_strings.begin(),
     h_val_0_strings.end(),
-    thrust::make_transform_iterator(h_val_0_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_0_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper values_2(
     h_val_2_strings.begin(),
     h_val_2_strings.end(),
-    thrust::make_transform_iterator(h_val_2_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_val_2_strings.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(column_0.release());
@@ -1509,8 +1457,7 @@ TEST_F(SearchTest, contains_true_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   bool expect = true;
   bool result = false;
@@ -1528,8 +1475,7 @@ TEST_F(SearchTest, contains_false_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   bool expect = false;
   bool result = false;
@@ -1547,8 +1493,7 @@ TEST_F(SearchTest, contains_empty_value_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   bool expect = false;
   bool result = false;
@@ -1566,8 +1511,7 @@ TEST_F(SearchTest, contains_empty_column_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   bool expect = false;
   bool result = false;
@@ -1585,8 +1529,7 @@ TEST_F(SearchTest, contains_nullable_column_true_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   bool result = false;
   bool expect = true;
@@ -1604,8 +1547,7 @@ TEST_F(SearchTest, contains_nullable_column_false_string)
   cudf::test::strings_column_wrapper column(
     h_col_strings.begin(),
     h_col_strings.end(),
-    thrust::make_transform_iterator(h_col_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_col_strings.begin(), [](auto str) { return str != nullptr; }));
 
   bool result = false;
   bool expect = false;
@@ -1715,14 +1657,12 @@ TEST_F(SearchTest, multi_contains_some_string_with_nulls)
   cudf::test::strings_column_wrapper haystack(
     h_haystack_strings.begin(),
     h_haystack_strings.end(),
-    thrust::make_transform_iterator(h_haystack_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_haystack_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper needles(
     h_needles_strings.begin(),
     h_needles_strings.end(),
-    thrust::make_transform_iterator(h_needles_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_needles_strings.begin(), [](auto str) { return str != nullptr; }));
 
   auto result = cudf::contains(haystack, needles);
 
@@ -1739,14 +1679,12 @@ TEST_F(SearchTest, multi_contains_none_string_with_nulls)
   cudf::test::strings_column_wrapper haystack(
     h_haystack_strings.begin(),
     h_haystack_strings.end(),
-    thrust::make_transform_iterator(h_haystack_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_haystack_strings.begin(), [](auto str) { return str != nullptr; }));
 
   cudf::test::strings_column_wrapper needles(
     h_needles_strings.begin(),
     h_needles_strings.end(),
-    thrust::make_transform_iterator(h_needles_strings.begin(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_needles_strings.begin(), [](auto str) { return str != nullptr; }));
 
   auto result = cudf::contains(haystack, needles);
 

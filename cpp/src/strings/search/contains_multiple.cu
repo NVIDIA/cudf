@@ -29,7 +29,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/equal.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/logical.h>
 #include <thrust/sequence.h>
 #include <thrust/unique.h>
@@ -194,7 +193,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
   auto first_bytes = rmm::device_uvector<u_char>(targets.size(), stream);
   auto indices     = rmm::device_uvector<size_type>(targets.size(), stream);
   {
-    auto tgt_itr = thrust::make_transform_iterator(
+    auto tgt_itr = cuda::transform_iterator(
       d_targets->begin<string_view>(),
       cuda::proclaim_return_type<u_char>([] __device__(auto const& d_tgt) -> u_char {
         return d_tgt.empty() ? u_char{0} : static_cast<u_char>(d_tgt.data()[0]);
@@ -239,7 +238,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
   auto results = std::vector<std::unique_ptr<column>>(results_iter, results_iter + targets.size());
   auto d_results = [&] {
     auto host_results_pointer_iter =
-      thrust::make_transform_iterator(results.begin(), [](auto const& results_column) {
+      cuda::transform_iterator(results.begin(), [](auto const& results_column) {
         return results_column->mutable_view().template data<bool>();
       });
     auto host_results_pointers =

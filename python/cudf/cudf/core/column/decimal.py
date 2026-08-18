@@ -162,7 +162,7 @@ class DecimalColumn(NumericalBaseColumn):
             )
 
     # Decimals in libcudf don't support truediv, see
-    # https://github.com/rapidsai/cudf/pull/7435 for explanation.
+    # https://github.com/NVIDIA/cudf/pull/7435 for explanation.
     def __truediv__(self, other: ColumnBinaryOperand) -> ColumnBase:
         return self._binaryop(other, "__div__")
 

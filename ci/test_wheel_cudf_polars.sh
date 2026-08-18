@@ -91,7 +91,6 @@ for version in "${VERSIONS[@]}"; do
 
     # Fail fast (-x) rather than trying to continue because failed tests pollute the state
     ./ci/run_cudf_polars_pytests.sh \
-        -vv \
         "${COVERAGE_ARGS[@]}" \
         --numprocesses=4 \
         --dist=worksteal \

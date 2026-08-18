@@ -227,11 +227,15 @@ pygments_style = "sphinx"
 html_theme_options = {
     "external_links": [],
     "icon_links": [],
-    "github_url": "https://github.com/rapidsai/cudf",
+    "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "content",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
+    "switcher": {
+        "json_url": "https://docs.nvidia.com/cudf/versions.json",
+        "version_match": version,
+    },
 }
 include_pandas_compat = True
 
@@ -415,10 +419,13 @@ _names_to_skip_in_pylibcudf = {
     "size_type",
     "size_t",
     "type_id",
+    "null_policy",
+    "nan_policy",
     # Unknown base types
     "int32_t",
     "uint64_t",
     "void",
+    "double",
 }
 
 
@@ -648,6 +655,13 @@ nitpick_ignore = [
     ("py:class", "Value"),
     ("py:class", "polars.lazyframe.frame.LazyFrame"),
     ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
+    # pylibcudf typing aliases rendered as bare names in autodoc signatures.
+    ("py:class", "ColumnNameSpec"),
+    ("py:class", "CudaStreamLike"),
+    ("py:class", "Datasource"),
+    ("py:class", "Span"),
+    ("py:class", "SupportsArrayInterface"),
+    ("py:class", "SupportsCudaArrayInterface"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [
@@ -735,7 +749,7 @@ def linkcode_resolve(domain, info) -> str | None:
 
     fn = os.path.relpath(fn, start=os.path.dirname(pkg_file))
     return (
-        f"https://github.com/rapidsai/cudf/blob/"
+        f"https://github.com/NVIDIA/cudf/blob/"
         f"{RAPIDS_BRANCH}/{source_path}/{fn}{linespec}"
     )
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,14 +22,13 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -70,7 +69,7 @@ struct set_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
                                            cudf::column_view const& new_keys,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
     requires(cudf::is_dictionary_key<T>())
   {
@@ -82,9 +81,8 @@ struct set_keys_dispatch_fn {
     auto const old_keys   = input.keys();
     auto const d_old_keys = column_device_view::create(old_keys, stream);
     auto const d_new_keys = column_device_view::create(new_keys, stream);
-    auto const keys_itr =
-      thrust::make_permutation_iterator(d_new_keys->begin<T>(), d_sorted_indices);
-    auto const iota = cuda::counting_iterator<cudf::size_type>{0};
+    auto const keys_itr = cuda::make_permutation_iterator(d_new_keys->begin<T>(), d_sorted_indices);
+    auto const iota     = cuda::counting_iterator<cudf::size_type>{0};
 
     // create a map from the old key indices to the new ones
     auto indices_map = rmm::device_uvector<size_type>(old_keys.size(), stream);
@@ -126,7 +124,7 @@ struct set_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
   {
@@ -137,7 +135,7 @@ struct set_keys_dispatch_fn {
 
 std::unique_ptr<column> set_keys(dictionary_column_view const& input,
                                  column_view const& new_keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);
@@ -155,7 +153,7 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& input,
 
 std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

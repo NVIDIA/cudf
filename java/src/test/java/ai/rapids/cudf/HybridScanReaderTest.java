@@ -296,20 +296,19 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   /**
-   * Verifies secondaryFiltersByteRanges() returns no dictionary page ranges when the file
-   * has no page index, even with all other conditions met (EQUAL predicate, low-cardinality
-   * column for which the writer's ADAPTIVE policy emits a dictionary). The C++ gate
-   * has_page_index_and_only_dict_encoded_pages requires both ColumnIndex and OffsetIndex
-   * to be present, which only COLUMN-stats files have. Without that, dict-based row-group
-   * pruning is unsound (cannot verify all pages are dict-encoded), so the function returns
-   * empty even though the dict pages physically exist in the file.
+   * Verifies secondaryFiltersByteRanges() finds dictionary pages even without page
+   * index. Dictionary pruning relies on encoding statistics and dictionary-page metadata
+   * rather than page indexes, so a low-cardinality column with an EQUAL predicate remains
+   * eligible.
    */
   @Test
-  void testSecondaryFiltersByteRangesEmptyForRowGroupStats(@TempDir Path tmp) throws IOException {
+  void testSecondaryFiltersByteRangesForRowGroupStats(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
       SecondaryFilterRanges sfr = open.reader.secondaryFiltersByteRanges(new int[]{0});
-      assertEquals(0, sfr.dictionaryPageRanges().length,
-          "ROWGROUP stats has no page index; the C++ gate skips dict-page discovery");
+      assertEquals(1, sfr.dictionaryPageRanges().length,
+          "A row group has only one dictionary-page per (filter) column");
+      assertTrue(sfr.dictionaryPageRanges()[0].size() > 0,
+          "Dictionary page range must be non-empty");
     }
   }
 
@@ -394,25 +393,22 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   /**
-   * Verifies filterRowGroupsWithDictionaryPages() throws when the upstream
-   * secondaryFiltersByteRanges yields no dict ranges due to a missing page index, even
-   * though the writer emitted dictionaries. With ROWGROUP-stats fixture + EQUAL on
-   * low-cardinality num_units, has_page_index_and_only_dict_encoded_pages is false (no
-   * ColumnIndex/OffsetIndex), so no buffers can be supplied. The C++ CUDF_EXPECTS at
-   * prepare_dictionaries fires for the same reason as the high-cardinality case but with
-   * a different upstream cause.
+   * Verifies dictionary-page pruning works without a page index. With a ROWGROUP-stats
+   * fixture and {@code num_units == 2}, the sole row group's dictionary contains the
+   *  literal, so it survives.
    */
   @Test
-  void testFilterRowGroupsWithDictionaryPagesThrowsWithoutPageIndex(@TempDir Path tmp) throws IOException {
+  void testFilterRowGroupsWithDictionaryPagesWithoutPageIndex(@TempDir Path tmp)
+      throws IOException {
     try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
       int[] rgs = new int[]{0};
       SecondaryFilterRanges sfr = open.reader.secondaryFiltersByteRanges(rgs);
       DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, sfr.dictionaryPageRanges());
       try {
-        assertEquals(0, dictBufs.length, "Without page index, no dict ranges discoverable");
-        assertThrows(CudfException.class,
-            () -> open.reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs),
-            "CUDF_EXPECTS at prepare_dictionaries: 0 buffers != 1 row group × 1 dict-eligible col");
+        assertEquals(1, dictBufs.length,
+            "The dictionary page is discoverable even without a page index");
+        assertArrayEquals(rgs, open.reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs),
+            "num_units == 2 is present in the row group's dictionary");
       } finally {
         closeAll(dictBufs);
       }

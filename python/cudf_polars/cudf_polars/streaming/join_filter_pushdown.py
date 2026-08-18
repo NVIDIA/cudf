@@ -38,6 +38,10 @@ The implementation uses the following terms:
     A node on a column lineage, together with the column name at that node and
     its edge path from the join input. So termed because it "produces" the
     key values participating in the join.
+``source cost``
+    An estimate of the cost required to materialize a producer. This guards
+    against treating a small intermediate result as a cheap domain when
+    producing it requires scanning large inputs.
 ``constraint domain``
     Selective values of another join key from the target input, used to reduce
     the domain before deriving the values that will filter the target.
@@ -49,10 +53,10 @@ The implementation uses the following terms:
     constraint domain, then projects the reduced domain's key used to filter
     the target.
 
-Plan rewrite has three stages. ``analyze_plan`` gathers row estimates,
-selective nodes, and column value-domain lineages. Candidate selection
-consumes those facts and returns a decision. ``apply_candidate`` then
-constructs the selected semi-join rewrite.
+Plan rewrite has three stages. ``analyze_plan`` gathers row estimates, source
+scan facts, selective nodes, and column value-domain lineages.
+Candidate selection consumes those facts and returns a decision.
+``apply_candidate`` then constructs the selected semi-join rewrite.
 
 Row estimates, selectivity propagation, thresholds, and candidate scores are
 only heuristics for deciding whether a safe rewrite is likely to improve
@@ -86,6 +90,7 @@ from cudf_polars.dsl.ir import (
 from cudf_polars.dsl.tracing import Scope, log
 from cudf_polars.dsl.traversal import (
     CachingVisitor,
+    collect_refcount,
     post_traversal,
     reuse_if_unchanged,
     traversal,
@@ -104,6 +109,17 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 
+DomainScore: TypeAlias = tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class SourceFacts:
+    """Source-derived facts for an IR node."""
+
+    cost: int | None
+    is_single_source: bool
+
+
 @dataclass(frozen=True)
 class _Producer:
     """A subtree and its bound column names at an insertion point."""
@@ -111,6 +127,8 @@ class _Producer:
     node: IR
     columns: tuple[str, ...]
     rows: int
+    cost: int
+    is_single_source: bool
     path: tuple[int, ...] = ()
     """Child-edge path from the candidate root to ``node``."""
 
@@ -118,6 +136,11 @@ class _Producer:
     def column(self) -> str:
         """First bound column in the producer."""
         return self.columns[0]
+
+    @property
+    def domain_score(self) -> DomainScore:
+        """Scoring function for a domain."""
+        return (self.cost, self.rows, len(self.node.schema))
 
 
 @dataclass(frozen=True)
@@ -132,9 +155,9 @@ class SimpleCandidate:
     domain_key: expr.Col
 
     @property
-    def score(self) -> tuple[int, int, int]:
-        """Rank after composite candidates, then by domain size."""
-        return (1, self.domain.rows, self.domain.rows)
+    def score(self) -> tuple[int, DomainScore]:
+        """Rank after composite candidates, then by domain cost."""
+        return (1, self.domain.domain_score)
 
 
 @dataclass(frozen=True)
@@ -152,16 +175,16 @@ class CompositeCandidate:
     target_constraint_key: expr.Col
 
     @property
-    def score(self) -> tuple[int, int, int]:
-        """Prefer smaller constraint and domain inputs."""
-        return (0, self.constraint_domain.rows, self.domain.rows)
+    def score(self) -> tuple[int, DomainScore, DomainScore]:
+        """Prefer cheaper constraint and domain inputs."""
+        return (0, self.constraint_domain.domain_score, self.domain.domain_score)
 
 
 Candidate: TypeAlias = SimpleCandidate | CompositeCandidate
 DecisionReason: TypeAlias = Literal[
     "applied",
     "maintain_order",
-    "no_selective_domain",
+    "no_profitable_domain",
     "non_column_join_key",
     "not_inner_join",
     "sliced_join",
@@ -181,8 +204,10 @@ class PlanFacts:
     """Facts derived in one bottom-up traversal of an IR DAG."""
 
     row_estimates: Mapping[IR, int | None]
+    source_facts: Mapping[IR, SourceFacts]
     selective_nodes: frozenset[IR]
     column_lineages: Mapping[ColumnRef, ColumnLineage]
+    refcounts: Mapping[IR, int]
 
 
 class _RewriteState(TypedDict):
@@ -210,8 +235,11 @@ def analyze_plan(ir: IR, stats: StatsCollector) -> PlanFacts:
     Gather facts about the plan.
     """
     row_estimates: dict[IR, int | None] = {}
+    source_facts: dict[IR, SourceFacts] = {}
+    source_nodes: dict[IR, frozenset[IR]] = {}
     selective_nodes: set[IR] = set()
     column_lineages: dict[ColumnRef, ColumnLineage] = {}
+    refcounts = collect_refcount([ir])
 
     for node in post_traversal([ir]):
         if isinstance(node, (Scan, DataFrameScan)):
@@ -235,6 +263,23 @@ def analyze_plan(ir: IR, stats: StatsCollector) -> PlanFacts:
             ]
             rows = max(child_estimates, default=None)
         row_estimates[node] = rows
+
+        if isinstance(node, (Scan, DataFrameScan)):
+            sources: frozenset[IR] = frozenset((node,))
+        else:
+            sources = frozenset(
+                source for child in node.children for source in source_nodes[child]
+            )
+        source_nodes[node] = sources
+        source_rows = [
+            source_rows
+            for source in sources
+            if (source_rows := row_estimates[source]) is not None and source_rows > 0
+        ]
+        source_facts[node] = SourceFacts(
+            cost=sum(source_rows) if source_rows else rows,
+            is_single_source=len(sources) == 1,
+        )
 
         if (
             (isinstance(node, Scan) and node.predicate is not None)
@@ -263,26 +308,33 @@ def analyze_plan(ir: IR, stats: StatsCollector) -> PlanFacts:
 
     return PlanFacts(
         row_estimates=row_estimates,
+        source_facts=source_facts,
         selective_nodes=frozenset(selective_nodes),
         column_lineages=column_lineages,
+        refcounts=refcounts,
     )
 
 
-def blocks_pushdown(node: IR) -> bool:
+def blocks_pushdown(node: IR, facts: PlanFacts) -> bool:
     """
     Return whether a node blocks filter pushdown.
 
     Parameters
     ----------
     node
-        Node to check
+        Node to check.
+    facts
+        Facts about the plan.
 
     Returns
     -------
     bool
         True if a semijoin cannot be pushed past this node, otherwise False.
     """
-    return (
+    # TODO: Need better cost model to handle nodes that are shared. Pushing
+    # a filter into a shared node will typically mean that it is no longer
+    # shared, since the same filter will not come from every consumer.
+    return facts.refcounts[node] > 1 or (
         # TODO: Distinct and Rolling only block pushdown in some
         # circumstances, but we'd need to make the logic more complicated:
         # - We can push through distinct if the filter applies to the columns
@@ -327,7 +379,7 @@ def semijoin_pushdown_candidates(
         yield lineage.column, path
         source = lineage.source
         source_child_index = lineage.source_child_index
-        if blocks_pushdown(lineage.column.node) or source is None:
+        if blocks_pushdown(lineage.column.node, facts) or source is None:
             return
         assert source_child_index is not None
         path = (*path, source_child_index)
@@ -526,7 +578,7 @@ def _select_candidate(
         )
 
     if not candidates:
-        return Decision(reason="no_selective_domain")
+        return Decision(reason="no_profitable_domain")
     return Decision(reason="applied", candidate=min(candidates, key=lambda c: c.score))
 
 
@@ -558,6 +610,12 @@ def _simple_candidates(
         if domain.rows / target.rows > threshold:
             continue
         if contains_node(target.node, domain.node):
+            continue
+        if domain.is_single_source and has_filtering_semi_ancestor(
+            target_child, target.path
+        ):
+            continue
+        if not domain_cost_is_small(domain, target, threshold):
             continue
         yield SimpleCandidate(
             target_side=target_side,
@@ -616,6 +674,10 @@ def _composite_candidates(
             if contains_node(target.node, domain.node) or contains_node(
                 target.node, constraint_domain.node
             ):
+                continue
+            if not domain_cost_is_small(domain, target, threshold):
+                continue
+            if not domain_cost_is_small(constraint_domain, domain, threshold):
                 continue
             yield CompositeCandidate(
                 target_side=target_side,
@@ -692,6 +754,27 @@ def _make_semi_join(
     )
 
 
+def make_producer(
+    node: IR,
+    columns: tuple[str, ...],
+    path: tuple[int, ...],
+    facts: PlanFacts,
+) -> _Producer | None:
+    """Construct a producer from gathered plan facts, if fully estimated."""
+    rows = facts.row_estimates.get(node)
+    source = facts.source_facts[node]
+    if rows is None or rows <= 0 or source.cost is None:
+        return None
+    return _Producer(
+        node=node,
+        columns=columns,
+        rows=rows,
+        cost=source.cost,
+        is_single_source=source.is_single_source,
+        path=path,
+    )
+
+
 def _smallest_key_producer(
     root: IR,
     column: str,
@@ -700,28 +783,25 @@ def _smallest_key_producer(
     require_selective: bool,
     exclude: IR | None = None,
 ) -> _Producer | None:
-    candidates = []
+    producers = []
     for reference, path in semijoin_pushdown_candidates(facts, root, column):
         node, bound_column = reference.node, reference.name
         if node is exclude:
             continue
-        rows = facts.row_estimates.get(node)
-        if rows is None or rows <= 0:
-            continue
         if require_selective and node not in facts.selective_nodes:
             continue
-        candidates.append(
-            (rows, len(node.schema), _Producer(node, (bound_column,), rows, path))
-        )
-    if not candidates:
+        producer = make_producer(node, (bound_column,), path, facts)
+        if producer is not None:
+            producers.append(producer)
+    if not producers:
         return None
-    return min(candidates, key=lambda item: (item[0], item[1]))[2]
+    return min(producers, key=lambda p: p.domain_score)
 
 
 def _smallest_node_containing_all(
     root: IR, columns: Sequence[str], facts: PlanFacts
 ) -> _Producer | None:
-    candidates = []
+    producers = []
     lineages: list[ColumnLineage] = []
     for column in columns:
         lineage = facts.column_lineages.get(ColumnRef(root, column))
@@ -736,16 +816,10 @@ def _smallest_node_containing_all(
         if any(lineage.column.node != node for lineage in lineages[1:]):
             break
         bound_columns = tuple(lineage.column.name for lineage in lineages)
-        rows = facts.row_estimates.get(node)
-        if rows is not None and rows > 0:
-            candidates.append(
-                (
-                    rows,
-                    len(node.schema),
-                    _Producer(node, bound_columns, rows, path),
-                )
-            )
-        if blocks_pushdown(node):
+        producer = make_producer(node, bound_columns, path, facts)
+        if producer is not None:
+            producers.append(producer)
+        if blocks_pushdown(node, facts):
             break
         source_child_index = lineages[0].source_child_index
         if source_child_index is None or any(
@@ -758,9 +832,9 @@ def _smallest_node_containing_all(
             break
         path = (*path, source_child_index)
         lineages = sources
-    if not candidates:
+    if not producers:
         return None
-    return min(candidates, key=lambda item: (item[0], item[1]))[2]
+    return min(producers, key=lambda p: p.domain_score)
 
 
 def _largest_key_source(root: IR, column: str, facts: PlanFacts) -> _Producer | None:
@@ -768,13 +842,13 @@ def _largest_key_source(root: IR, column: str, facts: PlanFacts) -> _Producer | 
     fallback_candidates = []
     for reference, path in semijoin_pushdown_candidates(facts, root, column):
         node, bound_column = reference.node, reference.name
-        rows = facts.row_estimates.get(node)
-        if rows is None or rows <= 0:
+        producer = make_producer(node, (bound_column,), path, facts)
+        if producer is None:
             continue
         item = (
-            rows,
+            producer.rows,
             len(node.schema),
-            _Producer(node, (bound_column,), rows, path),
+            producer,
         )
         if isinstance(node, (Scan, DataFrameScan)):
             source_candidates.append(item)
@@ -809,6 +883,23 @@ def contains_node(root: IR, needle: IR) -> bool:
     return needle in traversal([root])
 
 
+def domain_cost_is_small(
+    domain: _Producer, target: _Producer, threshold: float
+) -> bool:
+    """Return whether building a domain is cheap enough for its target."""
+    return domain.cost / target.rows <= threshold
+
+
+def has_filtering_semi_ancestor(root: IR, path: Sequence[int]) -> bool:
+    """Return whether a selected child edge is below a filtering semi join."""
+    node = root
+    for child_index in path:
+        if isinstance(node, Join) and node.options[0] == "Semi" and child_index == 0:
+            return True
+        node = node.children[child_index]
+    return False
+
+
 def _trace_decision(ir: Join, threshold: float, decision: Decision) -> None:
     join_filter_pushdown: dict[str, Any] = {
         "considered": True,
@@ -830,6 +921,8 @@ def _trace_decision(ir: Join, threshold: float, decision: Decision) -> None:
                 "domain_key": candidate.domain_key.name,
                 "estimated_target_rows": candidate.target.rows,
                 "estimated_domain_rows": candidate.domain.rows,
+                "estimated_target_cost": candidate.target.cost,
+                "estimated_domain_cost": candidate.domain.cost,
                 "target_node_type": type(candidate.target.node).__name__,
                 "domain_node_type": type(candidate.domain.node).__name__,
             }
@@ -839,6 +932,7 @@ def _trace_decision(ir: Join, threshold: float, decision: Decision) -> None:
                 {
                     "constraint_key": candidate.target_constraint_key.name,
                     "estimated_constraint_rows": candidate.constraint_domain.rows,
+                    "estimated_constraint_cost": candidate.constraint_domain.cost,
                 }
             )
     log("Join Filter Pushdown", **record)

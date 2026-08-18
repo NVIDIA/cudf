@@ -10,6 +10,10 @@ from pylibcudf.libcudf.strings.convert cimport (
 )
 from pylibcudf.types cimport DataType, type_id
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -18,7 +22,7 @@ __all__ = ["from_fixed_point", "is_fixed_point", "to_fixed_point"]
 
 
 cpdef Column to_fixed_point(
-    Column input, DataType output_type, object stream=None, DeviceMemoryResource mr=None
+    Column input, DataType output_type, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new fixed-point column parsing decimal values from the
@@ -59,7 +63,7 @@ cpdef Column to_fixed_point(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column from_fixed_point(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new strings column converting the fixed-point values
@@ -96,7 +100,7 @@ cpdef Column from_fixed_point(
 cpdef Column is_fixed_point(
     Column input,
     DataType decimal_type=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

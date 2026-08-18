@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,9 +9,8 @@
 
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/logical.h>
 
 #include <future>
@@ -20,7 +19,7 @@
 namespace cudf::io::parquet::detail {
 
 #if defined(PREPROCESS_DEBUG)
-void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, rmm::cuda_stream_view stream);
+void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, cuda::stream_ref stream);
 #endif  // PREPROCESS_DEBUG
 
 /**
@@ -68,7 +67,7 @@ void generate_depth_remappings(
   size_t end_chunk,
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -80,13 +79,13 @@ void generate_depth_remappings(
  * @return The total number of pages
  */
 [[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 /**
  * @brief Count the total number of pages using page index information.
  */
 [[nodiscard]] size_t count_page_headers_with_pgidx(
-  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, rmm::cuda_stream_view stream);
+  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, cuda::stream_ref stream);
 
 /**
  * @brief Set fields on the pages that can be derived from page indexes.
@@ -95,7 +94,7 @@ void generate_depth_remappings(
  */
 void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
                        device_span<PageInfo> pages,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream);
 
 /**
  * @brief Returns a string representation of known encodings
@@ -121,20 +120,35 @@ std::string encoding_to_string(Encoding encoding);
  * @returns Human readable string with unsupported encodings
  */
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
-                                                     rmm::cuda_stream_view stream);
+                                                     cuda::stream_ref stream);
 
 /**
  * @brief Decode the page information for a given pass.
  *
  * @param pass The struct containing pass information
  * @param unsorted_pages Device span of page information to decode
- * @param has_page_index Boolean indicating if the page index is available
+ * @param has_offset_index Boolean indicating if the offset index is available
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
-                         bool has_page_index,
-                         rmm::cuda_stream_view stream);
+                         bool has_offset_index,
+                         cuda::stream_ref stream);
+
+/**
+ * @brief Decode page information using one exact span per logical indexed page
+ *
+ * Empty data spans represent masked pages and retain their logical page-index metadata.
+ *
+ * @param pass Struct containing pass information
+ * @param unsorted_pages Device span of page information to decode
+ * @param page_data Host span of page data device spans, one per logical indexed page
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ */
+void decode_page_headers(pass_intermediate_data& pass,
+                         device_span<PageInfo> unsorted_pages,
+                         host_span<cudf::device_span<uint8_t const> const> page_data,
+                         cuda::stream_ref stream);
 
 /**
  * @brief Check if the column chunk has a string (byte array or FLBA) type
@@ -157,6 +171,7 @@ struct page_index_info {
   int32_t num_nulls;
   int32_t num_valids;
   int32_t str_bytes;
+  bool has_value_info;
 };
 
 /**
@@ -168,17 +183,19 @@ struct copy_page_info {
 
   __device__ constexpr void operator()(size_type idx)
   {
-    auto& pg                = pages[idx];
-    auto const& pi          = page_indexes[idx];
-    pg.num_rows             = pi.num_rows;
-    pg.chunk_row            = pi.chunk_row;
-    pg.has_page_index       = true;
-    pg.num_nulls            = pi.num_nulls;
-    pg.num_valids           = pi.num_valids;
-    pg.str_bytes_from_index = pi.str_bytes;
-    pg.str_bytes            = pi.str_bytes;
-    pg.start_val            = 0;
-    pg.end_val              = pg.num_valids;
+    auto& pg          = pages[idx];
+    auto const& pi    = page_indexes[idx];
+    pg.num_rows       = pi.num_rows;
+    pg.chunk_row      = pi.chunk_row;
+    pg.has_value_info = pi.has_value_info;
+    pg.start_val      = 0;
+    if (pg.has_value_info) {
+      pg.num_nulls            = pi.num_nulls;
+      pg.num_valids           = pi.num_valids;
+      pg.str_bytes_from_index = pi.str_bytes;
+      pg.str_bytes            = pi.str_bytes;
+      pg.end_val              = pg.num_valids;
+    }
   }
 };
 

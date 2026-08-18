@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,7 +23,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/uninitialized_fill.h>
 
 #include <optional>
@@ -63,7 +62,7 @@ struct is_not_zero {
 auto gather_histogram(table_view const& input,
                       device_span<size_type const> distinct_indices,
                       std::unique_ptr<column>&& distinct_counts,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       rmm::device_async_resource_ref mr)
 {
   auto distinct_rows = cudf::detail::gather(input,
@@ -101,7 +100,7 @@ std::unique_ptr<column> make_empty_histogram_like(column_view const& values)
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>, std::unique_ptr<column>>
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
@@ -112,8 +111,9 @@ compute_row_frequencies(table_view const& input,
                "Nested types are not yet supported in histogram aggregation.",
                std::invalid_argument);
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+    cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
 
   auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);
@@ -133,11 +133,10 @@ compute_row_frequencies(table_view const& input,
 
   // Construct a vector to store reduced counts and init to zero
   rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, mr);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    reduction_results.begin(),
-    reduction_results.end(),
-    histogram_count_type{0});
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
+                             reduction_results.begin(),
+                             reduction_results.end(),
+                             histogram_count_type{0});
 
   // Construct a hash set
   auto row_set =
@@ -148,8 +147,8 @@ compute_row_frequencies(table_view const& input,
                      cuco::linear_probing<DEFAULT_HISTOGRAM_CG_SIZE, row_hash>{key_hasher},
                      {},  // thread scope
                      {},  // storage
-                     rmm::mr::polymorphic_allocator<char>{},
-                     stream.value()};
+                     rmm::mr::polymorphic_allocator<char>{temp_mr},
+                     stream.get()};
 
   // Device-accessible reference to the hash set with `insert_and_find` operator
   auto row_set_ref = row_set.ref(cuco::op::insert_and_find);
@@ -157,7 +156,7 @@ compute_row_frequencies(table_view const& input,
   // Compute frequencies (aka distinct counts) for the input rows.
   // Note that we consider null and NaNs as always equal.
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     cuda::counting_iterator<std::size_t>{0},
     cuda::counting_iterator<std::size_t>{num_rows},
     [set_ref = row_set_ref,
@@ -181,9 +180,9 @@ compute_row_frequencies(table_view const& input,
     data_type{type_to_id<histogram_count_type>()}, set_size, mask_state::UNALLOCATED, stream, mr);
 
   // Copy row indices and counts to the output if counts are non-zero
-  auto const input_it = thrust::make_zip_iterator(
+  auto const input_it = cuda::make_zip_iterator(
     cuda::std::make_tuple(cuda::counting_iterator<cudf::size_type>{0}, reduction_results.begin()));
-  auto const output_it = thrust::make_zip_iterator(cuda::std::make_tuple(
+  auto const output_it = cuda::make_zip_iterator(cuda::std::make_tuple(
     distinct_indices->begin(), distinct_counts->mutable_view().begin<histogram_count_type>()));
 
   // Reduction results above are either group sizes of equal rows, or `0`.
@@ -194,7 +193,7 @@ compute_row_frequencies(table_view const& input,
 }
 
 std::unique_ptr<cudf::scalar> histogram(column_view const& input,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   // Empty group should be handled before reaching here.
@@ -207,7 +206,7 @@ std::unique_ptr<cudf::scalar> histogram(column_view const& input,
 }
 
 std::unique_ptr<cudf::scalar> merge_histogram(column_view const& input,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   // Empty group should be handled before reaching here.

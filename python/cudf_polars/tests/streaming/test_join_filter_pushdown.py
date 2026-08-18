@@ -10,6 +10,7 @@ import pytest
 import polars as pl
 
 from cudf_polars import Translator
+from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.ir import Cache, DataFrameScan, Distinct, Join, Select, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.column_domain import ColumnRef
@@ -92,6 +93,13 @@ def dataframe_scan(ir: IR, column: str) -> DataFrameScan:
         if isinstance(node, DataFrameScan) and column in node.schema
     )
     return match
+
+
+def join_key_names(join: Join) -> tuple[str, ...]:
+    """Return the column names used on the left of a simple-column join."""
+    names = tuple(key.value.name for key in join.left_on if isinstance(key.value, Col))
+    assert len(names) == len(join.left_on)
+    return names
 
 
 @pytest.fixture
@@ -257,7 +265,7 @@ def test_no_simple_filter_pushdown_when_domain_is_not_selective(
         ConfigOptions.from_polars_engine(engine),
     )
 
-    assert decision == Decision(reason="no_selective_domain")
+    assert decision == Decision(reason="no_profitable_domain")
     assert optimized is root
     assert not find_joins(optimized, "Semi")
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
@@ -327,6 +335,120 @@ def test_composite_filter_pushdown_constrains_domain_first(
     assert optimized.children[1] is supplier_ir
     assert any(semi.children[0] is supplier_ir for semi in semis)
     assert any(semi.children[0] is lineitem_ir for semi in semis)
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+def test_prefilter_uses_cheaper_source_domain_and_skips_expensive_domain(
+    engine: SPMDEngine,
+) -> None:
+    part = (
+        pl.LazyFrame(
+            {
+                "p_partkey": range(60),
+                "part_active": [True] * 30 + [False] * 30,
+            }
+        )
+        .filter("part_active")
+        .select("p_partkey")
+    )
+    partsupp = pl.LazyFrame(
+        {
+            "ps_partkey": [i % 60 for i in range(120)],
+            "ps_suppkey": [i % 30 for i in range(120)],
+        }
+    )
+    supplier = pl.LazyFrame({"s_suppkey": range(30)})
+    lineitem = pl.LazyFrame(
+        {
+            "l_partkey": [i % 60 for i in range(1_800)],
+            "l_suppkey": [i % 30 for i in range(1_800)],
+            "l_orderkey": [i % 900 for i in range(1_800)],
+        }
+    )
+    orders = pl.LazyFrame({"o_orderkey": range(900)})
+    query = (
+        part.join(partsupp, left_on="p_partkey", right_on="ps_partkey")
+        .join(supplier, left_on="ps_suppkey", right_on="s_suppkey")
+        .join(
+            lineitem,
+            left_on=("p_partkey", "ps_suppkey"),
+            right_on=("l_partkey", "l_suppkey"),
+        )
+        .join(orders, left_on="l_orderkey", right_on="o_orderkey")
+    )
+    root = translate_query(query, engine)
+
+    optimized = optimize_join_filter_pushdown(
+        root,
+        StatsCollector(),
+        ConfigOptions.from_polars_engine(engine),
+    )
+
+    part_ir = dataframe_scan(root, "p_partkey")
+    supplier_ir = dataframe_scan(root, "s_suppkey")
+    lineitem_ir = dataframe_scan(root, "l_orderkey")
+    orders_ir = dataframe_scan(root, "o_orderkey")
+    semis = find_joins(optimized, "Semi")
+    partkey_semis = [
+        semi
+        for semi in semis
+        if semi.children[0] is lineitem_ir and join_key_names(semi) == ("l_partkey",)
+    ]
+    assert partkey_semis
+    assert not any(semi.children[0] is orders_ir for semi in semis)
+    assert contains_node(partkey_semis[0].children[1], part_ir)
+    assert not contains_node(partkey_semis[0].children[1], supplier_ir)
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+def test_source_only_domain_does_not_stack_on_prefiltered_source(
+    engine: SPMDEngine,
+) -> None:
+    part = (
+        pl.LazyFrame(
+            {
+                "p_partkey": range(60),
+                "part_active": [True] * 30 + [False] * 30,
+            }
+        )
+        .filter("part_active")
+        .select("p_partkey")
+    )
+    lineitem = pl.LazyFrame(
+        {
+            "l_partkey": [i % 60 for i in range(1_800)],
+            "l_orderkey": [i % 150 for i in range(1_800)],
+        }
+    )
+    orders = (
+        pl.LazyFrame(
+            {
+                "o_orderkey": range(150),
+                "order_active": [True] * 75 + [False] * 75,
+            }
+        )
+        .filter("order_active")
+        .select("o_orderkey")
+    )
+    query = part.join(lineitem, left_on="p_partkey", right_on="l_partkey").join(
+        orders, left_on="l_orderkey", right_on="o_orderkey"
+    )
+    root = translate_query(query, engine)
+
+    optimized = optimize_join_filter_pushdown(
+        root,
+        StatsCollector(),
+        ConfigOptions.from_polars_engine(engine),
+    )
+
+    lineitem_ir = dataframe_scan(root, "l_partkey")
+    lineitem_semis = [
+        semi
+        for semi in find_joins(optimized, "Semi")
+        if semi.children[0] is lineitem_ir
+    ]
+    assert any(join_key_names(semi) == ("l_partkey",) for semi in lineitem_semis)
+    assert not any(join_key_names(semi) == ("l_orderkey",) for semi in lineitem_semis)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -432,7 +554,7 @@ def test_rewritten_domain_filters_other_side_instead_of_stacking(
     orders_ir = dataframe_scan(root, "o_orderkey")
     semis = find_joins(optimized, "Semi")
     assert sum(semi.children[0] is lineitem_ir for semi in semis) == 1
-    assert any(semi.children[0] is orders_ir for semi in semis)
+    assert not any(semi.children[0] is orders_ir for semi in semis)
     assert not any(
         isinstance(semi.children[0], Join) and semi.children[0].options[0] == "Semi"
         for semi in semis
@@ -568,8 +690,10 @@ def test_composite_domain_columns_follow_renames(engine: SPMDEngine) -> None:
     analyzed = analyze_plan(renamed, StatsCollector())
     facts = PlanFacts(
         row_estimates={renamed: 20, source: 10},
+        source_facts=analyzed.source_facts,
         selective_nodes=analyzed.selective_nodes,
         column_lineages=analyzed.column_lineages,
+        refcounts=analyzed.refcounts,
     )
     producer = _smallest_node_containing_all(
         renamed, ("domain_key", "domain_constraint"), facts
@@ -739,7 +863,7 @@ def test_target_replacement_does_not_rewrite_shared_domain_side(
     assert domain_ir.children[0] is shared_ir
     semis = find_joins(filtered, "Semi")
     assert len(semis) == 1
-    assert semis[0].children[0] is dataframe_scan(root, "target_key")
+    assert semis[0].children[0] is shared_ir
     assert not find_joins(unfiltered_domain, "Semi")
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
@@ -792,7 +916,59 @@ def test_target_prefilter_rewrites_only_selected_self_join_edge(
     filtered_semis = find_joins(filtered, "Semi")
     assert len(filtered_semis) == 1
     assert not find_joins(unfiltered, "Semi")
-    assert any(filtered_semis[0].children[0] is node for node in traversal([source_ir]))
+    # The shared node is a valid insertion point, but its children are not:
+    # Only this consumer should be wrapped by the semi-join.
+    assert filtered_semis[0].children[0] is source_ir
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+def test_internal_prefilter_rewrites_shared_subplan_once(
+    engine: SPMDEngine,
+) -> None:
+    domain = (
+        pl.LazyFrame(
+            {
+                "domain_key": [1, 99],
+                "active": [True, False],
+            }
+        )
+        .filter("active")
+        .select("domain_key")
+    )
+    target = pl.LazyFrame(
+        {
+            "target_key": [i % 10 for i in range(20)],
+            "value": range(20),
+        }
+    )
+    shared = domain.join(
+        target,
+        left_on="domain_key",
+        right_on="target_key",
+    )
+    query = shared.join(shared, on="domain_key", suffix="_right")
+    translated = Translator(query._ldf.visit(), engine).translate_ir()
+
+    assert isinstance(translated, Join)
+    shared_cache = translated.children[0]
+    assert isinstance(shared_cache, Cache)
+    assert translated.children[1] is shared_cache
+    original_shared = shared_cache.children[0]
+    assert len(find_joins(original_shared, "Inner")) == 1
+    target_ir = dataframe_scan(original_shared, "target_key")
+
+    optimized = optimize_with_stats(
+        translated,
+        ConfigOptions.from_polars_engine(engine),
+        StatsCollector(),
+    )
+
+    assert isinstance(optimized, Join)
+    rewritten_left, rewritten_right = optimized.children
+    assert rewritten_left is rewritten_right
+    assert rewritten_left is not original_shared
+    (internal_semi,) = find_joins(rewritten_left, "Semi")
+    assert internal_semi.children[0] is target_ir
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 

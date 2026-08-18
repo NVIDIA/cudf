@@ -42,9 +42,6 @@
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/transform_output_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/random/uniform_int_distribution.h>
 #include <thrust/random/uniform_real_distribution.h>
 #include <thrust/scan.h>
@@ -421,7 +418,7 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
       thrust::device, run_lens.begin(), run_lens.end(), run_lens.begin(), cuda::std::plus<int>{});
     auto const samples_indices = sample_dist(engine, approx_run_len + 1);
     // This is gather.
-    auto avg_repeated_sample_indices_iterator = thrust::make_transform_iterator(
+    auto avg_repeated_sample_indices_iterator = cuda::transform_iterator(
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::proclaim_return_type<cudf::size_type>(
         [rb              = run_lens.begin(),
@@ -442,14 +439,6 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
     return sample_dist(engine, num_rows);
   }
 }
-
-struct valid_or_zero {
-  template <typename T>
-  __device__ T operator()(cuda::std::tuple<T, bool> len_valid) const
-  {
-    return cuda::std::get<1>(len_valid) ? cuda::std::get<0>(len_valid) : T{0};
-  }
-};
 
 enum class string_encoding {
   ASCII,
@@ -513,18 +502,14 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
     lengths.begin(),
     cuda::proclaim_return_type<cudf::size_type>([] __device__(auto) { return 0; }),
     cuda::std::logical_not<bool>{});
-  auto valid_lengths = thrust::make_transform_iterator(
-    thrust::make_zip_iterator(cuda::std::make_tuple(lengths.begin(), null_mask.begin())),
-    valid_or_zero{});
-
   // offsets are created as INT32 or INT64 as appropriate
   auto [offsets, chars_length] = cudf::strings::detail::make_offsets_child_column(
-    valid_lengths, valid_lengths + num_rows, stream, mr);
+    lengths.begin(), lengths.begin() + num_rows, stream, mr);
   // use the offsetalator to normalize the offset values for use by the string_generator
   auto offsets_itr = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
   rmm::device_uvector<char> chars(chars_length, cudf::get_default_stream());
   thrust::for_each_n(thrust::device,
-                     thrust::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
+                     cuda::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
                      num_rows,
                      string_generator<Encoding>{chars.data(), engine});
 
@@ -793,7 +778,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
     auto offsets = len_dist(engine, current_num_rows + 1);
     auto valids  = valid_dist(engine, current_num_rows);
     // to ensure these values <= current_child_column->size()
-    auto output_offsets = thrust::make_transform_output_iterator(
+    auto output_offsets = cuda::make_transform_output_iterator(
       offsets.begin(), clamp_down{current_child_column->size()});
 
     thrust::exclusive_scan(thrust::device, offsets.begin(), offsets.end(), output_offsets);

@@ -312,7 +312,7 @@ def test_sum_all_null_decimal_dtype(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("bin_count", [1, 3, 10])
+@pytest.mark.parametrize("bin_count", [0, 1, 3, 10])
 @pytest.mark.parametrize(
     "data",
     [

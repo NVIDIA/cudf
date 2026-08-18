@@ -593,7 +593,7 @@ class UnaryFunction(Expr):
                     dtype=column.dtype,
                 )
             zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
-            if column.size == 0:
+            if column.size == 0 or bin_count == 0:
                 return Column(
                     plc.Column.from_scalar(zero, bin_count, stream=df.stream),
                     dtype=self.dtype,

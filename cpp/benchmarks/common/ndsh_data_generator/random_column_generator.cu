@@ -95,7 +95,7 @@ std::unique_ptr<cudf::column> generate_random_string_column(cudf::size_type lowe
   // We generate the strings in parallel into the `chars` vector using the
   // offsets vector generated above.
   thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::make_zip_iterator(cuda::std::make_tuple(offset_itr, offset_itr + 1)),
+                     cuda::make_zip_iterator(cuda::std::make_tuple(offset_itr, offset_itr + 1)),
                      num_rows,
                      random_string_generator(chars.data()));
 

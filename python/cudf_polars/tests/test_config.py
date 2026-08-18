@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import cast
 
 import pytest
@@ -33,7 +34,9 @@ from cudf_polars.utils.config import (
     InMemoryExecutor,
     JoinFilterPushdownOptions,
     MemoryResourceConfig,
+    ParquetOptions,
     StreamingExecutor,
+    Unspecified,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -87,6 +90,33 @@ def test_invalid_device_raises(device, monkeypatch):
     elif isinstance(device, str):
         with pytest.raises(TypeError):
             q.collect(engine=pl.GPUEngine(device=device))
+
+
+def test_failed_device_switch_does_not_set_seen_device(monkeypatch):
+    monkeypatch.setattr(cudf_polars.callback, "SEEN_DEVICE", None)
+    monkeypatch.setattr(gpu, "getDevice", lambda: 1)
+    calls = []
+
+    def fail_for_invalid_device(device):
+        calls.append(device)
+        if device == -1:
+            raise RuntimeError("invalid device")
+
+    monkeypatch.setattr(gpu, "setDevice", fail_for_invalid_device)
+
+    with (
+        pytest.raises(RuntimeError, match="invalid device"),
+        cudf_polars.callback.set_device(-1),
+    ):
+        pass
+
+    assert cudf_polars.callback.SEEN_DEVICE is None
+
+    with cudf_polars.callback.set_device(0):
+        pass
+
+    assert cudf_polars.callback.SEEN_DEVICE == 0
+    assert calls == [-1, 0, 1]
 
 
 def test_multiple_devices_in_same_process_raise(monkeypatch):
@@ -296,9 +326,9 @@ def test_validate_cluster() -> None:
         "broadcast_limit",
         "sink_to_directory",
         "client_device_threshold",
-        "max_io_threads",
-        "spill_to_pinned_memory",
+        "max_concurrent_io_tasks",
         "num_py_executors",
+        "kvikio_nthreads",
     ],
 )
 def test_validate_streaming_executor_options(option: str) -> None:
@@ -307,6 +337,16 @@ def test_validate_streaming_executor_options(option: str) -> None:
             pl.GPUEngine(
                 executor="streaming",
                 executor_options={option: object()},
+            )
+        )
+
+
+def test_kvikio_nthreads_non_positive_raises() -> None:
+    with pytest.raises(ValueError, match="kvikio_nthreads must be positive"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"kvikio_nthreads": 0},
             )
         )
 
@@ -333,7 +373,6 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_READ_LIMIT", "200")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_FOOTER_SAMPLES", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_ROW_GROUP_SAMPLES", "0")
-        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_RAPIDSMPF_NATIVE", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "1")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_JIT_FILTER", "1")
 
@@ -346,9 +385,15 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.parquet_options.pass_read_limit == 200
         assert config.parquet_options.max_footer_samples == 0
         assert config.parquet_options.max_row_group_samples == 0
-        assert config.parquet_options.use_rapidsmpf_native is False
         assert config.parquet_options.prefetch_file_metadata is True
         assert config.parquet_options.use_jit_filter is True
+
+    with monkeypatch.context() as m:
+        # Env must win over the executor-derived default (streaming => True).
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "0")
+        engine = pl.GPUEngine(executor="streaming")
+        config = ConfigOptions.from_polars_engine(engine)
+        assert config.parquet_options.prefetch_file_metadata is False
 
     with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__CHUNKED", "foo")
@@ -364,6 +409,7 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__EXECUTOR__MAX_ROWS_PER_PARTITION", "42")
         m.setenv("CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", "100")
         m.setenv("CUDF_POLARS__EXECUTOR__BROADCAST_LIMIT", "44")
+        m.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "6")
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
 
         engine = pl.GPUEngine()
@@ -374,6 +420,7 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.executor.max_rows_per_partition == 42
         assert config.executor.target_partition_size == 100
         assert config.executor.broadcast_limit == 44
+        assert config.executor.max_concurrent_io_tasks == 6
         assert config.executor.quent_context is not None
 
 
@@ -452,7 +499,6 @@ def test_fallback_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "pass_read_limit",
         "max_footer_samples",
         "max_row_group_samples",
-        "use_rapidsmpf_native",
         "prefetch_file_metadata",
         "use_jit_filter",
     ],
@@ -467,20 +513,55 @@ def test_validate_parquet_options(option: str) -> None:
         )
 
 
-def test_prefetch_and_use_rapidsmpf_native_raises() -> None:
-    with pytest.raises(
-        NotImplementedError,
-        match="'use_rapidsmpf_native=True' does not currently support 'prefetch_file_metadata=True'",
-    ):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                parquet_options={
-                    "use_rapidsmpf_native": True,
-                    "prefetch_file_metadata": True,
-                },
-            )
+def test_prefetch_file_metadata_default() -> None:
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="in-memory"))
+    assert config.parquet_options.prefetch_file_metadata is False
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming", parquet_options={"prefetch_file_metadata": True}
         )
+    )
+    assert config.parquet_options.prefetch_file_metadata is True
+
+
+def test_parquet_options_object_passthrough() -> None:
+    parquet_options = ParquetOptions(prefetch_file_metadata=False)
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert config.parquet_options is parquet_options
+
+
+def test_parquet_options_object_engine_default() -> None:
+    # If a user passes in a ParquetOptions object instead of a plain dict, and
+    # doesn't set prefetch_file_metadata on it, we still need to fill in the
+    # right default for the chosen executor.
+    parquet_options = ParquetOptions()
+    assert isinstance(parquet_options.prefetch_file_metadata, Unspecified)
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="in-memory", parquet_options=parquet_options)
+    )
+    assert config.parquet_options.prefetch_file_metadata is False
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
+
+def test_parquet_options_unspecified_dict_factory() -> None:
+    parquet_options = ParquetOptions()
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
+    assert result["parquet_options"]["prefetch_file_metadata"] is None
 
 
 def test_validate_raise_on_fail() -> None:
@@ -612,9 +693,6 @@ def test_dynamic_planning_defaults() -> None:
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 2
-    assert config.executor.dynamic_planning.join_prefilter_threshold == 0.5
-    assert config.executor.dynamic_planning.join_prefilter_max_key_columns == 1
-    assert not config.executor.dynamic_planning.join_prefilter_trace
     assert config.executor.join_filter_pushdown is None
 
 
@@ -639,28 +717,6 @@ def test_dynamic_planning_sample_chunk_count_from_env(
     assert config.executor.dynamic_planning.sample_chunk_count == 3
 
 
-def test_join_prefilter_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "1")
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_THRESHOLD", "0.25"
-    )
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-        "none",
-    )
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_TRACE", "1"
-    )
-    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
-    assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.join_prefilter_threshold == 0.25
-    assert config.executor.dynamic_planning.join_prefilter_max_key_columns is None
-    assert config.executor.dynamic_planning.join_prefilter_trace
-    assert config.executor.join_filter_pushdown is not None
-    assert config.executor.join_filter_pushdown.threshold == 0.5
-    assert not config.executor.join_filter_pushdown.trace
-
-
 def test_join_filter_pushdown_options_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -682,98 +738,6 @@ def test_join_filter_pushdown_disabled_from_env(
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is None
-
-
-@pytest.mark.parametrize("value, expected", [("none", None), ("null", None), ("2", 2)])
-def test_join_prefilter_max_key_columns_from_env(
-    monkeypatch: pytest.MonkeyPatch, value: str, expected: int | None
-) -> None:
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-        value,
-    )
-    assert DynamicPlanningOptions().join_prefilter_max_key_columns == expected
-
-
-def test_validate_join_prefilter_threshold() -> None:
-    config = ConfigOptions.from_polars_engine(
-        pl.GPUEngine(
-            executor="streaming",
-            executor_options={"dynamic_planning": {"join_prefilter_threshold": 0}},
-        )
-    )
-    assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.join_prefilter_threshold == 0.0
-
-    with pytest.raises(TypeError, match="join_prefilter_threshold must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_threshold": "bad"}
-                },
-            )
-        )
-    with pytest.raises(TypeError, match="join_prefilter_threshold must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_threshold": True}
-                },
-            )
-        )
-    with pytest.raises(ValueError, match="join_prefilter_threshold must be between"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_threshold": 1.5}
-                },
-            )
-        )
-
-
-def test_validate_join_prefilter_max_key_columns() -> None:
-    with pytest.raises(TypeError, match="join_prefilter_max_key_columns must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_max_key_columns": "bad"}
-                },
-            )
-        )
-    with pytest.raises(TypeError, match="join_prefilter_max_key_columns must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_max_key_columns": True}
-                },
-            )
-        )
-    with pytest.raises(
-        ValueError, match="join_prefilter_max_key_columns must be at least 1"
-    ):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={
-                    "dynamic_planning": {"join_prefilter_max_key_columns": 0}
-                },
-            )
-        )
-
-
-def test_validate_join_prefilter_trace() -> None:
-    with pytest.raises(TypeError, match="join_prefilter_trace must be a bool"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"dynamic_planning": {"join_prefilter_trace": "bad"}},
-            )
-        )
 
 
 def test_validate_join_filter_pushdown_options() -> None:
@@ -907,6 +871,53 @@ def test_num_py_executors_from_env(
         config = ConfigOptions.from_polars_engine(engine)
         assert config.executor.name == "streaming"
         assert config.executor.num_py_executors == 8
+
+
+def test_kvikio_nthreads_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as m:
+        m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
+        m.delenv("KVIKIO_NTHREADS", raising=False)
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 256
+
+
+def test_kvikio_nthreads_from_executor_options() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"kvikio_nthreads": 128},
+        )
+    )
+    assert config.executor.kvikio_nthreads == 128
+
+
+def test_kvikio_nthreads_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", "64")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 64
+
+
+def test_kvikio_nthreads_from_kvikio_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
+        m.setenv("KVIKIO_NTHREADS", "32")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 32
+
+
+def test_kvikio_nthreads_cudf_polars_env_takes_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", "64")
+        m.setenv("KVIKIO_NTHREADS", "32")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 64
 
 
 def test_dask_sink_to_directory_false_raises() -> None:

@@ -229,7 +229,7 @@ def test_groupby_apply_jit_unary_reductions(
                     and dtype.kind == "f"
                 )
             ),
-            reason=("https://github.com/rapidsai/cudf/issues/14860"),
+            reason=("https://github.com/NVIDIA/cudf/issues/14860"),
         )
     )
     dataset = groupby_jit_datasets[dataset].copy(deep=True)
@@ -303,7 +303,7 @@ def test_groupby_apply_jit_reductions_special_vals(
         pytest.param(
             np.nan,
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/13832"
+                reason="https://github.com/NVIDIA/cudf/issues/13832"
             ),
         ),
         np.inf,
@@ -367,7 +367,7 @@ def test_groupby_apply_jit_correlation(dataset, groupby_jit_datasets, dtype):
 
     if np.dtype(dtype).kind == "f":
         # Correlation of floating types is not yet supported:
-        # https://github.com/rapidsai/cudf/issues/13839
+        # https://github.com/NVIDIA/cudf/issues/13839
         m = (
             f"Series.corr\\(Series\\) is not "
             f"supported for \\({dtype}, {dtype}\\)"
@@ -492,7 +492,7 @@ def test_groupby_apply_jit_args(func, args, groupby_jit_data_small):
 
 
 def test_groupby_apply_jit_block_divergence():
-    # https://github.com/rapidsai/cudf/issues/12686
+    # https://github.com/NVIDIA/cudf/issues/12686
     df = cudf.DataFrame(
         {
             "a": [0, 0, 0, 1, 1, 1],

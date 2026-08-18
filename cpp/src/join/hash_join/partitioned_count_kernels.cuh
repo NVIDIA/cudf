@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,10 +9,9 @@
 
 #include <cudf/detail/utilities/grid_1d.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -80,7 +79,7 @@ void launch_partitioned_count(probe_key_type const* keys,
                               thread_index_type n,
                               size_type* output,
                               Ref ref,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   if (n == 0) { return; }
 
@@ -88,7 +87,7 @@ void launch_partitioned_count(probe_key_type const* keys,
     grid_1d{static_cast<thread_index_type>(n * DEFAULT_JOIN_CG_SIZE), DEFAULT_JOIN_BLOCK_SIZE};
 
   partitioned_count_kernel<IsOuter>
-    <<<config.num_blocks, config.num_threads_per_block, 0, stream.value()>>>(keys, n, output, ref);
+    <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(keys, n, output, ref);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

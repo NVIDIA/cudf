@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -29,7 +29,7 @@ std::unique_ptr<column> distinct(lists_column_view const& input,
                                  null_equality nulls_equal,
                                  nan_equality nans_equal,
                                  duplicate_keep_option keep_option,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   // Algorithm:
@@ -68,7 +68,7 @@ std::unique_ptr<column> distinct(lists_column_view const& input,
                                  null_equality nulls_equal,
                                  nan_equality nans_equal,
                                  duplicate_keep_option keep_option,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

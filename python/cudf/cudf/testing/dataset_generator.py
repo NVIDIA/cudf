@@ -573,7 +573,7 @@ def rand_dataframe(dtypes_meta, rows, seed=0, use_threads=True):
             else:
                 raise TypeError(f"Unsupported dtype: {dtype}")
             # TODO: Add List column support once
-            # https://github.com/rapidsai/cudf/pull/6075
+            # https://github.com/NVIDIA/cudf/pull/6075
             # is merged.
 
     df = get_dataframe(

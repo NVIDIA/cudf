@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,7 +33,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 make_trivial_outer_indices(size_type left_start_idx,
                            size_type partition_size,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   auto left_indices  = std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
@@ -57,7 +57,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                              cudf::join_partition_context const& context,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -106,8 +106,9 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
   validate_hash_join_probe(_right, left_partition_view, _has_nulls);
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream);
+    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream, temp_mr);
 
   // For FULL_JOIN, probe with LEFT_JOIN semantics (no complement here)
   bool const is_outer = (join != join_kind::INNER_JOIN);
@@ -123,8 +124,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
   auto retrieve_partition = [&](auto equality, auto d_hasher) {
     // Precompute left keys for this partition slice.
-    rmm::device_uvector<probe_key_type> left_keys(n, stream);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::device_uvector<probe_key_type> left_keys(n, stream, temp_mr);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(partition_size),
                       left_keys.begin(),
@@ -158,7 +159,7 @@ template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<hash_join_hasher>::partitioned_join_retrieve(join_kind,
                                                        cudf::join_partition_context const&,
-                                                       rmm::cuda_stream_view,
+                                                       cuda::stream_ref,
                                                        rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

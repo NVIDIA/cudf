@@ -46,7 +46,6 @@
 #include <thrust/extrema.h>
 #include <thrust/for_each.h>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
@@ -1473,8 +1472,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
                                                  persisted_statistics& per_chunk_stats,
                                                  cuda::stream_ref stream)
 {
-  auto stripe_size_iter = thrust::make_transform_iterator(per_chunk_stats.stripe_stat_merge.begin(),
-                                                          [](auto const& s) { return s.size(); });
+  auto stripe_size_iter = cuda::transform_iterator(per_chunk_stats.stripe_stat_merge.begin(),
+                                                   [](auto const& s) { return s.size(); });
 
   auto const num_columns = footer.types.size() - 1;
   auto const num_stripes = footer.stripes.size();

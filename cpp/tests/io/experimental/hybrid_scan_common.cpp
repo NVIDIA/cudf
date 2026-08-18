@@ -41,8 +41,8 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
 {
   CUDF_EXPECTS(value >= 0 && value <= 9999, "String value must be between 0000 and 9999");
 
-  auto elements = thrust::make_transform_iterator(cuda::make_constant_iterator(value),
-                                                  [](auto i) { return std::format("{:04d}", i); });
+  auto elements = cuda::transform_iterator(cuda::make_constant_iterator(value),
+                                           [](auto i) { return std::format("{:04d}", i); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 

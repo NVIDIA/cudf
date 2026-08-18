@@ -1025,17 +1025,14 @@ table_with_metadata read_csv(cudf::io::datasource* source,
             auto const replaced_all_iter = cudf::detail::make_optional_iterator<cudf::string_view>(
               *replaced_all_view, cudf::nullate::DYNAMIC{replaced_all_col->nullable()});
 
-            auto const* original_pairs = buffer->_strings->data();
-            auto const original_iter   = thrust::make_transform_iterator(
-              cuda::counting_iterator<size_type>{0},
+            auto const original_iter = cuda::transform_iterator(
+              buffer->_strings->data(),
               cuda::proclaim_return_type<cuda::std::optional<cudf::string_view>>(
-                [original_pairs] __device__(
-                  size_type idx) -> cuda::std::optional<cudf::string_view> {
-                  auto const& p = original_pairs[idx];
-                  return p.first != nullptr
-                             ? cuda::std::optional<cudf::string_view>{cudf::string_view{p.first,
-                                                                                      p.second}}
-                             : cuda::std::nullopt;
+                [] __device__(auto const& pair) -> cuda::std::optional<cudf::string_view> {
+                  return pair.first != nullptr
+                           ? cuda::std::optional<cudf::string_view>{cudf::string_view{pair.first,
+                                                                                      pair.second}}
+                           : cuda::std::nullopt;
                 }));
 
             out_columns[col_idx] = cudf::strings::detail::copy_if_else(

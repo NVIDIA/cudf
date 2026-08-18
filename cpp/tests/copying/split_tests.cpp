@@ -23,7 +23,6 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <array>
 #include <limits>
@@ -219,7 +218,7 @@ void split_custom_column(SplitFunc Split,
 
   std::vector<std::string> base_strings(
     {"banana", "pear", "apple", "pecans", "vanilla", "cat", "mouse", "green"});
-  auto string_randomizer = thrust::make_transform_iterator(
+  auto string_randomizer = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     [&base_strings](cudf::size_type i) { return base_strings[rand() % base_strings.size()]; });
 

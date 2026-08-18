@@ -13,7 +13,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -92,10 +92,10 @@ void nvbench_orc_chunked_write(nvbench::state& state)
 
   auto mem_stats_logger = cudf::memory_stats_logger();
 
-  auto size_iter = thrust::make_transform_iterator(
+  auto size_iter = cuda::transform_iterator(
     tables.begin(), [](auto const& i) { return i->num_columns() * i->num_rows(); });
   auto row_count_iter =
-    thrust::make_transform_iterator(tables.begin(), [](auto const& i) { return i->num_rows(); });
+    cuda::transform_iterator(tables.begin(), [](auto const& i) { return i->num_rows(); });
   auto total_elements = std::accumulate(size_iter, size_iter + num_tables, 0);
   auto total_rows     = std::accumulate(row_count_iter, row_count_iter + num_tables, 0);
 

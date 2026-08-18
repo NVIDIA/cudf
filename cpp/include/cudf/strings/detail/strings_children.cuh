@@ -14,6 +14,7 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/utilities.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 #include <cudf/utilities/span.hpp>
@@ -44,7 +45,7 @@ namespace detail {
  * @return Offsets column and total bytes
  * @throw std::overflow_error if the output exceeds the column size limit
  */
-std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
+CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 template <typename Iter>

@@ -42,7 +42,6 @@ enum class [[nodiscard]] null_output : uint8_t {
 {
   // this implementation must be kept in sync with the implementation of
   // `cudf::ast::detail::operator_functor::fixed_point_result_scale`
-  // (https://github.com/rapidsai/cudf/blob/a5dccda20a74fe61e3c4491b0e74bdc0321d60d5/cpp/include/cudf/ast/detail/operator_functor.cuh#L161)
   switch (op) {
     // pseudo-opcode with no argument
     case opcode::GET_INPUT: return 0;

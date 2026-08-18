@@ -53,6 +53,7 @@ cdef class Column:
         # _children: List[Column]
         list _children
         size_type _num_children
+        object __weakref__
 
     cdef column_view view(self)
     cdef mutable_column_view mutable_view(self)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -165,3 +165,48 @@ def test_df_stack_multiindex_column_axis_pd_example(level):
     got = gdf.stack(level=level, future_stack=True)
 
     assert_eq(expect, got)
+
+
+def test_df_stack_int_level_names_resolved_positionally():
+    # integer level *names* must not hijack positional level lookup
+    # (pandas' get_level_values resolves integer arguments by name first)
+    columns = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")], names=[1, 0])
+    pdf = pd.DataFrame([[1, 2], [3, 4]], columns=columns)
+    gdf = cudf.from_pandas(pdf)
+    for level in (0, 1):
+        assert_eq(
+            pdf.stack(level=level, future_stack=True),
+            gdf.stack(level=level, future_stack=True),
+        )
+
+
+@pytest.mark.parametrize("level", [2, -3])
+def test_df_stack_out_of_bounds_level_raises(level):
+    columns = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")])
+    gdf = cudf.DataFrame([[1, 2]], columns=columns)
+    with pytest.raises(IndexError, match="Too many levels"):
+        gdf.stack(level=level)
+
+
+def test_df_stack_duplicate_level_name_raises():
+    columns = pd.MultiIndex.from_tuples(
+        [("a", "x"), ("b", "y")], names=["c", "c"]
+    )
+    gdf = cudf.DataFrame([[1, 2]], columns=columns)
+    with pytest.raises(ValueError, match="occurs multiple times"):
+        gdf.stack(level="c")
+
+
+def test_df_stack_unsorted_column_permutation_appearance_order():
+    # a 3-cycle column permutation: the previous argsort-based reordering
+    # misaligned column data for non-involution permutations; stacked keys
+    # are emitted in appearance order like pandas
+    columns = pd.MultiIndex.from_tuples(
+        [("b", 1), ("c", 2), ("a", 3)], names=["l0", "l1"]
+    )
+    pdf = pd.DataFrame([[1, 2, 3], [4, 5, 6]], columns=columns)
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(
+        pdf.stack("l0", future_stack=True),
+        gdf.stack("l0", future_stack=True),
+    )

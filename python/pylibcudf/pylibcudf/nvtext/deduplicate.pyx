@@ -16,6 +16,10 @@ from pylibcudf.libcudf.nvtext.deduplicate cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.librmm.device_buffer cimport device_buffer
 from rmm.pylibrmm.stream cimport Stream
@@ -43,7 +47,7 @@ cdef Column _column_from_suffix_array(
 
 
 cpdef Column build_suffix_array(
-    Column input, size_type min_width, object stream=None, DeviceMemoryResource mr=None
+    Column input, size_type min_width, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Builds a suffix array for the input strings column.
@@ -85,7 +89,7 @@ cpdef Column resolve_duplicates(
     Column input,
     Column indices,
     size_type min_width,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -133,7 +137,7 @@ cpdef Column resolve_duplicates_pair(
     Column input2,
     Column indices2,
     size_type min_width,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

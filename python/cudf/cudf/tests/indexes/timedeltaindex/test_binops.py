@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -190,7 +190,7 @@ def test_timedelta_index_ops_with_scalars(
                 and 0 in ptdi.astype("int")
                 and np.timedelta64(other_scalars).item() is not None
             ),
-            reason="Related to https://github.com/rapidsai/cudf/issues/5938",
+            reason="Related to https://github.com/NVIDIA/cudf/issues/5938",
         )
     )
     assert_eq(expected, actual)

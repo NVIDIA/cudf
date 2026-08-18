@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,10 +31,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
+
+#include <ranges>
 
 namespace {
 enum class output_limit : std::size_t {};
@@ -60,8 +62,10 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
 {
   if (nullable) {
     // Generate deterministic bitmask instead of random bitmask for easy computation of data size.
-    auto const valid_iter = cudf::detail::make_counting_transform_iterator(
-      0, [](cudf::size_type i) { return i % 4 != 3; });
+    auto const valid_values =
+      std::views::iota(cudf::size_type{0}) |
+      std::views::transform([](cudf::size_type i) -> bool { return i % 4 != 3; });
+    auto const valid_iter = valid_values.begin();
     cudf::size_type offset{0};
     for (auto& col : input_columns) {
       auto const [null_mask, null_count] =
@@ -148,6 +152,46 @@ auto chunked_read(std::string const& filepath,
   return chunked_read(filepath, output_limit_bytes, input_limit{0UL}, output_granularity);
 }
 
+void expect_selected_nested_empty_struct_table(cudf::table_view expected, cudf::table_view actual)
+{
+  ASSERT_EQ(1, actual.num_columns());
+  ASSERT_EQ(1, actual.column(0).num_children());
+  ASSERT_EQ(cudf::type_id::STRUCT, actual.column(0).child(0).type().id());
+  ASSERT_EQ(0, actual.column(0).child(0).num_children());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, actual);
+}
+
+void expect_selected_nested_empty_struct_chunked_round_trip(
+  std::unique_ptr<cudf::column> input_column, std::string const& filename)
+{
+  std::vector<std::unique_ptr<cudf::column>> input_columns;
+  input_columns.emplace_back(std::move(input_column));
+
+  auto expected = std::make_unique<cudf::table>(std::move(input_columns));
+  cudf::io::table_input_metadata metadata(expected->view());
+  metadata.column_metadata[0].set_name("name");
+  metadata.column_metadata[0].child(0).set_name("empty");
+
+  auto const filepath = temp_env->get_temp_filepath(filename);
+  auto const write_opts =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, *expected)
+      .metadata(std::move(metadata))
+      .build();
+  cudf::io::write_orc(write_opts);
+
+  auto const make_read_opts = [&filepath] {
+    return cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath})
+      .columns({"name"})
+      .build();
+  };
+
+  auto reader = cudf::io::chunked_orc_reader(1'000, 0, 10'000, make_read_opts());
+  auto chunk  = reader.read_chunk();
+
+  EXPECT_FALSE(reader.has_next());
+  expect_selected_nested_empty_struct_table(expected->view(), chunk.tbl->view());
+}
+
 }  // namespace
 
 struct OrcChunkedReaderTest : public cudf::test::BaseFixture {};
@@ -166,6 +210,46 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadNoData)
   EXPECT_EQ(result->num_rows(), 0);
   EXPECT_EQ(result->num_columns(), 2);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
+}
+
+TEST_F(OrcChunkedReaderTest, NestedEmptyStructColumnSelection)
+{
+  auto const validity = std::vector<bool>{true, false};
+  auto const num_rows = static_cast<cudf::size_type>(validity.size());
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
+  auto input_column = cudf::make_structs_column(
+    num_rows, std::move(struct_children), null_count, std::move(null_mask));
+  ASSERT_TRUE(input_column->nullable());
+  ASSERT_EQ(null_count, input_column->null_count());
+  // Struct parent nulls are superimposed on their children by make_structs_column.
+  ASSERT_TRUE(input_column->child(0).nullable());
+  ASSERT_EQ(null_count, input_column->child(0).null_count());
+
+  expect_selected_nested_empty_struct_chunked_round_trip(std::move(input_column),
+                                                         "nested_empty_struct_outer_nullable.orc");
+}
+
+TEST_F(OrcChunkedReaderTest, NullableEmptyStructChildColumnSelection)
+{
+  auto const validity = std::vector<bool>{true, false};
+  auto const num_rows = static_cast<cudf::size_type>(validity.size());
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.emplace_back(
+    cudf::make_structs_column(num_rows, {}, null_count, std::move(null_mask)));
+  auto input_column = cudf::make_structs_column(num_rows, std::move(struct_children), 0, {});
+  ASSERT_FALSE(input_column->nullable());
+  ASSERT_TRUE(input_column->child(0).nullable());
+  ASSERT_EQ(null_count, input_column->child(0).null_count());
+
+  expect_selected_nested_empty_struct_chunked_round_trip(std::move(input_column),
+                                                         "nested_empty_struct_inner_nullable.orc");
 }
 
 TEST_F(OrcChunkedReaderTest, TestChunkedReadInvalidParameter)
@@ -359,12 +443,14 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithString)
     // 20000 rows of 1 char each    (20000  + 80004) = B0      100004        100004
     // 20000 rows of 4 chars each   (80000  + 80004) = B1      160004        260008
     // 20000 rows of 16 chars each  (320000 + 80004) = B2      400004        660012
-    auto const strings  = std::vector<std::string>{"a", "bbbb", "cccccccccccccccc"};
-    auto const str_iter = cudf::detail::make_counting_transform_iterator(0, [&](int32_t i) {
-      if (i < 20000) { return strings[0]; }
-      if (i < 40000) { return strings[1]; }
-      return strings[2];
-    });
+    auto const strings = std::vector<std::string>{"a", "bbbb", "cccccccccccccccc"};
+    auto const str_values =
+      std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) -> std::string {
+        if (i < 20000) { return strings[0]; }
+        if (i < 40000) { return strings[1]; }
+        return strings[2];
+      });
+    auto const str_iter = str_values.begin();
     input_columns.emplace_back(strings_col(str_iter, str_iter + num_rows).release());
 
     // Cumulative sizes:
@@ -458,9 +544,11 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithStructs)
       auto child1 = int32s_col(int_iter, int_iter + num_rows);
       auto child2 = int32s_col(int_iter + num_rows, int_iter + num_rows * 2);
 
-      auto const str_iter = cudf::detail::make_counting_transform_iterator(
-        0, [&](int32_t i) { return std::to_string(i); });
-      auto child3 = strings_col{str_iter, str_iter + num_rows};
+      auto const str_values =
+        std::views::iota(int32_t{0}) |
+        std::views::transform([&](int32_t i) -> std::string { return std::to_string(i); });
+      auto const str_iter = str_values.begin();
+      auto child3         = strings_col{str_iter, str_iter + num_rows};
 
       return structs_col{{child1, child2, child3}}.release();
     }());
@@ -545,9 +633,10 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     auto const template_lists = int32s_lists_col{
       int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{1, 2}, int32s_lists_col{3, 4, 5}};
 
-    auto const gather_iter =
-      cudf::detail::make_counting_transform_iterator(0, [&](int32_t i) { return i % 4; });
-    auto const gather_map = int32s_col(gather_iter, gather_iter + num_rows);
+    auto const gather_values = std::views::iota(int32_t{0}) |
+                               std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
+    auto const gather_iter = gather_values.begin();
+    auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
@@ -631,9 +720,10 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
                        int32s_lists_col{0},
                        int32s_lists_col{1, 2},
                        int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
-    auto const gather_iter =
-      cudf::detail::make_counting_transform_iterator(0, [&](int32_t i) { return i % 4; });
-    auto const gather_map = int32s_col(gather_iter, gather_iter + num_rows);
+    auto const gather_values = std::views::iota(int32_t{0}) |
+                               std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
+    auto const gather_iter = gather_values.begin();
+    auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
@@ -711,16 +801,19 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithStructsOfLists)
       child_columns.emplace_back(
         int32s_col(int_iter + num_rows, int_iter + num_rows * 2).release());
 
-      auto const str_iter = cudf::detail::make_counting_transform_iterator(0, [&](int32_t i) {
-        return std::to_string(i) + "++++++++++++++++++++" + std::to_string(i);
-      });
+      auto const str_values =
+        std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) -> std::string {
+          return std::to_string(i) + "++++++++++++++++++++" + std::to_string(i);
+        });
+      auto const str_iter = str_values.begin();
       child_columns.emplace_back(strings_col{str_iter, str_iter + num_rows}.release());
 
       auto const template_lists = int32s_lists_col{
         int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
-      auto const gather_iter =
-        cudf::detail::make_counting_transform_iterator(0, [&](int32_t i) { return i % 4; });
-      auto const gather_map = int32s_col(gather_iter, gather_iter + num_rows);
+      auto const gather_values = std::views::iota(int32_t{0}) |
+                                 std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
+      auto const gather_iter = gather_values.begin();
+      auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
       child_columns.emplace_back(
         std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
@@ -845,9 +938,12 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsOfStructs)
       auto child1 = int32s_col(int_iter, int_iter + num_structs);
       auto child2 = int32s_col(int_iter + num_structs, int_iter + num_structs * 2);
 
-      auto const str_iter = cudf::detail::make_counting_transform_iterator(
-        0, [&](int32_t i) { return std::to_string(i) + std::to_string(i) + std::to_string(i); });
-      auto child3 = strings_col{str_iter, str_iter + num_structs};
+      auto const str_values =
+        std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) -> std::string {
+          return std::to_string(i) + std::to_string(i) + std::to_string(i);
+        });
+      auto const str_iter = str_values.begin();
+      auto child3         = strings_col{str_iter, str_iter + num_structs};
 
       return structs_col{{child1, child2, child3}}.release();
     };
@@ -956,9 +1052,10 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadNullCount)
 {
   auto constexpr num_rows = 100'000;
 
-  auto const sequence = cuda::constant_iterator(1);
-  auto const validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 4 != 3; });
+  auto const sequence        = cuda::constant_iterator(1);
+  auto const validity_values = std::views::iota(cudf::size_type{0}) |
+                               std::views::transform([](auto i) -> bool { return i % 4 != 3; });
+  auto const validity = validity_values.begin();
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.push_back(int32s_col{sequence, sequence + num_rows, validity}.release());
   auto const expected = std::make_unique<cudf::table>(std::move(cols));
@@ -1083,16 +1180,20 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumns)
   auto const iter1 = cuda::counting_iterator<int>{0};
   auto const col1  = int32s_col(iter1, iter1 + num_rows);
 
-  auto const iter2 =
-    cudf::detail::make_counting_transform_iterator(0, [](int i) { return static_cast<double>(i); });
-  auto const col2 = doubles_col(iter2, iter2 + num_rows);
+  auto const values2 = std::views::iota(0) | std::views::transform([](int i) -> double {
+                         return static_cast<double>(i);
+                       });
+  auto const iter2   = values2.begin();
+  auto const col2    = doubles_col(iter2, iter2 + num_rows);
 
-  auto const strings  = std::vector<std::string>{"abc", "de", "fghi"};
-  auto const str_iter = cudf::detail::make_counting_transform_iterator(0, [&](int32_t i) {
-    if (i < 250000) { return strings[0]; }
-    if (i < 750000) { return strings[1]; }
-    return strings[2];
-  });
+  auto const strings = std::vector<std::string>{"abc", "de", "fghi"};
+  auto const str_values =
+    std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) -> std::string {
+      if (i < 250000) { return strings[0]; }
+      if (i < 750000) { return strings[1]; }
+      return strings[2];
+    });
+  auto const str_iter = str_values.begin();
   auto const col3     = strings_col(str_iter, str_iter + num_rows);
 
   auto const filename   = std::string{"mixed_columns"};
@@ -1364,11 +1465,12 @@ TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
   int64_t constexpr total_rows  = num_rows * num_reps;
   static_assert(total_rows > std::numeric_limits<cudf::size_type>::max());
 
-  auto const it =
-    thrust::make_transform_iterator(cuda::counting_iterator<int64_t>{0}, [num_rows](int64_t i) {
+  auto const values =
+    std::views::iota(int64_t{0}, num_rows) |
+    std::views::transform([num_rows](int64_t i) -> data_type {
       return (i % num_rows) % static_cast<int64_t>(std::numeric_limits<data_type>::max() / 2);
     });
-  auto const col         = data_col(it, it + num_rows);
+  auto const col         = data_col(values.begin(), values.end());
   auto const chunk_table = cudf::table_view{{col}};
 
   std::vector<char> data_buffer;
@@ -1400,8 +1502,9 @@ TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
 
     // Check validity of the last 5 million rows.
     auto const sequence_start = num_rows_to_skip % num_rows;
-    auto const skipped_col = data_col(it + sequence_start, it + sequence_start + num_rows_to_read);
-    auto const expected    = cudf::table_view{{skipped_col}};
+    auto const skipped_col =
+      data_col(values.begin() + sequence_start, values.begin() + sequence_start + num_rows_to_read);
+    auto const expected = cudf::table_view{{skipped_col}};
 
     auto const read_opts =
       cudf::io::orc_reader_options::builder(
@@ -1498,7 +1601,9 @@ TEST_P(OrcChunkedDecompressionTest, RoundTripBasic)
   auto const num_rows = 12'345;
 
   std::vector<std::unique_ptr<cudf::column>> input_columns;
-  auto value_iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i / 4; });
+  auto const values =
+    std::views::iota(int32_t{0}) | std::views::transform([](auto i) -> int32_t { return i / 4; });
+  auto const value_iter = values.begin();
   input_columns.emplace_back(int32s_col(value_iter, value_iter + num_rows).release());
   input_columns.emplace_back(int64s_col(value_iter, value_iter + num_rows).release());
   auto expected = std::make_unique<cudf::table>(std::move(input_columns));

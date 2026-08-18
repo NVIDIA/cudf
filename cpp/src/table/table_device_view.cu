@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,7 +42,7 @@ template class table_device_view_base<mutable_column_device_view, mutable_table_
 
 template <typename ColumnDeviceView, typename HostTableView>
 std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_device_views(
-  HostTableView source_view, rmm::cuda_stream_view stream)
+  HostTableView source_view, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
 {
   // First calculate the size of memory needed to hold the
   // table's ColumnDeviceViews. This is done by calling extent()
@@ -65,8 +65,9 @@ std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_
   // ColumnDeviceViews so the column can set the pointer(s) for any
   // of its child objects.
   // align both h_ptr, d_ptr
-  auto descendant_storage = std::make_unique<rmm::device_buffer>(padded_views_size_bytes, stream);
-  void* h_ptr             = detail::align_ptr_for_type<ColumnDeviceView>(h_buffer.data());
+  auto descendant_storage =
+    std::make_unique<rmm::device_buffer>(padded_views_size_bytes, stream, mr);
+  void* h_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(h_buffer.data());
   void* d_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(descendant_storage->data());
   auto d_columns = detail::child_columns_to_device_array<ColumnDeviceView>(
     source_view.begin(), source_view.end(), h_ptr, d_ptr);
@@ -80,7 +81,9 @@ std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_
 
 template std::pair<std::unique_ptr<rmm::device_buffer>, column_device_view*>
 create_column_device_views<column_device_view, host_span<column_view const>>(
-  host_span<column_view const> source_view, rmm::cuda_stream_view stream);
+  host_span<column_view const> source_view,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr);
 
 table_device_view::table_device_view(table_view source_view, column_device_view* columns)
   : detail::table_device_view_base<column_device_view, table_view>(source_view, columns)
@@ -88,10 +91,12 @@ table_device_view::table_device_view(table_view source_view, column_device_view*
 }
 
 std::unique_ptr<table_device_view, std::function<void(table_device_view*)>>
-table_device_view::create(table_view source_view, rmm::cuda_stream_view stream)
+table_device_view::create(table_view source_view,
+                          rmm::cuda_stream_view stream,
+                          rmm::device_async_resource_ref mr)
 {
   auto [descendant_storage, columns] =
-    create_column_device_views<column_device_view, table_view>(source_view, stream);
+    create_column_device_views<column_device_view, table_view>(source_view, stream, mr);
   auto deleter = [ds = descendant_storage.release()](table_device_view* tv) {
     tv->destroy();
     delete ds;
@@ -109,10 +114,13 @@ mutable_table_device_view::mutable_table_device_view(mutable_table_view source_v
 }
 
 std::unique_ptr<mutable_table_device_view, std::function<void(mutable_table_device_view*)>>
-mutable_table_device_view::create(mutable_table_view source_view, rmm::cuda_stream_view stream)
+mutable_table_device_view::create(mutable_table_view source_view,
+                                  rmm::cuda_stream_view stream,
+                                  rmm::device_async_resource_ref mr)
 {
   auto [descendant_storage, columns] =
-    create_column_device_views<mutable_column_device_view, mutable_table_view>(source_view, stream);
+    create_column_device_views<mutable_column_device_view, mutable_table_view>(
+      source_view, stream, mr);
   auto deleter = [ds = descendant_storage.release()](mutable_table_device_view* tv) {
     tv->destroy();
     delete ds;

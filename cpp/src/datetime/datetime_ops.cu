@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,7 +27,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -397,7 +396,7 @@ std::unique_ptr<column> add_calendrical_months(column_view const& timestamp_colu
                "Months type should be INT16 or INT32");
 
   if (months.is_valid(stream)) {
-    auto const months_begin_iter = thrust::make_permutation_iterator(
+    auto const months_begin_iter = cuda::make_permutation_iterator(
       cudf::detail::indexalator_factory::make_input_iterator(months),
       cuda::make_constant_iterator(0));
     auto output = type_dispatcher(timestamp_column.type(),

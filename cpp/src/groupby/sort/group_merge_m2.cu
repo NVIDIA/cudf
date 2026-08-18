@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,12 +8,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -76,7 +75,7 @@ template <typename count_type>
 std::unique_ptr<column> merge_m2(column_view const& values,
                                  device_span<size_type const> group_offsets,
                                  size_type num_groups,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto result_counts = make_numeric_column(
@@ -87,9 +86,9 @@ std::unique_ptr<column> merge_m2(column_view const& values,
     data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
 
   auto const out_iter =
-    thrust::make_zip_iterator(result_counts->mutable_view().template data<count_type>(),
-                              result_means->mutable_view().template data<result_type>(),
-                              result_M2s->mutable_view().template data<result_type>());
+    cuda::make_zip_iterator(result_counts->mutable_view().template data<count_type>(),
+                            result_means->mutable_view().template data<result_type>(),
+                            result_M2s->mutable_view().template data<result_type>());
 
   auto const count_valid = values.child(0);
   auto const mean_values = values.child(1);
@@ -120,7 +119,7 @@ std::unique_ptr<column> merge_m2(column_view const& values,
 std::unique_ptr<column> group_merge_m2(column_view const& values,
                                        device_span<size_type const> group_offsets,
                                        size_type num_groups,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(values.type().id() == type_id::STRUCT,

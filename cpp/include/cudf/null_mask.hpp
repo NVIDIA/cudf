@@ -241,7 +241,8 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(
  * yields the identity of bitwise AND, so such a segment's result marks every row valid and its
  * count of unset bits is zero.
  *
- * @throws cudf::logic_error if `segment_offsets` is decreasing, or if it reaches outside `colviews`
+ * @throws std::invalid_argument if `segment_offsets` is decreasing
+ * @throws std::out_of_range if `segment_offsets` reaches outside `colviews`
  *
  * @param colviews A span containing column views whose bitmasks will be ANDed within their
  * respective segments
@@ -270,7 +271,8 @@ segmented_bitmask_and(host_span<column_view const> colviews,
  * yields the identity of bitwise AND, so such a segment's result marks every row valid and its
  * count of unset bits is zero.
  *
- * @throws cudf::logic_error if `segment_offsets` is decreasing, or if it reaches outside `masks`
+ * @throws std::invalid_argument if `segment_offsets` is decreasing
+ * @throws std::out_of_range if `segment_offsets` reaches outside `masks`
  *
  * @param masks A span containing bitmasks that will be ANDed within their
  * respective segments

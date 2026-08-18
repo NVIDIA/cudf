@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -408,10 +409,12 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   CUDF_EXPECTS(segment_offsets.size() >= 2,
                "At least one segment needs to be passed for bitwise operations");
   CUDF_EXPECTS(std::is_sorted(segment_offsets.begin(), segment_offsets.end()),
-               "Segment offsets must be non-decreasing");
+               "Segment offsets must be non-decreasing",
+               std::invalid_argument);
   CUDF_EXPECTS(
     segment_offsets.front() >= 0 && std::cmp_less_equal(segment_offsets.back(), masks.size()),
-    "Segment offsets are out of the bounds of the mask array");
+    "Segment offsets are out of the bounds of the mask array",
+    std::out_of_range);
 
   auto const num_segments = static_cast<size_type>(segment_offsets.size() - 1);
   rmm::device_uvector<size_type> d_null_counts(num_segments, stream, mr);

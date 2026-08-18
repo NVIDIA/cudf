@@ -738,9 +738,9 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndRejectsInvalidOffsets)
   std::vector<cudf::column_view> const colviews{bools_col1, bools_col2};
 
   EXPECT_THROW(cudf::segmented_bitmask_and(colviews, std::vector<cudf::size_type>{0, 2, 1}),
-               cudf::logic_error);
+               std::invalid_argument);
   EXPECT_THROW(cudf::segmented_bitmask_and(colviews, std::vector<cudf::size_type>{0, 3}),
-               cudf::logic_error);
+               std::out_of_range);
 }
 
 TEST_F(MergeBitmaskTest, TestBitmaskOr)

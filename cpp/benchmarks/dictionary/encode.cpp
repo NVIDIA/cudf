@@ -11,7 +11,6 @@
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-
 #include <nvbench/nvbench.cuh>
 
 static void bench_dictionary_encode(nvbench::state& state)

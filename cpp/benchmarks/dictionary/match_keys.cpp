@@ -13,7 +13,6 @@
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-
 #include <nvbench/nvbench.cuh>
 
 #include <vector>

@@ -13,7 +13,6 @@
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-
 #include <nvbench/nvbench.cuh>
 
 static void bench_dictionary_set_keys(nvbench::state& state)

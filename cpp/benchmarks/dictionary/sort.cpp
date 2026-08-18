@@ -13,7 +13,6 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-
 #include <nvbench/nvbench.cuh>
 
 static void bench_dictionary_sort(nvbench::state& state)

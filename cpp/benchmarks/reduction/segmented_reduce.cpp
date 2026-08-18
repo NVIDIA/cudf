@@ -14,7 +14,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-
 #include <nvbench/nvbench.cuh>
 
 #include <memory>

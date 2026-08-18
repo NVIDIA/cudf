@@ -8,7 +8,6 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
 
-
 #include <filesystem>
 #include <iostream>
 #include <string>

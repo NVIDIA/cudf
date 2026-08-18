@@ -21,8 +21,8 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <stdexcept>
 
@@ -746,7 +746,7 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegmentsMultipleWords)
   auto const num_rows = 300;
   auto const nulls    = cudf::test::iterators::nulls_at_multiples_of(3);
   cudf::test::fixed_width_column_wrapper<int32_t> const col(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(num_rows), nulls);
+    cuda::make_counting_iterator(0), cuda::make_counting_iterator(num_rows), nulls);
   auto const expected_nulls = cudf::size_type{100};
 
   std::vector<cudf::column_view> const colviews{col};

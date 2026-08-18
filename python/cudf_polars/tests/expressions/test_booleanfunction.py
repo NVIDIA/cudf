@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
 import pytest
@@ -346,6 +347,20 @@ def test_boolean_is_close_negative_tol_raises(engine: pl.GPUEngine, kwargs):
     ldf = pl.LazyFrame({"a": [1.0], "b": [1.0]})
     q = ldf.select(pl.col("a").is_close(pl.col("b"), **kwargs))
     assert_ir_translation_raises(q, engine, pl.exceptions.ComputeError)
+
+
+@pytest.mark.parametrize(
+    "dtype,data",
+    [
+        (pl.Boolean, [True, False]),
+        (pl.String, ["a", "b"]),
+        (pl.Date, [date(2020, 1, 1), date(2020, 1, 2)]),
+    ],
+)
+def test_boolean_is_close_invalid_dtype_raises(engine: pl.GPUEngine, dtype, data):
+    ldf = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = ldf.select(pl.col("a").is_close(pl.col("a")))
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
 
 
 @pytest.mark.skipif(

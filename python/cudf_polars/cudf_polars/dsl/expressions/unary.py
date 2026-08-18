@@ -224,6 +224,11 @@ class UnaryFunction(Expr):
                 )
             if bin_count is None:
                 raise NotImplementedError("hist without bin_count is not supported")
+            typ = children[0].dtype.polars_type
+            if not typ.is_numeric() or typ.is_decimal():
+                raise pl.exceptions.InvalidOperationError(
+                    "'hist' is only supported for numeric data"
+                )
         if self.name == "max_horizontal":
             op = UnaryFunction._horizontal_fold_ops[self.name]
             if not plc.binaryop.is_supported_operation(

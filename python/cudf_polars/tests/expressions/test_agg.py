@@ -362,6 +362,19 @@ def test_hist_category_breakpoint_unsupported(engine: pl.GPUEngine, kwargs):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        pl.Series([True, False, True], dtype=pl.Boolean),
+        pl.Series([Decimal("1.00"), Decimal("2.00")], dtype=pl.Decimal(10, 2)),
+    ],
+)
+def test_hist_invalid_dtype_raises(engine: pl.GPUEngine, data: pl.Series) -> None:
+    df = pl.LazyFrame({"a": data})
+    q = df.select(pl.col("a").hist(bin_count=3))
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
+
+
 def test_hist_no_bin_count_unsupported(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": pl.Series([1, 2, 3], dtype=pl.Int64())})
     q = df.select(pl.col("a").hist(include_category=False, include_breakpoint=False))

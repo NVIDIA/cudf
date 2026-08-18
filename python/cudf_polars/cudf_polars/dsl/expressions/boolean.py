@@ -11,7 +11,7 @@ from functools import partial, reduce
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import polars as pl
-from polars.exceptions import ComputeError
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -129,6 +129,12 @@ class BooleanFunction(Expr):
                 raise ComputeError(f"`abs_tol` must be non-negative but got {abs_tol}")
             if rel_tol < 0.0:
                 raise ComputeError(f"`rel_tol` must be non-negative but got {rel_tol}")
+            for child in self.children:
+                typ = child.dtype.polars_type
+                if not typ.is_numeric():
+                    raise InvalidOperationError(
+                        f"is_close operation not supported for dtype `{dtype}`"
+                    )
 
     @staticmethod
     def _distinct(

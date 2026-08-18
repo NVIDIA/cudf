@@ -30,9 +30,10 @@ std::unique_ptr<column> xxhash_32(table_view const& input,
 
   if (input.num_rows() == 0) { return output; }
 
-  bool const nullable   = has_nulls(input);
-  auto const row_hasher = cudf::detail::row::hash::row_hasher(input, stream);
-  auto output_view      = output->mutable_view();
+  bool const nullable = has_nulls(input);
+  auto const row_hasher =
+    cudf::detail::row::hash::row_hasher(input, stream, cudf::get_current_device_resource_ref());
+  auto output_view = output->mutable_view();
 
   // Compute the hash value for each row
   auto const output_begin = output_view.begin<hash_value_type>();

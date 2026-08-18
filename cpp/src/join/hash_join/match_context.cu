@@ -45,8 +45,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> make_join_match_counts(
                "Left table has nulls while right table was not hashed with null check.",
                std::invalid_argument);
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
   auto const left_table_num_rows = left.num_rows();
 
   auto count_matches = [&](auto equality, auto d_hasher) {

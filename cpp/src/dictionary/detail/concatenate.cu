@@ -187,30 +187,29 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     cudf::detail::row::hash::device_row_hasher<cudf::hashing::detail::default_hash,
                                                cudf::nullate::NO>>;
   auto const tv         = cudf::table_view({all_keys->view()});
-  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream);
-  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream);
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream, temp_mr);
+  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream, temp_mr);
   auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
   auto const d_equal =
     row_equal.equal_to<false>(cudf::nullate::NO{}, null_equality::EQUAL, comparator);
   auto const empty_key = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
   auto probe           = encode_probe_t{row_hash.device_hasher(cudf::nullate::NO{})};
-  auto allocator = rmm::mr::polymorphic_allocator<char>(cudf::get_current_device_resource_ref());
-  auto set       = cuco::static_set{
+  auto allocator       = rmm::mr::polymorphic_allocator<char>(temp_mr);
+  auto set             = cuco::static_set{
     all_keys->size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
   auto set_ref    = set.ref(cuco::insert_and_find);
   using set_ref_t = decltype(set_ref);
 
-  auto policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+  auto policy = rmm::exec_policy_nosync(stream, temp_mr);
   auto iota   = cuda::counting_iterator<size_type>{0};
 
-  auto d_indices = rmm::device_uvector<size_type>(
-    all_keys->size(), stream, cudf::get_current_device_resource_ref());
+  auto d_indices  = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
   auto d_all_keys = column_device_view::create(all_keys->view(), stream);
   thrust::transform(
     policy, iota, iota + all_keys->size(), d_indices.begin(), insert_keys_fn{set_ref, *d_all_keys});
-  auto keys_indices = rmm::device_uvector<size_type>(
-    all_keys->size(), stream, cudf::get_current_device_resource_ref());
-  auto keys_end = set.retrieve_all(keys_indices.begin(), stream.get());
+  auto keys_indices = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
   keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 
   // use keys_indices to retrieve the keys (gather)
@@ -223,13 +222,11 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
 
   // build an all_keys_remap: abs position in all_keys to new key index
   // use scatter to assign new index values: all_keys_remap[keys_indices[i]] = i
-  auto all_keys_remap = rmm::device_uvector<size_type>(
-    all_keys->size(), stream, cudf::get_current_device_resource_ref());
+  auto all_keys_remap = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
   thrust::scatter(
     policy, iota, iota + keys_indices.size(), keys_indices.begin(), all_keys_remap.begin());
   // use gather to propagate new indices values to all duplicate positions
-  auto final_remap = rmm::device_uvector<size_type>(
-    all_keys->size(), stream, cudf::get_current_device_resource_ref());
+  auto final_remap = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
   thrust::gather(
     policy, d_indices.begin(), d_indices.end(), all_keys_remap.begin(), final_remap.begin());
 

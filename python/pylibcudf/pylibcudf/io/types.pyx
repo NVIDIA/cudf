@@ -333,7 +333,7 @@ cdef class TableWithMetadata:
     """
     def __init__(
         self, Table tbl, list column_names: list[ColumnNameSpec]
-    ) -> None:
+    ):
         self.tbl = tbl
 
         self.metadata.schema_info = self._make_column_info(column_names)
@@ -523,7 +523,7 @@ cdef class SourceInfo:
             | Sequence[io.BytesIO]
             | Sequence[Span]
         ),
-    ) -> None:
+    ):
         if not sources:
             self.c_obj = move(source_info())
             return
@@ -694,7 +694,7 @@ cdef class SinkInfo:
             | list[os.PathLike[Any]]
             | list[io.IOBase]
         ),
-    ) -> None:
+    ):
         cdef vector[data_sink *] data_sinks
         cdef vector[string] paths
 

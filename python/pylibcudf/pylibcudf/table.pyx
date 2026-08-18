@@ -83,7 +83,7 @@ cdef class Table:
 
     def __init__(
         self, columns: Sequence[Column], num_rows: int | None = None
-    ) -> None:
+    ):
         columns = tuple(columns)
         if not all(isinstance(c, Column) for c in columns):
             raise ValueError("All columns must be pylibcudf Column objects")

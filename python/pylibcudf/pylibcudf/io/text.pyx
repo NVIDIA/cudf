@@ -43,7 +43,7 @@ cdef class ByteRangeInfo:
         Size of the range in bytes
     """
 
-    def __init__(self, size_t offset, size_t size) -> None:
+    def __init__(self, size_t offset, size_t size):
         self.c_obj = byte_range_info(offset, size)
 
     @property
@@ -76,7 +76,7 @@ cdef class ParseOptions:
         *,
         byte_range: tuple[int, int] | list[int] | None = None,
         strip_delimiters: bool = False,
-    ) -> None:
+    ):
         self.c_options = cpp_text.parse_options()
         if byte_range is not None:
             c_byte_range_offset = byte_range[0]

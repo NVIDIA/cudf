@@ -32,7 +32,7 @@ cdef class GetJsonObjectOptions:
         allow_single_quotes: bool = False,
         strip_quotes_from_single_strings: bool = True,
         missing_fields_as_nulls: bool = False,
-    ) -> None:
+    ):
         self.set_allow_single_quotes(allow_single_quotes)
         self.set_strip_quotes_from_single_strings(
             strip_quotes_from_single_strings

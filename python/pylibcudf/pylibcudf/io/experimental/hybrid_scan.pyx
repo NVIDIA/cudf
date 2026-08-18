@@ -173,7 +173,7 @@ cdef class HybridScanReader:
         self,
         const uint8_t[::1] footer_bytes: Buffer,
         ParquetReaderOptions options,
-    ) -> None:
+    ):
         cdef const uint8_t* footer_ptr = <const uint8_t*>0
         if len(footer_bytes) > 0:
             footer_ptr = &footer_bytes[0]

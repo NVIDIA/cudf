@@ -158,7 +158,7 @@ cpdef size_t bitmask_allocation_size_bytes(size_type number_of_bits):
 
 cpdef DeviceBuffer create_null_mask(
     size_type size,
-    mask_state state = mask_state.UNINITIALIZED,
+    mask_state state: MaskState = mask_state.UNINITIALIZED,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):

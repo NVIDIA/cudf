@@ -21,6 +21,7 @@ from .aggregation cimport Aggregation
 from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
+from .types import NullOrder, Order
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -127,8 +128,8 @@ cdef class RollingRequest:
 cpdef Table grouped_range_rolling_window(
     Table group_keys,
     Column orderby,
-    order order,
-    null_order null_order,
+    order order: Order,
+    null_order null_order: NullOrder,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
     list requests: list[RollingRequest],
@@ -290,8 +291,8 @@ cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
 cpdef tuple[Column, Column] make_range_windows(
     Table group_keys,
     Column orderby,
-    order order,
-    null_order null_order,
+    order order: Order,
+    null_order null_order: NullOrder,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
     object stream: CudaStreamLike | None = None,

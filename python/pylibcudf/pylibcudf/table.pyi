@@ -7,7 +7,6 @@ from collections.abc import Sequence
 
 from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
-from rmm.pylibrmm.stream import Stream
 
 from ._interop_helpers import ArrowLike, ColumnMetadata
 from .column import Column
@@ -19,7 +18,7 @@ class Table:
     __hash__ = None
 
     def __init__(self, columns: Sequence[Column], num_rows=None): ...
-    def to_arrow(self, metadata: list[ColumnMetadata | str] | None=None, stream: Stream | None=None) -> ArrowLike: ...
+    def to_arrow(self, metadata: list[ColumnMetadata | str] | None=None, stream: CudaStreamLike | None=None) -> ArrowLike: ...
     @staticmethod
     def from_arrow(obj: ArrowLike, dtype: DataType | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
     def num_columns(self) -> int: ...

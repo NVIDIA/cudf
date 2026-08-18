@@ -31,6 +31,7 @@ from .column cimport Column
 from .expressions cimport Expression
 from .gpumemoryview cimport gpumemoryview
 from .types cimport DataType, null_aware, output_nullability
+from .types import NullAware, OutputNullability
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -301,8 +302,8 @@ cpdef Column transform(
     str transform_udf,
     DataType output_type,
     bool is_ptx,
-    null_aware is_null_aware,
-    output_nullability null_policy,
+    null_aware is_null_aware: NullAware,
+    output_nullability null_policy: OutputNullability,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):

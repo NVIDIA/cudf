@@ -14,6 +14,9 @@ namespace cudf {
 namespace reduction {
 namespace detail {
 
+// segmented_variance is intentionally co-located with segmented_standard_deviation in this
+// translation unit. Both reductions use the same var_std intermediate and segmented CUB reduction
+// shape; keeping them together avoids emitting duplicate device kernel instantiations.
 std::unique_ptr<cudf::column> segmented_standard_deviation(column_view const& col,
                                                            device_span<size_type const> offsets,
                                                            cudf::data_type const output_dtype,

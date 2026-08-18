@@ -30,7 +30,8 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .expressions cimport Expression
 from .gpumemoryview cimport gpumemoryview
-from .types cimport DataType, null_aware, output_nullability
+from .types cimport DataType, null_aware as null_aware_t, output_nullability
+from .types import NullAware, OutputNullability
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -301,8 +302,8 @@ cpdef Column transform(
     str transform_udf,
     DataType output_type,
     bool is_ptx,
-    null_aware is_null_aware,
-    output_nullability null_policy,
+    null_aware_t null_aware: NullAware,
+    output_nullability null_policy: OutputNullability,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -320,7 +321,7 @@ cpdef Column transform(
     is_ptx : bool
         If `True`, the UDF is treated as PTX code.
         If `False`, the UDF is treated as CUDA code.
-    is_null_aware: NullAware
+    null_aware: NullAware
         If `NO`, the UDF gets non-nullable parameters
         If `YES`, the UDF gets nullable parameters
     null_policy: OutputNullability
@@ -349,7 +350,7 @@ cpdef Column transform(
     cdef udf_source_type source_type = (
         udf_source_type.PTX if is_ptx else udf_source_type.CUDA
     )
-    cdef null_aware c_is_null_aware = is_null_aware
+    cdef null_aware_t c_is_null_aware = null_aware
     cdef output_nullability c_null_policy = null_policy
     cdef optional[void *] user_data
     cdef optional[size_type] row_size

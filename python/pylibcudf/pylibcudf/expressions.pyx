@@ -476,7 +476,7 @@ class ExpressionTransformer(ast.NodeVisitor):
 
 
 @functools.lru_cache(256)
-def to_expression(str expr, tuple column_names: tuple[str, ...]):
+def to_expression(str expr, tuple column_names: tuple[str, ...]) -> Expression:
     """
     Create an expression for `pylibcudf.transform.compute_column`.
 

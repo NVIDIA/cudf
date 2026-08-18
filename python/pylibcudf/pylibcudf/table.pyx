@@ -81,7 +81,9 @@ cdef class Table:
     """
     __hash__ = None
 
-    def __init__(self, columns: Sequence[Column], num_rows=None):
+    def __init__(
+        self, columns: Sequence[Column], num_rows: int | None = None
+    ) -> None:
         columns = tuple(columns)
         if not all(isinstance(c, Column) for c in columns):
             raise ValueError("All columns must be pylibcudf Column objects")
@@ -102,7 +104,7 @@ cdef class Table:
     def to_arrow(
         self,
         metadata: list[ColumnMetadata | str] | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a pyarrow table from a pylibcudf table.
 
@@ -130,7 +132,7 @@ cdef class Table:
 
     @staticmethod
     def from_arrow(
-        obj: ArrowLike,
+        arrow_like: ArrowLike,
         dtype: DataType | None = None,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -150,7 +152,7 @@ cdef class Table:
 
         Parameters
         ----------
-        obj : Arrow-like type
+        arrow_like : Arrow-like type
             An object implementing one of the Arrow C data interface methods.
         dtype: DataType
             The pylibcudf data type.
@@ -185,8 +187,8 @@ cdef class Table:
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
 
-        if hasattr(obj, "__arrow_c_device_array__"):
-            schema, array = obj.__arrow_c_device_array__()
+        if hasattr(arrow_like, "__arrow_c_device_array__"):
+            schema, array = arrow_like.__arrow_c_device_array__()
             c_schema = <ArrowSchema*>PyCapsule_GetPointer(schema, "arrow_schema")
             c_array = (
                 <ArrowDeviceArray*>PyCapsule_GetPointer(array, "arrow_device_array")
@@ -208,8 +210,8 @@ cdef class Table:
                 result,
                 stream,
             )
-        elif hasattr(obj, "__arrow_c_stream__"):
-            arrow_stream = obj.__arrow_c_stream__()
+        elif hasattr(arrow_like, "__arrow_c_stream__"):
+            arrow_stream = arrow_like.__arrow_c_stream__()
             c_stream = (
                 <ArrowArrayStream*>PyCapsule_GetPointer(
                     arrow_stream, "arrow_array_stream"
@@ -231,12 +233,12 @@ cdef class Table:
                 result,
                 stream,
             )
-        elif hasattr(obj, "__arrow_c_device_stream__"):
+        elif hasattr(arrow_like, "__arrow_c_device_stream__"):
             # TODO: When we add support for this case, it should be moved above
             # the __arrow_c_stream__ case since we should prioritize device
             # data if possible.
             raise NotImplementedError("Device streams not yet supported")
-        elif hasattr(obj, "__arrow_c_array__"):
+        elif hasattr(arrow_like, "__arrow_c_array__"):
             raise NotImplementedError("Arrow host arrays not yet supported")
         else:
             raise ValueError("Invalid Arrow-like object")

@@ -64,12 +64,15 @@ from .column cimport Column
 from .traits cimport is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
-from typing import TYPE_CHECKING
+from functools import singledispatch
+from typing import Any, TYPE_CHECKING, TypeAlias
+
+from ._interop_helpers import ArrowLike, ColumnMetadata
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
-from functools import singledispatch
-from ._interop_helpers import ArrowLike, ColumnMetadata
+
+NpGeneric: TypeAlias = type[Any]
 
 try:
     import pyarrow as pa
@@ -142,7 +145,7 @@ cdef class Scalar:
     def __cinit__(self, *args, **kwargs):
         self.mr = get_current_device_resource()
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         # TODO: This case is not something we really want to
         # support, but it here for now to ease the transition of
         # DeviceScalar.
@@ -166,7 +169,7 @@ cdef class Scalar:
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a PyArrow array from a pylibcudf scalar.
 
@@ -189,9 +192,9 @@ cdef class Scalar:
 
     @staticmethod
     def from_arrow(
-        pa_val,
+        pa_val: Any,
         dtype: DataType | None = None,
-        stream: Stream | None = None
+        object stream: CudaStreamLike | None = None,
     ) -> Scalar:
         """
         Convert a pyarrow scalar to a pylibcudf.Scalar.
@@ -252,9 +255,9 @@ cdef class Scalar:
     @classmethod
     def from_py(
         cls,
-        py_val,
+        py_val: Any,
         dtype: DataType | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None
     ) -> Scalar:
         """
@@ -285,8 +288,8 @@ cdef class Scalar:
     @classmethod
     def from_numpy(
         cls,
-        np_val,
-        stream: Stream | None = None,
+        np_val: NpGeneric,
+        object stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None
     ) -> Scalar:
         """
@@ -312,7 +315,7 @@ cdef class Scalar:
         return _from_numpy(np_val, _stream, mr)
 
     def to_py(
-        self, stream: Stream | None = None
+        self, object stream: CudaStreamLike | None = None
     ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.

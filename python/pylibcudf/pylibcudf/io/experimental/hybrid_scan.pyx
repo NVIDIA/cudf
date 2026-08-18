@@ -92,7 +92,7 @@ cdef class HybridScanReader:
         self,
         const uint8_t[::1] footer_bytes: Buffer,
         ParquetReaderOptions options,
-    ):
+    ) -> None:
         self.c_obj = make_unique[cpp_hybrid_scan_reader](
             host_span[const_uint8_t](&footer_bytes[0], len(footer_bytes)),
             options.c_obj
@@ -432,7 +432,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         list column_chunk_data,
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -516,7 +516,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         list column_chunk_data,
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -648,7 +648,7 @@ cdef class HybridScanReader:
         size_t pass_read_limit,
         list row_group_indices: list[int],
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
         list column_chunk_data,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
@@ -731,7 +731,7 @@ cdef class HybridScanReader:
         size_t pass_read_limit,
         list row_group_indices: list[int],
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
         list column_chunk_data,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,

@@ -14,7 +14,7 @@ from libcpp.limits cimport numeric_limits
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.utility cimport move
 
-from pylibcudf.libcudf.column.column cimport column, column_contents
+from pylibcudf.libcudf.column.column cimport column as cpp_column, column_contents
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.column.column_factories cimport make_column_from_scalar
 from pylibcudf.libcudf.copying cimport get_element
@@ -31,7 +31,7 @@ from pylibcudf.libcudf.interop cimport (
     to_arrow_schema_raw,
 )
 from pylibcudf.libcudf.null_mask cimport bitmask_allocation_size_bytes
-from pylibcudf.libcudf.scalar.scalar cimport scalar
+from pylibcudf.libcudf.scalar.scalar cimport scalar as cpp_scalar
 from pylibcudf.libcudf.lists.lists_column_view cimport lists_column_view
 from pylibcudf.libcudf.strings.strings_column_view cimport strings_column_view
 from pylibcudf.libcudf.structs.structs_column_view cimport structs_column_view
@@ -51,7 +51,7 @@ from ._interop_helpers cimport (
 from .filling cimport sequence
 from .gpumemoryview cimport gpumemoryview
 from .scalar cimport Scalar
-from .span import is_span as py_is_span
+from .span import Span, is_span as py_is_span
 from .traits cimport (
     is_fixed_width as plc_is_fixed_width,
     is_nested,
@@ -356,10 +356,11 @@ cdef class Column:
     __hash__ = None
 
     def __init__(
-        self, DataType data_type not None, size_type size, object data,
-        object mask, size_type null_count, size_type offset,
+        self, DataType data_type not None, size_type size,
+        object data: Span | None, object mask: Span | None,
+        size_type null_count, size_type offset,
         children: Iterable[Column], bint validate=True
-    ):
+    ) -> None:
         children = list(children)
         if not all(isinstance(c, Column) for c in children):
             raise ValueError("All children must be pylibcudf Column objects")
@@ -388,7 +389,7 @@ cdef class Column:
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a pyarrow array from a pylibcudf column.
 
@@ -420,7 +421,7 @@ cdef class Column:
         dtype: DataType | None = None,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ) -> ArrowLike:
+    ) -> Column:
         """
         Create a Column from an Arrow-like object using the Arrow C Data Interface.
 
@@ -661,7 +662,7 @@ cdef class Column:
 
     @staticmethod
     cdef Column from_libcudf(
-        unique_ptr[column] libcudf_col,
+        unique_ptr[cpp_column] libcudf_col,
         object stream,
         DeviceMemoryResource mr
     ):
@@ -711,7 +712,12 @@ cdef class Column:
             children,
         )
 
-    cpdef Column with_mask(self, object mask, size_type null_count, bint validate=True):
+    cpdef Column with_mask(
+        self,
+        object mask: Span | None,
+        size_type null_count,
+        bint validate=True
+    ):
         """Augment this column with a new null mask.
 
         Parameters
@@ -823,7 +829,7 @@ cdef class Column:
 
     @staticmethod
     def from_scalar(
-        Scalar slr,
+        Scalar scalar,
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
@@ -832,7 +838,7 @@ cdef class Column:
 
         Parameters
         ----------
-        slr : Scalar
+        scalar : Scalar
             The scalar to create a column from.
         size : size_type
             The number of elements in the column.
@@ -844,8 +850,8 @@ cdef class Column:
         Column
             A Column containing the scalar repeated `size` times.
         """
-        cdef const scalar* c_scalar = slr.get()
-        cdef unique_ptr[column] c_result
+        cdef const cpp_scalar* c_scalar = scalar.get()
+        cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
@@ -880,7 +886,7 @@ cdef class Column:
             raise ValueError("to_scalar only works for columns of size 1")
 
         cdef column_view cv = self.view()
-        cdef unique_ptr[scalar] result
+        cdef unique_ptr[cpp_scalar] result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
@@ -917,7 +923,7 @@ cdef class Column:
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
         cdef Scalar slr = Scalar.empty_like(like, _stream, mr)
-        cdef unique_ptr[column] c_result
+        cdef unique_ptr[cpp_column] c_result
         with nogil:
             c_result = make_column_from_scalar(
                 dereference(slr.get()),
@@ -1426,14 +1432,14 @@ cdef class Column:
 
     cpdef Column copy(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """Create a copy of the column."""
-        cdef unique_ptr[column] c_result
+        cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
 
         mr = _get_memory_resource(mr)
         cdef column_view c_self = self.view()
         with nogil:
-            c_result = make_unique[column](c_self, _cs, mr.get_mr())
+            c_result = make_unique[cpp_column](c_self, _cs, mr.get_mr())
         return Column.from_libcudf(move(c_result), _stream, mr)
 
     cpdef uint64_t device_buffer_size(self):
@@ -1533,18 +1539,18 @@ cdef class Column:
 
 cdef class ListsColumnView:
     """Accessor for methods of a Column that are specific to lists."""
-    def __init__(self, Column col):
-        if col.type().id() != type_id.LIST:
+    def __init__(self, Column column):
+        if column.type().id() != type_id.LIST:
             raise TypeError("Column is not a list type")
-        self._column = col
+        self._column = column
 
     __hash__ = None
 
-    cpdef child(self):
+    cpdef Column child(self):
         """The data column of the underlying list column."""
         return self._column.child(1)
 
-    cpdef offsets(self):
+    cpdef Column offsets(self):
         """The offsets column of the underlying list column."""
         return self._column.child(0)
 
@@ -1579,10 +1585,10 @@ cdef class ListsColumnView:
 
 cdef class StructsColumnView:
     """Accessor for methods of a Column that are specific to structs."""
-    def __init__(self, Column col):
-        if col.type().id() != type_id.STRUCT:
+    def __init__(self, Column column):
+        if column.type().id() != type_id.STRUCT:
             raise TypeError("Column is not a struct type")
-        self._column = col
+        self._column = column
 
     __hash__ = None
 

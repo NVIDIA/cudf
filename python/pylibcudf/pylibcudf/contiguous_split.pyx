@@ -35,7 +35,7 @@ from rmm.pylibrmm.stream cimport Stream
 
 from .gpumemoryview cimport gpumemoryview
 from .table cimport Table
-from .span import is_span
+from .span import Span, is_span
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -171,7 +171,7 @@ cdef class ChunkedPack:
         size_t user_buffer_size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource temp_mr=None,
-    ):
+    ) -> ChunkedPack:
         """
         Create a chunked packer.
 
@@ -225,7 +225,7 @@ cdef class ChunkedPack:
         with nogil:
             return dereference(self.c_obj).get_total_contiguous_size()
 
-    cpdef size_t next(self, object buf):
+    cpdef size_t next(self, object buf: Span):
         """
         Pack the next chunk into the provided device buffer.
 
@@ -263,7 +263,7 @@ cdef class ChunkedPack:
             metadata = move(dereference(self.c_obj).build_metadata())
         return memoryview(HostBuffer.from_unique_ptr(move(metadata)))
 
-    cpdef tuple pack_to_host(self, object buf):
+    cpdef tuple pack_to_host(self, object buf: Span):
         """
         Pack the entire table into a host buffer.
 
@@ -393,7 +393,7 @@ cpdef Table unpack(PackedColumns input, object stream: CudaStreamLike | None = N
 
 cpdef Table unpack_from_memoryviews(
     memoryview metadata,
-    object gpu_data,
+    object gpu_data: Span,
     object stream: CudaStreamLike | None = None,
 ):
     """Deserialize the result of `pack`.

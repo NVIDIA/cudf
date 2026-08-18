@@ -19,7 +19,7 @@ cdef class RegexProgram:
     Do not instantiate this class directly, use the `create` method.
 
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         raise ValueError("Do not instantiate RegexProgram directly, use create")
 
     __hash__ = None

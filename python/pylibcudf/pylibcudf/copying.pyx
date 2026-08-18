@@ -240,7 +240,7 @@ cpdef ColumnOrTable empty_like(
 cpdef Column allocate_like(
     Column input_column,
     mask_allocation_policy policy,
-    size=None,
+    object size: int | None = None,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):

@@ -41,6 +41,13 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
+    cdef unique_ptr[table] apply_retention_mask(
+        table_view source_table,
+        column_view retention_mask,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
     cdef unique_ptr[table] apply_boolean_mask(
         table_view source_table,
         column_view boolean_mask,

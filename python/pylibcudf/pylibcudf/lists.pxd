@@ -150,6 +150,13 @@ cpdef Column apply_boolean_mask(
     DeviceMemoryResource mr=*,
 )
 
+cpdef Column apply_retention_mask(
+    Column,
+    Column,
+    object stream = *,
+    DeviceMemoryResource mr=*,
+)
+
 cpdef Column apply_deletion_mask(
     Column,
     Column,

@@ -168,7 +168,7 @@ rapidsmpf::streaming::Actor filter_part(std::shared_ptr<rapidsmpf::streaming::Co
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(table.select({0}), mask->view(), chunk_stream, mr),
+        cudf::apply_retention_mask(table.select({0}), mask->view(), chunk_stream, mr),
         chunk_stream)));
   }
   co_await ch_out->drain(ctx->executor());

@@ -96,13 +96,21 @@ std::unique_ptr<table> apply_mask(table_view const& input,
 /*
  * Filters a table_view using a column_view of boolean values as a mask.
  */
+std::unique_ptr<table> apply_retention_mask(table_view const& input,
+                                            column_view const& retention_mask,
+                                            rmm::cuda_stream_view stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(input, retention_mask, detail::mask_type::RETENTION, stream, mr);
+}
+
 std::unique_ptr<table> apply_boolean_mask(table_view const& input,
                                           column_view const& boolean_mask,
                                           cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
-  CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, boolean_mask, detail::mask_type::RETENTION, stream, mr);
+  return apply_retention_mask(input, boolean_mask, stream, mr);
 }
 
 std::unique_ptr<table> apply_deletion_mask(table_view const& input,

@@ -148,7 +148,7 @@ rapidsmpf::streaming::Actor filter_lineitem(std::shared_ptr<rapidsmpf::streaming
                                        chunk_stream,
                                        mr);
     auto filtered_table =
-      cudf::apply_boolean_mask(table.select({2}), mask->view(), chunk_stream, mr);
+      cudf::apply_retention_mask(table.select({2}), mask->view(), chunk_stream, mr);
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(std::move(filtered_table), chunk_stream)));

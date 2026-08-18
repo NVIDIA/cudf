@@ -70,7 +70,7 @@ void apply_mask_benchmark(nvbench::state& state, nvbench::type_list<DataType>)
   state.exec(nvbench::exec_tag::sync,
              [&source_table, &mask, is_retention](nvbench::launch& launch) {
                if (is_retention) {
-                 cudf::apply_boolean_mask(*source_table, mask->view());
+                 cudf::apply_retention_mask(*source_table, mask->view());
                } else {
                  cudf::apply_deletion_mask(*source_table, mask->view());
                }

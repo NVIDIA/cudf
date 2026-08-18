@@ -34,9 +34,8 @@ class cuda_stream_pool {
   /**
    * @brief Get a single stream from the pool.
    *
-   * @note Use `get_streams` to obtain multiple streams. The pool grows to serve the largest request
-   * it has seen, so repeated single-stream requests rotate over a pool of two streams and the work
-   * enqueued on them does not run concurrently.
+   * @note Use `get_streams` to obtain multiple streams. Repeated single-stream requests are not
+   * guaranteed to return different streams.
    *
    * @return Stream view.
    */

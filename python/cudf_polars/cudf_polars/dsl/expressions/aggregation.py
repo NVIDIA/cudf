@@ -12,11 +12,12 @@ from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+import polars as pl
 from polars.exceptions import ComputeError
 
 import pylibcudf as plc
 
-from cudf_polars.containers import Column
+from cudf_polars.containers import Column, DataType
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136
@@ -24,7 +25,7 @@ from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
-    from cudf_polars.containers import DataFrame, DataType
+    from cudf_polars.containers import DataFrame
 
 __all__ = ["Agg", "Item", "Kurtosis", "Skew", "SortedAgg"]
 
@@ -37,6 +38,20 @@ def _powf_overflowsafe(base: float, exponent: float) -> float:
         return base**exponent
     except OverflowError:
         return math.inf
+
+
+def _as_float_for_moments(column: Column, dtype: DataType, stream: Stream) -> Column:
+    if plc.traits.is_timestamp(column.obj.type()) or plc.traits.is_duration(
+        column.obj.type()
+    ):
+        phys_dtype = DataType(
+            pl.Int32()
+            if column.obj.type().id()
+            in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+            else pl.Int64()
+        )
+        column = column.astype(phys_dtype, stream)
+    return column.astype(dtype, stream)
 
 
 class Item(Expr):
@@ -606,7 +621,7 @@ class Skew(Expr):
         if n == 0 or (not self.bias and n <= 2):
             value: float | None = None
         else:
-            casted = column.astype(self.dtype, df.stream)
+            casted = _as_float_for_moments(column, self.dtype, df.stream)
             mean, m2, m3 = self._central_moments(
                 casted.obj, self.dtype.plc_type, n, stream=df.stream
             )
@@ -727,7 +742,7 @@ class Kurtosis(Expr):
         if n == 0 or (not self.bias and n <= 3):
             value: float | None = None
         else:
-            casted = column.astype(self.dtype, df.stream)
+            casted = _as_float_for_moments(column, self.dtype, df.stream)
             mean, m2, m4 = self._central_moments(
                 casted.obj, self.dtype.plc_type, n, stream=df.stream
             )

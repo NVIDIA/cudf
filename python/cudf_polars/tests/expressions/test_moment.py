@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import pytest
 
 import polars as pl
@@ -125,3 +127,49 @@ def test_skew_kurtosis_groupby_unsupported(engine):
     assert_ir_translation_raises(
         df.group_by("g").agg(pl.col("a").kurtosis()), engine, NotImplementedError
     )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pl.Series(
+            [date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 5), date(2020, 1, 10)],
+            dtype=pl.Date,
+        ),
+        pl.Series(
+            [
+                datetime(2020, 1, 1),
+                datetime(2020, 1, 2),
+                datetime(2020, 1, 5),
+                datetime(2020, 1, 10),
+            ],
+            dtype=pl.Datetime("us"),
+        ),
+        pl.Series(
+            [
+                datetime(2020, 1, 1),
+                datetime(2020, 1, 2),
+                None,
+                datetime(2020, 1, 5),
+                datetime(2020, 1, 10),
+            ],
+            dtype=pl.Datetime("ms"),
+        ),
+        pl.Series(
+            [
+                datetime(2020, 1, 1),
+                datetime(2020, 1, 2),
+                datetime(2020, 1, 5),
+                datetime(2020, 1, 10),
+            ],
+            dtype=pl.Datetime("ns"),
+        ),
+    ],
+)
+def test_skew_kurtosis_temporal(engine, data):
+    df = pl.LazyFrame({"a": data})
+    q = df.select(
+        pl.col("a").skew().alias("s"),
+        pl.col("a").kurtosis().alias("k"),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)

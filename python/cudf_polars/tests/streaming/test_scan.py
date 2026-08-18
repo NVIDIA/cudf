@@ -376,6 +376,7 @@ def test_streaming_scan_raises() -> None:
         # uses hybrid scan reader
         (pl.col("x") < 1_000, None),
         (pl.col("x") < 1_000, ["x", "z"]),
+        (pl.col("x") < 1_000, ["z"]),
         # falls back to default parquet reader
         (pl.col("y").str.contains("cat"), None),
         (None, None),
@@ -399,10 +400,10 @@ def test_split_scan_hybrid(
     )
     make_partitioned_source(df, tmp_path, "parquet", n_files=1, row_group_size=100)
     q = pl.scan_parquet(tmp_path)
-    if use_columns is not None:
-        q = q.select(use_columns)
     if predicate is not None:
         q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 

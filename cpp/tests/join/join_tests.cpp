@@ -2784,6 +2784,45 @@ TEST_P(JoinParameterizedTest, DictionaryInnerJoinWithNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
+TEST_P(JoinParameterizedTest, DictionaryInnerJoinKeyWithNulls)
+{
+  auto algo = GetParam();
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
+  strcol_wrapper col0_1_w({"s1", "s1", "", "s4", "s0"}, {true, true, false, true, true});
+  auto col0_1 = cudf::dictionary::encode(col0_1_w);
+  column_wrapper<int32_t> col0_2{{0, 1, 2, 4, 1}};
+
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  strcol_wrapper col1_1_w({"s1", "", "", "s2", "s1"}, {true, false, false, true, true});
+  auto col1_1 = cudf::dictionary::encode(col1_1_w);
+  column_wrapper<int32_t> col1_2{{1, 0, 1, 2, 1}};
+
+  auto t0 = cudf::table_view({col0_0, col0_1->view(), col0_2});
+  auto t1 = cudf::table_view({col1_0, col1_1->view(), col1_2});
+
+  // left[2](2, null) matches right[1](2, null); left[0](3, "s1") matches right[4](3, "s1")
+  auto result      = inner_join(t0, t1, {0, 1}, {0, 1}, cudf::null_equality::EQUAL, algo);
+  auto result_view = result->view();
+  auto decoded1    = cudf::dictionary::decode(result_view.column(1));
+  auto decoded4    = cudf::dictionary::decode(result_view.column(4));
+  std::vector<cudf::column_view> result_decoded({result_view.column(0),
+                                                 decoded1->view(),
+                                                 result_view.column(2),
+                                                 result_view.column(3),
+                                                 decoded4->view(),
+                                                 result_view.column(5)});
+  auto result_sort_order = cudf::sorted_order(cudf::table_view(result_decoded));
+  auto sorted_result     = cudf::gather(cudf::table_view(result_decoded), *result_sort_order);
+
+  auto g0              = cudf::table_view({col0_0, col0_1_w, col0_2});
+  auto g1              = cudf::table_view({col1_0, col1_1_w, col1_2});
+  auto gold            = inner_join(g0, g1, {0, 1}, {0, 1});
+  auto gold_sort_order = cudf::sorted_order(gold->view());
+  auto sorted_gold     = cudf::gather(gold->view(), *gold_sort_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
+}
+
 TEST_F(JoinDictionaryTest, FullJoinNoNulls)
 {
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 3}};

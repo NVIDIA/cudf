@@ -181,17 +181,18 @@ void remap_dict_indices_by_chunk(int32_t* d_indices,
                                  cudf::device_span<int32_t const> stacked_to_unique,
                                  rmm::cuda_stream_view stream)
 {
-  thrust::for_each(
-    rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),
-    cuda::counting_iterator<size_type>{0},
-    cuda::counting_iterator{num_rows},
-    [row_offsets, key_counts_prefix, stacked_to_unique, d_indices] __device__(size_type row) -> void {
-      // Chunk owning `row` is the last offset <= row.
-      auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);
-      auto const k  = static_cast<size_type>(it - row_offsets.begin() - 1);
-      auto const stacked_pos = key_counts_prefix[k] + d_indices[row];
-      d_indices[row]         = stacked_to_unique[stacked_pos];
-    });
+  thrust::for_each(rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),
+                   cuda::counting_iterator<size_type>{0},
+                   cuda::counting_iterator{num_rows},
+                   [row_offsets, key_counts_prefix, stacked_to_unique, d_indices] __device__(
+                     size_type row) -> void {
+                     // Chunk owning `row` is the last offset <= row.
+                     auto const it = thrust::upper_bound(
+                       thrust::seq, row_offsets.begin(), row_offsets.end(), row);
+                     auto const k           = static_cast<size_type>(it - row_offsets.begin() - 1);
+                     auto const stacked_pos = key_counts_prefix[k] + d_indices[row];
+                     d_indices[row]         = stacked_to_unique[stacked_pos];
+                   });
 }
 
 }  // namespace
@@ -355,7 +356,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       auto& indices_col = out_columns[out_idx];
       CUDF_EXPECTS(indices_col != nullptr and indices_col->type().id() == type_id::INT32,
                    "Expected INT32 indices column for dict-transcoded flat string column");
-      // Claim ownership of the indices column. (output_columns vectoris now empty.)
+      // Claim ownership of the indices column; the `out_idx` entry in `out_columns` is now empty.
       auto indices_owner = std::move(indices_col);
 
       // Single row group fast path: the Parquet dictionary page's entries become the keys as-is,
@@ -382,7 +383,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       }
 
       // Multi-row-group path (dedup-and-shift): stack every chunk's keys into a single column,
-      // deduplicate the ( key set once, then remap each row's index onto the compact key space in
+      // deduplicate the key set once, then remap each row's index onto the compact key space in
       // place. This avoids `cudf::dictionary::detail::concatenate`, which would re-copy the
       // already-contiguous per-chunk indices (`indices_owner`) into a fresh buffer.
       auto const num_row_vals = static_cast<size_type>(indices_owner->size());
@@ -407,15 +408,15 @@ void reader_impl::assemble_dict_transcoded_columns(
         chunk_key_counts.begin(), chunk_key_counts.end(), key_counts_prefix.begin() + 1);
       auto const total_keys = key_counts_prefix.back();
 
-      // Stack this column's per-chunk keys, sliced out of the batched `all_string_column_keys`.
-      // Chunk `k`'s entries occupy `[key_offset, key_offset + chunk_key_counts[k])` in
-      // `pass.str_dict_index`, where `key_offset` is recovered from the chunk's stored pointer into
-      // that buffer. `all_string_column_keys` (owned by the caller-scoped `all_string_column_keys`)
-      // outlives this block, so any view into it stays valid.
+      // Stack this column's per-chunk keys, sliced out of the batched keys view
+      // `all_string_column_keys` -- a view of the caller-scoped owning column `all_keys`, which
+      // outlives this block, so any view into it stays valid. Chunk `k`'s entries occupy
+      // `[key_offset, key_offset + chunk_key_counts[k])` in `pass.str_dict_index`, where
+      // `key_offset` is recovered from the chunk's stored pointer into that buffer.
       //
-      // When those per-chunk ranges are already contiguous in `all_keys` -- e.g. a single string
-      // column, whose chunks are laid out consecutively -- the stacked keys are just one zero-copy
-      // sub-range of `all_keys`, so the per-chunk gather (`concatenate`) is skipped entirely.
+      // When those per-chunk ranges are already contiguous in `all_string_column_keys` -- e.g. a
+      // single string column, whose chunks are laid out consecutively -- the stacked keys are just
+      // one zero-copy sub-range of it, so the per-chunk gather (`concatenate`) is skipped entirely.
       // Otherwise (multiple string columns interleaved row-group-major) the strided slices are
       // concatenated into one contiguous column.
       auto const all_string_column_keys = ensure_all_keys();

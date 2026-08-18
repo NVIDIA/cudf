@@ -35,12 +35,19 @@ if [[ -z ${RAPIDS_CUDA_VERSION:-} ]]; then
   exit 1
 fi
 
-_chown_outputs_on_exit() {
-  if [[ -n ${HOST_UID:-} && -n ${HOST_GID:-} ]]; then
-    chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" "${REPO_ROOT}/java/target" 2>/dev/null || true
+if [[ -z ${HOST_UID} || -z ${HOST_GID} ]]; then
+  echo "Error: HOST_UID and HOST_GID must both be set" >&2
+  exit 1
+fi
+
+POM_WAS_REWRITTEN=0
+_cleanup_on_exit() {
+  if [[ ${POM_WAS_REWRITTEN} -eq 1 ]]; then
+    git -C "${REPO_ROOT}" checkout -- java/pom.xml 2>/dev/null || true
   fi
+  chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" "${REPO_ROOT}/java/target" 2>/dev/null || true
 }
-trap _chown_outputs_on_exit EXIT
+trap _cleanup_on_exit EXIT
 
 BUILD_ARG=(
   -B
@@ -83,7 +90,17 @@ BUILD_ARG+=("-Dcmake.ccache.opts=${CMAKE_CCACHE_OPTS[*]}")
 
 cd "${REPO_ROOT}/java"
 
-CUDF_VERSION="$(cudf_java_scl mvn help:evaluate -Dexpression=project.version -q -DforceStdout "${BUILD_ARG[@]}")"
+CUDF_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout "${BUILD_ARG[@]}")"
+
+# Release tag builds strip -SNAPSHOT and rewrite the POM so packaged artifacts
+# carry the release version. Non-release builds keep -SNAPSHOT. The EXIT trap
+# restores java/pom.xml after packaging (the rewritten POM is copied to OUTPUT_DIR).
+if rapids-is-release-build; then
+  CUDF_VERSION="${CUDF_VERSION%-SNAPSHOT}"
+  mvn versions:set -DnewVersion="${CUDF_VERSION}" -DgenerateBackupPoms=false "${BUILD_ARG[@]}"
+  POM_WAS_REWRITTEN=1
+fi
+
 rapids-logger "Packaging cuDF Java JAR ${CUDF_VERSION}"
 
 # Omit the `clean` goal: java/target may be a bind-mount point, so `mvn clean`
@@ -136,6 +153,7 @@ done
 
 cp -f "${MAIN_JAR}" "${OUTPUT_DIR}/"
 cp -f pom.xml "${OUTPUT_DIR}/cudf-${CUDF_VERSION}.pom"
+
 rapids-logger "Emitted artifacts to ${OUTPUT_DIR}"
 if command -v sccache >/dev/null 2>&1; then
   sccache --show-adv-stats || true

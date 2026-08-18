@@ -568,3 +568,25 @@ jobs:
           name: cudf_java_maven_repo
           path: ${{ runner.temp }}/maven-repo
           if-no-files-found: error
+
+  # Publish tagged release candidates to Maven Central via the Sonatype
+  # Central Publisher Portal. Release path only (vYY.MM.PP tags). Does not
+  # publish nightlies.
+  # TODO: add nightly Sonatype snapshot publishing.
+  java-publish:
+    needs: [java-gather]
+    if: ${{ github.ref_type == 'tag' && (inputs.build_type || 'branch') == 'branch' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/maven-publish.yaml@main
+    secrets:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      MAVEN_DEPLOY_TOKEN: ${{ secrets.MAVEN_DEPLOY_TOKEN }}
+    with:
+      publication-type: 'rc'
+      artifact-name: cudf_java_maven_repo
+      source-git-sha: ${{ inputs.sha || github.sha }}
+      # false = validate + drop (safe). true = stage PENDING for manual publish.
+      stage-for-maven-central-publish: true

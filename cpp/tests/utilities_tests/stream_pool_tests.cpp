@@ -6,7 +6,6 @@
 #include <cudf_test/base_fixture.hpp>
 
 #include <cudf/detail/utilities/stream_pool.hpp>
-#include <cudf/utilities/default_stream.hpp>
 
 #include <cuda/stream_ref>
 
@@ -23,20 +22,13 @@ class StreamPoolTest : public cudf::test::BaseFixture {};
 
 namespace {
 
-std::vector<cudaStream_t> values_of(std::vector<cuda::stream_ref> const& streams)
+std::vector<cudaStream_t> get_streams(std::size_t count)
 {
-  auto values = std::vector<cudaStream_t>{};
+  auto const streams = cudf::detail::thread_cuda_stream_pool().get_streams(count);
+  auto values        = std::vector<cudaStream_t>{};
   std::transform(streams.begin(), streams.end(), std::back_inserter(values), [](auto stream) {
     return stream.get();
   });
-  return values;
-}
-
-std::vector<cudaStream_t> fork_and_collect(std::size_t count)
-{
-  auto const streams = cudf::detail::fork_streams(cudf::get_default_stream(), count);
-  auto const values  = values_of(streams);
-  cudf::detail::join_streams(streams, cudf::get_default_stream());
   return values;
 }
 
@@ -44,16 +36,16 @@ std::vector<cudaStream_t> fork_and_collect(std::size_t count)
 
 TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
 {
-  auto constexpr num_forks   = 20;
-  auto constexpr num_streams = 8;
+  auto constexpr num_requests = 20;
+  auto constexpr num_streams  = 8;
 
-  // Both threads fork repeatedly so that a shared round-robin counter would be very likely to
+  // Both threads request repeatedly so that a shared round-robin counter would be very likely to
   // hand the same stream to both of them. The latch keeps them alive at the same time; otherwise
   // the second thread could adopt the pool the first one retired and pass trivially.
   auto collect = [](std::unordered_set<cudaStream_t>& out, std::latch& ready) {
     ready.arrive_and_wait();
-    for (auto fork = 0; fork < num_forks; fork++) {
-      auto const streams = fork_and_collect(num_streams);
+    for (auto request = 0; request < num_requests; request++) {
+      auto const streams = get_streams(num_streams);
       out.insert(streams.begin(), streams.end());
     }
   };
@@ -79,7 +71,7 @@ TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
   // one stream per request.
   auto constexpr count = 256;
 
-  auto const streams = fork_and_collect(count);
+  auto const streams = get_streams(count);
   EXPECT_EQ(streams.size(), count);
 
   auto const unique = std::unordered_set<cudaStream_t>(streams.begin(), streams.end());
@@ -90,7 +82,7 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
 {
   std::unordered_set<cudaStream_t> first_thread_streams;
   std::thread first([&] {
-    auto const streams = fork_and_collect(4);
+    auto const streams = get_streams(4);
     first_thread_streams.insert(streams.begin(), streams.end());
   });
   first.join();
@@ -100,7 +92,7 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
   // created a fresh pool would observe entirely different streams.
   std::unordered_set<cudaStream_t> second_thread_streams;
   std::thread second([&] {
-    auto const streams = fork_and_collect(256);
+    auto const streams = get_streams(256);
     second_thread_streams.insert(streams.begin(), streams.end());
   });
   second.join();

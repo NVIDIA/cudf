@@ -119,7 +119,7 @@ class host_buffer_sink : public data_sink {
     // in-flight when using cudaMemcpySrcAccessOrderStream. Need to ensure
     // stream ordering or pre-reserve buffer to avoid reallocation.
     CUDF_CUDA_TRY(cudaMemcpyAsync(
-      buffer_->data() + current_size, gpu_data, size, cudaMemcpyDeviceToHost, stream.get()));
+      buffer_->data() + current_size, gpu_data, size, cudaMemcpyDefault, stream.get()));
     return std::async(std::launch::deferred, [stream]() -> void { stream.sync(); });
   }
 

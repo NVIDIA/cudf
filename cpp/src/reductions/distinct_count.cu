@@ -135,11 +135,13 @@ cudf::size_type distinct_count(table_view const& keys,
   auto const num_rows = keys.num_rows();
   if (num_rows == 0) { return 0; }  // early exit for empty input
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(keys)};
+  auto const temp_mr   = cudf::get_current_device_resource_ref();
 
-  auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(keys, stream);
-  auto const row_hasher         = cudf::detail::row::hash::row_hasher(preprocessed_input);
-  auto const hash_key           = row_hasher.device_hasher(has_nulls);
-  auto const row_comp           = cudf::detail::row::equality::self_comparator(preprocessed_input);
+  auto const preprocessed_input =
+    cudf::detail::row::hash::preprocessed_table::create(keys, stream, temp_mr);
+  auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);
+  auto const hash_key   = row_hasher.device_hasher(has_nulls);
+  auto const row_comp   = cudf::detail::row::equality::self_comparator(preprocessed_input);
 
   auto const comparator_helper = [&](auto const row_equal) {
     using hasher_type = decltype(hash_key);
@@ -150,7 +152,7 @@ cudf::size_type distinct_count(table_view const& keys,
                                     cuco::linear_probing<1, hasher_type>{hash_key},
                                          {},
                                          {},
-                                    rmm::mr::polymorphic_allocator<char>{},
+                                    rmm::mr::polymorphic_allocator<char>{temp_mr},
                                     stream.get()};
 
     auto const iter = cuda::counting_iterator<cudf::size_type>{0};
@@ -160,8 +162,7 @@ cudf::size_type distinct_count(table_view const& keys,
       cuda::counting_iterator<size_type> stencil(0);
       // We must consider a row if any of its column entries is valid,
       // hence OR together the validities of the columns.
-      auto const [row_bitmask, null_count] =
-        cudf::detail::bitmask_or(keys, stream, cudf::get_current_device_resource_ref());
+      auto const [row_bitmask, null_count] = cudf::detail::bitmask_or(keys, stream, temp_mr);
 
       // Unless all columns have a null mask, row_bitmask will be
       // null, and null_count will be zero. Equally, unless there is

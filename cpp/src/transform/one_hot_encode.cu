@@ -68,12 +68,14 @@ std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const&
   auto all_encodings =
     make_numeric_column(data_type{type_id::BOOL8}, total_size, mask_state::UNALLOCATED, stream, mr);
 
-  auto const t_lhs      = table_view{{input}};
-  auto const t_rhs      = table_view{{categories}};
-  auto const comparator = cudf::detail::row::equality::two_table_comparator{t_lhs, t_rhs, stream};
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const t_lhs   = table_view{{input}};
+  auto const t_rhs   = table_view{{categories}};
+  auto const comparator =
+    cudf::detail::row::equality::two_table_comparator{t_lhs, t_rhs, stream, temp_mr};
 
   auto const comparator_helper = [&](auto const d_equal) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{total_size},
                       all_encodings->mutable_view().begin<bool>(),

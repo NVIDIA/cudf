@@ -144,16 +144,18 @@ void apply_struct_equality_op(mutable_column_view& out,
                "Unsupported operator for these types",
                cudf::data_type_error);
 
-  auto tlhs             = table_view{{lhs}};
-  auto trhs             = table_view{{rhs}};
-  auto table_comparator = cudf::detail::row::equality::two_table_comparator{tlhs, trhs, stream};
+  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto tlhs    = table_view{{lhs}};
+  auto trhs    = table_view{{rhs}};
+  auto table_comparator =
+    cudf::detail::row::equality::two_table_comparator{tlhs, trhs, stream, temp_mr};
 
   auto outd = column_device_view::create(out, stream);
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});
 
   auto const comparator_helper = [&](auto const device_comparator) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(out.size()),
                       out.begin<bool>(),

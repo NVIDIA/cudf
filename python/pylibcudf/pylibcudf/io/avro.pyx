@@ -34,7 +34,7 @@ cdef class AvroReaderOptions:
     For details, see :cpp:class:`cudf::io::avro_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> AvroReaderOptionsBuilder:
         """
         Create a AvroWriterOptionsBuilder object
 
@@ -93,6 +93,8 @@ cdef class AvroReaderOptions:
 
 
 cdef class AvroReaderOptionsBuilder:
+    """Builder to build options for ``read_avro``."""
+
     cpdef AvroReaderOptionsBuilder columns(self, list col_names: list[str]):
         """
         Set names of the column to be read.

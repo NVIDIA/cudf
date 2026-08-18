@@ -230,7 +230,7 @@ cdef class ParquetMetadata:
         """
         return self.meta.num_rowgroups()
 
-    cpdef list num_rowgroups_per_file(self):
+    cpdef list[int] num_rowgroups_per_file(self):
         """
         Returns the number of rowgroups in each file.
         """

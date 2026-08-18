@@ -66,6 +66,7 @@ Compression to_parquet_compression(compression_type compression)
   switch (compression) {
     case compression_type::AUTO:
     case compression_type::SNAPPY: return Compression::SNAPPY;
+    case compression_type::GZIP: return Compression::GZIP;
     case compression_type::ZSTD: return Compression::ZSTD;
     case compression_type::LZ4:
       // Parquet refers to LZ4 as "LZ4_RAW"; Parquet's "LZ4" is not standard LZ4

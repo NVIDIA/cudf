@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.map cimport map
@@ -79,7 +79,7 @@ cdef class JsonReaderOptionsBuilder:
     )
     cpdef JsonReaderOptionsBuilder strict_validation(self, bool val)
     cpdef JsonReaderOptionsBuilder unquoted_control_chars(self, bool val)
-    cpdef build(self)
+    cpdef JsonReaderOptions build(self)
 
 cpdef TableWithMetadata read_json(
     JsonReaderOptions options, object stream = *, DeviceMemoryResource mr = *

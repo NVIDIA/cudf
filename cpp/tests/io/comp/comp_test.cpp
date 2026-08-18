@@ -11,6 +11,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/io/detail/codec.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
@@ -373,6 +374,16 @@ TEST_F(NvcompConfigTest, Compression)
   EXPECT_FALSE(comp_disabled(compression_type::SNAPPY, {false, true}));
   // stable integrations enabled required
   EXPECT_TRUE(comp_disabled(compression_type::SNAPPY, {false, false}));
+
+  // GZIP compression is only available with nvCOMP 5.3 and later
+  if (cudf::io::detail::is_device_compression_supported(cudf::io::compression_type::GZIP)) {
+    EXPECT_FALSE(comp_disabled(compression_type::GZIP, {true, true}));
+    EXPECT_FALSE(comp_disabled(compression_type::GZIP, {false, true}));
+    // stable integrations enabled required
+    EXPECT_TRUE(comp_disabled(compression_type::GZIP, {false, false}));
+  } else {
+    EXPECT_TRUE(comp_disabled(compression_type::GZIP, {true, true}));
+  }
 }
 
 TEST_F(NvcompConfigTest, Decompression)

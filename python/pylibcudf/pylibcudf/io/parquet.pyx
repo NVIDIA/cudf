@@ -119,7 +119,7 @@ cdef class ParquetReaderOptions:
     For details, see :cpp:class:`cudf::io::parquet_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> ParquetReaderOptionsBuilder:
         """
         Create a ParquetReaderOptionsBuilder object
 
@@ -344,6 +344,8 @@ cdef class ParquetReaderOptions:
         return self.c_obj.is_enabled_case_sensitive_names()
 
 cdef class ParquetReaderOptionsBuilder:
+    """Builder to build options for ``read_parquet``."""
+
     cpdef ParquetReaderOptionsBuilder convert_strings_to_categories(self, bool val):
         """
         Sets enable/disable conversion of strings to categories.
@@ -567,7 +569,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.decimal_width(width)
         return self
 
-    cpdef build(self):
+    cpdef ParquetReaderOptions build(self):
         """Create a ParquetReaderOptions object"""
         cdef ParquetReaderOptions parquet_options = ParquetReaderOptions.__new__(
             ParquetReaderOptions
@@ -834,8 +836,10 @@ cdef class ChunkedParquetWriter:
 
 
 cdef class ChunkedParquetWriterOptions:
+    """The settings to use for chunked Parquet writing."""
+
     @staticmethod
-    def builder(SinkInfo sink):
+    def builder(SinkInfo sink) -> ChunkedParquetWriterOptionsBuilder:
         """
         Create builder to create ChunkedParquetWriterOptions.
 
@@ -874,6 +878,8 @@ cdef class ChunkedParquetWriterOptions:
 
 
 cdef class ChunkedParquetWriterOptionsBuilder:
+    """Builder to build options for chunked Parquet writing."""
+
     cpdef ChunkedParquetWriterOptionsBuilder metadata(
         self,
         TableInputMetadata metadata
@@ -1046,9 +1052,10 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
 
 cdef class ParquetWriterOptions:
+    """The settings to use for ``write_parquet``."""
 
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> ParquetWriterOptionsBuilder:
         """
         Create builder to create ParquetWriterOptionsBuilder.
 
@@ -1186,6 +1193,7 @@ cdef class ParquetWriterOptions:
 
 
 cdef class ParquetWriterOptionsBuilder:
+    """Builder to build options for ``write_parquet``."""
 
     cpdef ParquetWriterOptionsBuilder metadata(self, TableInputMetadata metadata):
         """

@@ -678,8 +678,7 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndMultipleSegments)
 
 TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
 {
-  // The columns span several bitmask words with a partial last word, so the identity that empty
-  // segments reduce to is exercised across the kernel's word-strided loop.
+  // Columns span several bitmask words with a partial last word
   auto const num_rows = 300;
   cudf::test::fixed_width_column_wrapper<int32_t> const col1(
     cuda::make_counting_iterator(0),
@@ -690,13 +689,12 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
     cuda::make_counting_iterator(num_rows),
     cudf::test::iterators::nulls_at_multiples_of(5));
 
-  // An empty segment reduces no masks, so it yields the identity of bitwise AND: every row valid.
+  // An empty segment should yield the identity of bitwise AND: every row valid.
   auto const expect_all_valid = [&](void const* mask) {
     EXPECT_EQ(cudf::null_count(static_cast<cudf::bitmask_type const*>(mask), 0, num_rows), 0);
   };
 
-  // Leading, interior and trailing empty segments. The trailing one would index the mask array past
-  // its end if a segment's first mask were read unconditionally.
+  // Empty leading, interior and trailing segments
   {
     std::vector<cudf::column_view> const colviews{col1, col2};
     std::vector<cudf::size_type> const segment_offsets{0, 0, 1, 1, 2, 2};
@@ -715,8 +713,8 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
     expect_all_valid(result_masks[4]->data());
   }
 
-  // The raw-mask overload, with both masks in one segment so that the identity is also checked
-  // against a reduction that has to accumulate on top of it.
+  // The raw-mask overload. Its non-empty segment ANDs both masks, so seeding the reduction with the
+  // identity must leave that segment's result unchanged.
   {
     std::vector<cudf::bitmask_type const*> const masks{
       static_cast<cudf::column_view>(col1).null_mask(),

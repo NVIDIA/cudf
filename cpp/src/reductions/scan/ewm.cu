@@ -11,13 +11,13 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/transform_scan.h>
 
@@ -130,13 +130,12 @@ struct ewma_noadjust_no_nulls_functor : public ewma_functor_base<T> {
 * Example: {1, NULL, 3, 4, NULL, NULL, 7}
         -> {0, 0     1, 0, 0,    1,    2}
 */
-rmm::device_uvector<cudf::size_type> null_roll_up(column_view const& input,
-                                                  rmm::cuda_stream_view stream)
+rmm::device_uvector<cudf::size_type> null_roll_up(column_view const& input, cuda::stream_ref stream)
 {
   rmm::device_uvector<cudf::size_type> output(input.size(), stream);
 
   auto device_view = column_device_view::create(input, stream);
-  auto invalid_it  = thrust::make_transform_iterator(
+  auto invalid_it  = cuda::transform_iterator(
     cudf::detail::make_validity_iterator(*device_view),
     cuda::proclaim_return_type<int>([] __device__(int valid) -> int { return 1 - valid; }));
 
@@ -153,7 +152,7 @@ rmm::device_uvector<cudf::size_type> null_roll_up(column_view const& input,
 template <typename T>
 rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
                                            T const beta,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
@@ -225,7 +224,7 @@ rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
 template <typename T>
 rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
                                              T const beta,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
@@ -281,7 +280,7 @@ struct ewma_functor {
   template <typename T, CUDF_ENABLE_IF(!std::is_floating_point<T>::value)>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     CUDF_FAIL("Unsupported type for EWMA.");
@@ -290,7 +289,7 @@ struct ewma_functor {
   template <typename T, CUDF_ENABLE_IF(std::is_floating_point<T>::value)>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto const ewma_agg       = dynamic_cast<ewma_aggregation const*>(&agg);
@@ -318,7 +317,7 @@ struct ewma_functor {
 
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,
                                                               scan_aggregation const& agg,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   return type_dispatcher(input.type(), ewma_functor{}, agg, input, stream, mr);

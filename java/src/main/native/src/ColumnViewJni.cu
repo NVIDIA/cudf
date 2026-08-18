@@ -38,8 +38,8 @@ std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& lis
   CUDF_EXPECTS(list_length.type().id() == cudf::type_id::INT32,
                "Input column does not have type INT32.");
 
-  auto const begin_iter = list_length.template begin<cudf::size_type>();
-  auto const end_iter   = list_length.template end<cudf::size_type>();
+  auto const begin_iter = list_length.template begin<int32_t>();
+  auto const end_iter   = list_length.template end<int32_t>();
 
   auto offsets_column = make_numeric_column(
     data_type{type_id::INT32}, list_length.size() + 1, mask_state::UNALLOCATED, stream);
@@ -179,8 +179,8 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
 
   // Assemble a lists column of structs<out_keys, out_vals>.
   auto out_offsets = make_numeric_column(
-    data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream);
-  auto const offsets_begin = out_offsets->mutable_view().template begin<size_type>();
+    data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream);
+  auto const offsets_begin = out_offsets->mutable_view().template begin<int32_t>();
   auto const labels_begin  = out_labels.template begin<size_type>();
   cudf::detail::labels_to_offsets(labels_begin,
                                   labels_begin + out_labels.size(),

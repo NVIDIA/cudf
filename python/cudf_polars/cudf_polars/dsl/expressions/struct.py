@@ -37,8 +37,8 @@ class StructFunction(Expr):
         PrefixFields = auto()
         SuffixFields = auto()
         JsonEncode = auto()
-        WithFields = auto()  # TODO: https://github.com/rapidsai/cudf/issues/19284
-        MapFieldNames = auto()  # TODO: https://github.com/rapidsai/cudf/issues/19285
+        WithFields = auto()  # TODO: https://github.com/NVIDIA/cudf/issues/19284
+        MapFieldNames = auto()  # TODO: https://github.com/NVIDIA/cudf/issues/19285
         FieldByIndex = auto()
         MultipleFields = (
             auto()
@@ -108,7 +108,7 @@ class StructFunction(Expr):
                 dtype=self.dtype,
             )
         elif self.name == StructFunction.Name.JsonEncode:
-            # Once https://github.com/rapidsai/cudf/issues/19338 is implemented,
+            # Once https://github.com/NVIDIA/cudf/issues/19338 is implemented,
             # we can use do this conversion on host.
             if column.size == 0:
                 # write_json emits no lines for an empty input, which makes

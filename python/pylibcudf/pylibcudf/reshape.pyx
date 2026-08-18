@@ -25,12 +25,16 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["interleave_columns", "tile", "table_to_array"]
 
 cpdef Column interleave_columns(
-    Table source_table, object stream=None, DeviceMemoryResource mr=None
+    Table source_table, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Interleave columns of a table into a single column.
 
@@ -73,7 +77,7 @@ cpdef Column interleave_columns(
 cpdef Table tile(
     Table source_table,
     size_type count,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Repeats the rows from input table count times to form a new table.
@@ -114,7 +118,7 @@ cpdef void table_to_array(
     Table input_table,
     uintptr_t ptr,
     size_t size,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """
     Copy a table into a preallocated column-major device array.

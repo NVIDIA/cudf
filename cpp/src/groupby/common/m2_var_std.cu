@@ -12,12 +12,12 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/functional>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 namespace cudf::groupby::detail {
@@ -44,7 +44,7 @@ struct m2_functor {
                 SumType const* sum,
                 CountType const* count,
                 size_type size,
-                rmm::cuda_stream_view stream) const noexcept
+                cuda::stream_ref stream) const noexcept
   {
     thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      target,
@@ -64,7 +64,7 @@ struct m2_functor {
                   column_view const& sum_sqr,
                   column_view const& sum,
                   column_view const& count,
-                  rmm::cuda_stream_view stream) const noexcept  //
+                  cuda::stream_ref stream) const noexcept  //
     requires(is_m2_supported<Source>())
   {
     using Target     = cudf::detail::target_type_t<Source, aggregation::M2>;
@@ -89,7 +89,7 @@ std::unique_ptr<column> compute_m2(data_type source_type,
                                    column_view const& sum_sqr,
                                    column_view const& sum,
                                    column_view const& count,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   auto output = make_numeric_column(cudf::detail::target_type(source_type, aggregation::M2),
@@ -123,7 +123,7 @@ void check_input_types(column_view const& m2, column_view const& count)
 template <typename TargetType, typename TransformFunc>
 std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
                                              size_type size,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   auto output = make_numeric_column(
@@ -152,7 +152,7 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
 std::unique_ptr<column> compute_variance(column_view const& m2,
                                          column_view const& count,
                                          size_type ddof,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   check_input_types(m2, count);
@@ -171,7 +171,7 @@ std::unique_ptr<column> compute_variance(column_view const& m2,
 std::unique_ptr<column> compute_std(column_view const& m2,
                                     column_view const& count,
                                     size_type ddof,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   check_input_types(m2, count);

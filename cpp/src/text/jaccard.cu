@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,7 +21,6 @@
 
 #include <nvtext/jaccard.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -29,6 +28,7 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/reduce.h>
@@ -105,12 +105,12 @@ CUDF_KERNEL void sorted_unique_fn(uint32_t const* d_values,
 rmm::device_uvector<cudf::size_type> compute_unique_counts(uint32_t const* values,
                                                            int64_t const* offsets,
                                                            cudf::size_type rows,
-                                                           rmm::cuda_stream_view stream)
+                                                           cuda::stream_ref stream)
 {
   auto d_results        = rmm::device_uvector<cudf::size_type>(rows, stream);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
-  sorted_unique_fn<<<num_blocks, block_size, 0, stream.value()>>>(
+  sorted_unique_fn<<<num_blocks, block_size, 0, stream.get()>>>(
     values, offsets, rows, d_results.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   return d_results;
@@ -180,12 +180,12 @@ rmm::device_uvector<cudf::size_type> compute_intersect_counts(uint32_t const* va
                                                               uint32_t const* values2,
                                                               int64_t const* offsets2,
                                                               cudf::size_type rows,
-                                                              rmm::cuda_stream_view stream)
+                                                              cuda::stream_ref stream)
 {
   auto d_results        = rmm::device_uvector<cudf::size_type>(rows, stream);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
-  sorted_intersect_fn<<<num_blocks, block_size, 0, stream.value()>>>(
+  sorted_intersect_fn<<<num_blocks, block_size, 0, stream.get()>>>(
     values1, offsets1, values2, offsets2, rows, d_results.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   return d_results;
@@ -305,15 +305,15 @@ void segmented_sort(uint32_t const* input,
                     int64_t items,
                     cudf::size_type segments,
                     int64_t const* offsets,
-                    rmm::cuda_stream_view stream)
+                    cuda::stream_ref stream)
 {
   rmm::device_buffer temp;
   std::size_t temp_bytes = 0;
   cub::DeviceSegmentedSort::SortKeys(
-    temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.value());
+    temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
   temp = rmm::device_buffer(temp_bytes, stream);
   cub::DeviceSegmentedSort::SortKeys(
-    temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.value());
+    temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
 }
 
 /**
@@ -328,7 +328,7 @@ void segmented_sort(uint32_t const* input,
  * @return The sorted hash values and offsets to each row
  */
 std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_substrings(
-  cudf::strings_column_view const& input, cudf::size_type width, rmm::cuda_stream_view stream)
+  cudf::strings_column_view const& input, cudf::size_type width, cuda::stream_ref stream)
 {
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
 
@@ -336,7 +336,7 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
   auto offsets          = rmm::device_uvector<int64_t>(input.size() + 1, stream);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size, block_size);
-  count_substrings_kernel<<<num_blocks, block_size, 0, stream.value()>>>(
+  count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     *d_strings, width, offsets.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   auto const total_hashes =
@@ -344,7 +344,7 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
 
   // hash substrings
   rmm::device_uvector<uint32_t> hashes(total_hashes, stream);
-  substring_hash_kernel<<<num_blocks, block_size, 0, stream.value()>>>(
+  substring_hash_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     *d_strings, width, offsets.data(), hashes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -439,7 +439,7 @@ struct jaccard_fn {
 std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& input1,
                                             cudf::strings_column_view const& input2,
                                             cudf::size_type width,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -490,7 +490,7 @@ std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& inp
 std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& input1,
                                             cudf::strings_column_view const& input2,
                                             cudf::size_type width,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

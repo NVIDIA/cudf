@@ -47,12 +47,12 @@ cdef class ByteRangeInfo:
         self.c_obj = byte_range_info(offset, size)
 
     @property
-    def offset(self):
+    def offset(self) -> int:
         """Get the offset in bytes."""
         return self.c_obj.offset()
 
     @property
-    def size(self):
+    def size(self) -> int:
         """Get the size in bytes."""
         return self.c_obj.size()
 

@@ -491,7 +491,7 @@ cdef class ApproxDistinctCount:
         return cpp_approx_distinct_count.sketch_bytes(precision)
 
     @staticmethod
-    def sketch_alignment():
+    def sketch_alignment() -> int:
         """Return the alignment required for sketch storage.
 
         Returns

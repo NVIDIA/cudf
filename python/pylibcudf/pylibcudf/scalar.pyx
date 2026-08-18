@@ -166,7 +166,7 @@ cdef class Scalar:
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a PyArrow array from a pylibcudf scalar.
 
@@ -191,7 +191,7 @@ cdef class Scalar:
     def from_arrow(
         pa_val,
         dtype: DataType | None = None,
-        stream: Stream | None = None
+        object stream: CudaStreamLike | None = None,
     ) -> Scalar:
         """
         Convert a pyarrow scalar to a pylibcudf.Scalar.
@@ -254,7 +254,7 @@ cdef class Scalar:
         cls,
         py_val,
         dtype: DataType | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None
     ) -> Scalar:
         """
@@ -286,7 +286,7 @@ cdef class Scalar:
     def from_numpy(
         cls,
         np_val,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None
     ) -> Scalar:
         """
@@ -312,7 +312,7 @@ cdef class Scalar:
         return _from_numpy(np_val, _stream, mr)
 
     def to_py(
-        self, stream: Stream | None = None
+        self, object stream: CudaStreamLike | None = None
     ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.

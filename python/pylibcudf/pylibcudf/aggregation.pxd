@@ -91,7 +91,11 @@ cpdef Aggregation nth_element(size_type n, null_policy null_handling = *)
 
 cpdef Aggregation collect_list(null_policy null_handling = *)
 
-cpdef Aggregation collect_set(null_handling = *, nulls_equal = *, nans_equal = *)
+cpdef Aggregation collect_set(
+    null_policy null_handling = *,
+    null_equality nulls_equal = *,
+    nan_equality nans_equal = *,
+)
 
 cpdef Aggregation udf(str operation, DataType output_type)
 

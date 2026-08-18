@@ -21,6 +21,7 @@ from .aggregation cimport Aggregation
 from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
+from .types import NullOrder, Order
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -68,7 +69,7 @@ cdef class BoundedClosed:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_closed](dereference(delta.get()))
@@ -85,7 +86,7 @@ cdef class BoundedOpen:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_open](dereference(delta.get()))
@@ -111,7 +112,7 @@ cdef class RollingRequest:
             Column values not None,
             size_type min_periods,
             Aggregation aggregation not None,
-    ):
+    ) -> None:
         self.values = values
         self.min_periods = min_periods
         self.aggregation = aggregation
@@ -127,8 +128,8 @@ cdef class RollingRequest:
 cpdef Table grouped_range_rolling_window(
     Table group_keys,
     Column orderby,
-    order order,
-    null_order null_order,
+    order order: Order,
+    null_order null_order: NullOrder,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
     list requests: list[RollingRequest],
@@ -290,8 +291,8 @@ cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
 cpdef tuple make_range_windows(
     Table group_keys,
     Column orderby,
-    order order,
-    null_order null_order,
+    order order: Order,
+    null_order null_order: NullOrder,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
     object stream: CudaStreamLike | None = None,

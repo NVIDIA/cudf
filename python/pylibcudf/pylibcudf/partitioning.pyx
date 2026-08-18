@@ -32,9 +32,11 @@ __all__ = [
 
 cpdef tuple[Table, list] hash_partition(
     Table input,
-    TableOrList keys,
+    TableOrList keys: Table | list[int],
     int num_partitions,
-    cpp_partitioning.hash_id hash_function = cpp_partitioning.hash_id.HASH_MURMUR3,
+    cpp_partitioning.hash_id hash_function: HashId = (
+        cpp_partitioning.hash_id.HASH_MURMUR3
+    ),
     uint32_t seed = cpp_partitioning.DEFAULT_HASH_SEED,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,

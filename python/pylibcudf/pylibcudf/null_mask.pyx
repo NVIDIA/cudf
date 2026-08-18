@@ -17,7 +17,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint
 
-from .span import is_span as py_is_span
+from .span import Span, is_span as py_is_span
 
 from .column cimport Column
 from .table cimport Table
@@ -83,7 +83,7 @@ cpdef DeviceBuffer copy_bitmask(
 
 
 cpdef DeviceBuffer copy_bitmask_from_bitmask(
-    object bitmask,
+    object bitmask: Span,
     size_type begin_bit,
     size_type end_bit,
     object stream: CudaStreamLike | None = None,
@@ -158,7 +158,7 @@ cpdef size_t bitmask_allocation_size_bytes(size_type number_of_bits):
 
 cpdef DeviceBuffer create_null_mask(
     size_type size,
-    mask_state state = mask_state.UNINITIALIZED,
+    mask_state state: MaskState = mask_state.UNINITIALIZED,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
@@ -272,7 +272,7 @@ cpdef tuple bitmask_or(
 
 
 cpdef size_type null_count(
-    object bitmask,
+    object bitmask: Span,
     size_type start,
     size_type stop,
     object stream: CudaStreamLike | None = None
@@ -314,7 +314,7 @@ cpdef size_type null_count(
         )
 
 cpdef size_type index_of_first_set_bit(
-    object bitmask,
+    object bitmask: Span,
     size_type start,
     size_type stop,
     object stream: CudaStreamLike | None = None

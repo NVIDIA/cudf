@@ -106,8 +106,8 @@ cdef class Column:
 
 cdef class ListsColumnView:
     cdef Column _column
-    cpdef child(self)
-    cpdef offsets(self)
+    cpdef Column child(self)
+    cpdef Column offsets(self)
     cdef lists_column_view view(self)
     cpdef Column get_sliced_child(self, object stream=*)
 

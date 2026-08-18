@@ -39,6 +39,7 @@ from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing_extensions import Buffer
     from pylibcudf.typing import CudaStreamLike
 
@@ -170,9 +171,9 @@ cdef class HybridScanReader:
 
     def __init__(
         self,
-        const uint8_t[::1] footer_bytes,
-        ParquetReaderOptions options
-    ):
+        const uint8_t[::1] footer_bytes: Buffer,
+        ParquetReaderOptions options,
+    ) -> None:
         cdef const uint8_t* footer_ptr = <const uint8_t*>0
         if len(footer_bytes) > 0:
             footer_ptr = &footer_bytes[0]
@@ -592,7 +593,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         list column_chunk_data,
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -678,7 +679,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         list column_chunk_data,
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -813,8 +814,8 @@ cdef class HybridScanReader:
         size_t pass_read_limit,
         list row_group_indices: list[int],
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
-        object column_chunk_data,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
+        object column_chunk_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -904,8 +905,8 @@ cdef class HybridScanReader:
         size_t pass_read_limit,
         list row_group_indices: list[int],
         Column row_mask,
-        cpp_use_data_page_mask mask_data_pages,
-        object column_chunk_data,
+        cpp_use_data_page_mask mask_data_pages: UseDataPageMask,
+        object column_chunk_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None

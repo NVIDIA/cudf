@@ -85,21 +85,17 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
   // stream in it, so the set holds the whole pool this thread leaves behind.
   std::unordered_set<cudaStream_t> first_thread_streams;
   std::thread first([&] {
-    auto const streams = get_streams_from_pool(1024);
+    auto const streams = get_streams_from_pool(64);
     first_thread_streams.insert(streams.begin(), streams.end());
   });
   first.join();
 
-  // A thread that adopted the retired pool can only be handed streams from it. One that created a
-  // fresh pool would be handed newly created streams instead.
-  std::unordered_set<cudaStream_t> second_thread_streams;
-  std::thread second([&] {
-    auto const streams = get_streams_from_pool(4);
-    second_thread_streams.insert(streams.begin(), streams.end());
-  });
+  std::vector<cudaStream_t> second_thread_streams;
+  std::thread second([&] { second_thread_streams = get_streams_from_pool(4); });
   second.join();
 
   EXPECT_FALSE(second_thread_streams.empty());
+  // A thread that adopted the retired pool can only be handed streams from it
   EXPECT_TRUE(std::all_of(second_thread_streams.begin(),
                           second_thread_streams.end(),
                           [&](auto stream) { return first_thread_streams.contains(stream); }));

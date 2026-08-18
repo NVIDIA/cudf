@@ -94,7 +94,8 @@ class make_key_pair {
  public:
   CUDF_HOST_DEVICE constexpr make_key_pair(Hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(cudf::size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(
+    cudf::size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }
@@ -380,10 +381,12 @@ class key_remap_table : public key_remap_table_interface {
       return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
     }
 
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+
     if (this->_right.num_rows() == 0) {
       auto result =
         std::make_unique<rmm::device_uvector<cudf::size_type>>(left_num_rows, stream, mr);
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                    result->begin(),
                    result->end(),
                    cudf::JoinNoMatch);
@@ -395,7 +398,7 @@ class key_remap_table : public key_remap_table_interface {
       cuda::make_transform_output_iterator(result->begin(), extract_index{});
 
     auto preprocessed_left =
-      cudf::detail::row::equality::preprocessed_table::create(left_keys, stream);
+      cudf::detail::row::equality::preprocessed_table::create(left_keys, stream, temp_mr);
 
     if (cudf::detail::is_primitive_row_op_compatible(_right)) {
       auto const d_hasher = cudf::detail::row::primitive::row_hasher{
@@ -500,7 +503,8 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(
 
   if (right.num_rows() == 0 || right.num_columns() == 0) { return nullptr; }
 
-  auto preprocessed_right = cudf::detail::row::equality::preprocessed_table::create(right, stream);
+  auto preprocessed_right = cudf::detail::row::equality::preprocessed_table::create(
+    right, stream, cudf::get_current_device_resource_ref());
 
   if (cudf::detail::is_primitive_row_op_compatible(right)) {
     auto const d_hasher = cudf::detail::row::primitive::row_hasher{

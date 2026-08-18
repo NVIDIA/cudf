@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 
 #include <nvtext/replace.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -28,9 +28,9 @@ TEST_F(TextReplaceTest, ReplaceTokens)
                                      "no change",
                                      "thé is the cheese is"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   cudf::test::strings_column_wrapper targets({"is", "the"});
   cudf::test::strings_column_wrapper repls({"___", ""});
   std::vector<char const*> h_expected{" fox jumped over  dog",
@@ -42,7 +42,7 @@ TEST_F(TextReplaceTest, ReplaceTokens)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
   auto results = nvtext::replace_tokens(cudf::strings_column_view(strings),
                                         cudf::strings_column_view(targets),

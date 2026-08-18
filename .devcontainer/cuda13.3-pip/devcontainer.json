@@ -8,7 +8,7 @@
       "BASE": "rapidsai/devcontainers:26.10-cpp-cuda13.3-ucx1.19.0-openmpi5.0.10"
     },
     "cacheFrom": [
-      "ghcr.io/rapidsai/cudf/devcontainer:26.10-cuda13.3-pip"
+      "ghcr.io/nvidia/cudf/devcontainer:26.10-cuda13.3-pip"
     ]
   },
   "runArgs": [

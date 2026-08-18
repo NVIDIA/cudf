@@ -14,7 +14,7 @@
 #include <cudf/utilities/prefetch.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <numeric>
@@ -214,7 +214,7 @@ void const* mutable_column_view::get_data() const noexcept
 size_type count_descendants(column_view parent)
 {
   auto descendants = [](auto const& child) { return count_descendants(child); };
-  auto begin       = thrust::make_transform_iterator(parent.child_begin(), descendants);
+  auto begin       = cuda::transform_iterator(parent.child_begin(), descendants);
   return std::accumulate(begin, begin + parent.num_children(), size_type{parent.num_children()});
 }
 

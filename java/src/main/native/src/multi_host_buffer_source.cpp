@@ -114,7 +114,7 @@ size_t multi_host_buffer_source::device_read(size_t offset,
     auto buffer_offset = offset - offsets_[buffer_index];
     auto src           = addrs_[buffer_index] + buffer_offset;
     auto copy_size     = std::min(buffer_left, bytes_left);
-    CUDF_CUDA_TRY(cudaMemcpyAsync(dst, src, copy_size, cudaMemcpyHostToDevice, stream.get()));
+    CUDF_CUDA_TRY(cudaMemcpyAsync(dst, src, copy_size, cudaMemcpyDefault, stream.get()));
     offset += copy_size;
     dst += copy_size;
     bytes_left -= copy_size;

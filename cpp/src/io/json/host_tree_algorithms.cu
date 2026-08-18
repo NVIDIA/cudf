@@ -1068,7 +1068,7 @@ void scatter_offsets(tree_meta_t const& tree,
   //    col[parent_col_id].child_offsets[row_offset[parent_node_id]]
 
   auto& parent_col_ids = sorted_col_ids;  // reuse sorted_col_ids
-  auto parent_col_id   = thrust::make_transform_iterator(
+  auto parent_col_id   = cuda::transform_iterator(
     cuda::counting_iterator<size_type>{0},
     cuda::proclaim_return_type<NodeIndexT>(
       [col_ids         = col_ids.begin(),

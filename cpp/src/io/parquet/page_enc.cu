@@ -566,6 +566,7 @@ CUDF_KERNEL void __launch_bounds__(128)
                size_type max_page_size_rows,
                uint32_t page_align,
                bool write_v2_headers,
+               bool write_page_stats
                kernel_error::pointer error_code)
 {
   // TODO: All writing seems to be done by thread 0. Could be replaced by thrust foreach
@@ -745,7 +746,8 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.dict_rle_bits =
             ck_g.dict_rle_bits;  // Conservatively set to the chunk-wide bit width
           page_g.max_hdr_size = max_data_page_hdr_size;  // Max size excluding statistics
-          if (ck_g.stats) {
+          // Only reserve space for statistics if actually writing them to the page header
+          if (ck_g.stats and write_page_stats) {
             uint32_t stats_hdr_len = 16;
             if (col_g.stats_dtype == dtype_string || col_g.stats_dtype == dtype_byte_array) {
               stats_hdr_len += 5 * 3 + 2 * max_stats_len;
@@ -3439,6 +3441,7 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
                       size_type max_page_size_rows,
                       uint32_t page_align,
                       bool write_v2_headers,
+                      bool write_page_stats,
                       statistics_merge_group* page_grstats,
                       statistics_merge_group* chunk_grstats,
                       kernel_error::pointer error_code,
@@ -3447,18 +3450,19 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
   auto num_rowgroups = chunks.size().first;
   dim3 dim_grid(num_columns, num_rowgroups);  // 1 threadblock per rowgroup
   gpuInitPages<<<dim_grid, encode_block_size, 0, stream.get()>>>(chunks,
-                                                                   pages,
-                                                                   page_sizes,
-                                                                   comp_page_sizes,
-                                                                   col_desc,
-                                                                   page_grstats,
-                                                                   chunk_grstats,
-                                                                   num_columns,
-                                                                   max_page_size_bytes,
-                                                                   max_page_size_rows,
-                                                                   page_align,
-                                                                   write_v2_headers,
-                                                                   error_code);
+                                                                 pages,
+                                                                 page_sizes,
+                                                                 comp_page_sizes,
+                                                                 col_desc,
+                                                                 page_grstats,
+                                                                 chunk_grstats,
+                                                                 num_columns,
+                                                                 max_page_size_bytes,
+                                                                 max_page_size_rows,
+                                                                 page_align,
+                                                                 write_v2_headers,
+                                                                 write_page_stats,
+                                                                 error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

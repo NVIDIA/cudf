@@ -87,11 +87,12 @@ cuda_stream_pool* create_global_cuda_stream_pool();
  * @brief Get the calling thread's stream pool for the current device.
  *
  * Each thread has its own pool for each device it uses, so concurrent threads are handed distinct
- * streams. Pools are created empty and grow on demand up to a maximum that can be configured with
- * the `LIBCUDF_STREAM_POOL_SIZE` environment variable.
+ * streams. The maximum number of streams a pool provides can be configured with the
+ * `LIBCUDF_STREAM_POOL_SIZE` environment variable.
  *
- * The returned streams may be used from any thread, but must not be used after the thread that
- * obtained them has exited: a pool is recycled for reuse by another thread at that point.
+ * The returned streams stay valid for the lifetime of the process and may be used from any thread.
+ * Once the thread that obtained them exits its pool is recycled, so another thread can be handed
+ * the same streams; holding on to them past that point gives up the isolation the pool provides.
  */
 cuda_stream_pool& thread_cuda_stream_pool();
 
@@ -115,7 +116,8 @@ inline cuda_stream_pool& global_cuda_stream_pool()
  * version that always returns the stream returned by `cudf::get_default_stream()`. To use this
  * debugging version, set the environment variable `LIBCUDF_USE_DEBUG_STREAM_POOL`.
  *
- * The returned streams must not be used after the calling thread has exited.
+ * The returned streams stay valid after the calling thread exits, but its pool is recycled at that
+ * point, so they may then be handed to another thread as well.
  *
  * Example usage:
  * @code{.cpp}

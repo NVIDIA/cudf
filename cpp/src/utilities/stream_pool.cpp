@@ -86,13 +86,11 @@ rmm::cuda_device_id get_current_cuda_device()
 }
 
 /**
- * @brief Returns the maximum number of streams a single thread's pool will hold.
+ * @brief Returns the configured maximum number of streams a single pool will hold.
  */
-std::size_t stream_pool_size()
+std::size_t configured_max_pool_size()
 {
-  static std::size_t const size =
-    std::max<std::size_t>(1, getenv_or("LIBCUDF_STREAM_POOL_SIZE", STREAM_POOL_SIZE));
-  return size;
+  return std::max<std::size_t>(1, getenv_or("LIBCUDF_STREAM_POOL_SIZE", STREAM_POOL_SIZE));
 }
 
 /**
@@ -119,12 +117,12 @@ cudaEvent_t event_for_thread()
  * @brief Implementation of `cuda_stream_pool` that creates streams on demand.
  *
  * Instances are owned by a single thread at a time, so no synchronization is needed. The pool
- * never shrinks; it grows to the largest number of streams requested so far, up to
- * `stream_pool_size()`.
+ * never shrinks; it grows to the largest number of streams requested so far, up to `_max_size`.
  */
 class growing_cuda_stream_pool : public cuda_stream_pool {
   std::vector<cuda::stream> _streams;
   std::size_t _next_stream{0};
+  std::size_t const _max_size{configured_max_pool_size()};
 
   /**
    * @brief Creates streams until the pool can serve `count` streams with room to spare.
@@ -132,14 +130,14 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
    * Twice the requested count is created so that consecutive requests are served from different
    * streams. Nested requests, such as decompression forking streams while its caller is using
    * forked streams of its own, then avoid colliding with the streams they are nested inside,
-   * except where the rotation wraps around a pool that has reached `stream_pool_size()`.
+   * except where the rotation wraps around a pool that has reached `_max_size`.
    */
   void grow_to(std::size_t count)
   {
     // A pool is only ever used with the device it was created on current, so the streams it creates
     // belong to that device. `cuda::stream` is always non-blocking.
     auto const device = cuda::device_ref{get_current_cuda_device().value()};
-    auto const target = std::min(2 * count, stream_pool_size());
+    auto const target = std::min(2 * count, _max_size);
     while (_streams.size() < target) {
       _streams.emplace_back(device);
     }

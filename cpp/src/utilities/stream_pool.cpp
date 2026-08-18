@@ -273,7 +273,7 @@ class thread_stream_pools {
  * @brief Returns a reference to the calling thread's stream pool for the current device.
  * @return `cuda_stream_pool` owned by the current thread and valid on the current device.
  */
-cuda_stream_pool& thread_cuda_stream_pool()
+cuda_stream_pool& current_cuda_stream_pool()
 {
   thread_local thread_stream_pools pools;
   return pools.pool_for(get_current_cuda_device());
@@ -281,7 +281,7 @@ cuda_stream_pool& thread_cuda_stream_pool()
 
 std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream, std::size_t count)
 {
-  auto const streams = thread_cuda_stream_pool().get_streams(count);
+  auto const streams = current_cuda_stream_pool().get_streams(count);
   auto const event   = event_for_thread();
   CUDF_CUDA_TRY(cudaEventRecord(event, stream.get()));
   std::for_each(streams.begin(), streams.end(), [&](auto& strm) {

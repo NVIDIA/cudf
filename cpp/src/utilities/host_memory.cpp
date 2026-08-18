@@ -90,7 +90,7 @@ class pinned_pool_with_fallback_memory_resource {
   size_t max_pool_size_{0};
   // Raw pointer to avoid a segfault when the pool is destroyed on exit
   host_pooled_mr* pool_{nullptr};
-  cuda::stream_ref stream_{cudf::detail::thread_cuda_stream_pool().get_stream()};
+  cuda::stream_ref stream_{cudf::detail::current_cuda_stream_pool().get_stream()};
 
   // Wrapped in shared_ptr so the outer class is copyable (required by any_resource)
   std::shared_ptr<fallback_state> fallback_{std::make_shared<fallback_state>()};

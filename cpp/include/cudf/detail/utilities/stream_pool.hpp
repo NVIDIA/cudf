@@ -20,7 +20,7 @@ namespace detail {
  * @brief Interface for a pool of CUDA streams.
  *
  * Implementations are not required to be thread safe. A pool is owned by a single thread at a time,
- * which is how `thread_cuda_stream_pool()` hands them out, so an implementation may keep
+ * which is how `current_cuda_stream_pool()` hands them out, so an implementation may keep
  * unsynchronized state. Sharing one pool between threads requires external synchronization.
  */
 class cuda_stream_pool {
@@ -67,28 +67,28 @@ class cuda_stream_pool {
 cuda_stream_pool* create_cuda_stream_pool();
 
 /**
- * @brief Get the calling thread's stream pool for the current device.
+ * @brief Get the stream pool the calling thread should use for the current device.
  *
- * Each thread has its own pool for each device it uses, so concurrent threads are handed distinct
- * streams. The maximum number of streams a pool provides can be configured with the
+ * Each thread currently has its own pool for each device it uses, so concurrent threads are handed
+ * distinct streams. The maximum number of streams a pool provides can be configured with the
  * `LIBCUDF_STREAM_POOL_SIZE` environment variable.
  *
  * The returned streams stay valid for the lifetime of the process and may be used from any thread.
  * Once the thread that obtained them exits its pool is recycled, so another thread can be handed
  * the same streams; holding on to them past that point gives up the isolation the pool provides.
  */
-cuda_stream_pool& thread_cuda_stream_pool();
+cuda_stream_pool& current_cuda_stream_pool();
 
 /**
- * @brief Get the calling thread's stream pool for the current device.
+ * @brief Get the stream pool the calling thread should use for the current device.
  *
- * @deprecated Renamed to `thread_cuda_stream_pool` now that the pool is per thread and per device.
+ * @deprecated Renamed to `current_cuda_stream_pool`, which does not imply a process-wide pool.
  */
-[[deprecated("Use thread_cuda_stream_pool instead.")]]  //
+[[deprecated("Use current_cuda_stream_pool instead.")]]  //
 inline cuda_stream_pool&
 global_cuda_stream_pool()
 {
-  return thread_cuda_stream_pool();
+  return current_cuda_stream_pool();
 }
 
 /**

@@ -24,7 +24,7 @@ namespace {
 
 std::vector<cudaStream_t> get_streams_from_pool(std::size_t count)
 {
-  auto const streams = cudf::detail::thread_cuda_stream_pool().get_streams(count);
+  auto const streams = cudf::detail::current_cuda_stream_pool().get_streams(count);
   auto values        = std::vector<cudaStream_t>{};
   std::transform(streams.begin(), streams.end(), std::back_inserter(values), [](auto stream) {
     return stream.get();

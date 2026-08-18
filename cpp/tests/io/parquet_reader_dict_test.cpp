@@ -489,15 +489,15 @@ TEST_F(ParquetReaderDictTest, MultiColumnMixedEligibility)
 }
 
 // A low-cardinality flat string column spanning multiple row groups must transcode to a
-// DICTIONARY32 whose keys are unique: the per-row-group dictionaries are deduplicated during
-// assembly, not merely stacked. Without dedup the keys would carry up to one copy per row group.
+// DICTIONARY32 with unique keys. Check if deduplication works correctly by checking for unique
+// keys.
 TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
 {
   auto input_col = make_low_cardinality_strings();
 
   auto const input_tbl = cudf::table_view{{input_col}};
   auto const filepath  = temp_env->get_temp_filepath("MultiRowGroupKeysAreUnique.parquet");
-  write_parquet(input_tbl, filepath);  // row_group_size rows/group -> multiple row groups
+  write_parquet(input_tbl, filepath);
 
   auto const read_table = read_parquet_as_dict(filepath).tbl;
   ASSERT_EQ(read_table->num_columns(), 1);
@@ -514,7 +514,7 @@ TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
   EXPECT_EQ(num_distinct, keys.size());
   EXPECT_LE(keys.size(), cardinality);
 
-  // And it still decodes to the original input.
+  // Check if the decoded column is equal to the original input.
   auto const decoded = cudf::dictionary::decode(dict_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
 }

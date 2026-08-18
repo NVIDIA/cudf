@@ -67,6 +67,7 @@ Compression to_parquet_compression(compression_type compression)
   switch (compression) {
     case compression_type::AUTO:
     case compression_type::SNAPPY: return Compression::SNAPPY;
+    case compression_type::GZIP: return Compression::GZIP;
     case compression_type::ZSTD: return Compression::ZSTD;
     case compression_type::LZ4:
       // Parquet refers to LZ4 as "LZ4_RAW"; Parquet's "LZ4" is not standard LZ4
@@ -2871,7 +2872,7 @@ std::unique_ptr<std::vector<uint8_t>> writer::merge_row_group_metadata(
 
   // Remove any LogicalType::UNKNOWN annotations that were passed in as they can confuse
   // column type inferencing.
-  // See https://github.com/rapidsai/cudf/pull/14264#issuecomment-1778311615
+  // See https://github.com/NVIDIA/cudf/pull/14264#issuecomment-1778311615
   for (auto& se : md.schema) {
     if (se.logical_type.has_value() && se.logical_type.value().type == LogicalType::UNKNOWN) {
       se.logical_type = cuda::std::nullopt;

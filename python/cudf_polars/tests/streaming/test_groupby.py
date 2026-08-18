@@ -352,7 +352,7 @@ def test_groupby_then_slice(streaming_engine, zlice: tuple[int, int]) -> None:
 
 
 def test_groupby_on_equality(streaming_engine) -> None:
-    # See: https://github.com/rapidsai/cudf/issues/19152
+    # See: https://github.com/NVIDIA/cudf/issues/19152
     df = pl.LazyFrame(
         {
             "key1": [1, 1, 1, 2, 3, 1, 4, 6, 7],

@@ -177,7 +177,7 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
   auto np_max_size = nrows % num_partitions;  // # partitions of max size
 
   // handle case when nr `mod` np == 0;
-  // fix for bug: https://github.com/rapidsai/cudf/issues/4043
+  // fix for bug: https://github.com/NVIDIA/cudf/issues/4043
   auto num_partitions_max_size = (np_max_size > 0 ? np_max_size : num_partitions);
 
   cudf::size_type max_partition_size = std::ceil(

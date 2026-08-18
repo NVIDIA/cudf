@@ -580,7 +580,7 @@ class Column:
         """
         result: int
         if self.size > 0 and plc.traits.is_floating_point(self.obj.type()):
-            # See https://github.com/rapidsai/cudf/issues/20202 for we type ignore
+            # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
             result = plc.reduce.reduce(  # type: ignore[assignment]
                 plc.unary.is_nan(self.obj, stream=stream),
                 plc.aggregation.sum(),

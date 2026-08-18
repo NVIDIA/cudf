@@ -49,6 +49,8 @@ def pq_file(tmp_path_factory, df):
         pl.col("a").is_not_null(),
         pl.col("a").abs().is_between(0, 2),
         pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
+        (pl.col("a") >= 2) & pl.col("c").str.contains("b"),
+        pl.col("a").is_null() & pl.col("c").str.starts_with("d"),
     ],
 )
 @pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])

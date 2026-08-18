@@ -10,6 +10,7 @@
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+#include <rmm/resource_ref.hpp>
 
 #include <memory>
 #include <vector>
@@ -47,10 +48,12 @@ struct preprocessed_table {
    *
    * @param table The table to preprocess
    * @param stream The cuda stream to use while preprocessing.
+   * @param temp_mr Device memory resource used for temporary allocations
    * @return A preprocessed table as shared pointer
    */
   static std::shared_ptr<preprocessed_table> create(table_view const& table,
-                                                    rmm::cuda_stream_view stream);
+                                                    rmm::cuda_stream_view stream,
+                                                    rmm::device_async_resource_ref temp_mr);
 
   /**
    * @brief Implicit conversion operator to a `table_device_view` of the preprocessed table.

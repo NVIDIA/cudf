@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool as cbool
@@ -88,6 +88,10 @@ cpdef Column shift(
     Scalar fill_value,
     object stream = *,
     DeviceMemoryResource mr=*,
+)
+
+cpdef ColumnOrTable reverse(
+    ColumnOrTable input, object stream = *, DeviceMemoryResource mr=*
 )
 
 cpdef list slice(ColumnOrTable input, list indices, object stream = *)

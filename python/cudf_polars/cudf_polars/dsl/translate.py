@@ -247,7 +247,7 @@ class Translator:
             return None
         unique_errors = sorted({str(e): e for e in self.errors}.values(), key=str)
         # TODO: Display these errors in user-friendly way, tracked in
-        # https://github.com/rapidsai/cudf/issues/17051
+        # https://github.com/NVIDIA/cudf/issues/17051
         formatted_errors = "\n".join(
             f"- {e.__class__.__name__}: {e}" for e in unique_errors
         )
@@ -426,7 +426,7 @@ def _(node: plrs._ir_nodes.PythonScan, translator: Translator, schema: Schema) -
         )
     if nrows is not None:
         # A global row limit cannot be enforced independently per rank; tracked
-        # in https://github.com/rapidsai/cudf/issues/22918.
+        # in https://github.com/NVIDIA/cudf/issues/22918.
         raise NotImplementedError(
             "A row limit (head/limit) on a PythonScan source is not supported."
         )
@@ -1063,12 +1063,12 @@ def _(
             # cudf-polars has no concept of chunking, so we can just
             # drop it.
             # Note: This could be a plan hook for explicit repartition for streaming engines
-            # https://github.com/rapidsai/cudf/pull/23192#discussion_r3553113408
+            # https://github.com/NVIDIA/cudf/pull/23192#discussion_r3553113408
             (child,) = children
             return child
         if name == "fused":
             # TODO: fuse into a single kernel via JIT transform, see
-            # https://github.com/rapidsai/cudf/issues/21456. We don't use
+            # https://github.com/NVIDIA/cudf/issues/21456. We don't use
             # libcudf AST here because it widens the dtype for integer types
             # narrower than int32 (e.g. int8*int8 to int32), then fails
             # with a type mismatch when doing the add/sub with the third operand.
@@ -1206,6 +1206,10 @@ def _(
         named_aggs = [agg for agg, _ in aggs]
 
         for named_agg in named_aggs:
+            if has_order_by and isinstance(named_agg.value, expr.RollingWindow):
+                raise NotImplementedError(
+                    "rolling(...).over(..., order_by=...) is not supported"
+                )
             if _unsupported_fill_over_window(named_agg.value):
                 raise NotImplementedError(
                     "fill_null with strategy over a window is only supported when "
@@ -1216,30 +1220,32 @@ def _(
             translator.translate_expr(n=n, schema=schema) for n in node.partition_by
         ]
 
-        child_deps = [
-            v.children[0].children[0]
+        child_deps: list[expr.Expr] = []
+        for ne in named_aggs:
+            v = ne.value
             if (
                 isinstance(v, expr.UnaryFunction)
                 and v.name == "fill_null_with_strategy"
                 and isinstance(v.children[0], expr.UnaryFunction)
                 and v.children[0].name == "cum_sum"
-            )
-            else v.children[0]
-            for ne in named_aggs
-            for v in (ne.value,)
-            if isinstance(v, expr.Agg)
-            or (
+            ):
+                child_deps.append(v.children[0].children[0])
+            elif isinstance(v, expr.RollingWindow):
+                child_deps.append(v.children[0])
+                child_deps.append(expr.Col(schema[v.orderby], v.orderby))
+            elif isinstance(v, (expr.FixedSizeRollingWindow, expr.Agg)) or (
                 isinstance(v, expr.UnaryFunction)
                 and v.name
                 in {
                     "rank",
                     "fill_null_with_strategy",
                     "cum_sum",
+                    "diff",
                     "shift",
                     "shift_and_fill",
                 }
-            )
-        ]
+            ):
+                child_deps.append(v.children[0])
         children = (*by_exprs, *((order_by_expr,) if has_order_by else ()), *child_deps)
         return expr.GroupedWindow(
             dtype,

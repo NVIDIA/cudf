@@ -12,8 +12,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <span>
@@ -384,7 +385,7 @@ class hybrid_scan_reader {
   [[nodiscard]] std::vector<size_type> filter_row_groups_with_stats(
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Get byte ranges of bloom filters and dictionary pages (secondary filters) for row group
@@ -406,7 +407,8 @@ class hybrid_scan_reader {
    * @brief Filter the row groups using column chunk dictionary pages
    *
    * @param dictionary_page_data Device spans of dictionary page data of column chunks with an
-   *                             (in)equality predicate
+   * (in)equality predicate, in the same order as the byte ranges returned by
+   * `secondary_filters_byte_ranges` including empty spans against empty byte ranges
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -416,7 +418,7 @@ class hybrid_scan_reader {
     std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Filter the row groups using column chunk bloom filters
@@ -434,7 +436,7 @@ class hybrid_scan_reader {
     std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Builds a boolean (survival) column of size equal to the total number of rows in the row
@@ -448,7 +450,7 @@ class hybrid_scan_reader {
    */
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     std::span<size_type const> row_group_indices,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -465,7 +467,7 @@ class hybrid_scan_reader {
   [[nodiscard]] std::unique_ptr<cudf::column> build_row_mask_with_page_index_stats(
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -497,7 +499,7 @@ class hybrid_scan_reader {
     cudf::mutable_column_view& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -528,7 +530,7 @@ class hybrid_scan_reader {
     cudf::column_view const& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -555,7 +557,7 @@ class hybrid_scan_reader {
     std::span<size_type const> row_group_indices,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
   /**
    * @brief Setup chunking information for filter columns and preprocess the input data pages
@@ -580,7 +582,7 @@ class hybrid_scan_reader {
     use_data_page_mask mask_data_pages,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -617,7 +619,7 @@ class hybrid_scan_reader {
     use_data_page_mask mask_data_pages,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**
@@ -651,7 +653,7 @@ class hybrid_scan_reader {
     std::span<size_type const> row_group_indices,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**

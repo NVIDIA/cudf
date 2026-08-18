@@ -3681,7 +3681,7 @@ TEST_F(JsonReaderTest, DeviceWriteAsyncThrows)
 // schema. cuDF itself does NOT change the column contents on mismatch (existing
 // CHILD_NULL_ONLY behavior); the diagnostic is reported on a separate side channel so the
 // public `column_name_info`/`table_metadata` ABI is unaffected.
-// See https://github.com/rapidsai/cudf/issues/22423.
+// See https://github.com/NVIDIA/cudf/issues/22423.
 
 // Build schema for: struct<c1: int64, c2: list<struct<c3: int64, c4: string>>>.
 // Pin column order so cuDF emits columns in (c1, c2) regardless of JSON-encounter order.

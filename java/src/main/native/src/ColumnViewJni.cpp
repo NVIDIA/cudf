@@ -72,7 +72,9 @@
 
 #include <jni.h>
 
+#include <array>
 #include <numeric>
+#include <utility>
 
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
@@ -1388,7 +1390,7 @@ Java_ai_rapids_cudf_ColumnView_castTo(JNIEnv* env, jclass, jlong handle, jint ty
     } else if (cudf::is_timestamp(n_data_type) && cudf::is_numeric(column->type())) {
       // This is a temporary workaround to allow Java to cast from integral types into a timestamp
       // without forcing an intermediate duration column to be manifested.  Ultimately this style of
-      // "reinterpret" casting will be supported via https://github.com/rapidsai/cudf/pull/5358
+      // "reinterpret" casting will be supported via https://github.com/NVIDIA/cudf/pull/5358
       if (n_data_type.id() == cudf::type_id::TIMESTAMP_DAYS) {
         if (column->type().id() != cudf::type_id::INT32) {
           JNI_THROW_NEW(env,
@@ -1411,7 +1413,7 @@ Java_ai_rapids_cudf_ColumnView_castTo(JNIEnv* env, jclass, jlong handle, jint ty
     } else if (cudf::is_timestamp(column->type()) && cudf::is_numeric(n_data_type)) {
       // This is a temporary workaround to allow Java to cast from timestamp types to integral types
       // without forcing an intermediate duration column to be manifested.  Ultimately this style of
-      // "reinterpret" casting will be supported via https://github.com/rapidsai/cudf/pull/5358
+      // "reinterpret" casting will be supported via https://github.com/NVIDIA/cudf/pull/5358
       cudf::data_type duration_type   = cudf::jni::timestamp_to_duration(column->type());
       cudf::column_view duration_view = cudf::column_view(
         duration_type, column->size(), column->head(), column->null_mask(), column->null_count());
@@ -1556,11 +1558,18 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
     cudf::jni::native_jstring n_j_udf(env, j_udf);
     std::string n_udf              = n_j_udf;
     cudf::transform_input inputs[] = {*column};
-    return release_as_jlong(cudf::transform_extended(
-      inputs,
-      n_udf,
-      cudf::data_type(cudf::type_id::INT32),
-      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA));
+    return release_as_jlong(std::move(
+      cudf::transform(n_udf,
+                      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
+                      cudf::null_aware::NO,
+                      std::nullopt,
+                      inputs,
+                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                                                        cudf::output_nullability::PRESERVE}},
+                      {},
+                      std::nullopt)
+        ->release()
+        .front()));
   }
   JNI_CATCH(env, 0);
 }
@@ -2289,7 +2298,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
           new cudf::column_view(cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0));
       } else {
         JNI_NULL_CHECK(env, j_offset, "offset is null", 0);
-        cudf::size_type* offsets = reinterpret_cast<cudf::size_type*>(j_offset);
+        int32_t* offsets = reinterpret_cast<int32_t*>(j_offset);
         cudf::column_view offsets_column(
           cudf::data_type{cudf::type_id::INT32}, size + 1, offsets, nullptr, 0);
         return ptr_as_jlong(new cudf::column_view(cudf::data_type{cudf::type_id::STRING},
@@ -2305,11 +2314,11 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
       cudf::jni::native_jpointerArray<cudf::column_view> children(env, j_children);
       JNI_ARG_CHECK(env, (children.size() == 1), "LIST children size is not 1", 0);
       cudf::size_type offsets_size = 0;
-      cudf::size_type* offsets     = nullptr;
+      int32_t* offsets             = nullptr;
       if (size != 0) {
         JNI_NULL_CHECK(env, j_offset, "offset is null", 0);
         offsets_size = size + 1;
-        offsets      = reinterpret_cast<cudf::size_type*>(j_offset);
+        offsets      = reinterpret_cast<int32_t*>(j_offset);
       }
       cudf::column_view offsets_column(
         cudf::data_type{cudf::type_id::INT32}, offsets_size, offsets, nullptr, 0);

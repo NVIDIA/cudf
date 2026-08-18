@@ -120,9 +120,11 @@ struct map_insert_fn {
       // Create a map ref with `cuco::insert` operator
       auto map_insert_ref = hash_map_ref.rebind_operators(cuco::insert);
 
-      // Create atomic refs to the current chunk's num_dict_entries and uniq_data_size
-      cuda::atomic_ref<size_type, SCOPE> const chunk_num_dict_entries{chunk->num_dict_entries};
-      cuda::atomic_ref<size_type, SCOPE> const chunk_uniq_data_size{chunk->uniq_data_size};
+      // Atomic refs to the current chunk's num_dict_entries and uniq_data_size
+      cuda::atomic_ref<size_type, cuda::thread_scope_device> const chunk_num_dict_entries{
+        chunk->num_dict_entries};
+      cuda::atomic_ref<size_type, cuda::thread_scope_device> const chunk_uniq_data_size{
+        chunk->uniq_data_size};
 
       // Note: Adjust the following loop to use `cg::tile<map_cg_size>` if needed in the future.
       for (size_type val_idx = start_value_idx + t; val_idx - t < end_value_idx;

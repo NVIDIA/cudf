@@ -15,7 +15,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/std/limits>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>

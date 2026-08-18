@@ -39,7 +39,7 @@
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/for_each.h>
 #include <thrust/sort.h>

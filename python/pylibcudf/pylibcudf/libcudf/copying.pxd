@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t, int64_t, uint8_t
 from libcpp cimport bool
@@ -39,6 +39,18 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& input,
         size_type offset,
         const scalar& fill_values,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef unique_ptr[table] reverse(
+        const table_view& source_table,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef unique_ptr[column] reverse(
+        const column_view& source_column,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler

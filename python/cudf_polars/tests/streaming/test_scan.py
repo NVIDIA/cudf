@@ -126,6 +126,27 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
     assert result == {}
 
 
+def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    scan = _make_parquet_scan([local_path])
+    fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, [])
+    streaming_scan = StreamingScan([fused], scan, "fused")
+
+    # Local paths are skipped entirely when remote_only=True.
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None, remote_only=True
+    )
+    assert result == {}
+
+    # The same local path is prefetched when remote_only=False (the default).
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None
+    )
+    assert set(result) == {local_path}
+
+
 def test_prefetch_file_metadata_select_fast_count(
     df: pl.DataFrame,
     streaming_engine_factory: Callable[..., StreamingEngine],
@@ -349,32 +370,12 @@ def test_streaming_scan_raises() -> None:
         StreamingScan.do_evaluate([fused], scan, context=ctx)
 
 
-def test_scan_missing_prefetch_metadata_raises() -> None:
+def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
         ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
     )
     ctx = IRExecutionContext()
-
-    with pytest.raises(
-        AssertionError,
-        match=r"Cached parquet info is required",
-    ):
-        Scan.do_evaluate(
-            scan.schema,
-            scan.typ,
-            scan.reader_options,
-            scan.paths,
-            scan.with_columns,
-            scan.skip_rows,
-            scan.n_rows,
-            scan.row_index,
-            scan.include_file_paths,
-            scan.predicate,
-            scan.parquet_options,
-            None,
-            context=ctx,
-        )
 
     with pytest.raises(
         AssertionError,

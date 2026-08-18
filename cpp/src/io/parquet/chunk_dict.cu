@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -478,45 +478,45 @@ CUDF_KERNEL void __launch_bounds__(DEFAULT_BLOCK_SIZE)
 
 void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cudf::detail::device_2dspan<PageFragment> frags,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   dim3 const dim_grid(frags.size().second, frags.size().first);
   populate_chunk_hash_maps_kernel<DEFAULT_BLOCK_SIZE>
-    <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.value()>>>(map_storage, frags);
+    <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(map_storage, frags);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void collect_map_entries(device_span<slot_type> const map_storage,
                          device_span<EncColumnChunk> chunks,
                          cudf::detail::device_2dspan<PageFragment const> frags,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   constexpr int block_size = 1024;
   static_assert(block_size >= MAX_FRAGMENTS_PER_CHUNK,
                 "block_size must be >= MAX_FRAGMENTS_PER_CHUNK so one BlockScan thread backs "
                 "each histogram bucket.");
   collect_map_entries_kernel<block_size>
-    <<<chunks.size(), block_size, 0, stream.value()>>>(map_storage, chunks, frags);
+    <<<chunks.size(), block_size, 0, stream.get()>>>(map_storage, chunks, frags);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void get_dictionary_indices(device_span<slot_type> const map_storage,
                             cudf::detail::device_2dspan<PageFragment const> frags,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   dim3 const dim_grid(frags.size().second, frags.size().first);
   get_dictionary_indices_kernel<DEFAULT_BLOCK_SIZE>
-    <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.value()>>>(map_storage, frags);
+    <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(map_storage, frags);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-void compute_per_page_dict_bits(device_span<EncPage> pages, rmm::cuda_stream_view stream)
+void compute_per_page_dict_bits(device_span<EncPage> pages, cuda::stream_ref stream)
 {
   if (pages.empty()) { return; }
   auto constexpr warps_per_block = DEFAULT_BLOCK_SIZE / cudf::detail::warp_size;
   auto const num_blocks =
     cudf::util::div_rounding_up_safe(static_cast<size_type>(pages.size()), warps_per_block);
-  compute_page_dict_bits_kernel<<<num_blocks, DEFAULT_BLOCK_SIZE, 0, stream.value()>>>(pages);
+  compute_page_dict_bits_kernel<<<num_blocks, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(pages);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

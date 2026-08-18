@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,10 +12,10 @@
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 
 namespace cudf {
@@ -24,13 +24,13 @@ namespace detail {
 
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr)
 {
   if (size == 0) {
     return make_lists_column(
       0,
-      make_empty_column(type_to_id<size_type>()),
+      make_empty_column(type_id::INT32),
       empty_like(value.view()),
       0,
       cudf::detail::create_null_mask(0, mask_state::UNALLOCATED, stream, mr));
@@ -72,19 +72,19 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
 
 std::unique_ptr<column> make_empty_lists_column(data_type child_type)
 {
-  auto offsets = make_empty_column(data_type(type_to_id<size_type>()));
+  auto offsets = make_empty_column(data_type(type_id::INT32));
   auto child   = make_empty_column(child_type);
   return make_lists_column(0, std::move(offsets), std::move(child), 0, rmm::device_buffer{});
 }
 
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   auto offsets = [&] {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<size_type>(size + 1, stream, mr);
+      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
     return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
   }();
   auto child     = make_empty_column(child_type);

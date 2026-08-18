@@ -16,7 +16,7 @@
 #include <cuco/operator.hpp>
 #include <cuco/static_set_ref.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::detail {
 

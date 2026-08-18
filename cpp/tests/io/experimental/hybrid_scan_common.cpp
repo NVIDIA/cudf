@@ -41,8 +41,8 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
 {
   CUDF_EXPECTS(value >= 0 && value <= 9999, "String value must be between 0000 and 9999");
 
-  auto elements = thrust::make_transform_iterator(cuda::make_constant_iterator(value),
-                                                  [](auto i) { return std::format("{:04d}", i); });
+  auto elements = cuda::transform_iterator(cuda::make_constant_iterator(value),
+                                           [](auto i) { return std::format("{:04d}", i); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 
@@ -194,7 +194,7 @@ multisource_device_data fetch_multisource_device_data(
   multifile_inputs const& inputs,
   std::pair<std::vector<cudf::io::text::byte_range_info>, std::vector<cudf::size_type>> const&
     byte_ranges_and_source_map,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const byte_ranges_per_source =
@@ -215,7 +215,7 @@ multisource_device_data fetch_multisource_device_data(
 }
 
 std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>>&& tables,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   if (tables.size() == 1) { return std::move(tables[0]); }
@@ -237,7 +237,7 @@ template <typename ReaderType, typename InputType>
 auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
                                               ReaderType const& reader,
                                               cudf::io::parquet_reader_options const& options,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   reader.reset_column_selection();
@@ -284,7 +284,7 @@ std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
   cudf::io::datasource& datasource,
   cudf::io::parquet::experimental::hybrid_scan_reader const& reader,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return filter_row_groups_with_dictionaries_impl(datasource, reader, options, stream, mr);
@@ -294,7 +294,7 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   multifile_inputs const& inputs,
   cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return filter_row_groups_with_dictionaries_impl(inputs, reader, options, stream, mr);
@@ -306,7 +306,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
   cudf::io::compression_type compression,
   std::vector<std::string> column_names,
   std::vector<cudf::size_type> column_order,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   static_assert(NumTableConcats >= 1, "Concatenated table must contain at least one table");
 
@@ -412,7 +412,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
     cudf::io::compression_type,                                                           \
     std::vector<std::string>,                                                             \
     std::vector<cudf::size_type>,                                                         \
-    rmm::cuda_stream_view)
+    cuda::stream_ref)
 
 #define INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(T)       \
   INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, false); \

@@ -29,7 +29,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <future>

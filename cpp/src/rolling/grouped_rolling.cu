@@ -23,7 +23,7 @@
 
 #include <cuda/functional>
 #include <cuda/std/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <concepts>
 #include <span>

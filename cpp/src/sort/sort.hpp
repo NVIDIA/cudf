@@ -8,7 +8,7 @@
 #include <cudf/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {

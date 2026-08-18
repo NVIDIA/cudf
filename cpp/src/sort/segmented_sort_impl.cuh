@@ -17,7 +17,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cub/device/device_segmented_sort.cuh>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {

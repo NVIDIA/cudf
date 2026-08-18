@@ -322,28 +322,10 @@ def in_memory_engine() -> pl.GPUEngine:
     Return an in-memory :class:`polars.GPUEngine` with ``raise_on_fail=True``.
 
     Use this for tests that intentionally exercise in-memory-only behavior
-    instead of the parametrized engine matrix.
+    instead of the parametrized engine matrix, but generally prefer the ``engine``
+    fixture instead.
     """
     return pl.GPUEngine(executor="in-memory", raise_on_fail=True)
-
-
-@pytest.fixture
-def engine_raise_on_fail(in_memory_engine: pl.GPUEngine) -> pl.GPUEngine:
-    """
-    Return a default :class:`polars.GPUEngine` with ``raise_on_fail=True``.
-
-    Returns
-    -------
-    In-memory engine configured to raise exceptions on failure.
-
-    Notes
-    -----
-    Intended for error-path tests that assert specific exceptions propagate
-    from ``.collect()``. Uses the in-memory executor so errors are not wrapped
-    by a streaming task group.
-    """
-    # TODO: We should be testing with all supported engine variants
-    return in_memory_engine
 
 
 @pytest.fixture

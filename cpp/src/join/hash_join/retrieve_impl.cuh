@@ -193,8 +193,8 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     }
   }
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
 
   auto right_matches = cudf::detail::make_zeroed_device_uvector_async<size_type>(
     Join == join_kind::FULL_JOIN ? _right.num_rows() : 0,

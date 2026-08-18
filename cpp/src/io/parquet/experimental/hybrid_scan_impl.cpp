@@ -147,7 +147,7 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
 
     // Select only columns required by the options and filter.
     // Using as is from:
-    // https://github.com/rapidsai/cudf/blob/a8b25cd205dc5d04b9918dcb0b3abd6b8c4e4a74/cpp/src/io/parquet/reader_impl.cpp#L556-L569
+    // https://github.com/NVIDIA/cudf/blob/a8b25cd205dc5d04b9918dcb0b3abd6b8c4e4a74/cpp/src/io/parquet/reader_impl.cpp#L556-L569
     std::optional<std::vector<std::string>> filter_only_columns_names;
     if (options.get_filter().has_value() and select_column_names.has_value()) {
       filter_only_columns_names = parquet::detail::get_column_names_in_expression(
@@ -238,7 +238,7 @@ hybrid_scan_reader_impl::prepare_filter_and_output_types(parquet_reader_options 
 void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode read_columns_mode,
                                                       std::size_t num_sources,
                                                       parquet_reader_options const& options,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   reset_internal_state();
@@ -265,7 +265,7 @@ hybrid_scan_reader_impl::filter_row_groups_with_byte_range(
 std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_with_stats(
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -284,11 +284,14 @@ hybrid_scan_reader_impl::secondary_filters_byte_ranges(
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
 
+  // Single source: keep only the bloom filter byte ranges, not the source map
   auto const bloom_filter_bytes =
-    _extended_metadata->get_bloom_filter_bytes(row_group_indices,
-                                               output_dtypes,
-                                               _output_column_schemas,
-                                               expr_conv.get_converted_expr().value());
+    _extended_metadata
+      ->bloom_filters_byte_ranges(row_group_indices,
+                                  output_dtypes,
+                                  _output_column_schemas,
+                                  expr_conv.get_converted_expr().value())
+      .first;
   auto const dictionary_page_bytes =
     _extended_metadata
       ->dictionary_pages_byte_ranges(row_group_indices,
@@ -314,12 +317,25 @@ hybrid_scan_reader_impl::dictionary_pages_byte_ranges(
                                                           expr_conv.get_converted_expr().value());
 }
 
+std::pair<std::vector<byte_range_info>, std::vector<size_type>>
+hybrid_scan_reader_impl::bloom_filters_byte_ranges(
+  std::span<std::vector<size_type> const> row_group_indices, parquet_reader_options const& options)
+{
+  CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
+  auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
+
+  return _extended_metadata->bloom_filters_byte_ranges(row_group_indices,
+                                                       output_dtypes,
+                                                       _output_column_schemas,
+                                                       expr_conv.get_converted_expr().value());
+}
+
 std::vector<std::vector<size_type>>
 hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
   std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -376,7 +392,7 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
   std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -392,7 +408,7 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
 
 std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
@@ -403,7 +419,7 @@ std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_all_true_row_mask(
 std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_row_mask_with_page_index_stats(
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
@@ -504,7 +520,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_filter_columns(
   cudf::mutable_column_view& row_mask,
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
@@ -544,7 +560,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_payload_columns(
   cudf::column_view const& row_mask,
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
@@ -580,7 +596,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_all_columns(
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
@@ -610,7 +626,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_filter_columns(
   use_data_page_mask mask_data_pages,
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(options.get_filter().has_value(), "Empty input filter expression encountered");
@@ -672,7 +688,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
   use_data_page_mask mask_data_pages,
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
@@ -729,7 +745,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_all_columns(
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
@@ -899,7 +915,7 @@ void hybrid_scan_reader_impl::initialize_reader_config(parquet_reader_options co
 
 void hybrid_scan_reader_impl::initialize_options(parquet_reader_options const& options,
                                                  std::size_t num_sources,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
   // Binary columns can be read as binary or strings

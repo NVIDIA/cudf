@@ -534,73 +534,9 @@ TEST_F(FromArrowHostDeviceTest, NestedList)
 
 namespace {
 
-// Build a struct schema carrying a single fixed_size_list<int64>[width] child named "a".
-// ArrowSchemaInitFromType cannot be used for NANOARROW_TYPE_FIXED_SIZE_LIST: there is no
-// unambiguous format template for it, so it fails with EINVAL. ArrowSchemaSetTypeFixedSize
-// is the supported path, and it allocates the "item" child with a NULL format, so the child
-// type still has to be set explicitly.
-nanoarrow::UniqueSchema make_fixed_size_list_schema(int32_t width, bool nullable)
-{
-  nanoarrow::UniqueSchema schema;
-  ArrowSchemaInit(schema.get());
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
-
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaSetTypeFixedSize(schema->children[0], NANOARROW_TYPE_FIXED_SIZE_LIST, width));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
-  schema->children[0]->flags = nullable ? ARROW_FLAG_NULLABLE : 0;
-
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaSetType(schema->children[0]->children[0], NANOARROW_TYPE_INT64));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0]->children[0], "element"));
-  schema->children[0]->children[0]->flags = 0;
-
-  return schema;
-}
-
-// Build the matching ArrowArray. `values` holds num_rows * width int64 child elements.
-// A fixed_size_list array has no offsets buffer, only validity, so nothing is written to
-// buffer index 1 of the list level.
-nanoarrow::UniqueArray make_fixed_size_list_array(ArrowSchema* schema,
-                                                  std::vector<int64_t> const& values,
-                                                  int64_t num_rows,
-                                                  std::vector<uint8_t> const& list_validity = {})
-{
-  nanoarrow::UniqueArray array;
-  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(array.get(), schema, nullptr));
-  array->length     = num_rows;
-  array->null_count = 0;
-
-  auto* list_array       = array->children[0];
-  list_array->length     = num_rows;
-  list_array->null_count = 0;
-  if (!list_validity.empty()) {
-    ArrowBitmap bitmap;
-    ArrowBitmapInit(&bitmap);
-    NANOARROW_THROW_NOT_OK(ArrowBitmapReserve(&bitmap, list_validity.size()));
-    ArrowBitmapAppendInt8Unsafe(
-      &bitmap, reinterpret_cast<int8_t const*>(list_validity.data()), list_validity.size());
-    ArrowArraySetValidityBitmap(list_array, &bitmap);
-    list_array->null_count =
-      num_rows -
-      ArrowBitCountSet(ArrowArrayValidityBitmap(list_array)->buffer.data, 0, list_validity.size());
-  }
-
-  auto* values_array = list_array->children[0];
-  NANOARROW_THROW_NOT_OK(ArrowBufferAppend(ArrowArrayBuffer(values_array, 1),
-                                           reinterpret_cast<void const*>(values.data()),
-                                           values.size() * sizeof(int64_t)));
-  values_array->length     = values.size();
-  values_array->null_count = 0;
-
-  NANOARROW_THROW_NOT_OK(
-    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
-  return array;
-}
-
 ArrowDeviceArray as_host_device_array(nanoarrow::UniqueArray const& array)
 {
-  ArrowDeviceArray input;
+  ArrowDeviceArray input{};
   memcpy(&input.array, array.get(), sizeof(ArrowArray));
   input.device_id   = -1;
   input.device_type = ARROW_DEVICE_CPU;
@@ -619,8 +555,8 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumn)
     cudf::test::lists_column_wrapper<int64_t>{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}, {10, 11, 12}};
   cudf::table_view expected_table_view({expected_col});
 
-  auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/false);
-  auto input_array  = make_fixed_size_list_array(input_schema.get(), values, num_rows);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows);
   auto input        = as_host_device_array(input_array);
 
   auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
@@ -663,9 +599,9 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnNulls)
   auto expected_col = cudf::make_lists_column(
     num_rows, std::move(offsets), std::move(child), null_count, std::move(null_mask));
 
-  auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/true);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/true);
   auto input_array =
-    make_fixed_size_list_array(input_schema.get(), values, num_rows, list_validity);
+    make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows, list_validity);
   auto input = as_host_device_array(input_array);
 
   auto got_cudf_table       = cudf::from_arrow_host(input_schema.get(), &input);
@@ -692,8 +628,8 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnSliced)
   auto sliced = cudf::slice(full_col, {1, 3});
   cudf::table_view expected_table_view({sliced.front()});
 
-  auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/false);
-  auto input_array  = make_fixed_size_list_array(input_schema.get(), values, num_rows);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows);
   auto input        = as_host_device_array(input_array);
   // this is what catches an incorrect `input->offset * width`, since the child range must
   // start at row 1 * width rather than at zero
@@ -710,8 +646,8 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnZeroLength)
   auto expected_col = cudf::test::lists_column_wrapper<int64_t>{};
   cudf::table_view expected_table_view({expected_col});
 
-  auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/false);
-  auto input_array  = make_fixed_size_list_array(input_schema.get(), {}, 0);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), {}, 0);
   auto input        = as_host_device_array(input_array);
 
   auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
@@ -729,9 +665,9 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnZeroWidth)
 
   // nanoarrow's schema builder rejects width zero, but ArrowSchemaView accepts it from a
   // foreign producer. Replace a normally constructed fixed-size-list format to exercise it.
-  auto input_schema = make_fixed_size_list_schema(1, /*nullable=*/false);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(1, /*nullable=*/false);
   NANOARROW_THROW_NOT_OK(ArrowSchemaSetFormat(input_schema->children[0], "+w:0"));
-  auto input_array = make_fixed_size_list_array(input_schema.get(), {}, num_rows);
+  auto input_array = make_struct_fixed_size_list_int64_array(input_schema.get(), {}, num_rows);
   auto input       = as_host_device_array(input_array);
 
   auto result = cudf::from_arrow_host(input_schema.get(), &input);
@@ -755,8 +691,8 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnLarge)
   auto expected_child =
     cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end());
 
-  auto input_schema = make_fixed_size_list_schema(width, /*nullable=*/false);
-  auto input_array  = make_fixed_size_list_array(input_schema.get(), values, num_rows);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows);
   auto input        = as_host_device_array(input_array);
 
   auto result       = cudf::from_arrow_host(input_schema.get(), &input);
@@ -767,8 +703,8 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnLarge)
 
 TEST_F(FromArrowHostDeviceTest, FixedSizeListInvalidBounds)
 {
-  auto input_schema = make_fixed_size_list_schema(3, /*nullable=*/false);
-  auto input_array  = make_fixed_size_list_array(input_schema.get(), {1, 2, 3}, 1);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(3, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), {1, 2, 3}, 1);
 
   ArrowDeviceArray input;
   memcpy(&input.array, input_array->children[0], sizeof(ArrowArray));

@@ -288,28 +288,6 @@ void populate_fixed_size_list_from_col(ArrowArray* arr, cudf::lists_column_view 
     const_cast<uint8_t*>(reinterpret_cast<uint8_t const*>(view.null_mask()));
 }
 
-// ArrowSchemaInitFromType does not support NANOARROW_TYPE_FIXED_SIZE_LIST (no format
-// template, returns EINVAL); ArrowSchemaSetTypeFixedSize is the supported path and leaves
-// the allocated "item" child with a NULL format, so the child type is set explicitly.
-nanoarrow::UniqueSchema make_fixed_size_list_device_schema(int32_t width, bool nullable = false)
-{
-  nanoarrow::UniqueSchema schema;
-  ArrowSchemaInit(schema.get());
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
-
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaSetTypeFixedSize(schema->children[0], NANOARROW_TYPE_FIXED_SIZE_LIST, width));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
-  schema->children[0]->flags = nullable ? ARROW_FLAG_NULLABLE : 0;
-
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaSetType(schema->children[0]->children[0], NANOARROW_TYPE_INT64));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0]->children[0], "element"));
-  schema->children[0]->children[0]->flags = 0;
-
-  return schema;
-}
-
 }  // namespace
 
 TEST_F(FromArrowDeviceTest, FixedSizeListColumn)
@@ -318,7 +296,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumn)
     cudf::test::lists_column_wrapper<int64_t>{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}, {10, 11, 12}};
   cudf::table_view expected_table_view({col});
 
-  auto input_schema = make_fixed_size_list_device_schema(3);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(3);
 
   nanoarrow::UniqueArray input_array;
   EXPECT_EQ(NANOARROW_OK, ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
@@ -366,7 +344,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnSliced)
   auto expected = cudf::slice(full_table_view.column(0), {1, 3}).front();
   cudf::table_view expected_table_view({expected});
 
-  auto input_schema = make_fixed_size_list_device_schema(3);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(3);
 
   nanoarrow::UniqueArray input_array;
   EXPECT_EQ(NANOARROW_OK, ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
@@ -396,7 +374,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnSliced)
 TEST_F(FromArrowDeviceTest, FixedSizeListColumnEmpty)
 {
   auto expected     = cudf::test::lists_column_wrapper<int64_t>{};
-  auto input_schema = make_fixed_size_list_device_schema(3);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(3);
 
   nanoarrow::UniqueArray input_array;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
@@ -430,7 +408,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnNulls)
   auto expected = cudf::make_lists_column(
     num_rows, std::move(offsets), std::move(child), null_count, std::move(null_mask));
 
-  auto input_schema = make_fixed_size_list_device_schema(2, /*nullable=*/true);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(2, /*nullable=*/true);
   nanoarrow::UniqueArray input_array;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
   auto* list_array = input_array->children[0];
@@ -477,7 +455,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
   auto expected = cudf::make_lists_column(
     num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
 
-  auto input_schema = make_fixed_size_list_device_schema(width);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width);
   nanoarrow::UniqueArray input_array;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
   auto* list_array = input_array->children[0];
@@ -500,7 +478,7 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
 
 TEST_F(FromArrowDeviceTest, FixedSizeListInvalidBounds)
 {
-  auto input_schema = make_fixed_size_list_device_schema(3);
+  auto input_schema = make_struct_fixed_size_list_int64_schema(3);
   nanoarrow::UniqueArray input_array;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
 

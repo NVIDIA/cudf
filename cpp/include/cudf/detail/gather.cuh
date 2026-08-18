@@ -343,11 +343,10 @@ struct column_gatherer_impl<list_view> {
     // resource until the dedicated list/segmented gather MR port lands.
     // generate gather_data for the next level (N+1)
     lists::detail::gather_data gd =
-      nullify_out_of_bounds
-        ? lists::detail::make_gather_data<true>(
-            column, gather_map_begin, gather_map_size, stream, output_mr)
-        : lists::detail::make_gather_data<false>(
-            column, gather_map_begin, gather_map_size, stream, output_mr);
+      nullify_out_of_bounds ? lists::detail::make_gather_data<true>(
+                                column, gather_map_begin, gather_map_size, stream, output_mr)
+                            : lists::detail::make_gather_data<false>(
+                                column, gather_map_begin, gather_map_size, stream, output_mr);
 
     // the nesting case.
     if (list.child().type() == cudf::data_type{type_id::LIST}) {

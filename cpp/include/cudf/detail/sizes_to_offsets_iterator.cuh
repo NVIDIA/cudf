@@ -304,7 +304,7 @@ template <typename InputIterator>
 std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   InputIterator begin, InputIterator end, rmm::cuda_stream_view stream, cudf::memory_resources mr)
 {
-  auto count = static_cast<size_type>(std::distance(begin, end));
+  auto count          = static_cast<size_type>(std::distance(begin, end));
   auto offsets_column = make_numeric_column(
     data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto offsets_view = offsets_column->mutable_view();

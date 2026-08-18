@@ -81,25 +81,26 @@ TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
 
 TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
 {
+  // A request larger than any pool grows this thread's pool to its maximum and cycles through every
+  // stream in it, so the set holds the whole pool this thread leaves behind.
   std::unordered_set<cudaStream_t> first_thread_streams;
   std::thread first([&] {
-    auto const streams = get_streams_from_pool(4);
+    auto const streams = get_streams_from_pool(1024);
     first_thread_streams.insert(streams.begin(), streams.end());
   });
   first.join();
 
-  // A request this large grows the pool to its maximum and then cycles through every stream in it.
-  // Growth only appends, so a thread that adopted its predecessor's retired pool observes every
-  // stream that predecessor used, whereas one that created a fresh pool observes none of them.
+  // A thread that adopted the retired pool can only be handed streams from it. One that created a
+  // fresh pool would be handed newly created streams instead.
   std::unordered_set<cudaStream_t> second_thread_streams;
   std::thread second([&] {
-    auto const streams = get_streams_from_pool(256);
+    auto const streams = get_streams_from_pool(4);
     second_thread_streams.insert(streams.begin(), streams.end());
   });
   second.join();
 
-  EXPECT_FALSE(first_thread_streams.empty());
-  EXPECT_TRUE(std::all_of(first_thread_streams.begin(),
-                          first_thread_streams.end(),
-                          [&](auto stream) { return second_thread_streams.contains(stream); }));
+  EXPECT_FALSE(second_thread_streams.empty());
+  EXPECT_TRUE(std::all_of(second_thread_streams.begin(),
+                          second_thread_streams.end(),
+                          [&](auto stream) { return first_thread_streams.contains(stream); }));
 }

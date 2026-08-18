@@ -68,11 +68,10 @@ enum class use_data_page_mask : bool {
  *
  * @code{.cpp}
  * // Parse the metadata once
- * auto metadata = std::make_shared<parquet::experimental::hybrid_scan_metadata>(*footer_buffer,
- *                                                                               options);
+ * auto metadata = parquet::experimental::hybrid_scan_metadata{*footer_buffer, options};
  * // Construct lightweight readers that share it
- * auto reader_a = std::make_unique<parquet::experimental::hybrid_scan_reader>(*metadata);
- * auto reader_b = std::make_unique<parquet::experimental::hybrid_scan_reader>(*metadata);
+ * auto reader_a = std::make_unique<parquet::experimental::hybrid_scan_reader>(metadata);
+ * auto reader_b = std::make_unique<parquet::experimental::hybrid_scan_reader>(metadata);
  * @endcode
  *
  * @note The metadata is immutable after `setup_page_index()` has been called (or immediately after

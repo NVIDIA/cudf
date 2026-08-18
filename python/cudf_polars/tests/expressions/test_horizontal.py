@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 import polars as pl
@@ -66,6 +68,28 @@ def test_mean_horizontal_mixed_dtypes(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": [1, 2, None], "b": [1.5, None, 3.5]})
     q = df.select(pl.mean_horizontal("a", "b"))
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+def test_mean_horizontal_bool(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": [True, False, True], "b": [True, True, False]})
+    q = df.select(pl.mean_horizontal("a", "b"))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+@pytest.mark.parametrize(
+    "df",
+    [
+        pl.LazyFrame({"a": ["1", "2"], "b": ["3", "4"]}),
+        pl.LazyFrame({"a": [1, 2], "b": ["3", "4"]}),
+        pl.LazyFrame({"a": [date(2020, 1, 1)], "b": [date(2020, 1, 3)]}),
+    ],
+    ids=["str", "mixed_int_str", "date"],
+)
+def test_mean_horizontal_non_numeric_raises(
+    engine: pl.GPUEngine, df: pl.LazyFrame
+) -> None:
+    q = df.select(pl.mean_horizontal("a", "b"))
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
 
 
 def test_min_horizontal(df: pl.LazyFrame, engine: pl.GPUEngine) -> None:

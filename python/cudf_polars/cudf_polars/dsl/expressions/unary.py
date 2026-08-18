@@ -244,6 +244,14 @@ class UnaryFunction(Expr):
             raise NotImplementedError(
                 f"{self.name} is not supported for dtype {self.dtype.id().name}"
             )
+        if self.name == "mean_horizontal":
+            for child in children:
+                typ = child.dtype.polars_type
+                if not (typ.is_numeric() or typ == pl.Boolean):
+                    raise pl.exceptions.InvalidOperationError(
+                        f"'horizontal_mean' expects numeric expressions, found "
+                        f"(dtype={typ})"
+                    )
         if self.name == "mode" and not POLARS_VERSION_LT_136:
             (maintain_order,) = self.options
             if maintain_order:

@@ -406,30 +406,57 @@ void reader_impl::assemble_dict_transcoded_columns(
       std::vector<size_type> key_counts_prefix(chunk_indices.size() + 1, 0);
       std::inclusive_scan(
         chunk_key_counts.begin(), chunk_key_counts.end(), key_counts_prefix.begin() + 1);
+      auto const total_keys = key_counts_prefix.back();
 
-      // Stack keys: concatenate every chunk's key slice from the batched `all_keys` (not yet
-      // deduplicated). `all_keys` owns the data and outlives this concatenate, so the slices stay
-      // valid. Chunk `k`'s entries occupy `[key_offset, key_offset + chunk_key_counts[k])` in
-      // `pass.str_dict_index`, where `key_offset` is recovered from the chunk's stored pointer.
-      auto const all_keys_column = ensure_all_keys();
-      std::vector<column_view> key_slices(chunk_indices.size());
-      std::transform(cuda::counting_iterator<size_t>{0},
-                     cuda::counting_iterator{chunk_indices.size()},
-                     key_slices.begin(),
-                     [&](size_t k) {
-                       auto const& chunk = pass.chunks[chunk_indices[k]];
-                       auto const key_offset =
-                         static_cast<size_type>(chunk.str_dict_index - pass.str_dict_index.data());
-                       return cudf::detail::slice(
-                         all_keys_column, key_offset, key_offset + chunk_key_counts[k], _stream);
-                     });
-      auto const stacked_keys =
-        cudf::detail::concatenate(key_slices, _stream, get_current_device_resource_ref());
+      // Stack this column's per-chunk keys, sliced out of the batched `all_string_column_keys`.
+      // Chunk `k`'s entries occupy `[key_offset, key_offset + chunk_key_counts[k])` in
+      // `pass.str_dict_index`, where `key_offset` is recovered from the chunk's stored pointer into
+      // that buffer. `all_string_column_keys` (owned by the caller-scoped `all_string_column_keys`)
+      // outlives this block, so any view into it stays valid.
+      //
+      // When those per-chunk ranges are already contiguous in `all_keys` -- e.g. a single string
+      // column, whose chunks are laid out consecutively -- the stacked keys are just one zero-copy
+      // sub-range of `all_keys`, so the per-chunk gather (`concatenate`) is skipped entirely.
+      // Otherwise (multiple string columns interleaved row-group-major) the strided slices are
+      // concatenated into one contiguous column.
+      auto const all_string_column_keys = ensure_all_keys();
+      auto const key_offset_of          = [&](size_t k) {
+        return static_cast<size_type>(pass.chunks[chunk_indices[k]].str_dict_index -
+                                      pass.str_dict_index.data());
+      };
+      bool contiguous = true;
+      for (size_t k = 0; k + 1 < chunk_indices.size(); ++k) {
+        if (key_offset_of(k + 1) != key_offset_of(k) + chunk_key_counts[k]) {
+          contiguous = false;
+          break;
+        }
+      }
+
+      std::unique_ptr<column> stacked_keys_owner;  // holds the gathered keys in the strided case
+      column_view const stacked_keys = [&] {
+        if (contiguous) {
+          auto const first = key_offset_of(0);
+          return cudf::detail::slice(all_string_column_keys, first, first + total_keys, _stream);
+        }
+        std::vector<column_view> key_slices(chunk_indices.size());
+        std::transform(cuda::counting_iterator<size_t>{0},
+                       cuda::counting_iterator{chunk_indices.size()},
+                       key_slices.begin(),
+                       [&](size_t k) {
+                         return cudf::detail::slice(all_string_column_keys,
+                                                    key_offset_of(k),
+                                                    key_offset_of(k) + chunk_key_counts[k],
+                                                    _stream);
+                       });
+        stacked_keys_owner =
+          cudf::detail::concatenate(key_slices, _stream, get_current_device_resource_ref());
+        return stacked_keys_owner->view();
+      }();
 
       // Deduplicate the stacked keys. `encode` yields the compact unique keys (on `_mr`, the output
       // keys child) plus an INT32 map from each stacked-key position to its compact index.
-      auto encoded = cudf::dictionary::detail::encode(
-        stacked_keys->view(), data_type{type_id::INT32}, _stream, _mr);
+      auto encoded =
+        cudf::dictionary::detail::encode(stacked_keys, data_type{type_id::INT32}, _stream, _mr);
       auto encoded_contents = encoded->release();
       auto stacked_to_unique =
         std::move(encoded_contents.children[0]);                   // INT32 map (keep for kernel)

@@ -43,7 +43,7 @@ namespace dictionary::detail {
 std::unique_ptr<column> encode(column_view const& column,
                                data_type indices_type,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr);
+                               memory_resources mr);
 
 /**
  * @brief Create a column by gathering the keys from the provided
@@ -62,7 +62,7 @@ std::unique_ptr<column> encode(column_view const& column,
  */
 std::unique_ptr<column> decode(dictionary_column_view const& dictionary_column,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr);
+                               memory_resources mr);
 
 /**
  * @brief Return minimal integer type for the given number of elements.

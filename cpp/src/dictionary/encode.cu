@@ -56,7 +56,7 @@ struct encode_fn {
 std::unique_ptr<column> encode(column_view const& input,
                                data_type indices_type,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr)
+                               memory_resources mr)
 {
   CUDF_EXPECTS(is_signed(indices_type) && is_index_type(indices_type),
                "indices must be type signed integer",
@@ -156,7 +156,7 @@ data_type get_indices_type_for_size(size_type keys_size)
 std::unique_ptr<column> encode(column_view const& input_column,
                                data_type indices_type,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr)
+                               memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::encode(input_column, indices_type, stream, mr);

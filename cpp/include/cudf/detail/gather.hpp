@@ -22,9 +22,7 @@ namespace detail {
 
 /**
  * @copydoc cudf::gather(table_view const&,column_view const&,out_of_bounds_policy,
- * negative_index_policy,cuda::stream_ref,rmm::device_async_resource_ref)
- *
- * @param mr Memory resources used for temporary allocations and the returned table
+ * negative_index_policy,cuda::stream_ref,memory_resources)
  */
 std::unique_ptr<table> gather(table_view const& source_table,
                               column_view const& gather_map,

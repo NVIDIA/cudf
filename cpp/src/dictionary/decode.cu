@@ -36,7 +36,7 @@ struct indices_handler_fn {
  */
 std::unique_ptr<column> decode(dictionary_column_view const& source,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr)
+                               memory_resources mr)
 {
   if (source.is_empty()) return make_empty_column(type_id::EMPTY);
 
@@ -67,7 +67,7 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
 
 std::unique_ptr<column> decode(dictionary_column_view const& source,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr)
+                               memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::decode(source, stream, mr);

@@ -2252,6 +2252,9 @@ def test_empty_csv_with_columns_pandas_compat(buffer, kwargs):
         ("archive.tar", "tar"),
         ("archive.tgz", "tar"),
         ("archive.tar.gz", "tar"),
+        ("archive.tar.bz2", "tar"),
+        ("archive.tar.xz", "tar"),
+        ("archive.tar.zst", "tar"),
         ("data.xz", "xz"),
         ("data.zst", "zstd"),
     ],
@@ -2268,8 +2271,7 @@ def test_read_csv_unreadable_compression_raises(tmp_path, name, fmt):
 
 
 def test_read_csv_explicit_unsupported_compression_raises(tmp_path):
-    path = tmp_path / "data.csv"
-    path.write_text("a,b\n1,2\n")
+    path = tmp_path / "does_not_exist.csv"
     with pytest.raises(NotImplementedError, match="tar"):
         cudf.read_csv(str(path), compression="tar")
 

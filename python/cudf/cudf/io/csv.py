@@ -130,6 +130,13 @@ def read_csv(
     if bytes_per_thread is None:
         bytes_per_thread = ioutils._BYTES_PER_THREAD_DEFAULT
 
+    if compression is None:
+        c_compression = plc.io.types.CompressionType.NONE
+    elif compression not in _COMPRESSION_MAP:
+        raise _unsupported_compression_error(compression)
+    else:
+        c_compression = _COMPRESSION_MAP[compression]
+
     # Refuse containers libcudf would silently misparse rather than reject.
     # Checked before the source is resolved, while it is still a path.
     if compression == "infer":
@@ -169,13 +176,6 @@ def read_csv(
 
     if byte_range is None:
         byte_range = (0, 0)
-
-    if compression is None:
-        c_compression = plc.io.types.CompressionType.NONE
-    else:
-        if compression not in _COMPRESSION_MAP:
-            raise _unsupported_compression_error(compression)
-        c_compression = _COMPRESSION_MAP[compression]
 
     # We need this later when setting index cols
     orig_header = header

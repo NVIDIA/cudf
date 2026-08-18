@@ -566,6 +566,8 @@ class UnaryFunction(Expr):
             )
         if self.name in ("max_by", "min_by"):
             val, by = (child.evaluate(df, context=context) for child in self.children)
+            if by.nan_count(stream=df.stream) > 0:
+                by = by.mask_nans(stream=df.stream)
             agg = (
                 plc.aggregation.argmax()
                 if self.name == "max_by"

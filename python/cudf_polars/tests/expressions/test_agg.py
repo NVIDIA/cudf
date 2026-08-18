@@ -160,6 +160,32 @@ def test_max_min_by(engine: pl.GPUEngine, expr: str, data) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+)
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+@pytest.mark.parametrize(
+    "by",
+    [
+        [1.0, float("nan"), 2.0],
+        [float("nan"), 1.0, 2.0],
+        [1.0, 2.0, float("nan")],
+        [-1.0, float("nan"), 1.0],
+        [1.0, float("nan"), float("nan")],
+        [float("nan"), float("nan"), 1.0],
+    ],
+)
+def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
+    df = pl.LazyFrame(
+        {
+            "a": pl.Series([10, 20, 30], dtype=pl.Int64),
+            "b": pl.Series(by, dtype=pl.Float64),
+        }
+    )
+    q = df.select(getattr(pl.col("a"), expr)("b"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_implode(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": [1, 2, None, 3]})
     q = df.select(pl.col("a").implode())

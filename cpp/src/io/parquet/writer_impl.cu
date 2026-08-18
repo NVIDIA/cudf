@@ -1341,18 +1341,13 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
     return std::pair(std::move(dict_data), std::move(dict_index));
   }
 
-  // The hash map only ever needs to hold as many entries as a chunk could actually use for
-  // dictionary encoding; inserts stop once that many entries have been added. Sizing the map from
-  // `num_values` (the *leaf* element count) therefore over-allocates by orders of magnitude for
-  // list columns with wide leaves, where the map alone can dwarf the payload it describes.
+  // The static map only needs slots for as many entries as maximum parquet dictionary size.
   auto const max_dict_entries = [&]() -> size_type {
-    // Under ADAPTIVE, a chunk is rejected below if its unique data exceeds the dictionary size
-    // limit. The smallest a unique entry can be is 4 bytes (INT32/FLOAT, or an empty BYTE_ARRAY),
-    // so no chunk that would be accepted can hold more than `size_limit / 4` entries.
+    // Dictionary elements are at least 4 bytes, so cap the entry count at max_dict_data_size / 4.
     if (dict_policy == dictionary_policy::ADAPTIVE) {
-      auto const size_limit = max_page_bytes(compression, max_dict_size);
-      return static_cast<size_type>(
-        std::clamp<size_t>(size_limit / sizeof(int32_t), 1, static_cast<size_t>(MAX_DICT_SIZE)));
+      auto const max_dict_data_size = max_page_bytes(compression, max_dict_size);
+      return static_cast<size_type>(std::clamp<size_t>(
+        max_dict_data_size / sizeof(int32_t), 1, static_cast<size_t>(MAX_DICT_SIZE)));
     }
     return MAX_DICT_SIZE;
   }();

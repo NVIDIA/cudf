@@ -268,9 +268,7 @@ dremel_data get_encoding(column_view h_col,
   rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream);
   rmm::device_uvector<uint8_t> def_level(max_vals_size, stream);
 
-  // These are only read by the loop below that merges the third-last nesting level and up. A column
-  // with a single list level (e.g. `list<int>`) never enters that loop, so skip allocating
-  // `2 * max_vals_size` bytes we would never touch.
+  // Use max_vals_size only for nested lists; otherwise no temporary values are needed.
   auto const temp_vals_size = nesting_levels.size() > 2 ? max_vals_size : size_t{0};
   rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream);
   rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream);

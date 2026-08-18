@@ -1162,7 +1162,7 @@ void reprog::build_start_ids()
  * @brief Check a specific instruction for errors.
  *
  * Currently this is checking for an infinite-loop condition as documented in this issue:
- * https://github.com/rapidsai/cudf/issues/10006
+ * https://github.com/NVIDIA/cudf/issues/10006
  *
  * Example instructions list created from pattern `(A?)+`
  * ```

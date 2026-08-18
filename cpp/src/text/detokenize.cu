@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,10 +22,10 @@
 
 #include <nvtext/tokenize.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 
 namespace nvtext {
 namespace detail {
@@ -90,7 +90,7 @@ rmm::device_uvector<cudf::size_type> create_token_row_offsets(
   cudf::column_view const& row_indices,
   cudf::column_view const& sorted_indices,
   cudf::size_type tokens_counts,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   index_changed_fn fn{cudf::detail::indexalator_factory::make_input_iterator(row_indices),
                       sorted_indices.data<cudf::size_type>()};
@@ -122,7 +122,7 @@ rmm::device_uvector<cudf::size_type> create_token_row_offsets(
 std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& strings,
                                          cudf::column_view const& row_indices,
                                          cudf::string_scalar const& separator,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(separator.is_valid(stream), "Parameter separator must be valid");
@@ -163,7 +163,7 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
 std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& input,
                                          cudf::column_view const& row_indices,
                                          cudf::string_scalar const& separator,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -37,7 +37,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
 #include <thrust/replace.h>
@@ -1027,13 +1026,13 @@ std::unique_ptr<column> compute_tdigests(int delta,
   // to represent cluster indices (for example, if a tdigest had 100 clusters, the keys should fall
   // into the range 0-99).  But since we have multiple tdigests, we need to keep the keys unique
   // between the groups, so we add our group start offset.
-  auto keys = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0},
-    compute_tdigests_keys_fn<CumulativeWeight>{delta,
-                                               cinfo.cluster_wl.begin(),
-                                               cinfo.cluster_start.begin(),
-                                               cinfo.num_clusters.begin(),
-                                               group_cumulative_weight});
+  auto keys =
+    cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                             compute_tdigests_keys_fn<CumulativeWeight>{delta,
+                                                                        cinfo.cluster_wl.begin(),
+                                                                        cinfo.cluster_start.begin(),
+                                                                        cinfo.num_clusters.begin(),
+                                                                        group_cumulative_weight});
 
   // mean and weight data
   auto centroid_means = cudf::make_numeric_column(
@@ -1450,9 +1449,9 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto merged_min_col = cudf::make_numeric_column(
     data_type{type_id::FLOAT64}, num_groups, mask_state::UNALLOCATED, stream, mr);
   auto min_iter =
-    thrust::make_transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
-                                      tdv.min_begin(), cudf::tdigest::detail::size_begin(tdv))),
-                                    tdigest_min{});
+    cuda::transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
+                               tdv.min_begin(), cudf::tdigest::detail::size_begin(tdv))),
+                             tdigest_min{});
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         group_labels,
                         group_labels + num_group_labels,
@@ -1465,9 +1464,9 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto merged_max_col = cudf::make_numeric_column(
     data_type{type_id::FLOAT64}, num_groups, mask_state::UNALLOCATED, stream, mr);
   auto max_iter =
-    thrust::make_transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
-                                      tdv.max_begin(), cudf::tdigest::detail::size_begin(tdv))),
-                                    tdigest_max{});
+    cuda::transform_iterator(cuda::make_zip_iterator(cuda::std::make_tuple(
+                               tdv.max_begin(), cudf::tdigest::detail::size_begin(tdv))),
+                             tdigest_max{});
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         group_labels,
                         group_labels + num_group_labels,

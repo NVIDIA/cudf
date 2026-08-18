@@ -135,7 +135,7 @@ rmm::device_uvector<cudf::size_type> null_roll_up(column_view const& input, cuda
   rmm::device_uvector<cudf::size_type> output(input.size(), stream);
 
   auto device_view = column_device_view::create(input, stream);
-  auto invalid_it  = thrust::make_transform_iterator(
+  auto invalid_it  = cuda::transform_iterator(
     cudf::detail::make_validity_iterator(*device_view),
     cuda::proclaim_return_type<int>([] __device__(int valid) -> int { return 1 - valid; }));
 

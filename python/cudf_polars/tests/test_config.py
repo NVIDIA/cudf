@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import cast
 
 import pytest
@@ -327,6 +328,7 @@ def test_validate_cluster() -> None:
         "client_device_threshold",
         "max_concurrent_io_tasks",
         "num_py_executors",
+        "kvikio_nthreads",
     ],
 )
 def test_validate_streaming_executor_options(option: str) -> None:
@@ -335,6 +337,16 @@ def test_validate_streaming_executor_options(option: str) -> None:
             pl.GPUEngine(
                 executor="streaming",
                 executor_options={option: object()},
+            )
+        )
+
+
+def test_kvikio_nthreads_non_positive_raises() -> None:
+    with pytest.raises(ValueError, match="kvikio_nthreads must be positive"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"kvikio_nthreads": 0},
             )
         )
 
@@ -544,6 +556,16 @@ def test_parquet_options_object_engine_default() -> None:
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
     assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
+
+def test_parquet_options_unspecified_dict_factory() -> None:
+    parquet_options = ParquetOptions()
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
+    assert result["parquet_options"]["prefetch_file_metadata"] is None
 
 
 def test_validate_raise_on_fail() -> None:
@@ -853,6 +875,53 @@ def test_num_py_executors_from_env(
         config = ConfigOptions.from_polars_engine(engine)
         assert config.executor.name == "streaming"
         assert config.executor.num_py_executors == 8
+
+
+def test_kvikio_nthreads_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as m:
+        m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
+        m.delenv("KVIKIO_NTHREADS", raising=False)
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 256
+
+
+def test_kvikio_nthreads_from_executor_options() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"kvikio_nthreads": 128},
+        )
+    )
+    assert config.executor.kvikio_nthreads == 128
+
+
+def test_kvikio_nthreads_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", "64")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 64
+
+
+def test_kvikio_nthreads_from_kvikio_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
+        m.setenv("KVIKIO_NTHREADS", "32")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 32
+
+
+def test_kvikio_nthreads_cudf_polars_env_takes_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", "64")
+        m.setenv("KVIKIO_NTHREADS", "32")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 64
 
 
 def test_dask_sink_to_directory_false_raises() -> None:

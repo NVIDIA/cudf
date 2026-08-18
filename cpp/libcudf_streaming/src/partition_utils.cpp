@@ -59,7 +59,7 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
 
   // Notice, the offset argument for split() and hash_partition() doesn't align.
   // hash_partition() returns the start offset of each partition thus we have to
-  // skip the first offset. See: <https://github.com/rapidsai/cudf/issues/4607>.
+  // skip the first offset. See: <https://github.com/NVIDIA/cudf/issues/4607>.
   auto partition_offsets =
     cudf::host_span<cudf::size_type const>(offsets.data() + 1, offsets.size() - 2);
 

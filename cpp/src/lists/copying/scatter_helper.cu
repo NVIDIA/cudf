@@ -18,7 +18,6 @@
 #include <cuda/std/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -43,7 +42,7 @@ std::pair<rmm::device_buffer, size_type> construct_child_nullmask(
   cudf::lists_column_device_view const& source_lists,
   cudf::lists_column_device_view const& target_lists,
   size_type num_child_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto is_valid_predicate = [d_list_vector  = parent_list_vector.begin(),
@@ -148,7 +147,7 @@ struct list_child_constructor {
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_fixed_width<T>())
   {
@@ -207,7 +206,7 @@ struct list_child_constructor {
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(std::is_same_v<T, string_view>)
   {
@@ -270,7 +269,7 @@ struct list_child_constructor {
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(std::is_same_v<T, list_view>)
   {
@@ -326,7 +325,7 @@ struct list_child_constructor {
 
     // child_list_views should now have been populated, with source and target references.
 
-    auto begin = thrust::make_transform_iterator(
+    auto begin = cuda::transform_iterator(
       child_list_views.begin(),
       cuda::proclaim_return_type<size_type>([] __device__(auto const& row) { return row.size(); }));
 
@@ -364,7 +363,7 @@ struct list_child_constructor {
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(std::is_same_v<T, struct_view>)
   {
@@ -400,8 +399,8 @@ struct list_child_constructor {
                                            {structs_list_offsets, structs_member}));
     };
 
-    auto const iter_source_member_as_list = thrust::make_transform_iterator(
-      cuda::counting_iterator<cudf::size_type>{0}, [&](auto child_idx) {
+    auto const iter_source_member_as_list =
+      cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0}, [&](auto child_idx) {
         return project_member_as_list_view(source_structs.child(child_idx),
                                            source_lists_column_view.size(),
                                            source_lists_column_view.offsets(),
@@ -409,8 +408,8 @@ struct list_child_constructor {
                                            source_lists_column_view.null_count());
       });
 
-    auto const iter_target_member_as_list = thrust::make_transform_iterator(
-      cuda::counting_iterator<cudf::size_type>{0}, [&](auto child_idx) {
+    auto const iter_target_member_as_list =
+      cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0}, [&](auto child_idx) {
         return project_member_as_list_view(target_structs.child(child_idx),
                                            target_lists_column_view.size(),
                                            target_lists_column_view.offsets(),
@@ -455,7 +454,7 @@ std::unique_ptr<column> build_lists_child_column_recursive(
   cudf::column_view const& list_offsets,
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher<dispatch_storage_type>(child_column_type,

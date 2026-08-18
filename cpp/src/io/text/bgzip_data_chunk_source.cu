@@ -19,12 +19,12 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 #include <thrust/transform.h>
 
@@ -62,7 +62,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
   template <typename T>
   static void copy_to_device(cudf::detail::host_vector<T> const& host,
                              rmm::device_uvector<T>& device,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
   {
     // Buffer needs to be padded.
     // Required by `inflate_kernel`.
@@ -102,7 +102,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
     std::size_t read_pos{};
     bool is_decompressed{};
 
-    decompression_blocks(rmm::cuda_stream_view init_stream)
+    decompression_blocks(cuda::stream_ref init_stream)
       : h_compressed_blocks{cudf::detail::make_pinned_vector_async<char>(0, init_stream)},
         h_compressed_offsets{cudf::detail::make_pinned_vector_async<std::size_t>(0, init_stream)},
         h_decompressed_offsets{cudf::detail::make_pinned_vector_async<std::size_t>(0, init_stream)},
@@ -122,7 +122,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
       h_decompressed_offsets.push_back(0);
     }
 
-    void decompress(rmm::cuda_stream_view stream)
+    void decompress(cuda::stream_ref stream)
     {
       if (is_decompressed) { return; }
       copy_to_device(h_compressed_blocks, d_compressed_blocks, stream);
@@ -288,7 +288,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
   }
 
   std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t read_size,
-                                                    rmm::cuda_stream_view stream) override
+                                                    cuda::stream_ref stream) override
   {
     CUDF_FUNC_RANGE();
     if (read_size <= _curr_blocks.remaining_size()) {
@@ -300,7 +300,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
         read_size,
         stream));
       // record the host-to-device copy, decompression and device copy
-      CUDF_CUDA_TRY(cudaEventRecord(_curr_blocks.event, stream.value()));
+      CUDF_CUDA_TRY(cudaEventRecord(_curr_blocks.event, stream.get()));
       _curr_blocks.consume_bytes(read_size);
       return std::make_unique<device_uvector_data_chunk>(std::move(data));
     }
@@ -320,8 +320,8 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
                                  read_size - _prev_blocks.remaining_size(),
                                  stream));
     // record the host-to-device copy, decompression and device copy
-    CUDF_CUDA_TRY(cudaEventRecord(_curr_blocks.event, stream.value()));
-    CUDF_CUDA_TRY(cudaEventRecord(_prev_blocks.event, stream.value()));
+    CUDF_CUDA_TRY(cudaEventRecord(_curr_blocks.event, stream.get()));
+    CUDF_CUDA_TRY(cudaEventRecord(_prev_blocks.event, stream.get()));
     read_size -= _prev_blocks.remaining_size();
     _prev_blocks.consume_bytes(_prev_blocks.remaining_size());
     _curr_blocks.consume_bytes(read_size);

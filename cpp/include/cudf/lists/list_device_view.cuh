@@ -12,7 +12,6 @@
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda_runtime.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace CUDF_EXPORT cudf {
 
@@ -144,12 +143,12 @@ class list_device_view {
   /// const pair iterator for the list
   template <typename T>
   using const_pair_iterator =
-    thrust::transform_iterator<pair_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
+    cuda::transform_iterator<pair_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
 
   /// const pair iterator type for the list
   template <typename T>
   using const_pair_rep_iterator =
-    thrust::transform_iterator<pair_rep_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
+    cuda::transform_iterator<pair_rep_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
 
   /**
    * @brief Fetcher for a pair iterator to the first element in the list_device_view.

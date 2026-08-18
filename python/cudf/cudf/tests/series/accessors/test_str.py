@@ -2619,7 +2619,7 @@ def _cat_convert_seq_to_cudf(others):
                 np.array(["f", "g", "h", "i", "j"]),
             ],
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/5862"
+                reason="https://github.com/NVIDIA/cudf/issues/5862"
             ),
         ),
         pytest.param(
@@ -2683,7 +2683,7 @@ def test_string_index_duplicate_str_cat(data, others, sep, na_rep, name):
 
     # TODO: Remove got.sort_values call once we have `join` param support
     # in `.str.cat`
-    # https://github.com/rapidsai/cudf/issues/5862
+    # https://github.com/NVIDIA/cudf/issues/5862
 
     assert_eq(
         expect.sort_values() if not isinstance(expect, str) else expect,
@@ -2810,7 +2810,7 @@ def test_string_cat(ps_gs, others, sep, na_rep, index, request):
     request.applymarker(
         pytest.mark.xfail(
             is_any_others_series_with_string_index,
-            reason="https://github.com/rapidsai/cudf/issues/21123",
+            reason="https://github.com/NVIDIA/cudf/issues/21123",
         )
     )
     pd_others = others

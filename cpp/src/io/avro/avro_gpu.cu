@@ -243,7 +243,7 @@ avro_decode_row(schemadesc_s const* schema,
       } break;
 
       // N.B. These aren't handled yet, see the discussion on
-      //      https://github.com/rapidsai/cudf/pull/12788.  The decoding logic
+      //      https://github.com/NVIDIA/cudf/pull/12788.  The decoding logic
       //      is correct, though, so there's no harm in having them here.
       case type_timestamp_millis: [[fallthrough]];
       case type_timestamp_micros: [[fallthrough]];

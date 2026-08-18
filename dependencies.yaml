@@ -833,10 +833,10 @@ dependencies:
     common:
       - output_types: [conda]
         packages:
-          - pyarrow>=19.0.0,<24  # https://github.com/rapidsai/cudf/issues/22229
+          - pyarrow>=19.0.0,<24  # https://github.com/NVIDIA/cudf/issues/22229
       - output_types: [requirements, pyproject]
         packages:
-          - pyarrow>=19.0.0,<24  # https://github.com/rapidsai/cudf/issues/22229
+          - pyarrow>=19.0.0,<24  # https://github.com/NVIDIA/cudf/issues/22229
   # 'cuda_version' intentionally does not contain fallback entries... we want
   # a loud error if an unsupported 'cuda' value is passed
   cuda_version:
@@ -966,7 +966,7 @@ dependencies:
               # We always want nvJitLink >= whatever minor version was available in the build environment
               # nvJitLink tends to follow the CTK's minor versions, but check at https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
               #
-              # ref: https://github.com/rapidsai/cudf/pull/20873
+              # ref: https://github.com/NVIDIA/cudf/pull/20873
               - nvidia-nvjitlink-cu12>=12.9,<13
           - matrix:
               cuda: "13.*"
@@ -1253,7 +1253,7 @@ dependencies:
       - output_types: [conda, requirements, pyproject]
         packages:
           # Upper bound on aiobotocore to avoid build issues in CI
-          # https://github.com/rapidsai/cudf/issues/20843
+          # https://github.com/NVIDIA/cudf/issues/20843
           - aiobotocore>=2.2.0,<3
           - boto3>=1.21.21
           - botocore>=1.24.21

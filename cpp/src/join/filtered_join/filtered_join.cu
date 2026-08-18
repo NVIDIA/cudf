@@ -107,7 +107,8 @@ filtered_join::filtered_join(cudf::table_view const& right,
                     stream.get()},
     _right{right},
     _nulls_equal{compare_nulls},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)}
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
+      _right, stream, cudf::get_current_device_resource_ref())}
 {
   cudf::scoped_range range{"filtered_join::filtered_join"};
   if (_right.num_rows() == 0) return;
@@ -129,9 +130,10 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
 {
   cudf::scoped_range range{"filtered_join::semi_anti_join"};
 
-  auto const preprocessed_left = [&left, stream] {
+  auto const preprocessed_left = [left, stream] {
     cudf::scoped_range range{"filtered_join::semi_anti_join::preprocessed_left"};
-    return cudf::detail::row::equality::preprocessed_table::create(left, stream);
+    return cudf::detail::row::equality::preprocessed_table::create(
+      left, stream, cudf::get_current_device_resource_ref());
   }();
 
   auto contains_map            = rmm::device_uvector<bool>(left.num_rows(), stream);

@@ -28,10 +28,10 @@
         </license>
     </licenses>
     <scm>
-        <connection>scm:git:https://github.com/rapidsai/cudf.git</connection>
-        <developerConnection>scm:git:git@github.com:rapidsai/cudf.git</developerConnection>
+        <connection>scm:git:https://github.com/NVIDIA/cudf.git</connection>
+        <developerConnection>scm:git:git@github.com:NVIDIA/cudf.git</developerConnection>
         <tag>HEAD</tag>
-        <url>https://github.com/rapidsai/cudf</url>
+        <url>https://github.com/NVIDIA/cudf</url>
     </scm>
     <developers>
         <developer>

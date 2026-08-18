@@ -17,7 +17,7 @@ namespace cudf::io::orc::detail {
 using strings::detail::fixed_point_string_size;
 
 // Nanosecond statistics should not be enabled until the spec version is set correctly in the output
-// files. See https://github.com/rapidsai/cudf/issues/14325 for more details
+// files. See https://github.com/NVIDIA/cudf/issues/14325 for more details
 constexpr bool enable_nanosecond_statistics = true;
 
 constexpr unsigned int init_threads_per_group = 32;

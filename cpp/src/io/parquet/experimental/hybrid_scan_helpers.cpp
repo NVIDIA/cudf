@@ -439,7 +439,8 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
   return stats_filtered_row_group_indices.value_or(all_row_group_indices(row_group_indices));
 }
 
-std::vector<byte_range_info> aggregate_reader_metadata::get_bloom_filter_bytes(
+std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::span<std::vector<cudf::size_type> const> row_group_indices,
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
@@ -463,7 +464,7 @@ std::vector<byte_range_info> aggregate_reader_metadata::get_bloom_filter_bytes(
                   std::back_inserter(bloom_filter_col_schemas),
                   [](auto& bloom_filter_literals) { return not bloom_filter_literals.empty(); });
 
-  // No equality literals found, return empty vector
+  // No equality literals found, return empty pair
   if (bloom_filter_col_schemas.empty()) { return {}; }
 
   // Compute total number of input row groups
@@ -476,36 +477,42 @@ std::vector<byte_range_info> aggregate_reader_metadata::get_bloom_filter_bytes(
   std::vector<byte_range_info> bloom_filter_bytes;
   bloom_filter_bytes.reserve(num_chunks);
 
+  // Parallel map identifying the source each emitted byte range must be fetched from
+  std::vector<cudf::size_type> bloom_filter_source_map;
+  bloom_filter_source_map.reserve(num_chunks);
+
   // Flag to check if we have at least one valid bloom filter offset
   auto have_bloom_filters = false;
 
   // For all sources
-  std::for_each(cuda::counting_iterator<std::size_t>{0},
-                cuda::counting_iterator{row_group_indices.size()},
-                [&](auto const src_index) {
-                  // Get all row group indices in the data source
-                  auto const& rg_indices = row_group_indices[src_index];
-                  // For all row groups
-                  std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
-                    // For all column chunks
-                    std::for_each(
-                      bloom_filter_col_schemas.begin(),
-                      bloom_filter_col_schemas.end(),
-                      [&](auto const schema_idx) {
-                        auto& col_meta = get_column_metadata(rg_index, src_index, schema_idx);
-                        // Get bloom filter offsets and sizes
-                        bloom_filter_bytes.emplace_back(col_meta.bloom_filter_offset.value_or(0),
-                                                        col_meta.bloom_filter_length.value_or(0));
+  std::for_each(
+    cuda::counting_iterator<std::size_t>{0},
+    cuda::counting_iterator{row_group_indices.size()},
+    [&](auto const src_index) {
+      // Get all row group indices in the data source
+      auto const& rg_indices = row_group_indices[src_index];
+      // For all row groups
+      std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
+        // For all column chunks
+        std::for_each(
+          bloom_filter_col_schemas.begin(),
+          bloom_filter_col_schemas.end(),
+          [&](auto const schema_idx) {
+            auto& col_meta = get_column_metadata(rg_index, src_index, schema_idx);
+            // Get bloom filter offsets and sizes
+            bloom_filter_bytes.emplace_back(col_meta.bloom_filter_offset.value_or(0),
+                                            col_meta.bloom_filter_length.value_or(0));
+            bloom_filter_source_map.emplace_back(static_cast<cudf::size_type>(src_index));
 
-                        // Set `have_bloom_filters` if `bloom_filter_offset` is valid
-                        if (col_meta.bloom_filter_offset.has_value()) { have_bloom_filters = true; }
-                      });
-                  });
-                });
+            // Set `have_bloom_filters` if `bloom_filter_offset` is valid
+            if (col_meta.bloom_filter_offset.has_value()) { have_bloom_filters = true; }
+          });
+      });
+    });
 
   if (not have_bloom_filters) { return {}; }
 
-  return bloom_filter_bytes;
+  return {std::move(bloom_filter_bytes), std::move(bloom_filter_source_map)};
 }
 
 std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
@@ -698,6 +705,13 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
+
+  // Ensure there is one bloom filter data span per eligible column in each row group
+  CUDF_EXPECTS(bloom_filter_data.size() ==
+                 static_cast<std::size_t>(total_row_groups) * bloom_filter_col_schemas.size(),
+               "Bloom filter data size must match the number of row groups times the number of "
+               "columns with bloom filters and an equality predicate",
+               std::invalid_argument);
 
   // Transform bloom filter data to cuda::std::byte type for apply_bloom_filters
   std::vector<cudf::device_span<cuda::std::byte const>> transformed_bloom_filter_data;

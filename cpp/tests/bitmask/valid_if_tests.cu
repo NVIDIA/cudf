@@ -48,21 +48,20 @@ TEST_F(ValidIfTest, ExplicitMemoryResourcesEmptyRange)
   auto harness = cudf::test::memory_resource_test_harness{this->mr()};
   auto stream  = cudf::get_default_stream();
 
+  // No harness.synchronize inside the scope: empty range has no GPU operations pending.
   auto actual = [&] {
     auto current_scope = harness.fail_on_current_device_resource_use();
-    auto result        = cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
-                                         cuda::counting_iterator<cudf::size_type>{0},
-                                         odds_valid{},
-                                         stream,
-                                         harness.resources());
-    harness.synchronize(stream);
-    return result;
+    return cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
+                                  cuda::counting_iterator<cudf::size_type>{0},
+                                  odds_valid{},
+                                  stream,
+                                  harness.resources());
   }();
 
   EXPECT_EQ(0u, actual.first.size());
   EXPECT_EQ(nullptr, actual.first.data());
   EXPECT_EQ(0, actual.second);
-  harness.expect_no_live_allocations(stream);
+  // total == 0 implies value == 0; no sync needed since no allocations were ever made.
   EXPECT_EQ(0, harness.output_mr().get_bytes_counter().total);
   EXPECT_EQ(0, harness.temporary_mr().get_bytes_counter().total);
 }

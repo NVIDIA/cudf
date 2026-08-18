@@ -1753,7 +1753,7 @@ TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTestChunked)
 }
 
 // Disabled as this test requires about 7GB of device memory.
-// See https://github.com/rapidsai/cudf/issues/20876 for more info.
+// See https://github.com/NVIDIA/cudf/issues/20876 for more info.
 TEST_F(ContiguousSplitUntypedTest, DISABLED_ChunkedPackNextReturnValueOver2GB)
 {
   auto const mr = cudf::get_current_device_resource_ref();

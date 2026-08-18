@@ -43,13 +43,14 @@
 #include <cuda/numeric>
 #include <cuda/stream>
 #include <thrust/fill.h>
-#include <thrust/for_each.h>
 
 #include <algorithm>
 #include <cstring>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <numeric>
+#include <optional>
 #include <utility>
 
 #ifndef CUDF_VERSION
@@ -65,6 +66,7 @@ Compression to_parquet_compression(compression_type compression)
   switch (compression) {
     case compression_type::AUTO:
     case compression_type::SNAPPY: return Compression::SNAPPY;
+    case compression_type::GZIP: return Compression::GZIP;
     case compression_type::ZSTD: return Compression::ZSTD;
     case compression_type::LZ4:
       // Parquet refers to LZ4 as "LZ4_RAW"; Parquet's "LZ4" is not standard LZ4
@@ -1209,6 +1211,8 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   if (chunks.is_empty()) { return cudf::detail::hostdevice_vector<size_type>{}; }
 
+  kernel_error error_code(stream);
+
   chunks.host_to_device_async(stream);
   // Calculate number of pages and store in respective chunks
   InitEncoderPages(chunks,
@@ -1224,10 +1228,16 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    write_page_stats,
                    nullptr,
                    nullptr,
+                   error_code.data(),
                    stream);
+  if (auto const error = error_code.value_sync(stream); error != 0) {
+    CUDF_FAIL(
+      std::format("Parquet encoding failed with code(s) {}", kernel_error::to_string(error)));
+  }
+
   chunks.device_to_host(stream);
 
-  int num_pages = 0;
+  auto num_pages = size_type{0};
   for (auto& chunk : chunks.host_view().flat_view()) {
     chunk.first_page = num_pages;
     num_pages += chunk.num_pages;
@@ -1250,7 +1260,13 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    write_page_stats,
                    nullptr,
                    nullptr,
+                   error_code.data(),
                    stream);
+  if (auto const error = error_code.value_sync(stream); error != 0) {
+    CUDF_FAIL(
+      std::format("Parquet encoding failed with code(s) {}", kernel_error::to_string(error)));
+  }
+
   page_sizes.device_to_host(stream);
 
   // Get per-page max compressed size
@@ -1275,8 +1291,15 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    write_page_stats,
                    nullptr,
                    nullptr,
+                   error_code.data(),
                    stream);
   chunks.device_to_host(stream);
+
+  if (auto const error = error_code.value_sync(stream); error != 0) {
+    CUDF_FAIL(
+      std::format("Parquet encoding failed with code(s) {}", kernel_error::to_string(error)));
+  }
+
   return comp_page_sizes;
 }
 
@@ -1311,7 +1334,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
   if (h_chunks.empty()) { return std::pair(std::move(dict_data), std::move(dict_index)); }
 
   if (dict_policy == dictionary_policy::NEVER) {
-    thrust::for_each(
+    std::for_each(
       h_chunks.begin(), h_chunks.end(), [](auto& chunk) { chunk.use_dictionary = false; });
     chunks.host_to_device_async(stream);
     return std::pair(std::move(dict_data), std::move(dict_index));
@@ -1458,6 +1481,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                         cuda::stream_ref stream)
 {
   rmm::device_uvector<statistics_merge_group> page_stats_mrg(num_stats_bfr, stream);
+  kernel_error error_code(stream);
   chunks.host_to_device_async(stream);
   InitEncoderPages(chunks,
                    pages,
@@ -1472,7 +1496,14 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                    write_page_stats,
                    (num_stats_bfr) ? page_stats_mrg.data() : nullptr,
                    (num_stats_bfr > num_pages) ? page_stats_mrg.data() + num_pages : nullptr,
+                   error_code.data(),
                    stream);
+
+  if (auto const error = error_code.value_sync(stream); error != 0) {
+    CUDF_FAIL(
+      std::format("Parquet encoding failed with code(s) {}", kernel_error::to_string(error)));
+  }
+
   if (num_stats_bfr > 0) {
     detail::merge_group_statistics<detail::io_file_format::PARQUET>(
       page_stats, frag_stats, page_stats_mrg.data(), num_pages, stream);
@@ -1500,7 +1531,8 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
  * @param column_stats optional page-level statistics for column index (nullptr if none)
  * @param comp_stats optional compression statistics (nullopt if none)
  * @param compression compression format
- * @param column_index_truncate_length maximum length of min or max values in column index, in bytes
+ * @param column_index_truncate_length maximum length of min or max values in column index, in
+ * bytes
  * @param write_v2_headers True if V2 page headers should be written
  * @param page_level_compression True if V2 pages can make per-page compression decisions
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -1624,8 +1656,8 @@ size_t column_index_buffer_size(EncColumnChunk* ck,
  *
  * @param[in,out] table_meta The table metadata
  * @param input The input table
- * @param partitions Optional partitions to divide the table into, if specified then must be same
- *        size as number of sinks
+ * @param partitions Partitions to divide the table into; if specified then must be same size as
+ * number of sinks
  * @param kv_meta Optional user metadata
  * @param curr_agg_meta The current aggregate writer metadata
  * @param max_page_fragment_size_opt Optional maximum number of rows in a page fragment
@@ -1762,43 +1794,51 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                    frag_size_fn);
   }
 
-  // Fragments are calculated in two passes. In the first pass, a uniform number of fragments
-  // per column is used. This is done to satisfy the requirement that each column chunk within
-  // a row group has the same number of rows. After the row group (and thus column chunk)
-  // boundaries are known, a second pass is done to calculate fragments to be used in determining
-  // page boundaries within each column chunk.
-  std::vector<int> num_frag_in_part;
-  std::transform(partitions.begin(),
-                 partitions.end(),
-                 std::back_inserter(num_frag_in_part),
-                 [max_page_fragment_size](auto const& part) {
-                   return util::div_rounding_up_safe<size_type>(part.num_rows,
-                                                                max_page_fragment_size);
-                 });
-
-  auto const num_fragments = std::reduce(num_frag_in_part.begin(), num_frag_in_part.end());
-
-  auto part_frag_offset =
-    cudf::detail::make_empty_host_vector<int>(num_frag_in_part.size() + 1, stream);
-  // Store the idx of the first fragment in each partition
-  std::exclusive_scan(
-    num_frag_in_part.begin(), num_frag_in_part.end(), std::back_inserter(part_frag_offset), 0);
-  part_frag_offset.push_back(part_frag_offset.back() + num_frag_in_part.back());
-
-  auto d_part_frag_offset = cudf::detail::make_device_uvector_async(
-    part_frag_offset, stream, cudf::get_current_device_resource_ref());
-  cudf::detail::hostdevice_2dvector<PageFragment> row_group_fragments(
-    num_columns, num_fragments, stream);
-
   // Create table_device_view so that corresponding column_device_view data
   // can be written into col_desc members
-  // These are unused but needs to be kept alive.
   auto parent_column_table_device_view = table_device_view::create(single_streams_table, stream);
-  rmm::device_uvector<column_device_view> leaf_column_views(0, stream);
+  auto leaf_column_views               = rmm::device_uvector<column_device_view>(0, stream);
+  auto d_col_desc =
+    device_span<parquet_column_device_view const>(col_desc.device_ptr(), col_desc.size());
 
-  device_span<parquet_column_device_view const> d_col_desc(col_desc.device_ptr(), col_desc.size());
+  // Fragments are calculated in two phases. Row group fragments use a uniform row span across
+  // columns and are re-measured with smaller spans until every fragment fits in a page. After
+  // row group (or column chunk) boundaries are known, per-column page fragments are calculated for
+  // page boundaries within each column chunk.
+  std::vector<int> num_frag_in_part;
 
-  if (num_fragments != 0) {
+  auto part_frag_offset =
+    cudf::detail::make_empty_pinned_vector<int>(partitions.size() + 1, stream);
+  auto row_group_fragments = cudf::detail::hostdevice_2dvector<PageFragment>(0, 0, stream);
+
+  // A fragment always ends up in a single page, so shrink the fragment row span and re-measure
+  // until every fragment fits within the maximum page size.
+  while (true) {
+    num_frag_in_part.clear();
+    std::transform(partitions.begin(),
+                   partitions.end(),
+                   std::back_inserter(num_frag_in_part),
+                   [max_page_fragment_size](auto const& part) {
+                     return util::div_rounding_up_safe<size_type>(part.num_rows,
+                                                                  max_page_fragment_size);
+                   });
+
+    auto const num_fragments = std::reduce(num_frag_in_part.begin(), num_frag_in_part.end());
+
+    // Store the idx of the first fragment in each partition
+    part_frag_offset.clear();
+    std::exclusive_scan(
+      num_frag_in_part.begin(), num_frag_in_part.end(), std::back_inserter(part_frag_offset), 0);
+    part_frag_offset.push_back(part_frag_offset.back() + num_frag_in_part.back());
+
+    if (num_fragments == 0) { break; }
+
+    auto d_part_frag_offset = cudf::detail::make_device_uvector_async(
+      part_frag_offset, stream, cudf::get_current_device_resource_ref());
+
+    row_group_fragments =
+      cudf::detail::hostdevice_2dvector<PageFragment>(num_columns, num_fragments, stream);
+
     // Move column info to device
     col_desc.host_to_device_async(stream);
     leaf_column_views = create_leaf_column_device_views<parquet_column_device_view>(
@@ -1810,7 +1850,29 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                              d_part_frag_offset,
                              max_page_fragment_size,
                              stream);
+
+    // Compute a smaller fragment size if any fragment is too large
+    auto const smaller_fragment_size =
+      compute_smaller_fragment_size(row_group_fragments.host_view(),
+                                    {col_desc.host_ptr(), col_desc.size()},
+                                    max_page_fragment_size);
+
+    // If no smaller fragment size is found (current size fits), break the loop.
+    if (not smaller_fragment_size.has_value()) { break; }
+
+    // Reduce the fragment size and re-measure
+    max_page_fragment_size = smaller_fragment_size.value();
   }
+
+  // The per-column fragment sizes used for page boundaries must not exceed the row group
+  // fragment size, which the loop above may have reduced.
+  std::transform(column_frag_size.begin(),
+                 column_frag_size.end(),
+                 column_frag_size.begin(),
+                 [max_page_fragment_size](auto frag_size) {
+                   return std::min(frag_size, max_page_fragment_size);
+                 });
+  auto const num_fragments = row_group_fragments.size().second;
 
   std::unique_ptr<aggregate_writer_metadata> agg_meta;
   if (!curr_agg_meta) {
@@ -1839,26 +1901,52 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   size_type num_rowgroups = 0;
 
   std::vector<int> num_rg_in_part(partitions.size());
+  // Page buffers of a column chunk are addressed using 32-bit offsets, so each column's
+  // contribution to a row group is budgeted separately from the row group's total size.
+  std::vector<size_t> chunk_frag_size(num_columns);
+  std::vector<size_t> curr_chunk_size(num_columns);
+
+  // Helper to check if the sum of two sizes exceeds a threshold
+  auto const sum_exceeds_threshold = [](auto const& lhs, auto const& rhs, auto const& threshold) {
+    auto const sum = cuda::add_overflow(lhs, rhs);
+    return sum.overflow or sum.value > threshold;
+  };
+
   for (size_t p = 0; p < partitions.size(); ++p) {
     size_type curr_rg_num_rows = 0;
     size_t curr_rg_data_size   = 0;
     int first_frag_in_rg       = part_frag_offset[p];
     int last_frag_in_part      = part_frag_offset[p + 1] - 1;
+    std::fill(curr_chunk_size.begin(), curr_chunk_size.end(), 0);
+
+    // Helper to finish a row group and start a new one
+    auto finish_row_group = [&] {
+      auto& rg    = agg_meta->file(p).row_groups.emplace_back();
+      rg.num_rows = curr_rg_num_rows;
+      ++num_rowgroups;
+      num_rg_in_part[p]++;
+    };
     for (auto f = first_frag_in_rg; f <= last_frag_in_part; ++f) {
-      size_t fragment_data_size = 0;
+      size_t fragment_data_size   = 0;
+      bool is_chunk_size_exceeded = false;
       for (auto c = 0; c < num_columns; c++) {
-        fragment_data_size += row_group_fragments[c][f].fragment_data_size;
+        auto const frag = row_group_fragments[c][f];
+        fragment_data_size += frag.fragment_data_size;
+        chunk_frag_size[c] =
+          max_fragment_page_size(frag.fragment_data_size, frag.num_values, col_desc[c]);
+        is_chunk_size_exceeded |= sum_exceeds_threshold(
+          curr_chunk_size[c], chunk_frag_size[c], EncColumnChunk::max_buffer_size);
       }
       size_type fragment_num_rows = row_group_fragments[0][f].num_rows;
 
       // If the fragment size gets larger than rg limit then break off a rg
-      if (f > first_frag_in_rg &&  // There has to be at least one fragment in row group
-          (curr_rg_data_size + fragment_data_size > max_row_group_size ||
-           curr_rg_num_rows + fragment_num_rows > max_row_group_rows)) {
-        auto& rg    = agg_meta->file(p).row_groups.emplace_back();
-        rg.num_rows = curr_rg_num_rows;
-        num_rowgroups++;
-        num_rg_in_part[p]++;
+      auto const starts_new_row_group =
+        f > first_frag_in_rg and  // There has to be at least one fragment in row group
+        (sum_exceeds_threshold(curr_rg_data_size, fragment_data_size, max_row_group_size) or
+         sum_exceeds_threshold(curr_rg_num_rows, fragment_num_rows, max_row_group_rows) or
+         is_chunk_size_exceeded);
+      if (starts_new_row_group) {
+        finish_row_group();
         curr_rg_num_rows  = 0;
         curr_rg_data_size = 0;
         first_frag_in_rg  = f;
@@ -1866,13 +1954,17 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
       curr_rg_num_rows += fragment_num_rows;
       curr_rg_data_size += fragment_data_size;
 
-      // TODO: (wishful) refactor to consolidate with above if block
-      if (f == last_frag_in_part) {
-        auto& rg    = agg_meta->file(p).row_groups.emplace_back();
-        rg.num_rows = curr_rg_num_rows;
-        num_rowgroups++;
-        num_rg_in_part[p]++;
+      if (starts_new_row_group) {
+        curr_chunk_size = chunk_frag_size;
+      } else {
+        std::transform(curr_chunk_size.begin(),
+                       curr_chunk_size.end(),
+                       chunk_frag_size.begin(),
+                       curr_chunk_size.begin(),
+                       std::plus{});
       }
+
+      if (f == last_frag_in_part) { finish_row_group(); }
     }
   }
 
@@ -2748,7 +2840,7 @@ std::unique_ptr<std::vector<uint8_t>> writer::merge_row_group_metadata(
 
   // Remove any LogicalType::UNKNOWN annotations that were passed in as they can confuse
   // column type inferencing.
-  // See https://github.com/rapidsai/cudf/pull/14264#issuecomment-1778311615
+  // See https://github.com/NVIDIA/cudf/pull/14264#issuecomment-1778311615
   for (auto& se : md.schema) {
     if (se.logical_type.has_value() && se.logical_type.value().type == LogicalType::UNKNOWN) {
       se.logical_type = cuda::std::nullopt;

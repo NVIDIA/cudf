@@ -112,14 +112,14 @@ class host_buffer_sink : public data_sink {
   {
     auto const current_size = buffer_->size();
     buffer_->resize(current_size + size);
-    // TODO: https://github.com/rapidsai/cudf/issues/21680
+    // TODO: https://github.com/NVIDIA/cudf/issues/21680
     // We need to replace this with memcpy_batch_async after fixing stream
     // ordering. The issue is that buffer_->resize() can reallocate,
     // invalidating pointers from previous async copies that are still
     // in-flight when using cudaMemcpySrcAccessOrderStream. Need to ensure
     // stream ordering or pre-reserve buffer to avoid reallocation.
     CUDF_CUDA_TRY(cudaMemcpyAsync(
-      buffer_->data() + current_size, gpu_data, size, cudaMemcpyDeviceToHost, stream.get()));
+      buffer_->data() + current_size, gpu_data, size, cudaMemcpyDefault, stream.get()));
     return std::async(std::launch::deferred, [stream]() -> void { stream.sync(); });
   }
 

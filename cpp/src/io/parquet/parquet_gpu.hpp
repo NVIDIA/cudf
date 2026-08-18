@@ -600,16 +600,16 @@ CUDF_HOST_DEVICE constexpr inline size_t max_RLE_page_size(uint8_t value_bit_wid
 constexpr uint32_t RLE_LENGTH_FIELD_LEN = sizeof(uint32_t);
 
 // Maximum size of a thrift field holding a varint of `value_bits` bits. Each varint byte carries
-// seven payload bits.
+// seven payload bits. Equal to 1 (field header byte) + ceil(value_bits / 7).
 CUDF_HOST_DEVICE constexpr size_t max_thrift_field_size(size_t value_bits)
 {
-  return 1 /* field header byte */ + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
+  return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
 }
 
-// Max V2 page header size excluding statistics.
+// Max V2 page header size excluding statistics. Equal to size of 9 `i32` fields + 2 bool fields
+// (is_compressed and nested struct) + 2 stop bytes.
 constexpr size_t MAX_V2_HDR_SIZE =
-  9 /* number of `i32` fields */ * max_thrift_field_size(sizeof(int32_t) * CHAR_BIT) +
-  2 /* is_compressed + nested struct */ + 2 /* stop bytes */;
+  9 * max_thrift_field_size(sizeof(int32_t) * CHAR_BIT) + 2 * sizeof(bool) + 2;
 
 /**
  * @brief Maximum size, in bytes, of a page holding a single fragment's data and levels.

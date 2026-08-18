@@ -566,7 +566,7 @@ CUDF_KERNEL void __launch_bounds__(128)
                size_type max_page_size_rows,
                uint32_t page_align,
                bool write_v2_headers,
-               bool write_page_stats
+               bool write_page_stats,
                kernel_error::pointer error_code)
 {
   // TODO: All writing seems to be done by thread 0. Could be replaced by thrust foreach

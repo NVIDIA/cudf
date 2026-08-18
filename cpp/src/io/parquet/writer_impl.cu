@@ -1241,7 +1241,6 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
     chunk.first_page = num_pages;
     num_pages += chunk.num_pages;
   }
-
   chunks.host_to_device_async(stream);
 
   // Now that we know the number of pages, allocate an array to hold per page size and get it

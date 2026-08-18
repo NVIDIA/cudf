@@ -10,7 +10,8 @@
 #include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream_view.hpp>
+
+#include <cuda/stream_ref>
 
 #include <algorithm>
 #include <cstddef>
@@ -25,11 +26,11 @@ class StreamPoolTest : public cudf::test::BaseFixture {};
 
 namespace {
 
-std::vector<cudaStream_t> values_of(std::vector<rmm::cuda_stream_view> const& streams)
+std::vector<cudaStream_t> values_of(std::vector<cuda::stream_ref> const& streams)
 {
   auto values = std::vector<cudaStream_t>{};
   std::transform(streams.begin(), streams.end(), std::back_inserter(values), [](auto stream) {
-    return stream.value();
+    return stream.get();
   });
   return values;
 }

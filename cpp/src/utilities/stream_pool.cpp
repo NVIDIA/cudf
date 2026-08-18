@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>
@@ -123,7 +123,7 @@ cudaEvent_t event_for_thread()
  * `stream_pool_size()`.
  */
 class growing_cuda_stream_pool : public cuda_stream_pool {
-  std::vector<rmm::cuda_stream> _streams;
+  std::vector<cuda::stream> _streams;
   std::size_t _next_stream{0};
 
   /**
@@ -136,31 +136,34 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
    */
   void grow_to(std::size_t count)
   {
+    // A pool is only ever used with the device it was created on current, so the streams it creates
+    // belong to that device. `cuda::stream` is always non-blocking.
+    auto const device = cuda::device_ref{get_current_cuda_device().value()};
     auto const target = std::min(2 * count, stream_pool_size());
     while (_streams.size() < target) {
-      _streams.emplace_back(rmm::cuda_stream::flags::non_blocking);
+      _streams.emplace_back(device);
     }
   }
 
  public:
-  rmm::cuda_stream_view get_stream() override { return get_streams(1).front(); }
+  cuda::stream_ref get_stream() override { return get_streams(1).front(); }
 
-  rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
+  cuda::stream_ref get_stream(stream_id_type stream_id) override
   {
     // The id maps to the same stream on every call: growing for `stream_id` leaves the pool either
     // larger than `stream_id` or at exactly `stream_pool_size()`, so the modulus below is fixed.
     grow_to(stream_id + 1);
-    return _streams[stream_id % _streams.size()].view();
+    return _streams[stream_id % _streams.size()];
   }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
     grow_to(count);
     auto const first = std::exchange(_next_stream, _next_stream + count);
-    auto streams     = std::vector<rmm::cuda_stream_view>();
+    auto streams     = std::vector<cuda::stream_ref>();
     streams.reserve(count);
     for (std::size_t i = 0; i < count; i++) {
-      streams.emplace_back(_streams[(first + i) % _streams.size()].view());
+      streams.emplace_back(_streams[(first + i) % _streams.size()]);
     }
     return streams;
   }
@@ -173,15 +176,15 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
  */
 class debug_cuda_stream_pool : public cuda_stream_pool {
  public:
-  rmm::cuda_stream_view get_stream() override { return cudf::get_default_stream(); }
-  rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
+  cuda::stream_ref get_stream() override { return cudf::get_default_stream(); }
+  cuda::stream_ref get_stream(stream_id_type stream_id) override
   {
     return cudf::get_default_stream();
   }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    return std::vector<rmm::cuda_stream_view>(count, cudf::get_default_stream());
+    return std::vector<cuda::stream_ref>(count, cudf::get_default_stream());
   }
 
   [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
@@ -292,23 +295,23 @@ cuda_stream_pool& global_cuda_stream_pool()
   return pools.pool_for(get_current_cuda_device());
 }
 
-std::vector<rmm::cuda_stream_view> fork_streams(rmm::cuda_stream_view stream, std::size_t count)
+std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream, std::size_t count)
 {
   auto const streams = global_cuda_stream_pool().get_streams(count);
   auto const event   = event_for_thread();
-  CUDF_CUDA_TRY(cudaEventRecord(event, stream));
+  CUDF_CUDA_TRY(cudaEventRecord(event, stream.get()));
   std::for_each(streams.begin(), streams.end(), [&](auto& strm) {
-    CUDF_CUDA_TRY(cudaStreamWaitEvent(strm, event, 0));
+    CUDF_CUDA_TRY(cudaStreamWaitEvent(strm.get(), event, 0));
   });
   return streams;
 }
 
-void join_streams(host_span<rmm::cuda_stream_view const> streams, rmm::cuda_stream_view stream)
+void join_streams(host_span<cuda::stream_ref const> streams, cuda::stream_ref stream)
 {
   auto const event = event_for_thread();
   std::for_each(streams.begin(), streams.end(), [&](auto& strm) {
-    CUDF_CUDA_TRY(cudaEventRecord(event, strm));
-    CUDF_CUDA_TRY(cudaStreamWaitEvent(stream, event, 0));
+    CUDF_CUDA_TRY(cudaEventRecord(event, strm.get()));
+    CUDF_CUDA_TRY(cudaStreamWaitEvent(stream.get(), event, 0));
   });
 }
 

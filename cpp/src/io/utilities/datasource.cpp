@@ -217,7 +217,7 @@ class device_buffer_source final : public datasource {
     auto const stream = cudf::detail::global_cuda_stream_pool().get_stream();
     auto h_data       = cudf::detail::make_host_vector_async(
       cudf::device_span<std::byte const>{_d_buffer.data() + offset, count}, stream);
-    stream.synchronize();
+    stream.sync();
     return std::make_unique<owning_buffer<cudf::detail::host_vector<std::byte>>>(std::move(h_data));
   }
 

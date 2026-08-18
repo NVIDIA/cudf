@@ -145,7 +145,7 @@ cdef class Scalar:
     def __cinit__(self, *args, **kwargs):
         self.mr = get_current_device_resource()
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         # TODO: This case is not something we really want to
         # support, but it here for now to ease the transition of
         # DeviceScalar.

@@ -392,7 +392,7 @@ cdef class ApproxDistinctCount:
         nan_policy nan_handling=nan_policy.NAN_IS_NULL,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> None:
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)

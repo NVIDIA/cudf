@@ -112,7 +112,7 @@ cdef class RollingRequest:
             Column values not None,
             size_type min_periods,
             Aggregation aggregation not None,
-    ):
+    ) -> None:
         self.values = values
         self.min_periods = min_periods
         self.aggregation = aggregation

@@ -360,7 +360,7 @@ cdef class Column:
         object data: Span | None, object mask: Span | None,
         size_type null_count, size_type offset,
         children: Iterable[Column], bint validate=True
-    ):
+    ) -> None:
         children = list(children)
         if not all(isinstance(c, Column) for c in children):
             raise ValueError("All children must be pylibcudf Column objects")

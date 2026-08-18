@@ -92,7 +92,7 @@ cdef class HybridScanReader:
         self,
         const uint8_t[::1] footer_bytes: Buffer,
         ParquetReaderOptions options,
-    ):
+    ) -> None:
         self.c_obj = make_unique[cpp_hybrid_scan_reader](
             host_span[const_uint8_t](&footer_bytes[0], len(footer_bytes)),
             options.c_obj

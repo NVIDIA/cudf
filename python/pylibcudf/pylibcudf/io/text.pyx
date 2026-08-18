@@ -43,7 +43,7 @@ cdef class ByteRangeInfo:
         Size of the range in bytes
     """
 
-    def __init__(self, size_t offset, size_t size):
+    def __init__(self, size_t offset, size_t size) -> None:
         self.c_obj = byte_range_info(offset, size)
 
     @property

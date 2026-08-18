@@ -53,7 +53,7 @@ namespace {
   Enable Transparent Huge Pages (THP) for large (>4MB) allocations.
   `buf` is returned untouched.
   Enabling THP can improve performance of device-host memory transfers
-  significantly, see <https://github.com/rapidsai/cudf/pull/13914>.
+  significantly, see <https://github.com/NVIDIA/cudf/pull/13914>.
 */
 void enable_hugepage(ArrowBuffer* buffer)
 {

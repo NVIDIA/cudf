@@ -21,7 +21,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -149,8 +149,8 @@ void perform_contains(table_view const& haystack,
 
     // If the haystack table has nulls but they are compared unequal, don't insert them.
     // Otherwise, it was known to cause performance issue:
-    // - https://github.com/rapidsai/cudf/pull/6943
-    // - https://github.com/rapidsai/cudf/pull/8277
+    // - https://github.com/NVIDIA/cudf/pull/6943
+    // - https://github.com/NVIDIA/cudf/pull/8277
     set.insert_if_async(haystack_iter,
                         haystack_iter + haystack.num_rows(),
                         cuda::counting_iterator<size_type>{0},  // stencil

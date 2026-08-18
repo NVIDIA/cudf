@@ -21,7 +21,6 @@
 #include <cuda/std/algorithm>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
@@ -38,7 +37,7 @@
 namespace cudf::io::parquet::detail {
 
 #if defined(PREPROCESS_DEBUG)
-void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, rmm::cuda_stream_view stream)
+void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, cuda::stream_ref stream)
 {
   pages.device_to_host(stream);
   auto idx = 0;
@@ -175,7 +174,7 @@ void generate_depth_remappings(
   size_t end_chunk,
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Construct per source byte ranges in chunk iteration order
@@ -223,7 +222,7 @@ void generate_depth_remappings(
 }
 
 [[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                                        rmm::cuda_stream_view stream)
+                                        cuda::stream_ref stream)
 {
   size_t total_pages = 0;
 
@@ -235,7 +234,7 @@ void generate_depth_remappings(
   // It's required to ignore unsupported encodings in this function
   // so that we can actually compile a list of all the unsupported encodings found
   // in the pages. That cannot be done here since we do not have the pages vector here.
-  // see https://github.com/rapidsai/cudf/pull/14453#pullrequestreview-1778346688
+  // see https://github.com/NVIDIA/cudf/pull/14453#pullrequestreview-1778346688
   if (auto const error = error_code.value_sync(stream);
       error != 0 and error != static_cast<uint32_t>(decode_error::UNSUPPORTED_ENCODING)) {
     CUDF_FAIL("Parquet header parsing failed with code(s) while counting page headers " +
@@ -250,7 +249,7 @@ void generate_depth_remappings(
 }
 
 [[nodiscard]] size_t count_page_headers_with_pgidx(
-  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, rmm::cuda_stream_view stream)
+  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, cuda::stream_ref stream)
 {
   auto const total_pages =
     std::accumulate(chunks.host_begin(), chunks.host_end(), size_t{0}, [](size_t sum, auto& chunk) {
@@ -269,7 +268,7 @@ void generate_depth_remappings(
 
 void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
                        device_span<PageInfo> pages,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   auto const num_pages = pages.size();
   auto page_indexes    = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
@@ -305,7 +304,7 @@ void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
                    iter,
                    iter + num_pages,
                    copy_page_info{d_page_indexes, pages});
-  stream.synchronize();  // ensures the page_indexes is not destroyed before the copy is completed
+  stream.sync();  // ensures the page_indexes is not destroyed before the copy is completed
 }
 
 std::string encoding_to_string(Encoding encoding)
@@ -341,7 +340,7 @@ std::string encoding_to_string(Encoding encoding)
 }
 
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream)
 {
   auto const to_mask     = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
     return is_supported_encoding(page.encoding) ? uint32_t{0} : encoding_to_mask(page.encoding);
@@ -353,7 +352,7 @@ std::string encoding_to_string(Encoding encoding)
 
 cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const> unsorted_pages,
                                                      device_span<ColumnChunkDesc const> chunks,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -407,7 +406,7 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
                  sort_indices.end(),
                  unsorted_pages.data(),
                  pass_pages.d_begin());
-  stream.synchronize();
+  stream.sync();
   return pass_pages;
 }
 
@@ -436,7 +435,7 @@ template <page_data_source_type data_source_type>
 void decode_page_headers_impl(pass_intermediate_data& pass,
                               device_span<PageInfo> unsorted_pages,
                               host_span<cudf::device_span<uint8_t const> const> page_data,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -621,7 +620,7 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
 
   pass.pages.device_to_host_async(stream);
   pass.chunks.device_to_host_async(stream);
-  stream.synchronize();
+  stream.sync();
 }
 
 }  // namespace
@@ -629,7 +628,7 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          bool has_offset_index,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   if (has_offset_index) {
     decode_page_headers_impl<page_data_source_type::OFFSET_INDEX>(pass, unsorted_pages, {}, stream);
@@ -642,7 +641,7 @@ void decode_page_headers(pass_intermediate_data& pass,
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          host_span<cudf::device_span<uint8_t const> const> page_data,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   decode_page_headers_impl<page_data_source_type::PAGE_SPANS>(
     pass, unsorted_pages, page_data, stream);

@@ -227,7 +227,7 @@ pygments_style = "sphinx"
 html_theme_options = {
     "external_links": [],
     "icon_links": [],
-    "github_url": "https://github.com/rapidsai/cudf",
+    "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "content",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
@@ -419,10 +419,13 @@ _names_to_skip_in_pylibcudf = {
     "size_type",
     "size_t",
     "type_id",
+    "null_policy",
+    "nan_policy",
     # Unknown base types
     "int32_t",
     "uint64_t",
     "void",
+    "double",
 }
 
 
@@ -746,7 +749,7 @@ def linkcode_resolve(domain, info) -> str | None:
 
     fn = os.path.relpath(fn, start=os.path.dirname(pkg_file))
     return (
-        f"https://github.com/rapidsai/cudf/blob/"
+        f"https://github.com/NVIDIA/cudf/blob/"
         f"{RAPIDS_BRANCH}/{source_path}/{fn}{linespec}"
     )
 

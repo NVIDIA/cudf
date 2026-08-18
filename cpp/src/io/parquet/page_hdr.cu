@@ -12,7 +12,6 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
@@ -20,6 +19,7 @@
 #include <cuda/std/cstring>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 
 namespace cudf::io::parquet::detail {
@@ -908,7 +908,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
 
 void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
                         kernel_error::pointer error_code,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   static_assert(count_page_headers_block_size % cudf::detail::warp_size == 0,
                 "Block size for decode page headers kernel must be a multiple of warp size");
@@ -920,14 +920,14 @@ void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
   dim3 dim_block(count_page_headers_block_size, 1);
   dim3 dim_grid(num_blocks, 1);
 
-  count_page_headers_kernel<<<dim_grid, dim_block, 0, stream.value()>>>(chunks, error_code);
+  count_page_headers_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(chunks, error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
                          cudf::device_span<chunk_page_info> chunk_pages,
                          kernel_error::pointer error_code,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   static_assert(decode_page_headers_block_size % cudf::detail::warp_size == 0,
                 "Block size for decode page headers kernel must be a multiple of warp size");
@@ -942,7 +942,7 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
   dim3 dim_block(decode_page_headers_block_size, 1);
   dim3 dim_grid(num_blocks, 1);
 
-  decode_page_headers_kernel<<<dim_grid, dim_block, 0, stream.value()>>>(
+  decode_page_headers_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(
     chunks, chunk_pages, error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -953,7 +953,7 @@ void decode_page_headers_from_page_data(
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data,
   cudf::device_span<size_type const> chunk_page_offsets,
   kernel_error::pointer error_code,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(chunk_page_offsets.size() == chunks.size() + 1,
                "Chunk page offsets must cover all chunks");
@@ -970,7 +970,7 @@ void decode_page_headers_from_page_data(
 void build_string_dictionary_index(ColumnChunkDesc* chunks,
                                    int32_t num_chunks,
                                    kernel_error::pointer error_code,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
 {
   static_assert(
     build_string_dict_index_block_size % cudf::detail::warp_size == 0,
@@ -982,7 +982,7 @@ void build_string_dictionary_index(ColumnChunkDesc* chunks,
   dim3 dim_block(build_string_dict_index_block_size, 1);
   dim3 dim_grid(num_blocks, 1);
 
-  build_string_dictionary_index_kernel<<<dim_grid, dim_block, 0, stream.value()>>>(
+  build_string_dictionary_index_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(
     chunks, num_chunks, error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

@@ -14,7 +14,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <list>
 #include <optional>
@@ -385,6 +385,6 @@ class offset_column_references : public named_to_reference_converter {
   cudf::table_view ast_table,
   std::reference_wrapper<ast::expression const> ast_expr,
   host_span<std::vector<size_type> const> input_row_group_indices,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::detail

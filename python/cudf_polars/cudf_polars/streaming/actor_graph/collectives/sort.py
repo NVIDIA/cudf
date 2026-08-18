@@ -492,7 +492,7 @@ def _build_order_scheme(
     strict_boundaries = (
         n_rows == 0
         # TODO: Use unique_count_table
-        # Requires https://github.com/rapidsai/cudf/pull/22487
+        # Requires https://github.com/NVIDIA/cudf/pull/22487
         or plc.stream_compaction.unique(
             by_table,
             list(range(n_keys)),

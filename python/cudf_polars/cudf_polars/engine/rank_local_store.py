@@ -79,7 +79,7 @@ class RankLocalStore:
                 "scanned more than once (for example a self-join, or "
                 "collecting the same LazyFrame twice). Call engine.execute() "
                 "again for a fresh result. Re-scan support is tracked as "
-                "future work (see https://github.com/rapidsai/cudf/issues/23115)."
+                "future work (see https://github.com/NVIDIA/cudf/issues/23115)."
             ) from None
         return df
 

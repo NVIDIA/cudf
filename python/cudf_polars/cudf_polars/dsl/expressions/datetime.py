@@ -184,7 +184,7 @@ class TemporalFunction(Expr):
             every = cast("Literal", self.children[1]).value
             match = re.fullmatch(r"(\d+)(ns|us|ms|s|m|h|d)", every)
             if match is None or int(match.group(1)) != 1:
-                # https://github.com/rapidsai/cudf/issues/18654 to support non-1 buckets
+                # https://github.com/NVIDIA/cudf/issues/18654 to support non-1 buckets
                 raise NotImplementedError(f"Unsupported bucket: {every!r}")
             self.options = (self._TRUNCATE_FREQ_MAP[match.group(2)],)
 

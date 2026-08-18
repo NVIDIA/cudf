@@ -15,7 +15,7 @@
 #include <cooperative_groups.h>
 #include <cuco/static_set_ref.cuh>
 #include <cuda/std/atomic>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 

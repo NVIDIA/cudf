@@ -10,7 +10,7 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/gather.h>
 
 namespace cudf {
@@ -28,7 +28,7 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
                "Input to `group_merge_lists` must be a non-nullable lists column.");
 
   auto offsets_column = make_numeric_column(
-    data_type(type_to_id<size_type>()), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type(type_id::INT32), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
 
   // Generate offsets of the output lists column by gathering from the provided group offsets and
   // the input list offsets.
@@ -44,7 +44,7 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
                  group_offsets.begin(),
                  group_offsets.end(),
                  lists_column_view(values).offsets_begin(),
-                 offsets_column->mutable_view().template begin<size_type>());
+                 offsets_column->mutable_view().template begin<int32_t>());
 
   // The child column of the output lists column is just copied from the input column.
   auto child_column =

@@ -83,7 +83,7 @@ def test_rapidsmpf_join_metadata(
     # ``self._handle`` across worker/actor processes, so the
     # ``metadata_collector`` round-trip fails on Dask and Ray.
     #
-    # When https://github.com/rapidsai/cudf/pull/22394 lands, dedup of
+    # When https://github.com/NVIDIA/cudf/pull/22394 lands, dedup of
     # replicated outputs moves to the Dask/Ray frontends and the
     # ``duplicated`` flag's semantics change to "every rank holds the
     # data". Revisit the ``len(metadata_collector) == 1`` and
@@ -255,7 +255,7 @@ def test_get_partitioning_moduli(partitioning, key_indices, nranks, expected) ->
             4,
             NormalizedPartitioning(None, None),
         ),
-        # Resolves https://github.com/rapidsai/cudf/issues/21742
+        # Resolves https://github.com/NVIDIA/cudf/issues/21742
         (
             Partitioning(inter_rank=HashScheme((0,), 8), local="inherit"),
             (1,),

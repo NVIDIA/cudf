@@ -51,7 +51,7 @@ from ._interop_helpers cimport (
 from .filling cimport sequence
 from .gpumemoryview cimport gpumemoryview
 from .scalar cimport Scalar
-from .span import is_span as py_is_span
+from .span import Span, is_span as py_is_span
 from .traits cimport (
     is_fixed_width as plc_is_fixed_width,
     is_nested,
@@ -354,8 +354,9 @@ cdef class Column:
     __hash__ = None
 
     def __init__(
-        self, DataType data_type not None, size_type size, object data,
-        object mask, size_type null_count, size_type offset,
+        self, DataType data_type not None, size_type size,
+        object data: Span | None, object mask: Span | None,
+        size_type null_count, size_type offset,
         children: Iterable[Column], bint validate=True
     ):
         children = list(children)
@@ -386,7 +387,7 @@ cdef class Column:
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a pyarrow array from a pylibcudf column.
 
@@ -418,7 +419,7 @@ cdef class Column:
         dtype: DataType | None = None,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ) -> ArrowLike:
+    ) -> Column:
         """
         Create a Column from an Arrow-like object using the Arrow C Data Interface.
 
@@ -709,7 +710,12 @@ cdef class Column:
             children,
         )
 
-    cpdef Column with_mask(self, object mask, size_type null_count, bint validate=True):
+    cpdef Column with_mask(
+        self,
+        object mask: Span | None,
+        size_type null_count,
+        bint validate=True
+    ):
         """Augment this column with a new null mask.
 
         Parameters
@@ -1537,11 +1543,11 @@ cdef class ListsColumnView:
 
     __hash__ = None
 
-    cpdef child(self):
+    cpdef Column child(self):
         """The data column of the underlying list column."""
         return self._column.child(1)
 
-    cpdef offsets(self):
+    cpdef Column offsets(self):
         """The offsets column of the underlying list column."""
         return self._column.child(0)
 

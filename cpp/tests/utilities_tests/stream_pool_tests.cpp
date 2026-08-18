@@ -45,7 +45,7 @@ std::vector<cudaStream_t> fork_and_collect(std::size_t count)
 TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
 {
   auto constexpr num_forks = 20;
-  auto const pool_size     = cudf::detail::global_cuda_stream_pool().get_stream_pool_size();
+  auto const pool_size     = cudf::detail::thread_cuda_stream_pool().get_stream_pool_size();
   auto const num_streams   = std::min<std::size_t>(8, pool_size);
 
   // Both threads fork repeatedly so that a shared round-robin counter would be very likely to
@@ -77,7 +77,7 @@ TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
 
 TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
 {
-  auto const pool_size = cudf::detail::global_cuda_stream_pool().get_stream_pool_size();
+  auto const pool_size = cudf::detail::thread_cuda_stream_pool().get_stream_pool_size();
   auto const count     = pool_size + 4;
 
   auto const streams = fork_and_collect(count);
@@ -90,7 +90,7 @@ TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
 TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
 {
   auto constexpr num_streams = 4;
-  auto const pool_size       = cudf::detail::global_cuda_stream_pool().get_stream_pool_size();
+  auto const pool_size       = cudf::detail::thread_cuda_stream_pool().get_stream_pool_size();
 
   auto collect = [](std::unordered_set<cudaStream_t>& out, std::size_t forks) {
     for (auto fork = 0u; fork < forks; fork++) {

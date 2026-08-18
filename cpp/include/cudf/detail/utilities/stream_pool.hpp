@@ -20,7 +20,7 @@ namespace detail {
  * @brief Interface for a pool of CUDA streams.
  *
  * Implementations are not required to be thread safe. A pool is owned by a single thread at a time,
- * which is how `global_cuda_stream_pool()` hands them out, so an implementation may keep
+ * which is how `thread_cuda_stream_pool()` hands them out, so an implementation may keep
  * unsynchronized state. Sharing one pool between threads requires external synchronization.
  */
 class cuda_stream_pool {
@@ -93,7 +93,18 @@ cuda_stream_pool* create_global_cuda_stream_pool();
  * The returned streams may be used from any thread, but must not be used after the thread that
  * obtained them has exited: a pool is recycled for reuse by another thread at that point.
  */
-cuda_stream_pool& global_cuda_stream_pool();
+cuda_stream_pool& thread_cuda_stream_pool();
+
+/**
+ * @brief Get the calling thread's stream pool for the current device.
+ *
+ * @deprecated Renamed to `thread_cuda_stream_pool` now that the pool is per thread and per device.
+ */
+[[deprecated("Use thread_cuda_stream_pool instead.")]]  //
+inline cuda_stream_pool& global_cuda_stream_pool()
+{
+  return thread_cuda_stream_pool();
+}
 
 /**
  * @brief Acquire a set of `cuda_stream_view` objects and synchronize them to an event on another

@@ -11,7 +11,7 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 from .aggregation import Aggregation
 from .column import Column
 from .table import Table
-from .types import null_policy, sorted
+from .types import NullOrder, NullPolicy, Order, Sorted, null_policy, sorted
 
 __all__ = ['GroupBy', 'GroupByRequest']
 
@@ -23,7 +23,7 @@ class GroupByRequest:
 class GroupBy:
     __hash__ = None
 
-    def __init__(self, keys: Table, null_handling: null_policy=null_policy.EXCLUDE, keys_are_sorted: sorted=sorted.NO, column_order: list | None=None, null_precedence: list | None=None): ...
+    def __init__(self, keys: Table, null_handling: NullPolicy=null_policy.EXCLUDE, keys_are_sorted: Sorted=sorted.NO, column_order: list[Order] | None=None, null_precedence: list[NullOrder] | None=None): ...
     def aggregate(self, requests: list[GroupByRequest], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple: ...
     def scan(self, requests: list[GroupByRequest], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple: ...
     def shift(self, values: Table, offset: list[int], fill_values: list[Scalar], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple: ...

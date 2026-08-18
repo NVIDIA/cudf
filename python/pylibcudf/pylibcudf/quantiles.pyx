@@ -21,6 +21,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .column cimport Column
 from .table cimport Table
 from .types cimport interpolation
+from .types import Interpolation, NullOrder, Order, Sorted
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -33,7 +34,7 @@ __all__ = ["quantile", "quantiles"]
 cpdef Column quantile(
     Column input,
     vector[double] q: Iterable[float],
-    interpolation interp = interpolation.LINEAR,
+    interpolation interp: Interpolation = interpolation.LINEAR,
     Column ordered_indices = None,
     bool exact=True,
     object stream: CudaStreamLike | None = None,
@@ -103,10 +104,10 @@ cpdef Column quantile(
 cpdef Table quantiles(
     Table input,
     vector[double] q: Iterable[float],
-    interpolation interp = interpolation.NEAREST,
-    sorted is_input_sorted = sorted.NO,
-    list column_order = None,
-    list null_precedence = None,
+    interpolation interp: Interpolation = interpolation.NEAREST,
+    sorted is_input_sorted: Sorted = sorted.NO,
+    list column_order: list[Order] | None = None,
+    list null_precedence: list[NullOrder] | None = None,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):

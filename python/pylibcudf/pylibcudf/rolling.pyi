@@ -5,7 +5,7 @@
 
 from typing import TypeVar
 
-from pylibcudf.libcudf.types import null_order, order, size_type
+from pylibcudf.libcudf.types import size_type
 from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
@@ -13,7 +13,7 @@ from .aggregation import Aggregation
 from .column import Column
 from .scalar import Scalar
 from .table import Table
-from .types import DataType
+from .types import DataType, NullOrder, Order
 
 WindowType = TypeVar('WindowType', Column, size_type)
 __all__ = ['BoundedClosed', 'BoundedOpen', 'CurrentRow', 'RollingRequest', 'Unbounded', 'grouped_range_rolling_window', 'rolling_window']
@@ -37,7 +37,7 @@ class BoundedOpen:
 class RollingRequest:
     def __init__(self, values: Column, min_periods: size_type, aggregation: Aggregation): ...
 
-def grouped_range_rolling_window(group_keys: Table, orderby: Column, order: order, null_order: null_order, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, requests: list[RollingRequest], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
+def grouped_range_rolling_window(group_keys: Table, orderby: Column, order: Order, null_order: NullOrder, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, requests: list[RollingRequest], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
 def rolling_window(source: Column, preceding_window: WindowType, following_window: WindowType, min_periods: size_type, agg: Aggregation, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
 def is_valid_rolling_aggregation(source: DataType, agg: Aggregation) -> bool: ...
-def make_range_windows(group_keys: Table, orderby: Column, order: order, null_order: null_order, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple: ...
+def make_range_windows(group_keys: Table, orderby: Column, order: Order, null_order: NullOrder, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple: ...

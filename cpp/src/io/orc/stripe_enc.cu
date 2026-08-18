@@ -807,7 +807,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
             auto nanos   = (ts - seconds * ticks_per_sec) * nanos_per_tick;
 
             // Adjust to keep the nanosecond remainder non-negative.
-            // See https://github.com/rapidsai/cudf/issues/19350.
+            // See https://github.com/NVIDIA/cudf/issues/19350.
             if (nanos < 0) {
               seconds -= 1;
               nanos += 1'000'000'000;

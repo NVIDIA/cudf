@@ -266,7 +266,7 @@ rapidsmpf::streaming::Actor produce_chunks(
     // Having acquire a ticket, let's move to a new thread.
     co_await ctx->executor()->schedule();
     // TODO: This reads the metadata ntasks times.
-    // See https://github.com/rapidsai/cudf/issues/20311
+    // See https://github.com/NVIDIA/cudf/issues/20311
     auto [msg, exception] = [&]() -> std::pair<rapidsmpf::streaming::Message, std::exception_ptr> {
       try {
         return {read_parquet_chunk(ctx, stream, chunk_options, chunk.sequence_number), nullptr};

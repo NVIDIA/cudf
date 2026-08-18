@@ -250,30 +250,22 @@ struct page_stats_caster : public stats_caster_base {
     auto row_str_chars = rmm::device_buffer(total_bytes, stream, mr);
 
     // Iterator for input (page-level) string chars
-    auto src_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
+    auto const page_offsets =
+      cuda::make_permutation_iterator(page_str_offsets.begin(), page_indices.begin());
+    auto src_iter = cuda::transform_iterator(
+      page_offsets,
       cuda::proclaim_return_type<char*>(
-        [chars        = page_str_chars.begin(),
-         offsets      = page_str_offsets.begin(),
-         page_indices = page_indices.begin()] __device__(std::size_t index) {
-          auto const page_index = page_indices[index];
-          return chars + offsets[page_index];
-        }));
+        [chars = page_str_chars.begin()] __device__(auto offset) { return chars + offset; }));
 
     // Iterator for output (row-level) string chars
-    auto dst_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<char*>(
-        [chars   = reinterpret_cast<char*>(row_str_chars.data()),
-         offsets = row_str_offsets.begin()] __device__(std::size_t index) {
-          return chars + offsets[index];
-        }));
+    auto dst_iter =
+      cuda::transform_iterator(row_str_offsets.begin(),
+                               cuda::proclaim_return_type<char*>(
+                                 [chars = reinterpret_cast<char*>(row_str_chars.data())] __device__(
+                                   auto offset) { return chars + offset; }));
 
     // Iterator for string sizes
-    auto size_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<std::size_t>(
-        [sizes = row_str_sizes.begin()] __device__(std::size_t index) { return sizes[index]; }));
+    auto size_iter = row_str_sizes.begin();
 
     // Gather page-level string chars to row-level string chars
     cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, total_rows, stream);

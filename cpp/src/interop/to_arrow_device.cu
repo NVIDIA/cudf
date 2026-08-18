@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -389,7 +389,7 @@ int dispatch_to_arrow_device_view::operator()<cudf::string_view>(ArrowArray* out
   NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), nanoarrow_type, column));
 
   if (column.size() == 0) {
-    // https://github.com/rapidsai/cudf/pull/15047#discussion_r1546528552
+    // https://github.com/NVIDIA/cudf/pull/15047#discussion_r1546528552
     if (nanoarrow_type == NANOARROW_TYPE_LARGE_STRING) {
       auto zero = std::make_unique<cudf::detail::device_scalar<int64_t>>(0, stream, mr);
       NANOARROW_RETURN_NOT_OK(set_buffer(std::move(zero), fixed_width_data_buffer_idx, tmp.get()));

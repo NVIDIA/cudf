@@ -15,5 +15,5 @@ cdef extern from "cudf/utilities/span.hpp" namespace "cudf" nogil:
     cdef cppclass device_span[T]:
         device_span() noexcept
         device_span(T *data, size_t size) noexcept
-        T *data() noexcept
-        size_t size() noexcept
+        T *data() noexcept const
+        size_t size() noexcept const

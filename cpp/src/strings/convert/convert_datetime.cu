@@ -24,13 +24,13 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/logical.h>
 #include <thrust/transform.h>
@@ -109,7 +109,7 @@ struct format_compiler {
   // clang-format on
 
   format_compiler(std::string_view fmt,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   specifier_map extra_specifiers = {})
     : format(fmt), d_items(0, stream)
   {
@@ -395,7 +395,7 @@ struct dispatch_to_timestamps_fn {
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
-                  rmm::cuda_stream_view stream) const
+                  cuda::stream_ref stream) const
     requires(cudf::is_timestamp<T>())
   {
     format_compiler compiler(format, stream);
@@ -410,7 +410,7 @@ struct dispatch_to_timestamps_fn {
   void operator()(column_device_view const&,
                   std::string_view,
                   mutable_column_view&,
-                  rmm::cuda_stream_view) const
+                  cuda::stream_ref) const
     requires(not cudf::is_timestamp<T>())
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
@@ -423,7 +423,7 @@ struct dispatch_to_timestamps_fn {
 std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
                                             data_type timestamp_type,
                                             std::string_view format,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(timestamp_type); }
@@ -661,7 +661,7 @@ struct check_datetime_format {
 
 std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
                                            std::string_view const& format,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   size_type strings_count = input.size();
@@ -697,7 +697,7 @@ std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
 std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
                                             data_type timestamp_type,
                                             std::string_view format,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -706,7 +706,7 @@ std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
 
 std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
                                            std::string_view format,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -1093,7 +1093,7 @@ struct dispatch_from_timestamps_fn {
   strings_children operator()(column_device_view const& d_timestamps,
                               column_device_view const& d_format_names,
                               device_span<format_item const> d_format_items,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr) const
     requires(cudf::is_timestamp<T>())
   {
@@ -1118,7 +1118,7 @@ struct dispatch_from_timestamps_fn {
 std::unique_ptr<column> from_timestamps(column_view const& timestamps,
                                         std::string_view format,
                                         strings_column_view const& names,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   if (timestamps.is_empty()) return make_empty_column(type_id::STRING);
@@ -1161,7 +1161,7 @@ std::unique_ptr<column> from_timestamps(column_view const& timestamps,
 std::unique_ptr<column> from_timestamps(column_view const& timestamps,
                                         std::string_view format,
                                         strings_column_view const& names,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

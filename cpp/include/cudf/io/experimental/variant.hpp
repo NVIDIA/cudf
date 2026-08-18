@@ -12,7 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -68,7 +68,7 @@ namespace io::parquet::experimental {
   column_view const& variant_column,
   std::string_view path,
   std::optional<mutable_column_view> status = std::nullopt,
-  rmm::cuda_stream_view stream              = cudf::get_default_stream(),
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /**
@@ -99,7 +99,7 @@ namespace io::parquet::experimental {
   column_view const& values,
   data_type desired_type,
   std::optional<mutable_column_view> status = std::nullopt,
-  rmm::cuda_stream_view stream              = cudf::get_default_stream(),
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /**
@@ -127,7 +127,7 @@ namespace io::parquet::experimental {
   std::string_view path,
   data_type desired_type,
   std::optional<mutable_column_view> status = std::nullopt,
-  rmm::cuda_stream_view stream              = cudf::get_default_stream(),
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /**
@@ -147,7 +147,7 @@ namespace io::parquet::experimental {
  */
 [[nodiscard]] std::unique_ptr<column> get_variant_type_id(
   column_view const& values,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */

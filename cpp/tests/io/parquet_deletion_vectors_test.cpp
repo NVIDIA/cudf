@@ -15,9 +15,8 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 
 #include <roaring/roaring.h>
@@ -70,7 +69,7 @@ std::vector<char> write_parquet(cudf::table_view const& input_table, std::size_t
 template <typename T>
 auto build_column_from_host_data(cudf::host_span<T const> host_data,
                                  cudf::type_id data_type,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not host_data.empty(), "Host data vector must not be empty");
@@ -144,7 +143,7 @@ auto build_expected_row_indices(cudf::host_span<std::size_t const> row_group_off
 auto build_roaring_bitmap_and_expected_row_mask(cudf::size_type num_rows,
                                                 float deletion_probability,
                                                 cudf::host_span<std::size_t const> row_indices,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr,
                                                 bool are_retention_vectors = false)
 {
@@ -200,7 +199,7 @@ std::unique_ptr<cudf::table> build_expected_table(
   cudf::table_view const& input_table_view,
   cudf::column_view const& expected_row_index_column,
   cudf::column_view const& row_mask_column,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const num_rows = input_table_view.num_rows();
@@ -232,7 +231,7 @@ void test_read_parquet_and_apply_mask(
   cudf::table_view const& input_table_view,
   cudf::column_view const& expected_row_mask_column,
   cudf::column_view const& expected_row_index_column,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   static_assert(std::cmp_greater_equal(num_concat, 1),

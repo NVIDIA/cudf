@@ -296,7 +296,7 @@ class aggregate_reader_metadata {
                      host_span<std::vector<size_type> const> row_group_indices,
                      host_span<int const> column_schemas,
                      size_type num_row_groups,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const;
 
   /**
@@ -387,7 +387,7 @@ class aggregate_reader_metadata {
     host_span<data_type const> output_dtypes,
     host_span<int const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Filters the row groups using bloom filters
@@ -411,7 +411,7 @@ class aggregate_reader_metadata {
     host_span<data_type const> output_dtypes,
     host_span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Initialize the internal variables
@@ -667,7 +667,7 @@ class aggregate_reader_metadata {
                     host_span<data_type const> output_dtypes,
                     host_span<int const> output_column_schemas,
                     std::reference_wrapper<ast::expression const> filter,
-                    rmm::cuda_stream_view stream) const;
+                    cuda::stream_ref stream) const;
 
   /**
    * @brief Filters and reduces down to a selection of row groups
@@ -704,7 +704,7 @@ class aggregate_reader_metadata {
                     host_span<data_type const> output_dtypes,
                     host_span<int const> output_column_schemas,
                     std::optional<std::reference_wrapper<ast::expression const>> filter,
-                    rmm::cuda_stream_view stream) const;
+                    cuda::stream_ref stream) const;
 
   /**
    * @brief Filters and reduces down to a selection of columns

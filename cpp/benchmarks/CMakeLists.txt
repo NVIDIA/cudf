@@ -352,6 +352,11 @@ target_compile_definitions(
 target_link_libraries(PARQUET_DELETION_VECTORS_NVBENCH PRIVATE roaring)
 
 # ##################################################################################################
+# * parquet variant extract benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
+
+# ##################################################################################################
 # * parquet multithread reader benchmark
 # ----------------------------------------------------------------------
 ConfigureNVBench(PARQUET_MULTITHREAD_READER_NVBENCH io/parquet/parquet_reader_multithread.cpp)

@@ -24,6 +24,92 @@
 
 #include <cuda/iterator>
 
+#include <array>
+#include <cstring>
+
+namespace {
+
+void release_schema(ArrowSchema* schema) { schema->release = nullptr; }
+
+void release_array(ArrowArray* array) { array->release = nullptr; }
+
+struct direct_arrow_c_producer {
+  static constexpr int64_t num_rows = 5;
+
+  std::array<int32_t, num_rows> int_values{1, 2, 5, 2, 7};
+  std::array<uint8_t, 1> int_validity{0b00011101};
+
+  std::array<int32_t, num_rows + 1> string_offsets{0, 3, 6, 6, 6, 9};
+  std::array<char, 9> string_chars{'f', 'f', 'f', 'a', 'a', 'a', 'c', 'c', 'c'};
+  std::array<uint8_t, 1> string_validity{0b00010111};
+
+  ArrowSchema schema{};
+  std::array<ArrowSchema, 2> child_schemas{};
+  std::array<ArrowSchema*, 2> child_schema_ptrs{};
+
+  ArrowArray array{};
+  std::array<ArrowArray, 2> child_arrays{};
+  std::array<ArrowArray*, 2> child_array_ptrs{};
+  std::array<void const*, 1> parent_buffers{nullptr};
+  std::array<void const*, 2> int_buffers{int_validity.data(), int_values.data()};
+  std::array<void const*, 3> string_buffers{
+    string_validity.data(), string_offsets.data(), string_chars.data()};
+
+  direct_arrow_c_producer()
+  {
+    child_schema_ptrs = {&child_schemas[0], &child_schemas[1]};
+    child_array_ptrs  = {&child_arrays[0], &child_arrays[1]};
+
+    schema.format     = "+s";
+    schema.name       = "";
+    schema.flags      = 0;
+    schema.n_children = child_schemas.size();
+    schema.children   = child_schema_ptrs.data();
+    schema.release    = release_schema;
+
+    child_schemas[0].format  = "i";
+    child_schemas[0].name    = "ints";
+    child_schemas[0].flags   = ARROW_FLAG_NULLABLE;
+    child_schemas[0].release = release_schema;
+
+    child_schemas[1].format  = "u";
+    child_schemas[1].name    = "strings";
+    child_schemas[1].flags   = ARROW_FLAG_NULLABLE;
+    child_schemas[1].release = release_schema;
+
+    array.length     = num_rows;
+    array.null_count = 0;
+    array.n_buffers  = parent_buffers.size();
+    array.n_children = child_arrays.size();
+    array.buffers    = parent_buffers.data();
+    array.children   = child_array_ptrs.data();
+    array.release    = release_array;
+
+    child_arrays[0].length     = num_rows;
+    child_arrays[0].null_count = 1;
+    child_arrays[0].n_buffers  = int_buffers.size();
+    child_arrays[0].buffers    = int_buffers.data();
+    child_arrays[0].release    = release_array;
+
+    child_arrays[1].length     = num_rows;
+    child_arrays[1].null_count = 1;
+    child_arrays[1].n_buffers  = string_buffers.size();
+    child_arrays[1].buffers    = string_buffers.data();
+    child_arrays[1].release    = release_array;
+  }
+
+  ArrowDeviceArray device_array() const
+  {
+    ArrowDeviceArray out{};
+    std::memcpy(&out.array, &array, sizeof(ArrowArray));
+    out.device_type = ARROW_DEVICE_CPU;
+    out.device_id   = -1;
+    return out;
+  }
+};
+
+}  // namespace
+
 // create a cudf::table and equivalent arrow table with host memory
 std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
 get_nanoarrow_host_tables(cudf::size_type length)
@@ -104,6 +190,21 @@ TEST_F(FromArrowHostDeviceTest, EmptyTable)
 
   auto got_cudf_table = cudf::from_arrow_host(schema.get(), &input);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_cudf_table, got_cudf_table->view());
+}
+
+TEST_F(FromArrowHostDeviceTest, DirectArrowCProducerTable)
+{
+  direct_arrow_c_producer producer;
+  auto input = producer.device_array();
+
+  auto const expected_ints =
+    cudf::test::fixed_width_column_wrapper<int32_t>{{1, 2, 5, 2, 7}, {1, 0, 1, 1, 1}};
+  auto const expected_strings =
+    cudf::test::strings_column_wrapper{{"fff", "aaa", "", "xxx", "ccc"}, {1, 1, 1, 0, 1}};
+  auto const expected = cudf::table_view{{expected_ints, expected_strings}};
+
+  auto got_cudf_table = cudf::from_arrow_host(&producer.schema, &input);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, got_cudf_table->view());
 }
 
 TEST_F(FromArrowHostDeviceTest, ZeroColumnsWithRows)

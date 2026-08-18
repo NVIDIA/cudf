@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from cudf_polars.containers import DataType
 from cudf_polars.containers.dataframe import DataFrame, NamedColumn
 from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.dsl.to_ast import insert_colrefs, to_ast, to_parquet_filter
+from cudf_polars.dsl.traversal import traversal
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
 
@@ -118,3 +119,52 @@ def test_to_parquet_filter_with_colref_raises():
 
     with pytest.raises(TypeError):
         to_parquet_filter(colref, stream=get_cuda_stream())
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        expr_nodes.BooleanFunction.Name.IsNull,
+        expr_nodes.BooleanFunction.Name.IsNotNull,
+    ],
+)
+def test_to_parquet_filter_null_checks_on_column(name):
+    col = expr_nodes.Col(DataType(pl.datatypes.Int64()), "a")
+    fn = expr_nodes.BooleanFunction(DataType(pl.datatypes.Boolean()), name, (), col)
+    filter_expr, residual = to_parquet_filter(fn, stream=get_cuda_stream())
+    assert filter_expr is not None
+    assert residual is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        expr_nodes.BooleanFunction.Name.IsNull,
+        expr_nodes.BooleanFunction.Name.IsNotNull,
+    ],
+)
+def test_to_parquet_filter_null_checks_on_nested_column_not_pushed(name):
+    # See https://github.com/rapidsai/cudf/issues/23397
+    struct_dtype = DataType(pl.Struct({"a": pl.Int64}))
+    col = expr_nodes.Col(struct_dtype, "s")
+    fn = expr_nodes.BooleanFunction(DataType(pl.datatypes.Boolean()), name, (), col)
+    filter_expr, residual = to_parquet_filter(fn, stream=get_cuda_stream())
+    assert filter_expr is None
+    assert residual is None
+
+
+@pytest.mark.parametrize(
+    "predicate, pushed, exact",
+    [
+        (pl.col("a") >= 2, True, True),
+        ((pl.col("a") >= 2) & pl.col("s").str.contains("b"), True, False),
+        ((pl.col("a") >= 2) | pl.col("s").str.contains("b"), False, False),
+    ],
+)
+def test_to_parquet_filter_conjunction_splitting(predicate, pushed, exact):
+    lf = pl.LazyFrame({"a": [1, 2, 3], "s": ["x", "y", "z"]})
+    ir = Translator(lf.filter(predicate)._ldf.visit(), pl.GPUEngine()).translate_ir()
+    mask = next(n.mask.value for n in traversal([ir]) if isinstance(n, ir_nodes.Filter))
+    filter_expr, residual = to_parquet_filter(mask, stream=get_cuda_stream())
+    assert (filter_expr is not None) == pushed
+    assert (filter_expr is not None and residual is None) == exact

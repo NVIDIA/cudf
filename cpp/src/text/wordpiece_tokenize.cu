@@ -39,7 +39,6 @@
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/remove.h>
 
 namespace nvtext {
@@ -172,7 +171,8 @@ namespace {
  * @brief Identifies the column indices as the values in the vocabulary map
  */
 struct key_pair {
-  __device__ auto operator()(cudf::size_type idx) const noexcept
+  __device__ cuco::pair<cudf::size_type, cudf::size_type> operator()(
+    cudf::size_type idx) const noexcept
   {
     return cuco::make_pair(idx, idx);
   }
@@ -259,7 +259,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
     rmm::mr::polymorphic_allocator<char>{mr},
     stream.get());
   // insert them without the '##' prefix since that is how they will be looked up
-  auto iter_sub = thrust::make_transform_iterator(sub_map_indices.begin(), key_pair{});
+  auto iter_sub = cuda::transform_iterator(sub_map_indices.begin(), key_pair{});
   vocab_sub_map->insert_async(iter_sub, iter_sub + sub_map_indices.size(), stream.get());
 
   // prefetch the [unk] vocab entry

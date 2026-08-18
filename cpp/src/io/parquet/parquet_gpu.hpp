@@ -22,6 +22,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -425,7 +426,7 @@ struct get_page_key {
  */
 inline auto make_page_key_iterator(device_span<PageInfo const> pages)
 {
-  return thrust::make_transform_iterator(pages.begin(), get_page_key{});
+  return cuda::transform_iterator(pages.begin(), get_page_key{});
 }
 
 /**
@@ -577,7 +578,8 @@ struct PageFragment {
  * @param value_bit_width Bit width of a single value, 0 if the level is not encoded
  * @param num_values Number of values in the run
  */
-CUDF_HOST_DEVICE constexpr size_t max_RLE_page_size(uint8_t value_bit_width, size_t num_values)
+CUDF_HOST_DEVICE constexpr inline size_t max_RLE_page_size(uint8_t value_bit_width,
+                                                           size_t num_values)
 {
   if (value_bit_width == 0) { return 0; }
 
@@ -591,23 +593,24 @@ CUDF_HOST_DEVICE constexpr size_t max_RLE_page_size(uint8_t value_bit_width, siz
   // bitwidths it's hard to get the pathological 8:2 split.
   // If the encoder starts printing the data corruption warning, then this will need to be
   // revisited.
-  return 4 + 5 + ((num_values * value_bit_width + 7) / 8) + (num_values / 8);
+  return 4 + 5 + cudf::util::div_rounding_up_unsafe<size_t>(num_values * value_bit_width, 8) +
+         (num_values / 8);
 }
 
 // Bytes needed for the RLE length field
 constexpr uint32_t RLE_LENGTH_FIELD_LEN = sizeof(uint32_t);
 
 // Maximum size of a thrift field holding a varint of `value_bits` bits. Each varint byte carries
-// seven payload bits.
+// seven payload bits. Equal to 1 (field header byte) + ceil(value_bits / 7).
 CUDF_HOST_DEVICE constexpr size_t max_thrift_field_size(size_t value_bits)
 {
-  return 1 /* field header byte */ + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
+  return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
 }
 
-// Max V2 page header size excluding statistics.
+// Max V2 page header size excluding statistics. Equal to size of 9 `i32` fields + 2 bool fields
+// (is_compressed and nested struct) + 2 stop bytes.
 constexpr size_t MAX_V2_HDR_SIZE =
-  9 /* number of `i32` fields */ * max_thrift_field_size(sizeof(int32_t) * CHAR_BIT) +
-  2 /* is_compressed + nested struct */ + 2 /* stop bytes */;
+  9 * max_thrift_field_size(sizeof(int32_t) * CHAR_BIT) + 2 * sizeof(bool) + 2;
 
 /**
  * @brief Maximum size, in bytes, of a page holding a single fragment's data and levels.
@@ -1238,6 +1241,8 @@ void InitFragmentStatistics(device_span<statistics_group> groups,
  * @param[in] max_page_size_rows Maximum number of rows per page
  * @param[in] page_align Required alignment for uncompressed pages
  * @param[in] write_v2_headers True if V2 page headers should be written
+ * @param[in] write_page_stats True if statistics are to be written to the data page headers. When
+ * false, no space is reserved for them in the page headers
  * @param[in] page_grstats Setup for page-level stats
  * @param[in] chunk_grstats Setup for chunk-level stats
  * @param[out] error_code Error code for kernel failures
@@ -1253,6 +1258,7 @@ void InitEncoderPages(cudf::detail::device_2dspan<EncColumnChunk> chunks,
                       size_type max_page_size_rows,
                       uint32_t page_align,
                       bool write_v2_headers,
+                      bool write_page_stats,
                       statistics_merge_group* page_grstats,
                       statistics_merge_group* chunk_grstats,
                       kernel_error::pointer error_code,

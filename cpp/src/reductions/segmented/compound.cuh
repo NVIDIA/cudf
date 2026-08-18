@@ -15,8 +15,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/iterator>
 #include <thrust/adjacent_difference.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace reduction {
@@ -66,12 +66,12 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
   // Run segmented reduction
   if (col.has_nulls()) {
     auto nrt = compound_op.template get_null_replacing_element_transformer<ResultType>();
-    auto itr = thrust::make_transform_iterator(d_col->pair_begin<InputType, true>(), nrt);
+    auto itr = cuda::transform_iterator(d_col->pair_begin<InputType, true>(), nrt);
     cudf::reduction::detail::segmented_reduce(
       itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream);
   } else {
     auto et  = compound_op.template get_element_transformer<ResultType>();
-    auto itr = thrust::make_transform_iterator(d_col->begin<InputType>(), et);
+    auto itr = cuda::transform_iterator(d_col->begin<InputType>(), et);
     cudf::reduction::detail::segmented_reduce(
       itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream);
   }

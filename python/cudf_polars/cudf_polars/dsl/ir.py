@@ -965,6 +965,7 @@ class Scan(IR):
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
         stream = context.get_cuda_stream()
+        effective_predicate = predicate
         if typ == "csv":
 
             def read_csv_header(
@@ -1092,12 +1093,18 @@ class Scan(IR):
             filters = None
             if predicate is not None and row_index is None:
                 # Can't apply filters during read if we have a row index.
-                filters = to_parquet_filter(
+                filters, residual_expr = to_parquet_filter(
                     _prepare_parquet_predicate(
                         predicate.value, paths, schema, with_columns
                     ),
                     stream=stream,
                 )
+                if filters is not None:
+                    effective_predicate = (
+                        expr.NamedExpr(predicate.name, residual_expr)
+                        if residual_expr is not None
+                        else None
+                    )
             builder = plc.io.parquet.ParquetReaderOptions.builder(source_info)
             if filters is not None and parquet_options.use_jit_filter:
                 builder.use_jit_filter(use_jit_filter=True)
@@ -1189,8 +1196,7 @@ class Scan(IR):
                     df = Scan.add_file_paths(
                         include_file_paths, paths, tbl_w_meta.num_rows_per_source, df
                     )
-            if filters is not None:
-                # Mask must have been applied.
+            if filters is not None and effective_predicate is None:
                 return df
         elif typ == "ndjson":
             json_schema: list[plc.io.json.NameAndType] = [
@@ -1241,7 +1247,7 @@ class Scan(IR):
         assert all(
             c.obj.type() == schema[name].plc_type for name, c in df.column_map.items()
         )
-        return apply_predicate(df, predicate)
+        return apply_predicate(df, effective_predicate)
 
 
 class Sink(IR):

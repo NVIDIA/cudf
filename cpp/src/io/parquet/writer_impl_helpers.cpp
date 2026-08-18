@@ -93,7 +93,7 @@ std::optional<size_type> compute_smaller_fragment_size(
   auto fragment_size     = input_fragment_size;
   auto const num_columns = fragments.size().first;
 
-  for (auto const col_idx : std::views::iota(size_t{0}, num_columns)) {
+  for (auto col_idx = 0; std::cmp_less(col_idx, num_columns); ++col_idx) {
     for (auto const& frag : fragments[col_idx]) {
       auto const page_size =
         max_fragment_page_size(frag.fragment_data_size, frag.num_values, col_desc[col_idx]);

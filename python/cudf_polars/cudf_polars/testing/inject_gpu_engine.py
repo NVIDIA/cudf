@@ -9,6 +9,7 @@ import sqlite3
 from functools import partialmethod
 from typing import TYPE_CHECKING
 
+import numpy
 import packaging.version
 import pytest
 
@@ -136,8 +137,7 @@ def pytest_report_header(config: pytest.Config) -> str:
     return f"injected GPU engine: {cls.__module__}.{cls.__name__}"
 
 
-EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/unit/constructors/test_series.py::test_series_init_np_temporal_with_nat_15518": "DeprecationWarning from Numpy: https://github.com/pola-rs/polars/pull/28782",
+EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_csv.py::test_read_csv_only_loads_selected_columns": "Memory usage won't be correct due to GPU",
     "tests/unit/io/test_delta.py::test_scan_delta_version": "Need to expose hive partitioning",
     "tests/unit/io/test_delta.py::test_scan_delta_relative": "Need to expose hive partitioning",
@@ -352,6 +352,15 @@ TESTS_TO_SKIP: dict[str, str] = {
 }
 
 
+if packaging.version.parse(numpy.__version__) >= packaging.version.parse("2.5.0"):
+    # TODO: remove once cudf-polars supports polars==1.44
+    EXPECTED_FAILURES.update(
+        {
+            "tests/unit/constructors/test_series.py::test_series_init_np_temporal_with_nat_15518": "DeprecationWarning from Numpy: https://github.com/pola-rs/polars/pull/28782",
+        }
+    )
+
+
 if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3.44.0"):
     # These tests rely on features not available in older versions of sqlite.
     TESTS_TO_SKIP.update(
@@ -496,5 +505,5 @@ def pytest_collection_modifyitems(
             is not None
         ):
             item.add_marker(pytest.mark.xfail(reason=s_reason))
-        elif (reason := EXPECTED_FAILURES.get(item.nodeid, None)) is not None:
+        elif (reason := EXPECTED_FAILURES.get(item.nodeid)) is not None:
             item.add_marker(pytest.mark.xfail(reason=reason))

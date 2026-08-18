@@ -14,8 +14,6 @@
 #include <cudf/io/detail/parquet.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <optional>
 
 namespace cudf::io::parquet::detail {

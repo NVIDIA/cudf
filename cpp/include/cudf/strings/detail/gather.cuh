@@ -23,11 +23,11 @@
 
 #include <cub/cub.cuh>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <cstddef>
 
@@ -234,7 +234,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
     strings.is_empty() ? make_empty_column(type_id::INT32)->view() : strings.offsets(),
     strings.offset());
 
-  auto sizes_itr = thrust::make_transform_iterator(
+  auto sizes_itr = cuda::transform_iterator(
     begin,
     cuda::proclaim_return_type<size_type>(
       [d_strings = *d_strings, d_in_offsets] __device__(size_type idx) {
@@ -289,7 +289,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
           d_strings->begin<string_view>(), d_out_chars, offsets_view, begin, output_count);
     } else {
       // Iterator over the character column of input strings to gather
-      auto in_chars_itr = thrust::make_transform_iterator(
+      auto in_chars_itr = cuda::transform_iterator(
         begin,
         cuda::proclaim_return_type<char const*>([d_strings = *d_strings] __device__(size_type idx) {
           if (NullifyOutOfBounds && (idx < 0 || idx >= d_strings.size())) {

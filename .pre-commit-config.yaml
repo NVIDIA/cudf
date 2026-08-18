@@ -112,6 +112,12 @@ repos:
         entry: 'rmm::exec_policy\('
         language: pygrep
         types_or: [c, c++, cuda]
+      - id: use-cuda-iterators
+        name: use-cuda-iterators
+        description: 'Enforce that CUDA iterators are used instead of equivalent Thrust iterators'
+        entry: 'thrust::(?:make_)?(?:constant|counting|discard|permutation|reverse|strided|tabulate_output|transform|transform_input_output|transform_output|zip)_iterator'
+        language: pygrep
+        types_or: [c, c++, cuda]
       - id: exec-policy-nosync-memory-resource
         name: exec-policy-nosync-memory-resource
         description: 'Enforce that rmm::exec_policy_nosync is always passed a memory resource as its second argument'

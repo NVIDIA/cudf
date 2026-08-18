@@ -69,9 +69,7 @@ make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& in
 }  // namespace
 
 std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  device_span<size_type const> sizes,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
 }

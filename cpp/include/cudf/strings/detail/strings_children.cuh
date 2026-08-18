@@ -44,9 +44,7 @@ namespace detail {
  * @return Offsets column and total bytes
  */
 std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  device_span<size_type const> sizes,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr);
+  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 template <typename Iter>
 struct string_offsets_fn {

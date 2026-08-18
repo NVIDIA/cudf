@@ -31,6 +31,7 @@
 
 #include <cub/cub.cuh>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -285,7 +286,7 @@ CUDF_KERNEL void special_tokens_kernel(uint32_t* d_normalized,
   if (match == end) { return; }
   char candidate[8];
   auto const ch_begin =
-    thrust::transform_iterator(begin, [](auto v) { return static_cast<char>(v); });
+    cuda::transform_iterator(begin, [](auto v) { return static_cast<char>(v); });
   auto const ch_end = ch_begin + cuda::std::distance(begin, match + 1);
   auto last         = thrust::copy_if(
     thrust::seq, ch_begin, ch_end, candidate, [](auto c) { return c != 0 && c != ' '; });
@@ -430,7 +431,7 @@ rmm::device_uvector<cudf::size_type> compute_sizes(cudf::device_span<uint32_t co
       d_temp.data(), temp, d_in, d_out, size, offsets, offsets + 1, stream.get());
   } else {
     // offsets need to be normalized for segmented-reduce to work efficiently
-    auto offsets_itr = thrust::transform_iterator(
+    auto offsets_itr = cuda::transform_iterator(
       offsets,
       cuda::proclaim_return_type<int64_t>([offset] __device__(auto o) { return o - offset; }));
     cub::DeviceSegmentedReduce::Sum(

@@ -1002,6 +1002,27 @@ class ConfigOptions(Generic[ExecutorType]):
     device: int | None = None
     memory_resource_config: MemoryResourceConfig | None = None
 
+    @staticmethod
+    def dict_factory(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        """
+        ``dict_factory`` for :func:`dataclasses.asdict`.
+
+        Converts any :data:`UNSPECIFIED` value to ``None``
+        (e.g. ParquetOptions.prefetch_file_metadata) so the resulting
+        dict can be serialized with :func:`json.dumps`.
+
+        Parameters
+        ----------
+        items
+            The ``(key, value)`` pairs for a single dataclass level, as passed
+            by :func:`dataclasses.asdict`.
+
+        Returns
+        -------
+        A dict with :data:`UNSPECIFIED` values replaced by ``None``.
+        """
+        return {k: (None if isinstance(v, Unspecified) else v) for k, v in items}
+
     def drop_unserializable(self) -> ConfigOptions[ExecutorType]:
         """
         Return a copy safe to pickle to a worker/actor.

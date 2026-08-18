@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -289,10 +289,10 @@ class Profiler:
             call_to_action = (
                 "To request GPU support for any of these functions, "
                 "please file a Github issue here: "
-                "[link=https://github.com/rapidsai/cudf/issues/new?assignees"
+                "[link=https://github.com/NVIDIA/cudf/issues/new?assignees"
                 "=&labels=%3F+-+Needs+Triage%2C+feature+request&projects="
                 "&template=pandas_function_request.md&title=%5BFEA%5D]"
-                "https://github.com/rapidsai/cudf/issues/new/choose"
+                "https://github.com/NVIDIA/cudf/issues/new/choose"
                 "[/link]."
             )
             console.print(

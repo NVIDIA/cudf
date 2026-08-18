@@ -22,7 +22,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <functional>
 #include <stdexcept>
@@ -40,7 +40,7 @@ namespace {
 std::vector<column_view> unslice_children(column_view const& c)
 {
   if (c.type().id() == type_id::STRUCT) {
-    auto child_it = thrust::make_transform_iterator(c.child_begin(), [](auto const& child) {
+    auto child_it = cuda::transform_iterator(c.child_begin(), [](auto const& child) {
       return column_view(
         child.type(),
         child.offset() + child.size(),  // This is hacky, we don't know the actual unsliced size but

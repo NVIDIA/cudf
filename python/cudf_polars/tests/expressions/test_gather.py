@@ -84,7 +84,7 @@ def test_gather_out_of_bounds(engine: pl.GPUEngine, negative):
         pytest.param(
             pl.lit([7]),
             marks=pytest.mark.xfail(
-                reason="List literal loses nesting in gather: https://github.com/rapidsai/cudf/issues/19610"
+                reason="List literal loses nesting in gather: https://github.com/NVIDIA/cudf/issues/19610"
             ),
         ),
         pl.lit([[7]]),

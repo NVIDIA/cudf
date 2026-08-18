@@ -500,11 +500,12 @@ def _cached_intersphinx_lookup(env, node, contnode):
 
 def _resolve_cpp_xref(app, env, node, contnode, name):
     docname, objtype, anchor = _domain_objects[name]
+    fromdocname = node.get("refdoc", env.docname)
     for reftype in (node["reftype"], objtype):
         if (
             ref := env.domains["cpp"].resolve_xref(
                 env,
-                docname,
+                fromdocname,
                 app.builder,
                 reftype,
                 name,
@@ -514,7 +515,7 @@ def _resolve_cpp_xref(app, env, node, contnode, name):
         ) is not None:
             return ref
     return make_refnode(
-        app.builder, env.docname, docname, anchor, contnode, name
+        app.builder, fromdocname, docname, anchor, contnode, name
     )
 
 

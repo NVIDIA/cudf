@@ -227,6 +227,8 @@ def _read_with_hybrid_scan(
     stats_pruning: bool = True,
 ) -> DataFrame:
     """Two-pass parquet read via HybridScanReader for a row-group-aligned split."""
+    from cudf_polars.dsl.utils.io import _default_reader_options
+
     assert plc_filter is not None
     assert len(paths) == 1, (
         "hybrid scan only supported for SplitScan; one physical file"
@@ -237,11 +239,7 @@ def _read_with_hybrid_scan(
         source_info = plc.io.SourceInfo(
             [plc.io.types.FilepathSource(cached_info.path, cached_info.size)]
         )
-        options = (
-            plc.io.parquet.ParquetReaderOptions.builder(source_info)
-            .decimal_width(plc.TypeId.DECIMAL128)
-            .build()
-        )
+        options = _default_reader_options(cached_info)
         if with_columns is not None:
             options.set_column_names(with_columns)
         options.set_filter(plc_filter)
@@ -1028,6 +1026,9 @@ class ParquetMetadata:
         Parquet-dataset paths.
     max_footer_samples
         Maximum number of file footers to sample metadata from.
+    parse_hybrid_metadata
+        Whether to eagerly parse ``HybridScanMetadata`` for sampled paths.
+        Only useful when ``ParquetOptions.use_hybrid_scan`` is enabled.
     """
 
     __slots__ = (
@@ -1061,7 +1062,13 @@ class ParquetMetadata:
     """Cached parquet info for the sampled paths. Only set if all files were sampled."""
 
     @nvtx_annotate_cudf_polars(message="ParquetMetadata")
-    def __init__(self, paths: tuple[str, ...], max_footer_samples: int):
+    def __init__(
+        self,
+        paths: tuple[str, ...],
+        max_footer_samples: int,
+        *,
+        parse_hybrid_metadata: bool = False,
+    ):
         from cudf_polars.dsl.utils.io import _prefetch_parquet_footers_for_paths
 
         self.paths = paths
@@ -1088,7 +1095,7 @@ class ParquetMetadata:
         sampled_file_count = len(self.sample_paths)
 
         sample_parquet_info = _prefetch_parquet_footers_for_paths(
-            list(self.sample_paths)
+            list(self.sample_paths), parse_hybrid_metadata=parse_hybrid_metadata
         )
         sample_footers = [info.file_metadata for info in sample_parquet_info]
 
@@ -1219,9 +1226,13 @@ class ParquetSourceInfo:
         schema: tuple[tuple[str, DataType], ...],
         max_footer_samples: int,
         max_row_group_samples: int,
+        *,
+        parse_hybrid_metadata: bool = False,
     ) -> ParquetSourceInfo:
         """Build a ParquetSourceInfo from a list of paths."""
-        metadata = ParquetMetadata(paths, max_footer_samples)
+        metadata = ParquetMetadata(
+            paths, max_footer_samples, parse_hybrid_metadata=parse_hybrid_metadata
+        )
         row_count = metadata.row_count
 
         file_count = len(paths)
@@ -1347,10 +1358,17 @@ def _build_parquet_source(
     schema: tuple[tuple[str, DataType], ...],
     max_footer_samples: int,
     max_row_group_samples: int,
+    *,
+    parse_hybrid_metadata: bool = False,
 ) -> ParquetSourceInfo:
     """Return cached, fully-computed Parquet datasource information."""
     return ParquetSourceInfo.from_paths(
-        paths, needed_cols, schema, max_footer_samples, max_row_group_samples
+        paths,
+        needed_cols,
+        schema,
+        max_footer_samples,
+        max_row_group_samples,
+        parse_hybrid_metadata=parse_hybrid_metadata,
     )
 
 
@@ -1370,7 +1388,10 @@ def _build_source_info(
         needed_cols = frozenset(ir.schema) if needed_cols is None else needed_cols
         schema = tuple(ir.schema.items()) if schema is None else schema
         paths = tuple(ir.paths)
-        return _build_parquet_source(paths, needed_cols, schema, max_footer, max_rg)
+        use_hybrid_scan = config_options.parquet_options.use_hybrid_scan
+        return _build_parquet_source(
+            paths, needed_cols, schema, max_footer, max_rg, use_hybrid_scan
+        )
     else:  # pragma: no cover
         raise ValueError(f"Unsupported Scan type: {ir.typ}")
 

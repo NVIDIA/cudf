@@ -34,6 +34,8 @@ cdef extern from * nogil:
         auto [buffers, spans, fut] =
             cudf::io::parquet::fetch_byte_ranges_to_device_async(
                 datasource, byte_ranges, stream, mr);
+        // Block until the async fetch completes so the returned buffers/spans
+        // are fully populated. This also avoids exposing std::future to Cython.
         fut.get();
         return {std::move(buffers), std::move(spans)};
     }

@@ -913,7 +913,7 @@ cdef class FilteredJoin:
     def __cinit__(
         self,
         Table right,
-        null_equality compare_nulls=null_equality.EQUAL,
+        null_equality compare_nulls: NullEquality = null_equality.EQUAL,
         double load_factor=0.5,
         object stream: CudaStreamLike | None = None,
     ) -> None:

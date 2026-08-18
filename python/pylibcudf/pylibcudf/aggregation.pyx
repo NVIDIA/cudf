@@ -82,6 +82,14 @@ from pylibcudf.libcudf.types import \
     udf_source_type as UdfSourceType  # no-cython-lint
 
 from .types cimport DataType
+from .types import (
+    Interpolation,
+    NanEquality,
+    NullEquality,
+    NullOrder,
+    NullPolicy,
+    Order,
+)
 
 __all__ = [
     "Aggregation",
@@ -280,7 +288,7 @@ cpdef Aggregation max():
     return Aggregation.from_libcudf(move(make_max_aggregation[aggregation]()))
 
 
-cpdef Aggregation ewma(float center_of_mass, ewm_history history):
+cpdef Aggregation ewma(float center_of_mass, ewm_history history: EWMHistory):
     """Create a EWMA aggregation.
 
     For details, see :cpp:func:`make_ewma_aggregation`.
@@ -302,7 +310,9 @@ cpdef Aggregation ewma(float center_of_mass, ewm_history history):
     )
 
 
-cpdef Aggregation count(null_policy null_handling = null_policy.EXCLUDE):
+cpdef Aggregation count(
+    null_policy null_handling: NullPolicy = null_policy.EXCLUDE
+):
     """Create a count aggregation.
 
     For details, see :cpp:func:`make_count_aggregation`.
@@ -477,7 +487,9 @@ cpdef Aggregation argmin():
     return Aggregation.from_libcudf(move(make_argmin_aggregation[aggregation]()))
 
 
-cpdef Aggregation nunique(null_policy null_handling = null_policy.EXCLUDE):
+cpdef Aggregation nunique(
+    null_policy null_handling: NullPolicy = null_policy.EXCLUDE
+):
     """Create a nunique aggregation.
 
     For details, see :cpp:func:`make_nunique_aggregation`.
@@ -498,7 +510,8 @@ cpdef Aggregation nunique(null_policy null_handling = null_policy.EXCLUDE):
 
 
 cpdef Aggregation nth_element(
-    size_type n, null_policy null_handling = null_policy.INCLUDE
+    size_type n,
+    null_policy null_handling: NullPolicy = null_policy.INCLUDE,
 ):
     """Create a nth_element aggregation.
 
@@ -519,7 +532,9 @@ cpdef Aggregation nth_element(
     )
 
 
-cpdef Aggregation collect_list(null_policy null_handling = null_policy.INCLUDE):
+cpdef Aggregation collect_list(
+    null_policy null_handling: NullPolicy = null_policy.INCLUDE
+):
     """Create a collect_list aggregation.
 
     For details, see :cpp:func:`make_collect_list_aggregation`.
@@ -540,9 +555,9 @@ cpdef Aggregation collect_list(null_policy null_handling = null_policy.INCLUDE):
 
 
 cpdef Aggregation collect_set(
-    null_handling = null_policy.INCLUDE,
-    nulls_equal = null_equality.EQUAL,
-    nans_equal = nan_equality.ALL_EQUAL,
+    null_policy null_handling: NullPolicy = null_policy.INCLUDE,
+    null_equality nulls_equal: NullEquality = null_equality.EQUAL,
+    nan_equality nans_equal: NanEquality = nan_equality.ALL_EQUAL,
 ):
     """Create a collect_set aggregation.
 
@@ -648,11 +663,11 @@ cpdef Aggregation covariance(size_type min_periods, size_type ddof):
 
 
 cpdef Aggregation rank(
-    rank_method method,
-    order column_order = order.ASCENDING,
-    null_policy null_handling = null_policy.EXCLUDE,
-    null_order null_precedence = null_order.AFTER,
-    rank_percentage percentage = rank_percentage.NONE,
+    rank_method method: RankMethod,
+    order column_order: Order = order.ASCENDING,
+    null_policy null_handling: NullPolicy = null_policy.EXCLUDE,
+    null_order null_precedence: NullOrder = null_order.AFTER,
+    rank_percentage percentage: RankPercentage = rank_percentage.NONE,
 ):
     """Create a rank aggregation.
 
@@ -766,8 +781,8 @@ cpdef Aggregation merge_lists():
 
 
 cpdef Aggregation merge_sets(
-    null_equality nulls_equal = null_equality.EQUAL,
-    nan_equality nans_equal = nan_equality.ALL_EQUAL,
+    null_equality nulls_equal: NullEquality = null_equality.EQUAL,
+    nan_equality nans_equal: NanEquality = nan_equality.ALL_EQUAL,
 ):
     """Create a merge sets aggregation.
 
@@ -836,7 +851,7 @@ cpdef Aggregation tdigest(int max_centroids):
         move(make_tdigest_aggregation[aggregation](max_centroids))
     )
 
-cpdef Aggregation bitwise(bitwise_op op):
+cpdef Aggregation bitwise(bitwise_op op: BitwiseOp):
     """Create a bitwise aggregation.
 
     For details, see :cpp:func:`make_bitwise_aggregation`.

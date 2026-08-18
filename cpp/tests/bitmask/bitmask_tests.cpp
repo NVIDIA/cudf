@@ -713,8 +713,7 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
     expect_all_valid(result_masks[4]->data());
   }
 
-  // The raw-mask overload. Its non-empty segment ANDs both masks, so seeding the reduction with the
-  // identity must leave that segment's result unchanged.
+  // Call the raw-mask overload
   {
     std::vector<cudf::bitmask_type const*> const masks{
       static_cast<cudf::column_view>(col1).null_mask(),

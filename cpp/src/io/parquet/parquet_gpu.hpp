@@ -21,6 +21,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -408,7 +409,7 @@ struct get_page_key {
  */
 inline auto make_page_key_iterator(device_span<PageInfo const> pages)
 {
-  return thrust::make_transform_iterator(pages.begin(), get_page_key{});
+  return cuda::transform_iterator(pages.begin(), get_page_key{});
 }
 
 /**

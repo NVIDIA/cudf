@@ -28,7 +28,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -688,8 +687,8 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
                      pass.pages.d_begin(),
                      pass.pages.d_end(),
                      set_list_row_count_estimate{pass.chunks});
-    auto key_input  = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
-    auto page_input = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
+    auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
+    auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
     thrust::exclusive_scan_by_key(
       rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
       key_input,
@@ -802,8 +801,8 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // field in ColumnChunkDesc is the absolute row index for the whole file. chunk_row in PageInfo is
   // relative to the beginning of the chunk. so in the kernels, chunk.start_row + page.chunk_row
   // gives us the absolute row index
-  auto key_input  = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
-  auto page_input = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
+  auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
+  auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
   thrust::exclusive_scan_by_key(
     rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
     key_input,
@@ -1036,7 +1035,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           d_cols_info.data(), max_depth, subpass.pages.size(), subpass.pages.device_begin()});
 
       // Manually create a size_t `key_start` compatible counting_transform_iterator.
-      auto const reduction_keys = thrust::make_transform_iterator(
+      auto const reduction_keys = cuda::transform_iterator(
         cuda::counting_iterator<std::size_t>{key_start}, get_reduction_key{subpass.pages.size()});
 
       // Find the size of each column
@@ -1139,8 +1138,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
   rmm::device_uvector<size_t> d_col_sizes(_input_columns.size(), _stream);
 
   // use page_index to fetch page string sizes in the proper order
-  auto val_iter = thrust::make_transform_iterator(subpass.pages.device_begin(),
-                                                  page_to_string_size{pass.chunks.d_begin()});
+  auto val_iter = cuda::transform_iterator(subpass.pages.device_begin(),
+                                           page_to_string_size{pass.chunks.d_begin()});
 
   // do scan by key to calculate string offsets for each page
   thrust::exclusive_scan_by_key(

@@ -167,8 +167,6 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
     }
     return streams;
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return stream_pool_size(); }
 };
 
 /**
@@ -186,8 +184,6 @@ class debug_cuda_stream_pool : public cuda_stream_pool {
   {
     return std::vector<cuda::stream_ref>(count, cudf::get_default_stream());
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
 };
 
 cuda_stream_pool* create_global_cuda_stream_pool()

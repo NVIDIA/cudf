@@ -54,8 +54,8 @@ class cuda_stream_pool {
   /**
    * @brief Get a set of `cuda_stream_view` objects from the pool.
    *
-   * The returned streams are distinct unless `count` is greater than the value returned by
-   * `get_stream_pool_size()`, in which case streams are repeated.
+   * The returned streams are distinct unless `count` is greater than the maximum number of streams
+   * the pool provides, in which case streams are repeated.
    *
    * Consecutive calls are served from different streams where the pool is large enough, so a
    * nested call generally does not return streams that its caller is already using. This is not
@@ -66,13 +66,6 @@ class cuda_stream_pool {
    * @return Vector containing `count` stream views.
    */
   virtual std::vector<cuda::stream_ref> get_streams(std::size_t count) = 0;
-
-  /**
-   * @brief Get the maximum number of unique stream objects the pool can provide.
-   *
-   * @return the maximum number of stream objects in the pool
-   */
-  [[nodiscard]] virtual std::size_t get_stream_pool_size() const = 0;
 
  protected:
   cuda_stream_pool() = default;
@@ -102,7 +95,8 @@ cuda_stream_pool& thread_cuda_stream_pool();
  * @deprecated Renamed to `thread_cuda_stream_pool` now that the pool is per thread and per device.
  */
 [[deprecated("Use thread_cuda_stream_pool instead.")]]  //
-inline cuda_stream_pool& global_cuda_stream_pool()
+inline cuda_stream_pool&
+global_cuda_stream_pool()
 {
   return thread_cuda_stream_pool();
 }

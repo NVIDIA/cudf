@@ -7,30 +7,4 @@ from pylibcudf.typing import CudaStreamLike
 
 __all__ = ['join_streams']
 
-def join_streams(streams: list[CudaStreamLike], stream: CudaStreamLike) -> None:
-    """Synchronize a stream to an event on a set of streams.
-
-    This function synchronizes the joined stream with the waited-on streams
-    by placing events on each of the waited-on streams and having the joined
-    stream wait on those events.
-
-    Parameters
-    ----------
-    streams : list
-        A list of Stream objects to wait on.
-    stream : Stream
-        The joined stream that synchronizes with the waited-on streams.
-
-    Examples
-    --------
-    >>> import pylibcudf as plc
-    >>> from rmm.pylibrmm.stream import Stream
-    >>> # Create streams
-    >>> stream1 = Stream()
-    >>> stream2 = Stream()
-    >>> join_stream = Stream()
-    >>> # ... do work on stream1 and stream2 ...
-    >>> # Wait for both streams before continuing work on join_stream
-    >>> plc.experimental.join_streams([stream1, stream2], join_stream)
-    >>> # ... continue work on join_stream ...
-    """
+def join_streams(streams: list[CudaStreamLike], stream: CudaStreamLike) -> None: ...

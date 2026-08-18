@@ -10,45 +10,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['find_multiple', 'contains_multiple']
 
-def find_multiple(input: Column, targets: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a lists column with character position values where each
-    of the target strings are found in each string.
-
-    For details, see :cpp:func:`find_multiple`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-    targets : Column
-        Strings to search for in each string
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        Lists column with character position values
-    """
-def contains_multiple(input: Column, targets: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """
-    Returns a table of boolean values where each column indicates
-    whether the corresponding target is found at that row.
-
-    For details, see :cpp:func:`contains_multiple`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-    targets : Column
-        Strings to search for in each string
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Table
-        Columns of booleans
-    """
+def find_multiple(input: Column, targets: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def contains_multiple(input: Column, targets: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...

@@ -13,31 +13,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 ColumnOrScalar = TypeVar('ColumnOrScalar', Column, Scalar)
 __all__ = ['slice_strings']
 
-def slice_strings(input: Column, start: ColumnOrScalar | None=None, stop: ColumnOrScalar | None=None, step: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Perform a slice operation on a strings column.
-
-    ``start`` and ``stop`` may be a
-    :py:class:`~pylibcudf.column.Column` or a
-    :py:class:`~pylibcudf.scalar.Scalar`. But ``step`` must be a
-    :py:class:`~pylibcudf.scalar.Scalar`.
-
-    For details, see :cpp:func:`slice_strings`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings column for this operation
-    start : Union[Column, Scalar]
-        The start character position or positions.
-    stop : Union[Column, Scalar]
-        The end character position or positions
-    step : Scalar
-        Distance between input characters retrieved
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    pylibcudf.Column
-        The result of the slice operation
-    """
+def slice_strings(input: Column, start: ColumnOrScalar | None=None, stop: ColumnOrScalar | None=None, step: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

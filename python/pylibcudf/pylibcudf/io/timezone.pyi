@@ -10,23 +10,4 @@ from ..table import Table
 
 __all__ = ['make_timezone_transition_table']
 
-def make_timezone_transition_table(tzif_dir: str, timezone_name: str, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """
-    Creates a transition table to convert ORC timestamps to UTC.
-
-    Parameters
-    ----------
-    tzif_dir : str
-        The directory where the TZif files are located
-    timezone_name : str
-        standard timezone name
-    stream : Stream, optional
-        CUDA stream for device memory operations and kernel launches
-    mr : DeviceMemoryResource, optional
-        Device memory resource used to allocate the returned table's device memory
-
-    Returns
-    -------
-    Table
-        The transition table for the given timezone.
-    """
+def make_timezone_transition_table(tzif_dir: str, timezone_name: str, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...

@@ -10,52 +10,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['from_booleans', 'to_booleans']
 
-def to_booleans(input: Column, true_string: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a new bool column by parsing boolean values from the strings
-    in the provided strings column.
-
-    For details, see :cpp:func:`to_booleans`.
-
-    Parameters
-    ----------
-    input :  Column
-        Strings instance for this operation
-
-    true_string : Scalar
-        String to expect for true. Non-matching strings are false
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New bool column converted from strings.
-    """
-def from_booleans(booleans: Column, true_string: Scalar, false_string: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a new strings column converting the boolean values from the
-    provided column into strings.
-
-    For details, see :cpp:func:`from_booleans`.
-
-    Parameters
-    ----------
-    booleans :  Column
-        Boolean column to convert.
-
-    true_string : Scalar
-        String to use for true in the output column.
-
-    false_string : Scalar
-        String to use for false in the output column.
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column.
-    """
+def to_booleans(input: Column, true_string: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def from_booleans(booleans: Column, true_string: Scalar, false_string: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

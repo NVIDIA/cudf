@@ -11,44 +11,5 @@ from ._interop_helpers import ColumnMetadata
 
 __all__ = ['ColumnMetadata', 'from_dlpack', 'to_dlpack']
 
-def from_dlpack(managed_tensor: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """
-    Convert a DLPack DLTensor into a cudf table.
-
-    For details, see :cpp:func:`from_dlpack`
-
-    Parameters
-    ----------
-    managed_tensor : PyCapsule
-        A 1D or 2D column-major (Fortran order) tensor.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned table's device memory.
-
-    Returns
-    -------
-    Table
-        Table with a copy of the tensor data.
-    """
-def to_dlpack(input: Table, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> object:
-    """
-    Convert a cudf table into a DLPack DLTensor.
-
-    For details, see :cpp:func:`to_dlpack`
-
-    Parameters
-    ----------
-    input : Table
-        A 1D or 2D column-major (Fortran order) tensor.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned DLPack tensor's device
-        memory.
-
-    Returns
-    -------
-    PyCapsule
-        1D or 2D DLPack tensor with a copy of the table data, or nullptr.
-    """
+def from_dlpack(managed_tensor: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
+def to_dlpack(input: Table, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> object: ...

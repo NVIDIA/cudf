@@ -10,45 +10,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['findall', 'find_re']
 
-def findall(input: Column, pattern: RegexProgram, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a lists column of strings for each matching occurrence using
-    the regex_program pattern within each string.
-
-    For details, see :cpp:func:`findall`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-    pattern : RegexProgram
-        Regex pattern
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New lists column of strings
-    """
-def find_re(input: Column, pattern: RegexProgram, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns character positions where the pattern first matches
-    the elements in input strings.
-
-    For details, see :cpp:func:`find_re`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-    pattern : RegexProgram
-        Regex pattern
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column of integers
-    """
+def findall(input: Column, pattern: RegexProgram, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def find_re(input: Column, pattern: RegexProgram, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

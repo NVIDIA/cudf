@@ -9,62 +9,6 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['swapcase', 'to_lower', 'to_upper']
 
-def to_lower(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Returns a column of lowercased strings.
-
-    For details, see :cpp:func:`to_lower`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    pylibcudf.Column
-        Column of strings lowercased from the input column
-    """
-def to_upper(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Returns a column of uppercased strings.
-
-    For details, see :cpp:func:`to_upper`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    pylibcudf.Column
-        Column of strings uppercased from the input column
-    """
-def swapcase(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Returns a column of strings where the lowercase characters
-    are converted to uppercase and the uppercase characters
-    are converted to lowercase.
-
-    For details, see :cpp:func:`swapcase`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    pylibcudf.Column
-        Column of strings
-    """
+def to_lower(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def to_upper(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def swapcase(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

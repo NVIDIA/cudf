@@ -11,43 +11,10 @@ from .types import DataType, TypeId, size_type
 
 __all__ = ['make_duration_column', 'make_empty_column', 'make_fixed_point_column', 'make_fixed_width_column', 'make_numeric_column', 'make_timestamp_column', 'make_empty_lists_column']
 
-def make_empty_column(type_or_id: DataType | TypeId, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Creates an empty column of the specified type.
-
-    For details, see :cpp:func:`make_empty_column`.
-
-    Parameters
-    ----------
-    type_or_id : Union[DataType, type_id, object]
-        The column data type.
-
-    Returns
-    -------
-    Column
-        An empty Column
-    """
-def make_numeric_column(type_: DataType, size: size_type, mstate: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Creates an empty numeric column.
-
-    For details, see :cpp:func:`make_numeric_column`.
-
-    """
+def make_empty_column(type_or_id: DataType | TypeId, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def make_numeric_column(type_: DataType, size: size_type, mstate: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
 def make_fixed_point_column(type_: DataType, size: size_type, mstate: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
 def make_timestamp_column(type_: DataType, size: size_type, mstate: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
 def make_duration_column(type_: DataType, size: size_type, mstate: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
 def make_fixed_width_column(type_: DataType, size: size_type, mstate: object, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
-def make_empty_lists_column(child_type: DataType, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Creates an empty column of the specified type.
-
-    For details, see :cpp:func:`make_empty_lists_column`.
-
-    Parameters
-    ----------
-    child_type : DataType
-        The child column data type for the list column.
-
-    Returns
-    -------
-    Column
-        An empty Column
-    """
+def make_empty_lists_column(child_type: DataType, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

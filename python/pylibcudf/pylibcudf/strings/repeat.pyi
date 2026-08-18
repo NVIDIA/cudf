@@ -10,27 +10,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['repeat_strings']
 
-def repeat_strings(input: Column, repeat_times: Column | size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Repeat each string in the given strings column by the numbers
-    of times given in another numeric column.
-
-    For details, see :cpp:func:`repeat`.
-
-    Parameters
-    ----------
-    input : Column
-        The column containing strings to repeat.
-    repeat_times : Column or int
-        Number(s) of times that the corresponding input strings
-        for each row are repeated.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        New column containing the repeated strings.
-    """
+def repeat_strings(input: Column, repeat_times: Column | size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

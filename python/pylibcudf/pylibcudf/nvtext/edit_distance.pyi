@@ -9,23 +9,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['edit_distance']
 
-def edit_distance(input: Column, targets: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns the edit distance between individual strings in two strings columns
-
-    For details, see :cpp:func:`edit_distance`
-
-    Parameters
-    ----------
-    input : Column
-        Input strings
-    targets : Column
-        Strings to compute edit distance against
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column of edit distance values
-    """
+def edit_distance(input: Column, targets: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

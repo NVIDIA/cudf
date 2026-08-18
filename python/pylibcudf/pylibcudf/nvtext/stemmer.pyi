@@ -11,50 +11,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['is_letter', 'porter_stemmer_measure', 'LetterType']
 
-def is_letter(input: Column, check_vowels: bool, indices: Column | size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns boolean column indicating if the character
-    or characters at the provided character index or
-    indices (respectively) are consonants or vowels
-
-    For details, see :cpp:func:`is_letter`
-
-    Parameters
-    ----------
-    input : Column
-        Input strings
-    check_vowels : bool
-        If true, the check is for vowels. Otherwise the check is
-        for consonants.
-    indices : Union[Column, size_type]
-        The character position(s) to check in each string
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        New boolean column.
-    """
-def porter_stemmer_measure(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns the Porter Stemmer measurements of a strings column.
-
-    For details, see :cpp:func:`porter_stemmer_measure`
-
-    Parameters
-    ----------
-    input : Column
-        Strings column of words to measure
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        New column of measure values
-    """
+def is_letter(input: Column, check_vowels: bool, indices: Column | size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def porter_stemmer_measure(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

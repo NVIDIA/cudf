@@ -10,28 +10,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['wrap']
 
-def wrap(input: Column, width: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Wraps strings onto multiple lines shorter than `width` by
-    replacing appropriate white space with
-    new-line characters (ASCII 0x0A).
-
-    For details, see :cpp:func:`wrap`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-
-    width : int
-        Maximum character width of a line within each string
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        Column of wrapped strings
-    """
+def wrap(input: Column, width: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

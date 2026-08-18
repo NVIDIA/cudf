@@ -10,22 +10,4 @@ from .table import Table
 
 __all__ = ['transpose']
 
-def transpose(input_table: Table, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """Transpose a Table.
-
-    For details, see :cpp:func:`transpose`.
-
-    Parameters
-    ----------
-    input_table : Table
-        Table to transpose
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned table's device memory.
-
-    Returns
-    -------
-    Table
-        Transposed table.
-    """
+def transpose(input_table: Table, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...

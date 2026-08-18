@@ -13,20 +13,4 @@ from .table import Table
 
 __all__ = ['concatenate']
 
-def concatenate(objects: Sequence[Column] | Sequence[Table], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None):
-    """Concatenate columns or tables.
-
-    Parameters
-    ----------
-    objects : Sequence[Column] | Sequence[Table]
-        The Columns or Tables to concatenate.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned object's device memory.
-
-    Returns
-    -------
-    Union[Column, Table]
-        The concatenated Column or Table.
-    """
+def concatenate(objects: Sequence[Column] | Sequence[Table], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None): ...

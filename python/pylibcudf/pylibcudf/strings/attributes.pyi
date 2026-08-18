@@ -9,54 +9,6 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['code_points', 'count_bytes', 'count_characters']
 
-def count_characters(source_strings: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a column containing character lengths of each string
-    in the given column.
-
-    Parameters
-    ----------
-    source_strings : Column
-        Column of strings.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column with lengths for each string
-    """
-def count_bytes(source_strings: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a column containing byte lengths of each string
-    in the given column.
-
-    Parameters
-    ----------
-    source_strings : Column
-        Column of strings.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column with the number of bytes for each string
-    """
-def code_points(source_strings: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Creates a numeric column with code point values (integers)
-    for each character of each string.
-
-    Parameters
-    ----------
-    source_strings : Column
-        Column of strings.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column with code point integer values for each character
-    """
+def count_characters(source_strings: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def count_bytes(source_strings: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def code_points(source_strings: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

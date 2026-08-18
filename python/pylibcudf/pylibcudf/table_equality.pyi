@@ -10,29 +10,4 @@ from .table import Table
 
 __all__ = ['tables_equal']
 
-def tables_equal(left: Table, right: Table, nulls_equal: null_equality=null_equality.EQUAL, stream: CudaStreamLike | None=None) -> bool:
-    """Check if two tables are equal.
-
-    Returns true if the input tables have the same number of rows, the same
-    number of columns, matching column types, and every row in ``left``
-    compares equal to the row at the same index in ``right``. Null equality
-    is controlled by ``nulls_equal``. Floating point NaN values compare equal.
-
-    For details, see :cpp:func:`tables_equal`.
-
-    Parameters
-    ----------
-    left : Table
-        The first table to compare.
-    right : Table
-        The second table to compare.
-    nulls_equal : NullEquality, default NullEquality.EQUAL
-        Flag to denote if null elements should be considered equal.
-    stream : Stream, default None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    bool
-        True if the tables are equal, False otherwise.
-    """
+def tables_equal(left: Table, right: Table, nulls_equal: null_equality=null_equality.EQUAL, stream: CudaStreamLike | None=None) -> bool: ...

@@ -11,112 +11,15 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 __all__ = ['read_avro', 'AvroReaderOptions', 'AvroReaderOptionsBuilder']
 
 class AvroReaderOptions:
-    """
-    The settings to use for ``read_avro``
-    For details, see :cpp:class:`cudf::io::avro_reader_options`
-    """
     @staticmethod
-    def builder(source: SourceInfo):
-        """
-        Create a AvroWriterOptionsBuilder object
-
-        For details, see :cpp:func:`cudf::io::avro_reader_options::builder`
-
-        Parameters
-        ----------
-        sink : SourceInfo
-            The source to read the Avro file from.
-
-        Returns
-        -------
-        AvroReaderOptionsBuilder
-            Builder to build AvroReaderOptions
-        """
-    def set_columns(self, col_names: list[str]) -> None:
-        """
-        Set names of the column to be read.
-
-        Parameters
-        ----------
-        col_names : list[str]
-            List of column names
-
-        Returns
-        -------
-        None
-        """
-    def set_source(self, src: SourceInfo) -> None:
-        """
-        Set a new source info location.
-
-        Parameters
-        ----------
-        src : SourceInfo
-            New source information, replacing existing information.
-
-        Returns
-        -------
-        None
-        """
+    def builder(source: SourceInfo) -> AvroReaderOptionsBuilder: ...
+    def set_columns(self, col_names: list[str]) -> None: ...
+    def set_source(self, src: SourceInfo) -> None: ...
 
 class AvroReaderOptionsBuilder:
-    def columns(self, col_names: list[str]) -> AvroReaderOptionsBuilder:
-        """
-        Set names of the column to be read.
+    def columns(self, col_names: list[str]) -> AvroReaderOptionsBuilder: ...
+    def skip_rows(self, skip_rows: size_type) -> AvroReaderOptionsBuilder: ...
+    def num_rows(self, num_rows: size_type) -> AvroReaderOptionsBuilder: ...
+    def build(self) -> AvroReaderOptions: ...
 
-        Parameters
-        ----------
-        col_names : list
-            List of column names
-
-        Returns
-        -------
-        AvroReaderOptionsBuilder
-        """
-    def skip_rows(self, skip_rows: size_type) -> AvroReaderOptionsBuilder:
-        """
-        Sets number of rows to skip.
-
-        Parameters
-        ----------
-        skip_rows : size_type
-            Number of rows to skip from start
-
-        Returns
-        -------
-        AvroReaderOptionsBuilder
-        """
-    def num_rows(self, num_rows: size_type) -> AvroReaderOptionsBuilder:
-        """
-        Sets number of rows to read.
-
-        Parameters
-        ----------
-        num_rows : size_type
-            Number of rows to read after skip
-
-        Returns
-        -------
-        AvroReaderOptionsBuilder
-        """
-    def build(self) -> AvroReaderOptions:
-        """Create a AvroReaderOptions object"""
-
-def read_avro(options: AvroReaderOptions, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> TableWithMetadata:
-    """
-    Read from Avro format.
-
-    The source to read from and options are encapsulated
-    by the `options` object.
-
-    For details, see :cpp:func:`read_avro`.
-
-    Parameters
-    ----------
-    options: AvroReaderOptions
-        Settings for controlling reading behavior
-    stream : Stream | None
-        CUDA stream used for device memory operations and kernel launches
-    mr : DeviceMemoryResource, optional
-        Device memory resource used to allocate the returned table's device memory.
-    """
+def read_avro(options: AvroReaderOptions, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> TableWithMetadata: ...

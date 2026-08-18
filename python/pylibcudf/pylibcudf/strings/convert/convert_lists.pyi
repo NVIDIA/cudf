@@ -10,30 +10,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['format_list_column']
 
-def format_list_column(input: Column, na_rep: Scalar | None=None, separators: Column | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Convert a list column of strings into a formatted strings column.
-
-    For details, see :cpp:func`cudf::strings::format_list_column`
-
-    Parameters
-    ----------
-    input : Column
-        Lists column to format
-
-    na_rep : Scalar
-        Replacement string for null elements.
-        Default, empty string
-
-    separators : Column
-        Strings to use for enclosing list components and separating elements.
-        Default, ``,``, ``[``, ``]``
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column
-    """
+def format_list_column(input: Column, na_rep: Scalar | None=None, separators: Column | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

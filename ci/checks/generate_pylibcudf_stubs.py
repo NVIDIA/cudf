@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -67,8 +68,54 @@ def _replace_header(path: Path, header: str) -> None:
     path.write_text(header + "\n".join(lines) + "\n")
 
 
+def _is_internal_name(name: str) -> bool:
+    return name.startswith("_") and not (
+        name.startswith("__") and name.endswith("__")
+    )
+
+
+def _remove_internal_apis(path: Path) -> None:
+    lines = path.read_text().splitlines()
+    tree = ast.parse("\n".join(lines) + "\n", filename=str(path))
+    ranges = []
+    for node in tree.body:
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            name = node.name
+        else:
+            continue
+        if _is_internal_name(name):
+            start = min(
+                [
+                    node.lineno,
+                    *(decorator.lineno for decorator in node.decorator_list),
+                ]
+            )
+            ranges.append((start, node.end_lineno or node.lineno))
+
+    if not ranges:
+        return
+
+    removed_lines = {
+        lineno for start, end in ranges for lineno in range(start, end + 1)
+    }
+    retained_lines = [
+        line
+        for lineno, line in enumerate(lines, start=1)
+        if lineno not in removed_lines
+    ]
+    while retained_lines and not retained_lines[-1]:
+        retained_lines.pop()
+    path.write_text("\n".join(retained_lines) + "\n")
+
+
 def _generate_stub(pyx_file: Path, pyi_file: Path) -> int:
-    header = _spdx_header(pyi_file) or _stored_spdx_header(pyi_file) or _spdx_header(pyx_file)
+    header = (
+        _spdx_header(pyi_file)
+        or _stored_spdx_header(pyi_file)
+        or _spdx_header(pyx_file)
+    )
     result = subprocess.run(
         [
             "stubgen-pyx",
@@ -78,7 +125,7 @@ def _generate_stub(pyx_file: Path, pyi_file: Path) -> int:
             "--output-file",
             str(pyi_file),
             "--continue-on-error",
-            "--include-private",
+            "--exclude-docstrings",
         ],
         stderr=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -86,6 +133,7 @@ def _generate_stub(pyx_file: Path, pyi_file: Path) -> int:
     )
     if result.returncode == 0:
         _replace_header(pyi_file, header)
+        _remove_internal_apis(pyi_file)
     else:
         print(result.stdout, end="")
         print(result.stderr, end="", file=sys.stderr)
@@ -95,7 +143,9 @@ def _generate_stub(pyx_file: Path, pyi_file: Path) -> int:
 def main() -> int:
     failures = []
     for pyi_file in sorted(
-        path for path in _git_ls_files(str(PACKAGE_DIR)) if path.suffix == ".pyi"
+        path
+        for path in _git_ls_files(str(PACKAGE_DIR))
+        if path.suffix == ".pyi"
     ):
         pyx_file = pyi_file.with_suffix(".pyx")
         if not pyx_file.exists():

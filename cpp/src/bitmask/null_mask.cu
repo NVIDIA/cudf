@@ -25,7 +25,7 @@
 #include <cub/cub.cuh>
 #include <cuda/atomic>
 #include <cuda/numeric>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/tabulate.h>
 

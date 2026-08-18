@@ -232,9 +232,18 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 ),
             )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
-        raise NotImplementedError(
-            f"Parquet filters don't support {node.name} on columns"
-        )
+        if node.name not in (
+            expr.BooleanFunction.Name.IsNull,
+            expr.BooleanFunction.Name.IsNotNull,
+        ):
+            raise NotImplementedError(
+                f"Parquet filters don't support {node.name} on columns"
+            )
+        if node.children[0].dtype.id() in (plc.TypeId.STRUCT, plc.TypeId.LIST):
+            # TODO: Remove once https://github.com/rapidsai/cudf/issues/23397 is resolved.
+            raise NotImplementedError(
+                f"Parquet filters don't support {node.name} on nested types"
+            )
     if node.name is expr.BooleanFunction.Name.IsNull:
         return plc_expr.Operation(plc_expr.ASTOperator.IS_NULL, self(node.children[0]))
     elif node.name is expr.BooleanFunction.Name.IsNotNull:
@@ -258,7 +267,37 @@ def _(node: expr.UnaryFunction, self: Transformer) -> plc_expr.Expression:
     )
 
 
-def to_parquet_filter(node: expr.Expr, stream: Stream) -> plc_expr.Expression | None:
+def _extract_conjuncts(node: expr.Expr) -> list[expr.Expr]:
+    if (
+        isinstance(node, expr.BinOp)
+        and node.op == plc.binaryop.BinaryOperator.NULL_LOGICAL_AND
+    ):
+        return [c for child in node.children for c in _extract_conjuncts(child)]
+    return [node]
+
+
+def _to_parquet_filter(
+    node: expr.Expr, mapper: Transformer
+) -> plc_expr.Expression | None:
+    # Converts a boolean column reference (e.g., filter(pl.col("foo")))
+    # to an explicit comparison for parquet filters (e.g., filter(pl.col("foo") == True)).
+    # TODO: Have polars pass us the comparison instead
+    if isinstance(node, expr.Col) and node.dtype.id() == plc.TypeId.BOOL8:
+        node = expr.BinOp(
+            node.dtype,
+            plc.binaryop.BinaryOperator.EQUAL,
+            node,
+            expr.Literal(node.dtype, value=True),
+        )
+    try:
+        return mapper(node)
+    except (KeyError, NotImplementedError):
+        return None
+
+
+def to_parquet_filter(
+    node: expr.Expr, stream: Stream
+) -> tuple[plc_expr.Expression | None, expr.Expr | None]:
     """
     Convert an expression to libcudf AST nodes suitable for parquet filtering.
 
@@ -271,26 +310,41 @@ def to_parquet_filter(node: expr.Expr, stream: Stream) -> plc_expr.Expression | 
 
     Returns
     -------
-    pylibcudf Expression if conversion is possible, otherwise None.
+    filter
+        pylibcudf Expression suitable for parquet filtering, or None if no part
+        of the predicate can be converted.
+    residual
+        Expression still to be applied as a post-read filter, or None when
+        ``filter`` is exact (equivalent to ``node``).  When ``filter`` is None
+        the caller must apply the full original predicate post-read.
     """
-    # Converts a boolean column reference (e.g., filter(pl.col("foo")))
-    # to an explicit comparison for parquet filters (e.g., filter(pl.col("foo") == True)).
-    # TODO: Have polars pass us the comparison instead
-    if isinstance(node, expr.Col) and node.dtype.id() == plc.TypeId.BOOL8:
-        node = expr.BinOp(
-            node.dtype,
-            plc.binaryop.BinaryOperator.EQUAL,
-            node,
-            expr.Literal(node.dtype, value=True),
-        )
-
     mapper: Transformer = CachingVisitor(
         _to_ast, state={"for_parquet": True, "stream": stream}
     )
-    try:
-        return mapper(node)
-    except (KeyError, NotImplementedError):
-        return None
+    whole = _to_parquet_filter(node, mapper)
+    if whole is not None:
+        return whole, None
+    can_handle_filters = []
+    cant_handle_exprs = []
+    for conjunct in _extract_conjuncts(node):
+        f = _to_parquet_filter(conjunct, mapper)
+        if f is not None:
+            can_handle_filters.append(f)
+        else:
+            cant_handle_exprs.append(conjunct)
+    if not can_handle_filters:
+        return None, None
+    combined = reduce(
+        partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_AND),
+        can_handle_filters,
+    )
+    residual = reduce(
+        lambda a, b: expr.BinOp(
+            b.dtype, plc.binaryop.BinaryOperator.NULL_LOGICAL_AND, a, b
+        ),
+        cant_handle_exprs,
+    )
+    return combined, residual
 
 
 def to_ast(node: expr.Expr, stream: Stream) -> plc_expr.Expression | None:

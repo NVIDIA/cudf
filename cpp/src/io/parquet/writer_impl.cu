@@ -35,13 +35,13 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuda/iterator>
 #include <cuda/numeric>
+#include <cuda/stream>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 
@@ -265,7 +265,7 @@ void update_chunk_encoding_stats(ColumnChunkMetaData& chunk_meta,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The data size of the input
  */
-size_t column_size(column_view const& column, rmm::cuda_stream_view stream)
+size_t column_size(column_view const& column, cuda::stream_ref stream)
 {
   if (column.is_empty()) { return 0; }
 
@@ -955,9 +955,9 @@ std::vector<schema_tree_node> construct_parquet_schema_tree(
 struct parquet_column_view {
   parquet_column_view(schema_tree_node const& schema_node,
                       std::vector<schema_tree_node> const& schema_tree,
-                      rmm::cuda_stream_view stream);
+                      cuda::stream_ref stream);
 
-  [[nodiscard]] parquet_column_device_view get_device_view(rmm::cuda_stream_view stream) const;
+  [[nodiscard]] parquet_column_device_view get_device_view(cuda::stream_ref stream) const;
 
   [[nodiscard]] column_view cudf_column_view() const { return cudf_col; }
   [[nodiscard]] Type physical_type() const { return schema_node.type; }
@@ -1005,7 +1005,7 @@ struct parquet_column_view {
 
 parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
                                          std::vector<schema_tree_node> const& schema_tree,
-                                         rmm::cuda_stream_view stream)
+                                         cuda::stream_ref stream)
   : schema_node(schema_node),
     _d_nullability(0, stream),
     _dremel_offsets(0, stream),
@@ -1098,14 +1098,14 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
     _def_level      = std::move(dremel.def_level);
     _data_count     = dremel.leaf_data_size;  // Needed for knowing what size dictionary to allocate
 
-    stream.synchronize();
+    stream.sync();
   } else {
     // For non-list struct, the size of the root column is the same as the size of the leaf column
     _data_count = cudf_col.size();
   }
 }
 
-parquet_column_device_view parquet_column_view::get_device_view(rmm::cuda_stream_view) const
+parquet_column_device_view parquet_column_view::get_device_view(cuda::stream_ref) const
 {
   auto desc        = parquet_column_device_view{};  // Zero out all fields
   desc.stats_dtype = schema_node.stats_dtype;
@@ -1149,7 +1149,7 @@ void init_row_group_fragments(cudf::detail::hostdevice_2dvector<PageFragment>& f
                               host_span<partition_info const> partitions,
                               device_span<int const> part_frag_offset,
                               uint32_t fragment_size,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   auto d_partitions = cudf::detail::make_device_uvector_async(
     partitions, stream, cudf::get_current_device_resource_ref());
@@ -1169,7 +1169,7 @@ void init_row_group_fragments(cudf::detail::hostdevice_2dvector<PageFragment>& f
  */
 void calculate_page_fragments(device_span<PageFragment> frag,
                               host_span<size_type const> frag_sizes,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   auto d_frag_sz = cudf::detail::make_device_uvector_async(
     frag_sizes, stream, cudf::get_current_device_resource_ref());
@@ -1187,14 +1187,14 @@ void calculate_page_fragments(device_span<PageFragment> frag,
 void gather_fragment_statistics(device_span<statistics_chunk> frag_stats,
                                 device_span<PageFragment const> frags,
                                 bool int96_timestamps,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   rmm::device_uvector<statistics_group> frag_stats_group(frag_stats.size(), stream);
 
   InitFragmentStatistics(frag_stats_group, frags, stream);
   detail::calculate_group_statistics<detail::io_file_format::PARQUET>(
     frag_stats.data(), frag_stats_group.data(), frag_stats.size(), stream, int96_timestamps);
-  stream.synchronize();
+  stream.sync();
 }
 
 auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
@@ -1203,8 +1203,9 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                      size_t max_page_size_bytes,
                      size_type max_page_size_rows,
                      bool write_v2_headers,
+                     bool write_page_stats,
                      compression_type compression,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   if (chunks.is_empty()) { return cudf::detail::hostdevice_vector<size_type>{}; }
 
@@ -1220,6 +1221,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    max_page_size_rows,
                    compress_required_chunk_alignment(compression),
                    write_v2_headers,
+                   write_page_stats,
                    nullptr,
                    nullptr,
                    stream);
@@ -1245,6 +1247,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    max_page_size_rows,
                    compress_required_chunk_alignment(compression),
                    write_v2_headers,
+                   write_page_stats,
                    nullptr,
                    nullptr,
                    stream);
@@ -1269,6 +1272,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    max_page_size_rows,
                    compress_required_chunk_alignment(compression),
                    write_v2_headers,
+                   write_page_stats,
                    nullptr,
                    nullptr,
                    stream);
@@ -1294,7 +1298,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
                          compression_type compression,
                          dictionary_policy dict_policy,
                          size_t max_dict_size,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   // At this point, we know all chunks and their sizes. We want to allocate dictionaries for each
   // chunk that can have dictionary
@@ -1341,14 +1345,14 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
 
   // Create a single bulk storage used by all sub-dictionaries
   auto map_storage =
-    storage_type{total_map_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.value()};
+    storage_type{total_map_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get()};
   // Create a span of non-const map_storage as map_storage_ref takes in a non-const pointer.
   device_span<slot_type> const map_storage_data{map_storage.data(), total_map_storage_size};
 
   // Synchronize
   chunks.host_to_device_async(stream);
   // Initialize storage with the given sentinel
-  map_storage.initialize_async({KEY_SENTINEL, VALUE_SENTINEL}, {stream.value()});
+  map_storage.initialize_async({KEY_SENTINEL, VALUE_SENTINEL}, {stream.get()});
   // Populate the hash map for each chunk
   populate_chunk_hash_maps(map_storage_data, frags, stream);
   // Synchronize again
@@ -1434,6 +1438,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
  * @param max_page_size_bytes Maximum uncompressed page size, in bytes
  * @param max_page_size_rows Maximum page size, in rows
  * @param write_v2_headers True if version 2 page headers are to be written
+ * @param write_page_stats True if statistics are to be written to the data page headers
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
@@ -1449,7 +1454,8 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                         size_t max_page_size_bytes,
                         size_type max_page_size_rows,
                         bool write_v2_headers,
-                        rmm::cuda_stream_view stream)
+                        bool write_page_stats,
+                        cuda::stream_ref stream)
 {
   rmm::device_uvector<statistics_merge_group> page_stats_mrg(num_stats_bfr, stream);
   chunks.host_to_device_async(stream);
@@ -1463,6 +1469,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                    max_page_size_rows,
                    alignment,
                    write_v2_headers,
+                   write_page_stats,
                    (num_stats_bfr) ? page_stats_mrg.data() : nullptr,
                    (num_stats_bfr > num_pages) ? page_stats_mrg.data() + num_pages : nullptr,
                    stream);
@@ -1478,7 +1485,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
         stream);
     }
   }
-  stream.synchronize();
+  stream.sync();
 }
 
 /**
@@ -1508,7 +1515,7 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                   int32_t column_index_truncate_length,
                   bool write_v2_headers,
                   bool page_level_compression,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
 {
   auto const num_pages = pages.size();
   auto pages_stats     = (page_stats != nullptr)
@@ -1549,7 +1556,7 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
   if (comp_stats.has_value()) {
     comp_stats.value() += collect_compression_statistics(comp_in, comp_res, stream);
   }
-  stream.synchronize();
+  stream.sync();
 }
 
 /**
@@ -1667,7 +1674,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                                    bool page_level_compression,
                                    bool write_arrow_schema,
                                    host_span<std::unique_ptr<data_sink> const> out_sink,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
 {
   // initialize LinkedColVector
   auto vec = table_to_linked_columns(input);
@@ -2008,6 +2015,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                                          max_page_size_bytes,
                                          max_page_size_rows,
                                          write_v2_headers,
+                                         stats_granularity == statistics_freq::STATISTICS_PAGE,
                                          compression,
                                          stream);
 
@@ -2128,6 +2136,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                        max_page_size_bytes,
                        max_page_size_rows,
                        write_v2_headers,
+                       stats_granularity == statistics_freq::STATISTICS_PAGE,
                        stream);
 
     // Now that page boundaries are finalized and dictionary indices have been materialized, compute
@@ -2146,6 +2155,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
     encode_pages(
       chunks,
       {pages.data(), pages.size()},
+      // Page statistics only go into the data page headers for STATISTICS_PAGE
       (stats_granularity == statistics_freq::STATISTICS_PAGE) ? page_stats.data() : nullptr,
       (stats_granularity != statistics_freq::STATISTICS_NONE) ? page_stats.data() + num_pages
                                                               : nullptr,
@@ -2218,7 +2228,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
     }
 
     // Sync before calling the next `encode_pages` which may alter the stats data.
-    if (need_sync) { stream.synchronize(); }
+    if (need_sync) { stream.sync(); }
 
     // now add to the column chunk SizeStatistics if necessary
     if (stats_granularity == statistics_freq::STATISTICS_COLUMN) {
@@ -2302,7 +2312,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
                    parquet_writer_options const& options,
                    single_write_mode mode,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
   : _stream(stream),
     _compression(options.get_compression()),
     _max_row_group_size{options.get_row_group_size_bytes()},
@@ -2343,7 +2353,7 @@ writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
 writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
                    chunked_parquet_writer_options const& options,
                    single_write_mode mode,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
   : _stream(stream),
     _compression(options.get_compression()),
     _max_row_group_size{options.get_row_group_size_bytes()},
@@ -2579,7 +2589,7 @@ void writer::impl::write_parquet_data_to_sink(
 
           if (is_byte_arr) { offset_idx.unencoded_byte_array_data_bytes = std::move(var_bytes); }
 
-          _stream.synchronize();
+          _stream.sync();
           _agg_meta->file(p).offset_indexes.emplace_back(std::move(offset_idx));
           _agg_meta->file(p).column_indexes.emplace_back(std::move(column_idx));
         }
@@ -2681,7 +2691,7 @@ std::unique_ptr<std::vector<uint8_t>> writer::impl::close(
 writer::writer(std::vector<std::unique_ptr<data_sink>> sinks,
                parquet_writer_options const& options,
                single_write_mode mode,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
   : _impl(std::make_unique<impl>(std::move(sinks), options, mode, stream))
 {
 }
@@ -2689,7 +2699,7 @@ writer::writer(std::vector<std::unique_ptr<data_sink>> sinks,
 writer::writer(std::vector<std::unique_ptr<data_sink>> sinks,
                chunked_parquet_writer_options const& options,
                single_write_mode mode,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
   : _impl(std::make_unique<impl>(std::move(sinks), options, mode, stream))
 {
 }

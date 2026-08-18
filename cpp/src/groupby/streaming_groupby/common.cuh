@@ -24,7 +24,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>

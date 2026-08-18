@@ -302,6 +302,9 @@ def _(
 def _(
     ir: MapFunction, rec: LowerIRTransformer
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if ir.name == "hint_sorted":
+        return _lower_ir_pwise(ir, rec, preserve_partitioning=True)
+
     # Allow pointwise operations
     if ir.name in ("rename", "explode"):
         return _lower_ir_pwise(ir, rec)

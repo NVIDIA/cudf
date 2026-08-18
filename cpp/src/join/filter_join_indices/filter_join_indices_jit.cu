@@ -30,7 +30,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <jit/cache.hpp>
 #include <jit/helpers.hpp>

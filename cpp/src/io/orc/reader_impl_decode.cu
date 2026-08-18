@@ -24,13 +24,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
@@ -78,7 +78,7 @@ rmm::device_buffer decompress_stripe_data(
   cudf::detail::hostdevice_2dvector<row_group>& row_groups,
   size_type row_index_stride,
   bool use_base_stride,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Whether we have the comppression info precomputed.
   auto const compinfo_ready = not compinfo_map.empty();
@@ -282,7 +282,7 @@ rmm::device_buffer decompress_stripe_data(
  */
 void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
                       host_span<column_buffer> out_buffers,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       rmm::device_async_resource_ref mr)
 {
   auto const num_stripes = chunks.size().first;
@@ -315,7 +315,7 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
           stream);
 
         auto merged_null_mask = cudf::detail::create_null_mask(
-          parent_mask_len, mask_state::ALL_NULL, rmm::cuda_stream_view(stream), mr);
+          parent_mask_len, mask_state::ALL_NULL, cuda::stream_ref(stream), mr);
         auto merged_mask      = static_cast<bitmask_type*>(merged_null_mask.data());
         uint32_t* dst_idx_ptr = dst_idx.data();
         // Copy child valid bits from child column to valid indexes, this will merge both child
@@ -374,7 +374,7 @@ void decode_stream_data(int64_t num_dicts,
                         cudf::detail::hostdevice_2dvector<column_desc>& chunks,
                         cudf::detail::device_2dspan<row_group> row_groups,
                         std::vector<column_buffer>& out_buffers,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
   auto const num_stripes = chunks.size().first;
@@ -440,7 +440,7 @@ void decode_stream_data(int64_t num_dicts,
  */
 void scan_null_counts(cudf::detail::hostdevice_2dvector<column_desc> const& chunks,
                       uint32_t* d_prefix_sums,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   auto const num_stripes = chunks.size().first;
   if (num_stripes == 0) return;
@@ -477,7 +477,7 @@ void scan_null_counts(cudf::detail::hostdevice_2dvector<column_desc> const& chun
                      thrust::inclusive_scan(thrust::seq, psums, psums + num_stripes, psums);
                    });
   // `prefix_sums_to_update` goes out of scope, copy has to be done before we return
-  stream.synchronize();
+  stream.sync();
 }
 
 /**
@@ -594,7 +594,7 @@ struct list_buffer_data {
 };
 
 // Generates offsets for list buffer from number of elements in a row.
-void generate_offsets_for_list(host_span<list_buffer_data> buff_data, rmm::cuda_stream_view stream)
+void generate_offsets_for_list(host_span<list_buffer_data> buff_data, cuda::stream_ref stream)
 {
   for (auto& list_data : buff_data) {
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -624,7 +624,7 @@ void generate_offsets_for_list(host_span<list_buffer_data> buff_data, rmm::cuda_
 std::vector<range> find_table_splits(table_view const& input,
                                      size_type segment_length,
                                      std::size_t size_limit,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   if (size_limit == 0) {
     return std::vector<range>{range{0, static_cast<std::size_t>(input.num_rows())}};

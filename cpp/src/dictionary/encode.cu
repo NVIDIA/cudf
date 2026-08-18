@@ -31,7 +31,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>

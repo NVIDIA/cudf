@@ -22,7 +22,7 @@
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 

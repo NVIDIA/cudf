@@ -21,7 +21,7 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/transform_reduce.h>
 
 #include <type_traits>

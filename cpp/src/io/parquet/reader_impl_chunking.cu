@@ -201,7 +201,7 @@ void reader_impl::setup_next_pass(read_mode mode)
     }
 #endif
 
-    _stream.synchronize();
+    _stream.sync();
   }
 }
 
@@ -333,7 +333,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
   auto h_spans = cudf::detail::make_pinned_vector_async(page_indices, _stream);
   subpass.pages.device_to_host_async(_stream);
 
-  _stream.synchronize();
+  _stream.sync();
 
   subpass.column_page_count = std::vector<size_t>(num_columns);
   std::transform(

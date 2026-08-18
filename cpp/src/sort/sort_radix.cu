@@ -12,7 +12,7 @@
 
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {

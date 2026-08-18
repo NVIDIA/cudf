@@ -769,7 +769,7 @@ class ColumnAccessor(MutableMapping):
         start, stop = key.start, key.stop
 
         if len(self) == 0:
-            # https://github.com/rapidsai/cudf/issues/18376
+            # https://github.com/NVIDIA/cudf/issues/18376
             # Any slice is valid when we have no columns
             return self._from_columns_like_self([], verify=False)
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Utility functions/classes for running the PDS-H and PDS-DS benchmarks."""
@@ -207,7 +207,7 @@ class GPUInfo:
         except pynvml.NVMLError_NotSupported:
             # Happens on systems without traditional GPU memory (e.g., Grace Hopper),
             # where nvmlDeviceGetMemoryInfo is not supported.
-            # See: https://github.com/rapidsai/cudf/issues/19427
+            # See: https://github.com/NVIDIA/cudf/issues/19427
             return cls(
                 name=pynvml.nvmlDeviceGetName(handle),
                 index=index,

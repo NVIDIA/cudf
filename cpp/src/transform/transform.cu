@@ -21,7 +21,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cudf_fragments.hpp>
 #include <jit/cache.hpp>

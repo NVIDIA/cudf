@@ -44,7 +44,7 @@ def test_rename_multi(mapping, streaming_engine):
 
 
 def test_rename_concat(streaming_engine) -> None:
-    # https://github.com/rapidsai/cudf/pull/19121#issuecomment-2959305678
+    # https://github.com/NVIDIA/cudf/pull/19121#issuecomment-2959305678
     q = pl.concat(
         [
             pl.LazyFrame({"a": [1, 2, 3]}).rename({"a": "A"}),

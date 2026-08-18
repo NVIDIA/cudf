@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -21,10 +20,10 @@
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/optional>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -47,10 +46,10 @@ std::unique_ptr<table> build_table(
   cudf::device_span<size_type const> gather_map,
   cuda::std::optional<cudf::device_span<size_type const>> explode_col_gather_map,
   cuda::std::optional<rmm::device_uvector<size_type>> position_array,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  auto select_iter = thrust::make_transform_iterator(
+  auto select_iter = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     [explode_column_idx](size_type i) { return i >= explode_column_idx ? i + 1 : i; });
 
@@ -101,7 +100,7 @@ std::unique_ptr<table> build_table(
 
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type const explode_column_idx,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
@@ -111,7 +110,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
   // offsets + 1 here to skip the 0th offset, which removes a - 1 operation later.
-  auto offsets_minus_one = thrust::make_transform_iterator(
+  auto offsets_minus_one = cuda::transform_iterator(
     cuda::std::next(offsets), cuda::proclaim_return_type<size_type>([offsets] __device__(auto i) {
       return (i - offsets[0]) - 1;
     }));
@@ -139,7 +138,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
 
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type const explode_column_idx,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
@@ -149,7 +148,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
   // offsets + 1 here to skip the 0th offset, which removes a - 1 operation later.
-  auto offsets_minus_one = thrust::make_transform_iterator(
+  auto offsets_minus_one = cuda::transform_iterator(
     offsets + 1, cuda::proclaim_return_type<size_type>([offsets] __device__(auto i) {
       return (i - offsets[0]) - 1;
     }));
@@ -190,7 +189,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
 std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type const explode_column_idx,
                                      bool include_position,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
@@ -201,7 +200,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   // number of nulls or empty lists found so far in the explode column
   rmm::device_uvector<size_type> null_or_empty_offset(explode_col.size(), stream);
 
-  auto null_or_empty = thrust::make_transform_iterator(
+  auto null_or_empty = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::proclaim_return_type<size_type>(
       [offsets, offsets_size = explode_col.size() - 1] __device__(int idx) {
@@ -228,7 +227,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   rmm::device_uvector<size_type> pos(include_position ? gather_map_size : 0, stream, mr);
 
   // offsets + 1 here to skip the 0th offset, which removes a - 1 operation later.
-  auto offsets_minus_one = thrust::make_transform_iterator(
+  auto offsets_minus_one = cuda::transform_iterator(
     cuda::std::next(offsets), cuda::proclaim_return_type<size_type>([offsets] __device__(auto i) {
       return (i - offsets[0]) - 1;
     }));
@@ -290,12 +289,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 }  // namespace detail
 
 /**
- * @copydoc cudf::explode(table_view const&, size_type, rmm::cuda_stream_view,
+ * @copydoc cudf::explode(table_view const&, size_type, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type explode_column_idx,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -305,12 +304,12 @@ std::unique_ptr<table> explode(table_view const& input_table,
 }
 
 /**
- * @copydoc cudf::explode_position(table_view const&, size_type, rmm::cuda_stream_view,
+ * @copydoc cudf::explode_position(table_view const&, size_type, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type explode_column_idx,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -320,12 +319,12 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
 }
 
 /**
- * @copydoc cudf::explode_outer(table_view const&, size_type, rmm::cuda_stream_view,
+ * @copydoc cudf::explode_outer(table_view const&, size_type, cuda::stream_ref,
  * rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type explode_column_idx,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -336,11 +335,11 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_outer_position(table_view const&, size_type,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> explode_outer_position(table_view const& input_table,
                                               size_type explode_column_idx,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

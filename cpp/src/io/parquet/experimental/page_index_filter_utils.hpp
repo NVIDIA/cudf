@@ -13,8 +13,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <span>
 
@@ -37,7 +38,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   size_type schema_idx,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @brief Computes page row offsets and the size (number of rows) of the largest page for a given
@@ -66,7 +67,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 [[nodiscard]] rmm::device_uvector<size_type> compute_page_indices_async(
   cudf::host_span<cudf::size_type const> page_row_offsets,
   cudf::size_type total_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**

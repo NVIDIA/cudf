@@ -24,7 +24,7 @@
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <memory>

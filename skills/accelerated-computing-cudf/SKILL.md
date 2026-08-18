@@ -199,5 +199,5 @@ Use WebFetch to retrieve detailed API signatures, parameter descriptions, and ex
 
 - **cuDF Documentation:** https://docs.rapids.ai/api/cudf/stable/
 - **dask-cuDF API Reference:** https://docs.rapids.ai/api/dask-cudf/stable/api/
-- **GitHub:** https://github.com/rapidsai/cudf
-- **CHANGELOG:** https://github.com/rapidsai/cudf/blob/main/CHANGELOG.md
+- **GitHub:** https://github.com/NVIDIA/cudf
+- **CHANGELOG:** https://github.com/NVIDIA/cudf/blob/main/CHANGELOG.md

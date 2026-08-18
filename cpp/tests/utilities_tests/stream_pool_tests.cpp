@@ -22,7 +22,11 @@ class StreamPoolTest : public cudf::test::BaseFixture {};
 
 namespace {
 
-std::vector<cudaStream_t> get_streams(std::size_t count)
+/**
+ * @brief Requests `count` streams from the calling thread's pool, as values that can be compared
+ * and hashed.
+ */
+std::vector<cudaStream_t> stream_values(std::size_t count)
 {
   auto const streams = cudf::detail::thread_cuda_stream_pool().get_streams(count);
   auto values        = std::vector<cudaStream_t>{};
@@ -45,7 +49,7 @@ TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
   auto collect = [](std::unordered_set<cudaStream_t>& out, std::latch& ready) {
     ready.arrive_and_wait();
     for (auto request = 0; request < num_requests; request++) {
-      auto const streams = get_streams(num_streams);
+      auto const streams = stream_values(num_streams);
       out.insert(streams.begin(), streams.end());
     }
   };
@@ -71,7 +75,7 @@ TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
   // one stream per request.
   auto constexpr count = 256;
 
-  auto const streams = get_streams(count);
+  auto const streams = stream_values(count);
   EXPECT_EQ(streams.size(), count);
 
   auto const unique = std::unordered_set<cudaStream_t>(streams.begin(), streams.end());
@@ -82,7 +86,7 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
 {
   std::unordered_set<cudaStream_t> first_thread_streams;
   std::thread first([&] {
-    auto const streams = get_streams(4);
+    auto const streams = stream_values(4);
     first_thread_streams.insert(streams.begin(), streams.end());
   });
   first.join();
@@ -92,7 +96,7 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
   // created a fresh pool would observe entirely different streams.
   std::unordered_set<cudaStream_t> second_thread_streams;
   std::thread second([&] {
-    auto const streams = get_streams(256);
+    auto const streams = stream_values(256);
     second_thread_streams.insert(streams.begin(), streams.end());
   });
   second.join();

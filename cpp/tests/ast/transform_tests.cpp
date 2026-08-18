@@ -1221,7 +1221,7 @@ using DecimalArithmeticParams =
   cudf::test::CrossProduct<Executors, cudf::test::Types<numeric::decimal32, numeric::decimal64>>;
 TYPED_TEST_SUITE(DecimalTests, DecimalArithmeticParams);
 
-// Regression test for https://github.com/rapidsai/cudf/issues/21980
+// Regression test for https://github.com/NVIDIA/cudf/issues/21980
 // Nested decimal expressions lose scale in intermediate return types,
 // causing "non-matching operand types" at parse time.
 TYPED_TEST(DecimalTests, NestedDecimalArithmetic)

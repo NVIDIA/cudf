@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,11 +15,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -52,7 +52,7 @@ void compute_m2_fn(column_device_view const& values,
                    cudf::device_span<size_type const> group_labels,
                    ResultType const* d_means,
                    ResultType* d_result,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   auto m2_fn = m2_transform<ResultType, decltype(values_iter)>{
     values, values_iter, d_means, group_labels.data()};
@@ -81,7 +81,7 @@ struct m2_functor {
   std::unique_ptr<column> operator()(column_view const& values,
                                      column_view const& group_means,
                                      cudf::device_span<size_type const> group_labels,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<T>)
   {
@@ -122,7 +122,7 @@ struct m2_functor {
 std::unique_ptr<column> group_m2(column_view const& values,
                                  column_view const& group_means,
                                  cudf::device_span<size_type const> group_labels,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto values_type = cudf::is_dictionary(values.type())

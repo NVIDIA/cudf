@@ -103,7 +103,7 @@ __all__ = ["Scalar"]
 # the best we can do is to grab the current memory resource at the time of
 # construction and keep it alive until the Scalar is destroyed (for potential
 # problems with this approach, see https://github.com/rapidsai/rmm/issues/1515;
-# the solution will be to address https://github.com/rapidsai/cudf/issues/15170
+# the solution will be to address https://github.com/NVIDIA/cudf/issues/15170
 # and also pass mrs all the way down to every rmm Python API to avoid its
 # default mrs). This is done in the `__cinit__` method below.
 #
@@ -256,7 +256,7 @@ cdef class Scalar:
         dtype: DataType | None = None,
         stream: Stream | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a Python standard library object to a Scalar.
 
@@ -288,7 +288,7 @@ cdef class Scalar:
         np_val,
         stream: Stream | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a NumPy scalar to a Scalar.
 
@@ -311,7 +311,9 @@ cdef class Scalar:
         mr = _get_memory_resource(mr)
         return _from_numpy(np_val, _stream, mr)
 
-    def to_py(self, stream: Stream | None = None):
+    def to_py(
+        self, stream: Stream | None = None
+    ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.
 

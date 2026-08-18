@@ -26,9 +26,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
+
+#include <cuda/stream>
 
 #include <algorithm>
 #include <future>
@@ -52,10 +53,10 @@ enum class algorithm { HASH, HASH_PARTITIONED, SORT_MERGE, MERGE };
 
 void expect_match_counts_equal(rmm::device_uvector<cudf::size_type> const& actual_counts,
                                std::vector<cudf::size_type> const& expected_counts,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   auto const host_actual_counts = cudf::detail::make_host_vector_async(actual_counts, stream);
-  stream.synchronize();
+  stream.sync();
 
   ASSERT_EQ(host_actual_counts.size(), expected_counts.size());
   EXPECT_TRUE(
@@ -75,7 +76,7 @@ std::unique_ptr<cudf::table> join_and_gather(
   std::vector<cudf::size_type> const& left_on,
   std::vector<cudf::size_type> const& right_on,
   cudf::null_equality compare_nulls,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto left_selected  = left_input.select(left_on);
@@ -113,7 +114,7 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
         return obj.inner_join(left, stream, mr);
@@ -128,7 +129,7 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::YES, compare_nulls, stream);
         return obj.inner_join(left, stream, mr);
@@ -143,7 +144,7 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::hash_join hash_joiner(right, compare_nulls, stream);
         auto match_ctx = hash_joiner.inner_join_match_context(left, stream, mr);
@@ -161,7 +162,7 @@ std::unique_ptr<cudf::table> inner_join(
     [](cudf::table_view const& left,
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        rmm::device_async_resource_ref mr) {
       return cudf::inner_join(left, right, compare_nulls, stream, mr);
     },
@@ -204,7 +205,7 @@ std::unique_ptr<cudf::table> left_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
         return obj.left_join(left, stream, mr);
@@ -219,7 +220,7 @@ std::unique_ptr<cudf::table> left_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::YES, compare_nulls, stream);
         return obj.left_join(left, stream, mr);
@@ -234,7 +235,7 @@ std::unique_ptr<cudf::table> left_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::hash_join hash_joiner(right, compare_nulls, stream);
         auto match_ctx = hash_joiner.left_join_match_context(left, stream, mr);
@@ -252,7 +253,7 @@ std::unique_ptr<cudf::table> left_join(
     [](cudf::table_view const& left,
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        rmm::device_async_resource_ref mr) {
       return cudf::left_join(left, right, compare_nulls, stream, mr);
     },
@@ -276,7 +277,7 @@ std::unique_ptr<cudf::table> full_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::hash_join hash_joiner(right, compare_nulls, stream);
         auto match_ctx = hash_joiner.full_join_match_context(left, stream, mr);
@@ -301,7 +302,7 @@ std::unique_ptr<cudf::table> full_join(
     [](cudf::table_view const& left,
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        rmm::device_async_resource_ref mr) {
       return cudf::full_join(left, right, compare_nulls, stream, mr);
     },
@@ -2420,7 +2421,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test single column join with null_equality::EQUAL
   {
@@ -2431,7 +2432,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.synchronize();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
@@ -2480,7 +2481,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test single column join
   {
@@ -2491,7 +2492,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.synchronize();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const left_join_size = hash_join.left_join_size(t0.select({0}));
@@ -2532,7 +2533,7 @@ TEST_F(JoinTest, HashJoinFullMatchContext)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test single column join
   {
@@ -2564,7 +2565,7 @@ TEST_F(JoinTest, HashJoinMatchContextEmptyRight)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
   cudf::hash_join const hash_join(t1, cudf::null_equality::EQUAL);
 
   // Test inner join match context
@@ -2604,7 +2605,7 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test inner join with multiple matches per row
   {
@@ -2615,7 +2616,7 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.synchronize();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
@@ -3109,7 +3110,7 @@ struct JoinParameterizedTestLists : public JoinTestLists,
     auto join_lambda = [](cudf::table_view const& left,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
       return obj.inner_join(left, stream, mr);
@@ -3129,7 +3130,7 @@ struct JoinParameterizedTestLists : public JoinTestLists,
     auto join_lambda = [](cudf::table_view const& left,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
       return obj.left_join(left, stream, mr);

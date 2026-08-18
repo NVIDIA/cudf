@@ -25,7 +25,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <iterator>
@@ -50,13 +50,14 @@ struct unique_keys_dispatch_fn {
 
     auto const has_nulls  = nullate::DYNAMIC{false};
     auto const keys_tv    = table_view({all_keys});
-    auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream);
-    auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream);
+    auto const temp_mr    = cudf::get_current_device_resource_ref();
+    auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream, temp_mr);
+    auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream, temp_mr);
     auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
     auto const d_equal    = row_equal.equal_to<false>(has_nulls, null_equality::EQUAL, comparator);
     auto const empty_key  = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
     auto probe            = probe_t{row_hash.device_hasher(has_nulls)};
-    auto allocator        = rmm::mr::polymorphic_allocator<char>{};
+    auto allocator        = rmm::mr::polymorphic_allocator<char>{temp_mr};
     auto set              = cuco::static_set{
       all_keys.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
 
@@ -65,7 +66,7 @@ struct unique_keys_dispatch_fn {
     set.insert_async(iter, iter + all_keys.size(), stream.get());
 
     // retrieve the indices of all the unique keys
-    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream);
+    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream, temp_mr);
     auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
     keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 

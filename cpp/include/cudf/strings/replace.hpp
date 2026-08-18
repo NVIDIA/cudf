@@ -60,7 +60,7 @@ std::unique_ptr<column> replace(
   string_scalar const& target,
   string_scalar const& repl,
   cudf::size_type maxrepl           = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -102,7 +102,7 @@ std::unique_ptr<column> replace_slice(
   string_scalar const& repl         = string_scalar(""),
   size_type start                   = 0,
   size_type stop                    = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -138,7 +138,7 @@ std::unique_ptr<column> replace(
   strings_column_view const& input,
   strings_column_view const& targets,
   strings_column_view const& repls,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -184,7 +184,7 @@ std::unique_ptr<column> replace_multiple(
   strings_column_view const& input,
   strings_column_view const& targets,
   strings_column_view const& repls,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

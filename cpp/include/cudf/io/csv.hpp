@@ -1349,7 +1349,7 @@ class csv_reader_options_builder {
  */
 table_with_metadata read_csv(
   csv_reader_options options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
@@ -1753,7 +1753,7 @@ class csv_writer_options_builder {
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void write_csv(csv_writer_options const& options,
-               rmm::cuda_stream_view stream = cudf::get_default_stream());
+               cuda::stream_ref stream = cudf::get_default_stream());
 
 /// @cond
 struct is_supported_csv_write_type_fn {

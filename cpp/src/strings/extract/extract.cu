@@ -18,10 +18,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 
@@ -75,7 +74,7 @@ struct extract_fn {
 //
 std::unique_ptr<table> extract(strings_column_view const& input,
                                regex_program const& prog,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   // create device object from regex_program
@@ -145,7 +144,7 @@ struct extract_single_fn {
 std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        regex_program const& prog,
                                        size_type group,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -175,7 +174,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
 
 std::unique_ptr<table> extract(strings_column_view const& input,
                                regex_program const& prog,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -185,7 +184,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
 std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        regex_program const& prog,
                                        size_type group,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

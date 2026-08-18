@@ -730,7 +730,11 @@ async def metadata_drain_node(
         context, ch_in, ch_out, ir_context=ir_context, trace_ir=ir
     ):
         # Drain metadata channel (we don't need it after this point)
-        metadata = await recv_metadata(ch_in, context)
+        msg = await ch_in.recv_metadata(context)
+        if msg is None:
+            # An upstream actor failed/was cancelled and shut down the channel
+            return
+        metadata = ChannelMetadata.from_message(msg)
         if metadata_collector is not None:
             metadata_collector.append(metadata)
 

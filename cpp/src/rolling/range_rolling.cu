@@ -18,13 +18,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/functional>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <memory>
@@ -37,7 +37,7 @@ namespace detail {
 
 rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                                      rmm::device_uvector<size_type> const& offsets,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   auto d_orderby        = column_device_view::create(orderby, stream);
@@ -57,7 +57,7 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   num_groups,
                                   offsets.begin(),
                                   offsets.begin() + 1,
-                                  stream.value());
+                                  stream.get());
   auto tmp = rmm::device_buffer(bytes, stream);
   cub::DeviceSegmentedReduce::Sum(tmp.data(),
                                   bytes,
@@ -66,7 +66,7 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   num_groups,
                                   offsets.begin(),
                                   offsets.begin() + 1,
-                                  stream.value());
+                                  stream.get());
   return null_counts;
 }
 
@@ -77,7 +77,7 @@ std::unique_ptr<column> make_range_window(
   order order,
   null_order null_order,
   range_window_type window,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -106,7 +106,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (group_keys.num_columns() > 0) {
@@ -157,7 +157,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

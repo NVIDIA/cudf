@@ -64,7 +64,7 @@ namespace CUDF_EXPORT cudf {
 std::unique_ptr<table> explode(
   table_view const& input_table,
   size_type explode_column_idx,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -110,7 +110,7 @@ std::unique_ptr<table> explode(
 std::unique_ptr<table> explode_position(
   table_view const& input_table,
   size_type explode_column_idx,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -154,7 +154,7 @@ std::unique_ptr<table> explode_position(
 std::unique_ptr<table> explode_outer(
   table_view const& input_table,
   size_type explode_column_idx,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -200,7 +200,7 @@ std::unique_ptr<table> explode_outer(
 std::unique_ptr<table> explode_outer_position(
   table_view const& input_table,
   size_type explode_column_idx,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

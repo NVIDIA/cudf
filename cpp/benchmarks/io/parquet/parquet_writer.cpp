@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -206,7 +206,7 @@ NVBENCH_BENCH_TYPES(BM_parq_write_encode, NVBENCH_TYPE_AXES(d_type_list))
 NVBENCH_BENCH(BM_parq_write_io_compression)
   .set_name("parquet_write_io_compression")
   .add_string_axis("io_type", {"FILEPATH", "HOST_BUFFER", "VOID"})
-  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "LZ4", "NONE"})
+  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "LZ4", "GZIP", "NONE"})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
   .add_int64_axis("run_length", {1, 32})

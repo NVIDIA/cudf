@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,6 @@
 #include <cudf/utilities/default_stream.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <nvbench/nvbench.cuh>
 
@@ -22,7 +21,7 @@ void bench_transpose(nvbench::state& state)
   constexpr auto column_type_id = cudf::type_id::INT32;
 
   auto int_column_generator =
-    thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0}, [count](int i) {
+    cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0}, [count](int i) {
       return cudf::make_numeric_column(
         cudf::data_type{column_type_id}, count, cudf::mask_state::ALL_VALID);
     });

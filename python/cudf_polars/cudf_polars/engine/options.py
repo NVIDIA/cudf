@@ -18,7 +18,7 @@ from rapidsmpf.utils.string import parse_boolean
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
 )
-from cudf_polars.utils.config import MemoryResourceConfig
+from cudf_polars.utils.config import UNSPECIFIED, MemoryResourceConfig, Unspecified
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,38 +35,6 @@ __all__: list[str] = [
     "StreamingOptions",
     "Unspecified",
 ]
-
-
-class Unspecified:
-    """
-    Sentinel value meaning "fall back to environment variable, then built-in default".
-
-    The singleton instance :data:`UNSPECIFIED` is used as the default for every
-    :class:`StreamingOptions` field.  When a field is still ``UNSPECIFIED`` after
-    construction (i.e. neither an explicit value nor an environment variable was provided),
-    the underlying library applies its own built-in default.
-    """
-
-    _instance: Unspecified | None = None
-
-    def __new__(cls) -> Unspecified:
-        """Return the singleton instance."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __repr__(self) -> str:
-        """Return ``"UNSPECIFIED"``."""
-        return "UNSPECIFIED"
-
-
-UNSPECIFIED = Unspecified()
-"""Singleton sentinel for all :class:`StreamingOptions` fields.
-
-A field set to ``UNSPECIFIED`` after construction means no explicit value and no
-matching environment variable was found; the underlying library will apply its own
-built-in default.
-"""
 
 
 def _opt(
@@ -218,10 +186,21 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE``.
         Default: ``"disabled"``.
         Category: rapidsmpf.
+    ucxx_progress_mode
+        UCXX progress mode (``"polling"``, ``"thread-blocking"``, or
+        ``"thread-polling"``).
+        Env: ``RAPIDSMPF_UCXX_PROGRESS_MODE``.
+        Default: ``"thread-blocking"``.
+        Category: rapidsmpf.
     num_py_executors
         Workers for the internal Python ``ThreadPoolExecutor``.
         Env: ``CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS``.
         Default: ``8``.
+        Category: executor.
+    max_concurrent_io_tasks
+        Maximum concurrent IO tasks for each scan node.
+        Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
+        Default: ``2``.
         Category: executor.
     fallback_mode
         Fallback behavior (``"warn"``, ``"raise"``, ``"silent"``).
@@ -336,9 +315,18 @@ class StreamingOptions:
     unbounded_file_read_cache: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
     )
+    ucxx_progress_mode: (
+        Literal["polling", "thread-blocking", "thread-polling"] | Unspecified
+    ) = _opt("rapidsmpf", "RAPIDSMPF_UCXX_PROGRESS_MODE")
     # ---- Executor ----
     num_py_executors: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", int
+    )
+    kvikio_nthreads: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", int
+    )
+    max_concurrent_io_tasks: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", int
     )
     fallback_mode: str | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__FALLBACK_MODE"
@@ -532,6 +520,7 @@ class StreamingOptions:
             unbounded_file_read_cache=_get("unbounded_file_read_cache"),
             hardware_binding=_get("hardware_binding"),
             num_py_executors=_get("num_py_executors"),
+            max_concurrent_io_tasks=_get("max_concurrent_io_tasks"),
             fallback_mode=_get("fallback_mode"),
             max_rows_per_partition=_get("max_rows_per_partition"),
             broadcast_limit=_get("broadcast_limit"),
@@ -694,6 +683,16 @@ class StreamingOptions:
                 Max workers for the Python ThreadPoolExecutor inside RapidsMPF.
                 Env: CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS.
                 Built-in default: 8."""),
+        )
+        g.add_argument(
+            "--max-concurrent-io-tasks",
+            dest="max_concurrent_io_tasks",
+            default=None,
+            type=int,
+            help=textwrap.dedent("""\
+                Maximum concurrent IO tasks for each scan node.
+                Env: CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS.
+                Built-in default: 2."""),
         )
         g.add_argument(
             "--raise-on-fail",

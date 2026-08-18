@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/strings/find_multiple.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -23,9 +23,9 @@ TEST_F(StringsFindMultipleTest, FindMultiple)
 {
   std::vector<char const*> h_strings{"Héllo", "thesé", nullptr, "lease", "test strings", ""};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto strings_view = cudf::strings_column_view(strings);
 
   std::vector<char const*> h_targets{"é", "a", "e", "i", "o", "u", "es"};

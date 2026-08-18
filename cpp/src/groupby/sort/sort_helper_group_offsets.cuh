@@ -14,13 +14,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf::groupby::detail::sort {
@@ -29,14 +29,14 @@ size_type compute_nested_group_offsets(table_view const& keys,
                                        size_type const* sorted_order,
                                        size_type size,
                                        rmm::device_uvector<size_type>& group_offsets,
-                                       rmm::cuda_stream_view stream);
+                                       cuda::stream_ref stream);
 
 template <bool HasNested>
 size_type compute_group_offsets(table_view const& keys,
                                 size_type const* sorted_order,
                                 size_type size,
                                 rmm::device_uvector<size_type>& group_offsets,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   auto const comparator  = cudf::detail::row::equality::self_comparator{keys, stream};
   auto const d_key_equal = comparator.equal_to<HasNested>(

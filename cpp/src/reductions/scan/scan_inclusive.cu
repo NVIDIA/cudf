@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,11 +19,11 @@
 #include <cudf/structs/detail/scan.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/functional>
+#include <cuda/stream>
 #include <thrust/find.h>
 #include <thrust/scan.h>
 
@@ -35,7 +35,7 @@ namespace detail {
 // logical-and scan of the null mask of the input view
 std::pair<rmm::device_buffer, size_type> mask_scan(column_view const& input_view,
                                                    scan_type inclusive,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   rmm::device_buffer mask =
@@ -66,7 +66,7 @@ template <typename Op, typename T>
 struct scan_functor {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const*,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     auto output_column = detail::allocate_like(
@@ -85,7 +85,7 @@ struct scan_functor {
                            result.data<T>(),
                            binary_op);
 
-    CUDF_CHECK_CUDA(stream.value());
+    CUDF_CHECK_CUDA(stream.get());
     return output_column;
   }
 };
@@ -95,7 +95,7 @@ template <typename Op>
 struct scan_functor<Op, cudf::string_view> {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const* mask,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     return cudf::strings::detail::scan_inclusive<Op>(input_view, mask, stream, mr);
@@ -107,7 +107,7 @@ template <typename Op>
 struct scan_functor<Op, cudf::struct_view> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         bitmask_type const*,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     return cudf::structs::detail::scan_inclusive<Op>(input, stream, mr);
@@ -119,7 +119,7 @@ template <typename Op, typename T>
 struct scan_functor<Op, T> {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const* mask,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     auto output_column = make_numeric_column(data_type{type_to_id<size_type>()},
@@ -139,7 +139,7 @@ struct scan_functor<Op, T> {
                            begin + input_view.size(),
                            result.data<size_type>());
 
-    CUDF_CHECK_CUDA(stream.value());
+    CUDF_CHECK_CUDA(stream.get());
     return output_column;
   }
 };
@@ -178,7 +178,7 @@ struct scan_dispatcher {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      bitmask_type const* output_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<T>())
   {
@@ -198,7 +198,7 @@ struct scan_dispatcher {
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        scan_aggregation const& agg,
                                        null_policy null_handling,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto [mask, null_count] = [&] {

@@ -520,7 +520,7 @@ void device_decompress(compression_type compression,
                        device_span<codec_exec_result> results,
                        size_t max_uncomp_chunk_size,
                        size_t max_total_uncomp_size,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -549,7 +549,7 @@ void host_decompress(compression_type compression,
                      device_span<device_span<uint8_t const> const> inputs,
                      device_span<device_span<uint8_t> const> outputs,
                      device_span<codec_exec_result> results,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -557,7 +557,7 @@ void host_decompress(compression_type compression,
   auto const num_chunks = inputs.size();
   auto const h_inputs   = cudf::detail::make_host_vector_async(inputs, stream);
   auto const h_outputs  = cudf::detail::make_host_vector_async(outputs, stream);
-  stream.synchronize();
+  stream.sync();
 
   std::vector<std::future<size_t>> tasks;
   auto const num_streams =
@@ -645,7 +645,7 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
   device_span<device_span<uint8_t const> const> inputs,
   size_t max_uncomp_chunk_size,
   size_t max_total_uncomp_size,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   if (compression == compression_type::NONE or
       get_host_engine_state(compression) == host_engine_state::ON) {
@@ -765,7 +765,7 @@ void decompress(compression_type compression,
                 device_span<detail::codec_exec_result> results,
                 size_t max_uncomp_chunk_size,
                 size_t max_total_uncomp_size,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 

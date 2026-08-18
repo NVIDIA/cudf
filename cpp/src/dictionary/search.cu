@@ -15,9 +15,8 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cub/device/device_find.cuh>
+#include <cuda/stream>
 
 namespace cudf {
 namespace dictionary {
@@ -36,7 +35,7 @@ struct find_index_fn {
   template <typename Element>
   std::unique_ptr<scalar> operator()(dictionary_column_view const& input,
                                      scalar const& key,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(not std::is_same_v<Element, dictionary32> and
              not std::is_same_v<Element, list_view> and not std::is_same_v<Element, struct_view>)
@@ -60,10 +59,10 @@ struct find_index_fn {
     auto find_fn  = [find_key] __device__(auto const& k) { return k == find_key.value(); };
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
-      nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.value()));
+      nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
     auto tmp = rmm::device_buffer(tmp_size, stream);
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
-      tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.value()));
+      tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
     if (result->value(stream) == num_keys) { result->set_valid_async(false, stream); }
     return result;
   }
@@ -71,7 +70,7 @@ struct find_index_fn {
   template <typename Element>
   std::unique_ptr<scalar> operator()(dictionary_column_view const&,
                                      scalar const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(std::is_same_v<Element, dictionary32> or std::is_same_v<Element, list_view> or
              std::is_same_v<Element, struct_view>)
@@ -85,7 +84,7 @@ struct find_index_fn {
 
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   if (dictionary.is_empty()) {
@@ -101,7 +100,7 @@ std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
 
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

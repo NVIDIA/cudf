@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,11 +10,16 @@
 
 #include "writer_impl_helpers.hpp"
 
+#include "io/parquet/parquet_gpu.hpp"
+
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 
+#include <algorithm>
+#include <format>
 #include <functional>
 #include <string>
 
@@ -37,7 +42,7 @@ void fill_table_meta(table_input_metadata& table_meta)
   }
 }
 
-[[nodiscard]] size_t column_size(column_view const& column, rmm::cuda_stream_view stream)
+[[nodiscard]] size_t column_size(column_view const& column, cuda::stream_ref stream)
 {
   if (column.is_empty()) { return 0; }
 
@@ -76,6 +81,40 @@ void fill_table_meta(table_input_metadata& table_meta)
   // For chunked write, when not provided nullability, we assume the worst case scenario
   // that all columns are nullable.
   return write_mode == single_write_mode::NO or column->nullable();
+}
+
+std::optional<size_type> compute_smaller_fragment_size(
+  cudf::detail::host_2dspan<PageFragment const> fragments,
+  host_span<parquet_column_device_view const> col_desc,
+  size_type input_fragment_size)
+{
+  auto fragment_size     = input_fragment_size;
+  auto const num_columns = fragments.size().first;
+
+  for (auto col_idx = 0; std::cmp_less(col_idx, num_columns); ++col_idx) {
+    for (auto const& frag : fragments[col_idx]) {
+      auto const page_size =
+        max_fragment_page_size(frag.fragment_data_size, frag.num_values, col_desc[col_idx]);
+      if (page_size <= MAX_PARQUET_PAGE_SIZE) { continue; }
+
+      CUDF_EXPECTS(frag.num_rows > 1,
+                   std::format("A single row of column {} needs {} bytes, which exceeds the "
+                               "maximum Parquet page size of {} bytes",
+                               col_idx,
+                               page_size,
+                               MAX_PARQUET_PAGE_SIZE),
+                   std::overflow_error);
+
+      // Scale the row span down by the overshoot, then halve it again so that columns with
+      // uneven row lengths are less likely to need another pass. Halving also bounds the number
+      // of passes to the width of `size_type`.
+      auto const scaled_row_span = util::div_rounding_up_safe<size_t>(
+        static_cast<size_t>(frag.num_rows) * MAX_PARQUET_PAGE_SIZE, page_size * 2);
+      fragment_size = std::min<size_type>(fragment_size, std::max<size_t>(1, scaled_row_span));
+    }
+  }
+
+  return fragment_size < input_fragment_size ? std::optional{fragment_size} : std::nullopt;
 }
 
 }  // namespace cudf::io::parquet::detail

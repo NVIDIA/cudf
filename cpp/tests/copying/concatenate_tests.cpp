@@ -45,7 +45,7 @@ template <typename T>
 struct TypedColumnTest : public cudf::test::BaseFixture {
   cudf::data_type type() { return cudf::data_type{cudf::type_to_id<T>()}; }
 
-  TypedColumnTest(rmm::cuda_stream_view stream = cudf::get_default_stream())
+  TypedColumnTest(cuda::stream_ref stream = cudf::get_default_stream())
     : data{_num_elements * sizeof(T), stream},
       mask{cudf::bitmask_allocation_size_bytes(_num_elements), stream}
   {
@@ -56,11 +56,11 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
     std::vector<char> h_mask(mask.size());
     std::iota(h_mask.begin(), h_mask.end(), char{0});
     CUDF_CUDA_TRY(
-      cudaMemcpyAsync(typed_data, h_data.data(), data.size(), cudaMemcpyDefault, stream.value()));
+      cudaMemcpyAsync(typed_data, h_data.data(), data.size(), cudaMemcpyDefault, stream.get()));
     CUDF_CUDA_TRY(
-      cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.value()));
+      cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.get()));
     _null_count = cudf::null_count(static_cast<cudf::bitmask_type*>(mask.data()), 0, _num_elements);
-    stream.synchronize();
+    stream.sync();
   }
 
   [[nodiscard]] cudf::size_type num_elements() const { return _num_elements; }

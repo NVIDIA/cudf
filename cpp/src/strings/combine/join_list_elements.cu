@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,10 +18,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -168,7 +168,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                                            string_scalar const& narep,
                                            separator_on_nulls separate_nulls,
                                            output_if_empty_list empty_list_policy,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(lists_strings_column.child().type().id() == type_id::STRING,
@@ -241,7 +241,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                                            string_scalar const& string_narep,
                                            separator_on_nulls separate_nulls,
                                            output_if_empty_list empty_list_policy,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(lists_strings_column.child().type().id() == type_id::STRING,
@@ -292,7 +292,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                                            string_scalar const& narep,
                                            separator_on_nulls separate_nulls,
                                            output_if_empty_list empty_list_policy,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -306,7 +306,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                                            string_scalar const& string_narep,
                                            separator_on_nulls separate_nulls,
                                            output_if_empty_list empty_list_policy,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

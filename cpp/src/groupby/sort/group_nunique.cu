@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,11 +11,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace groupby {
@@ -66,7 +65,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                       size_type const num_groups,
                                       cudf::device_span<size_type const> group_offsets,
                                       null_policy null_handling,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(num_groups >= 0, "number of groups cannot be negative");

@@ -3,7 +3,7 @@ The use of the cuDF pandas accelerator mode (`cudf.pandas`) is explained [in the
 The purpose of this document is to explain how the fast-slow proxy mechanism works and document internal environment variables that can be used to debug `cudf.pandas` itself.
 
 ## fast-slow proxy mechanism
-The core of `cudf.pandas` is implemented through proxy types defined in [`fast_slow_proxy.py`](https://github.com/rapidsai/cudf/blob/5f45803b2a68b49d330d94e2f701791a7590612a/python/cudf/cudf/pandas/fast_slow_proxy.py), which link a pair of "fast" and "slow" libraries.
+The core of `cudf.pandas` is implemented through proxy types defined in [`fast_slow_proxy.py`](https://github.com/NVIDIA/cudf/blob/5f45803b2a68b49d330d94e2f701791a7590612a/python/cudf/cudf/pandas/fast_slow_proxy.py), which link a pair of "fast" and "slow" libraries.
 `cudf.pandas` works by wrapping each "slow" type and its corresponding "fast" type in a new proxy type, also known as a fast-slow proxy type.
 The purpose of these proxy types is so we can first attempt computations on the fast object, and then fall back to the slow object if the fast version fails.
 While the core wrapping functionality is generic, the current usage mainly involves providing a proxy pair using cuDF and Pandas.
@@ -77,7 +77,7 @@ DataFrame = make_final_proxy_type(
 ```
 
 ### The Fallback Mechanism
-Proxied calls are implemented with fallback via [`_fast_slow_function_call`](https://github.com/rapidsai/cudf/blob/57aeeb78d85e169ac18b82f51d2b1cbd01b0608d/python/cudf/cudf/pandas/fast_slow_proxy.py#L869). This implements the mechanism by which we attempt operations the fast way (using cuDF) and then fall back to the slow way (using Pandas) on failure.
+Proxied calls are implemented with fallback via [`_fast_slow_function_call`](https://github.com/NVIDIA/cudf/blob/57aeeb78d85e169ac18b82f51d2b1cbd01b0608d/python/cudf/cudf/pandas/fast_slow_proxy.py#L869). This implements the mechanism by which we attempt operations the fast way (using cuDF) and then fall back to the slow way (using Pandas) on failure.
 The function looks like this:
 ```python
 def _fast_slow_function_call(func: Callable, *args, **kwargs):

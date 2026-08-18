@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,10 +12,10 @@
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -56,7 +56,7 @@ template <typename value_resolver, typename scan_operator>
 std::unique_ptr<column> rank_generator(column_view const& order_by,
                                        value_resolver resolver,
                                        scan_operator scan_op,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto const order_by_tview = table_view{{order_by}};
@@ -96,7 +96,7 @@ std::unique_ptr<column> rank_generator(column_view const& order_by,
 }  // namespace
 
 std::unique_ptr<column> inclusive_dense_rank_scan(column_view const& order_by,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
 {
   return rank_generator(
@@ -108,7 +108,7 @@ std::unique_ptr<column> inclusive_dense_rank_scan(column_view const& order_by,
 }
 
 std::unique_ptr<column> inclusive_rank_scan(column_view const& order_by,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!cudf::structs::detail::is_or_has_nested_lists(order_by),
@@ -122,7 +122,7 @@ std::unique_ptr<column> inclusive_rank_scan(column_view const& order_by,
 }
 
 std::unique_ptr<column> inclusive_one_normalized_percent_rank_scan(
-  column_view const& order_by, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  column_view const& order_by, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   auto const rank_column =
     inclusive_rank_scan(order_by, stream, cudf::get_current_device_resource_ref());

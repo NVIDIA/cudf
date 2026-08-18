@@ -9,6 +9,10 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport findall as cpp_findall
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -16,7 +20,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["findall", "find_re"]
 
 cpdef Column findall(
-    Column input, RegexProgram pattern, object stream=None, DeviceMemoryResource mr=None
+    Column input, RegexProgram pattern, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a lists column of strings for each matching occurrence using
@@ -55,7 +59,7 @@ cpdef Column findall(
 
 
 cpdef Column find_re(
-    Column input, RegexProgram pattern, object stream=None, DeviceMemoryResource mr=None
+    Column input, RegexProgram pattern, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns character positions where the pattern first matches

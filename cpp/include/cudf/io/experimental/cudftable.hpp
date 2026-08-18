@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <utility>
 
@@ -200,7 +200,7 @@ class cudftable_reader_options_builder {
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void write_cudftable(cudftable_writer_options const& options,
-                     rmm::cuda_stream_view stream = cudf::get_default_stream());
+                     cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of group
 /**
@@ -229,7 +229,7 @@ void write_cudftable(cudftable_writer_options const& options,
  */
 packed_table read_cudftable(
   cudftable_reader_options const& options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

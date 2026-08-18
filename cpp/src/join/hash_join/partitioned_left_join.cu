@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@ template <typename Hasher>
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<Hasher>::partitioned_left_join(cudf::join_partition_context const& context,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr) const
 {
   return this->partitioned_join_retrieve(join_kind::LEFT_JOIN, context, stream, mr);
@@ -20,7 +20,7 @@ hash_join<Hasher>::partitioned_left_join(cudf::join_partition_context const& con
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<hash_join_hasher>::partitioned_left_join(cudf::join_partition_context const& context,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const;
 
 }  // namespace cudf::detail

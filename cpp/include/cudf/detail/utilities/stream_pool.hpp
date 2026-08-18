@@ -47,11 +47,6 @@ class cuda_stream_pool {
    * The returned streams are distinct unless `count` is greater than the maximum number of streams
    * the pool provides, in which case streams are repeated.
    *
-   * Consecutive calls are served from different streams where the pool is large enough, so a
-   * nested call generally does not return streams that its caller is already using. This is not
-   * guaranteed: once the pool has reached its maximum size the assignment wraps around, so a
-   * request for more than half the pool can overlap with the streams the caller holds.
-   *
    * @param count The number of stream views to return.
    * @return Vector containing `count` stream views.
    */
@@ -62,9 +57,14 @@ class cuda_stream_pool {
 };
 
 /**
- * @brief Initialize global stream pool.
+ * @brief Create a stream pool for a thread to use with one device.
+ *
+ * Overridden by the stream identification test utilities to substitute a pool that always returns
+ * the default stream.
+ *
+ * @return An owning pointer to a new pool.
  */
-cuda_stream_pool* create_global_cuda_stream_pool();
+cuda_stream_pool* create_cuda_stream_pool();
 
 /**
  * @brief Get the calling thread's stream pool for the current device.

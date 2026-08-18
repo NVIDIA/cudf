@@ -174,7 +174,7 @@ class debug_cuda_stream_pool : public cuda_stream_pool {
   }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool()
+cuda_stream_pool* create_cuda_stream_pool()
 {
   if (getenv("LIBCUDF_USE_DEBUG_STREAM_POOL")) return new debug_cuda_stream_pool();
   return new growing_cuda_stream_pool();
@@ -213,7 +213,7 @@ class stream_pool_registry {
         return pool;
       }
     }
-    return create_global_cuda_stream_pool();
+    return create_cuda_stream_pool();
   }
 
   /**

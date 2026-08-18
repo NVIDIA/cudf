@@ -75,7 +75,7 @@ class test_cuda_stream_pool : public cuda_stream_pool {
   }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool() { return new test_cuda_stream_pool(); }
+cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
 
 }  // namespace detail
 #endif

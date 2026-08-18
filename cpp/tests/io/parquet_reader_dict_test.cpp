@@ -331,7 +331,7 @@ TEST_F(ParquetReaderDictTest, FilterWithOutputDictColumns)
 
   // Expected result: apply the same predicate to the input table on host-visible data.
   auto const predicate = cudf::compute_column(input_tbl, filter_expr);
-  auto const expected  = cudf::apply_boolean_mask(input_tbl, predicate->view());
+  auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
   ASSERT_LT(expected->num_rows(), num_rows) << "filter must remove some rows to be meaningful";
 
   auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})

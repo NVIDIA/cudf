@@ -37,6 +37,12 @@ def apply_boolean_mask(
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...
+def apply_retention_mask(
+    source_table: Table,
+    retention_mask: Column,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Table: ...
 def apply_deletion_mask(
     source_table: Table,
     deletion_mask: Column,

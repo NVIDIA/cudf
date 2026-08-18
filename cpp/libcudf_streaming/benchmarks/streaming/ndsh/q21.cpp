@@ -211,7 +211,7 @@ rapidsmpf::streaming::Actor filter_lineitem(std::shared_ptr<rapidsmpf::streaming
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(
+        cudf::apply_retention_mask(
           chunk.table_view().select({0, 1}), mask->view(), chunk.stream(), ctx->br()->device_mr()),
         chunk.stream())));
   }
@@ -243,7 +243,7 @@ rapidsmpf::streaming::Actor filter_grouped_greater(
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(
+        cudf::apply_retention_mask(
           chunk.table_view().select({0}), mask->view(), chunk.stream(), ctx->br()->device_mr()),
         chunk.stream())));
     if (!released_lineitem_read) {
@@ -278,7 +278,7 @@ rapidsmpf::streaming::Actor filter_grouped_equal(
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(
+        cudf::apply_retention_mask(
           chunk.table_view().select({0}), mask->view(), chunk.stream(), ctx->br()->device_mr()),
         chunk.stream())));
   }

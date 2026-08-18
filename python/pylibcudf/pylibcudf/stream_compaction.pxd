@@ -37,6 +37,13 @@ cpdef Table apply_boolean_mask(
     DeviceMemoryResource mr = *,
 )
 
+cpdef Table apply_retention_mask(
+  Table source_table,
+  Column retention_mask,
+  object stream = *,
+  DeviceMemoryResource mr = *,
+)
+
 cpdef Table apply_deletion_mask(
     Table source_table,
     Column deletion_mask,

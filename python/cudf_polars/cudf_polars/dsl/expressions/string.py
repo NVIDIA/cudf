@@ -1086,7 +1086,7 @@ class StringFunction(Expr):
                 # Polars begins inference with the first non null value
                 if plc_col.null_mask() is not None:
                     boolmask = plc.unary.is_valid(plc_col, stream=df.stream)
-                    table = plc.stream_compaction.apply_boolean_mask(
+                    table = plc.stream_compaction.apply_retention_mask(
                         plc.Table([plc_col]), boolmask, stream=df.stream
                     )
                     filtered = table.columns()[0]

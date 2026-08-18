@@ -1260,7 +1260,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         replaced = self
         if old_plc.null_count() == 1:
             old_isnull_plc = plc.unary.is_null(old_plc)
-            (filtered_column,) = plc.stream_compaction.apply_boolean_mask(
+            (filtered_column,) = plc.stream_compaction.apply_retention_mask(
                 plc.Table([new_plc]), old_isnull_plc
             ).columns()
             replacement_for_null = filtered_column.to_scalar().to_py()
@@ -1833,7 +1833,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 # Both value and key are aligned to self. Thus, the values
                 # corresponding to the false values in key should be
                 # ignored.
-                value = value.apply_boolean_mask(key)
+                value = value.apply_retention_mask(key)
                 # After applying boolean mask, the length of value equals
                 # the number of elements to scatter, we can skip computing
                 # the sum of ``key`` below.
@@ -2035,8 +2035,8 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             # Each point is evenly spaced, index values don't matter
             known_x = cp.flatnonzero(valid_locs.values)
         else:
-            known_x = index._column.apply_boolean_mask(valid_locs).values
-        known_y = col.apply_boolean_mask(valid_locs).values
+            known_x = index._column.apply_retention_mask(valid_locs).values
+        known_y = col.apply_retention_mask(valid_locs).values
 
         result = cp.interp(index.to_cupy(), known_x, known_y)
 
@@ -2065,7 +2065,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         return (
             ColumnBase.from_range(range(len(self)))  # type: ignore[return-value]
             .astype(SIZE_TYPE_DTYPE)
-            .apply_boolean_mask(mask)
+            .apply_retention_mask(mask)
         )
 
     def _find_first_and_last(self, value: ScalarLike) -> tuple[int, int]:
@@ -2393,15 +2393,23 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
     def as_decimal_column(self, dtype: DecimalDtype) -> DecimalColumn:
         raise NotImplementedError()
 
-    def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
+    def apply_retention_mask(self, mask: ColumnBase) -> ColumnBase:
         if mask.dtype.kind != "b":
-            raise ValueError("boolean_mask is not boolean type.")
+            raise ValueError("retention_mask is not boolean type.")
 
         return PylibcudfFunction(
-            plc.stream_compaction.apply_boolean_mask,
+            plc.stream_compaction.apply_retention_mask,
             same_dtype_policy,
             result_index=0,
         ).execute_with_args(ColumnList(self), mask)
+
+    def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
+        warnings.warn(
+            "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.apply_retention_mask(mask)
 
     def argsort(
         self,

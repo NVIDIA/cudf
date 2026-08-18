@@ -4745,7 +4745,7 @@ class IndexedFrame(Frame):
             *cols,
             mask_col,
         ):
-            plc_table = plc.stream_compaction.apply_boolean_mask(
+            plc_table = plc.stream_compaction.apply_retention_mask(
                 plc.Table([col.plc_column for col in cols]),
                 mask_col.plc_column,
             )
@@ -4766,7 +4766,7 @@ class IndexedFrame(Frame):
         ):
             result.index._levels = self.index._levels
             result.index._codes = [
-                code.apply_boolean_mask(boolean_mask.column)
+                code.apply_retention_mask(boolean_mask.column)
                 for code in self.index._codes
             ]
         return result

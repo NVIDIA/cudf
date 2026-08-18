@@ -148,14 +148,6 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
  public:
   cuda::stream_ref get_stream() override { return get_streams(1).front(); }
 
-  cuda::stream_ref get_stream(stream_id_type stream_id) override
-  {
-    // The id maps to the same stream on every call: growing for `stream_id` leaves the pool either
-    // larger than `stream_id` or at exactly `stream_pool_size()`, so the modulus below is fixed.
-    grow_to(stream_id + 1);
-    return _streams[stream_id % _streams.size()];
-  }
-
   std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
     grow_to(count);
@@ -175,10 +167,6 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
 class debug_cuda_stream_pool : public cuda_stream_pool {
  public:
   cuda::stream_ref get_stream() override { return cudf::get_default_stream(); }
-  cuda::stream_ref get_stream(stream_id_type stream_id) override
-  {
-    return cudf::get_default_stream();
-  }
 
   std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {

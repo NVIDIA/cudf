@@ -25,9 +25,6 @@ namespace detail {
  */
 class cuda_stream_pool {
  public:
-  // matching type used in rmm::cuda_stream_pool::get_stream(stream_id)
-  using stream_id_type = std::size_t;
-
   virtual ~cuda_stream_pool()                          = default;
   cuda_stream_pool(cuda_stream_pool const&)            = delete;
   cuda_stream_pool(cuda_stream_pool&&)                 = delete;
@@ -40,16 +37,6 @@ class cuda_stream_pool {
    * @return Stream view.
    */
   virtual cuda::stream_ref get_stream() = 0;
-
-  /**
-   * @brief Get a `cuda_stream_view` of the stream associated with `stream_id`.
-   *
-   * Equivalent values of `stream_id` return a `cuda_stream_view` to the same underlying stream.
-   *
-   * @param stream_id Unique identifier for the desired stream
-   * @return Requested stream view.
-   */
-  virtual cuda::stream_ref get_stream(stream_id_type stream_id) = 0;
 
   /**
    * @brief Get a set of `cuda_stream_view` objects from the pool.

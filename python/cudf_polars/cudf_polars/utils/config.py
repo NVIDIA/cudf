@@ -327,7 +327,8 @@ class ParquetOptions:
             f"{_env_prefix}__HYBRID_SCAN_STATS_PRUNING",
             _bool_converter,
             default=True,
-        )
+        ),
+        init=False,
     )
     use_jit_filter: bool = dataclasses.field(
         default_factory=_make_default_factory(

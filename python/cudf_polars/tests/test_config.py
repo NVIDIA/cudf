@@ -492,7 +492,6 @@ def test_fallback_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "max_footer_samples",
         "max_row_group_samples",
         "prefetch_file_metadata",
-        "_hybrid_scan_stats_pruning",
         "use_jit_filter",
     ],
 )

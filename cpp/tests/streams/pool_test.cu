@@ -9,7 +9,6 @@
 
 #include <cudf/detail/utilities/stream_pool.hpp>
 
-
 class StreamPoolTest : public cudf::test::BaseFixture {};
 
 CUDF_KERNEL void do_nothing_kernel() {}

@@ -12,7 +12,6 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
-
 #include <vector>
 
 template <typename T>

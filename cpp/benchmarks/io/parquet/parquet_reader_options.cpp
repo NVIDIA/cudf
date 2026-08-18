@@ -219,6 +219,7 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_options,
                         "timestamp_type"})
   .set_min_samples(4)
   .add_int64_axis("row_group_size_bytes", {0})
-  // 0 == cuDF default (1,000,000 rows/RG → few, large row groups); 100,000 forces ~10x more,
-  // smaller row groups, exercising the multi-row-group concatenate path.
-  .add_int64_axis("row_group_size_rows", {0, 100'000});
+  // Explicit row-group sizes (in rows) rather than the cuDF default. Larger values yield fewer,
+  // bigger row groups (favoring the single-row-group fast path); smaller values yield many small
+  // row groups (exercising the multi-row-group assembly).
+  .add_int64_axis("row_group_size_rows", {1'000'000, 100'000, 10'000, 1'000});

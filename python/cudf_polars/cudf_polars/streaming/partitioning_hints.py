@@ -88,7 +88,7 @@ def collect_partitioning_hints(
     Parameters
     ----------
     ir
-        The IR to determine the preferred partitioning for.
+        The IR to collect partitioning hints for.
     partition_info : Mapping[IR, PartitionInfo]
         The partition information for each IR node.
 
@@ -146,19 +146,22 @@ def _direct_child_hints(
 def _propagate_hint(
     ir: IR, hint: PartitioningHint
 ) -> tuple[tuple[IR, PartitioningHint], ...]:
-    """Propagate *hint* through simple row-order-preserving IR nodes."""
+    """Propagate *hint* through nodes whose children may benefit from it."""
     if len(ir.children) != 1:
         return ()
 
     (child,) = ir.children
-    if isinstance(ir, (Filter, GroupBy, Projection, Select, Slice)):
+    if isinstance(ir, (Filter, Projection, Select, Slice)):
+        remapped = _remap_hint(hint, _child_zero_remapping(ir))
+    elif isinstance(ir, GroupBy):
+        # Only group-key outputs remap to the child; aggregate outputs stop here.
         remapped = _remap_hint(hint, _child_zero_remapping(ir))
     elif isinstance(ir, Repartition) or (
         isinstance(ir, MapFunction) and ir.name in {"hint_sorted", "rechunk"}
     ):
-        remapped = _remap_hint(hint, _identity_remapping(ir))
+        remapped = _remap_hint(hint, {name: name for name in ir.schema})
     elif isinstance(ir, MapFunction) and ir.name == "row_index":
-        remapped = _remap_hint(hint, _identity_remapping(child))
+        remapped = _remap_hint(hint, {name: name for name in child.schema})
     else:
         remapped = None
 
@@ -174,19 +177,13 @@ def _sort_hint(ir: Sort) -> OrderPartitioningHint | None:
             NamedOrderKey(
                 name,
                 order == plc.types.Order.DESCENDING,
-                _nulls_last(order, null_order),
+                (order == plc.types.Order.ASCENDING)
+                == (null_order == plc.types.NullOrder.AFTER),
             )
             for name, order, null_order in zip(
                 names, ir.order, ir.null_order, strict=True
             )
         )
-    )
-
-
-def _nulls_last(order: plc.types.Order, null_order: plc.types.NullOrder) -> bool:
-    """Return the Polars ``nulls_last`` value represented by cudf sort options."""
-    return (order == plc.types.Order.ASCENDING) == (
-        null_order == plc.types.NullOrder.AFTER
     )
 
 
@@ -203,15 +200,20 @@ def _remap_hint(
     hint: PartitioningHint, remapping: Mapping[str, str]
 ) -> PartitioningHint | None:
     if isinstance(hint, HashPartitioningHint):
-        names = _remap_names(hint.keys, remapping)
-        return None if names is None else dataclasses.replace(hint, keys=names)
+        remapped_names = []
+        for name in hint.keys:
+            if (new_name := remapping.get(name)) is None:
+                return None
+            remapped_names.append(new_name)
+        return dataclasses.replace(hint, keys=tuple(remapped_names))
 
-    keys = []
+    remapped_keys = []
     for key in hint.keys:
-        if (name := remapping.get(key.name)) is None:
+        new_name = remapping.get(key.name)
+        if new_name is None:
             return None
-        keys.append(dataclasses.replace(key, name=name))
-    return dataclasses.replace(hint, keys=tuple(keys))
+        remapped_keys.append(dataclasses.replace(key, name=new_name))
+    return dataclasses.replace(hint, keys=tuple(remapped_keys))
 
 
 def _child_zero_remapping(ir: IR) -> dict[str, str]:
@@ -220,21 +222,6 @@ def _child_zero_remapping(ir: IR) -> dict[str, str]:
         for output_name, binding in column_domain_bindings(ir).items()
         if binding.child_index == 0
     }
-
-
-def _identity_remapping(ir: IR) -> dict[str, str]:
-    return {name: name for name in ir.schema}
-
-
-def _remap_names(
-    names: tuple[str, ...], remapping: Mapping[str, str]
-) -> tuple[str, ...] | None:
-    remapped = []
-    for name in names:
-        if (new_name := remapping.get(name)) is None:
-            return None
-        remapped.append(new_name)
-    return tuple(remapped)
 
 
 def _record_hint(

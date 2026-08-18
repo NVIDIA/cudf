@@ -11,370 +11,100 @@ const_unique_ptr_datasource = ...
 __all__ = ['ColumnChunk', 'ColumnChunkMetaData', 'FileMetaData', 'ParquetColumnSchema', 'ParquetMetadata', 'ParquetSchema', 'RowGroup', 'SortingColumn', 'read_parquet_footers', 'read_parquet_metadata']
 
 class ParquetColumnSchema:
-    """
-    Schema of a parquet column, including the nested columns.
-
-    Parameters
-    ----------
-    parquet_column_schema
-    """
     def __init__(self): ...
-    def name(self) -> str:
-        """
-        Returns parquet column name; can be empty.
-
-        Returns
-        -------
-        str
-            Column name
-        """
-    def num_children(self) -> int:
-        """
-        Returns the number of child columns.
-
-        Returns
-        -------
-        int
-            Children count
-        """
-    def child(self, idx: int) -> ParquetColumnSchema:
-        """
-        Returns schema of the child with the given index.
-
-        Parameters
-        ----------
-        idx : int
-            Child Index
-
-        Returns
-        -------
-        ParquetColumnSchema
-            Child schema
-        """
-    def children(self) -> list:
-        """
-        Returns schemas of all child columns.
-
-        Returns
-        -------
-        list[ParquetColumnSchema]
-            Child schemas.
-        """
-    def cudf_type(self) -> DataType:
-        """
-        Returns the cudf data type for this column.
-
-        This is the resolved cudf data type mapped from the parquet
-        physical/logical types.
-
-        Returns
-        -------
-        DataType
-            cudf data type
-        """
+    def name(self) -> str: ...
+    def num_children(self) -> int: ...
+    def child(self, idx: int) -> ParquetColumnSchema: ...
+    def children(self) -> list: ...
+    def cudf_type(self) -> DataType: ...
 
 class ParquetSchema:
-    """
-    Schema of a parquet file.
-
-    Parameters
-    ----------
-    parquet_schema
-    """
     def __init__(self): ...
-    def root(self) -> ParquetColumnSchema:
-        """
-        Returns the schema of the struct column that contains all columns as fields.
-
-        Returns
-        -------
-        ParquetColumnSchema
-            Root column schema
-        """
-    def column_types(self) -> dict:
-        """
-        Returns a dictionary mapping column names to their cudf data types.
-
-        Returns
-        -------
-        dict[str, DataType]
-            Dictionary mapping column names to DataType objects
-        """
+    def root(self) -> ParquetColumnSchema: ...
+    def column_types(self) -> dict: ...
 
 class ParquetMetadata:
-    """
-    Information about content of a parquet file.
-
-    Parameters
-    ----------
-    parquet_metadata
-    """
     def __init__(self): ...
-    def schema(self) -> ParquetSchema:
-        """
-        Returns the parquet schema.
-
-        Returns
-        -------
-        ParquetSchema
-            Parquet schema
-        """
-    def num_rows(self) -> int:
-        """
-        Returns the number of rows of the root column.
-
-        Returns
-        -------
-        int
-            Number of rows
-        """
-    def num_rowgroups(self) -> int:
-        """
-        Returns the total number of rowgroups in the file.
-
-        Returns
-        -------
-        int
-            Number of row groups.
-        """
-    def num_rowgroups_per_file(self) -> list:
-        """
-        Returns the number of rowgroups in each file.
-        """
-    def metadata(self) -> dict:
-        """
-        Returns the key-value metadata in the file footer.
-
-        Returns
-        -------
-        dict[str, str]
-            Key value metadata as a map.
-        """
-    def rowgroup_metadata(self) -> list:
-        """
-        Returns the row group metadata in the file footer.
-
-        Returns
-        -------
-        list[dict[str, int]]
-            Vector of row group metadata as maps.
-        """
-    def columnchunk_metadata(self) -> dict:
-        """
-        Returns a map of leaf column names to lists of `total_uncompressed_size`
-        metadata from all column chunks in the file footer.
-
-        Returns
-        -------
-        dict[str, list[int]]
-            Map of leaf column names to lists of `total_uncompressed_size` metadata
-            from all their column chunks.
-        """
+    def schema(self) -> ParquetSchema: ...
+    def num_rows(self) -> int: ...
+    def num_rowgroups(self) -> int: ...
+    def num_rowgroups_per_file(self) -> list[int]: ...
+    def metadata(self) -> dict: ...
+    def rowgroup_metadata(self) -> list: ...
+    def columnchunk_metadata(self) -> dict: ...
 
 class SortingColumn:
-    """Sort metadata for a row group column."""
     def __init__(self): ...
     @property
-    def column_idx(self) -> int:
-        """Column index (within the row group)."""
+    def column_idx(self) -> int: ...
     @property
-    def descending(self) -> bool:
-        """Whether this column is sorted in descending order."""
+    def descending(self) -> bool: ...
     @property
-    def nulls_first(self) -> bool:
-        """Whether null values are ordered before non-null values."""
+    def nulls_first(self) -> bool: ...
 
 class ColumnChunk:
-    """Metadata for a row group's column chunk."""
     def __init__(self): ...
     @property
-    def file_path(self) -> str:
-        """Relative file path for this column chunk."""
+    def file_path(self) -> str: ...
     @property
-    def file_offset(self) -> int:
-        """Deprecated byte offset to column metadata."""
+    def file_offset(self) -> int: ...
     @property
-    def offset_index_offset(self) -> int:
-        """File offset of the chunk's OffsetIndex."""
+    def offset_index_offset(self) -> int: ...
     @property
-    def offset_index_length(self) -> int:
-        """Size of the chunk's OffsetIndex, in bytes."""
+    def offset_index_length(self) -> int: ...
     @property
-    def column_index_offset(self) -> int:
-        """File offset of the chunk's ColumnIndex."""
+    def column_index_offset(self) -> int: ...
     @property
-    def column_index_length(self) -> int:
-        """Size of the chunk's ColumnIndex, in bytes."""
+    def column_index_length(self) -> int: ...
     @property
-    def schema_idx(self) -> int:
-        """Derived index in the flattened schema."""
+    def schema_idx(self) -> int: ...
     @property
-    def meta_data(self) -> ColumnChunkMetaData:
-        """Column metadata for this chunk."""
+    def meta_data(self) -> ColumnChunkMetaData: ...
 
 class ColumnChunkMetaData:
-    """Metadata payload for a column chunk."""
     def __init__(self): ...
     @property
-    def path_in_schema(self) -> list[str]:
-        """Column path components in the flattened schema."""
+    def path_in_schema(self) -> list[str]: ...
     @property
-    def num_values(self) -> int:
-        """Number of values in this chunk."""
+    def num_values(self) -> int: ...
     @property
-    def total_uncompressed_size(self) -> int:
-        """Total uncompressed page bytes for this chunk."""
+    def total_uncompressed_size(self) -> int: ...
     @property
-    def total_compressed_size(self) -> int:
-        """Total compressed page bytes for this chunk."""
+    def total_compressed_size(self) -> int: ...
 
 class RowGroup:
-    """Parquet row group metadata."""
     def __init__(self): ...
     @property
-    def columns(self) -> list[ColumnChunk]:
-        """Column chunk metadata for each column in this row group."""
+    def columns(self) -> list[ColumnChunk]: ...
     @property
-    def total_byte_size(self) -> int:
-        """Total uncompressed byte size in this row group."""
+    def total_byte_size(self) -> int: ...
     @property
-    def num_rows(self) -> int:
-        """Number of rows in this row group."""
+    def num_rows(self) -> int: ...
     @property
-    def sorting_columns(self) -> list[SortingColumn] | None:
-        """Optional row sort order metadata."""
+    def sorting_columns(self) -> list[SortingColumn] | None: ...
     @property
-    def file_offset(self) -> int | None:
-        """Optional byte offset to first page in this row group."""
+    def file_offset(self) -> int | None: ...
     @property
-    def total_compressed_size(self) -> int | None:
-        """Optional total compressed bytes for this row group."""
+    def total_compressed_size(self) -> int | None: ...
     @property
-    def ordinal(self) -> int | None:
-        """Optional row group ordinal within the file."""
+    def ordinal(self) -> int | None: ...
 
 class FileMetaData:
-    """Parquet file footer metadata.
-
-    For details, see :cpp:class:`cudf::io::parquet::FileMetaData`
-
-    See Also
-    --------
-    read_parquet_footers
-        Read one ``FileMetaData`` per source directly from
-        :class:`pylibcudf.io.types.SourceInfo`.
-    """
     def __init__(self): ...
     @property
-    def version(self) -> int:
-        """Get the file format version."""
+    def version(self) -> int: ...
     @property
-    def num_rows(self) -> int:
-        """Get the total number of rows."""
+    def num_rows(self) -> int: ...
     @property
-    def created_by(self) -> str:
-        """Get the application that created the file."""
+    def created_by(self) -> str: ...
     @property
-    def row_groups(self) -> list[RowGroup]:
-        """Get row group metadata in this file."""
+    def row_groups(self) -> list[RowGroup]: ...
     @property
-    def row_group_num_rows(self) -> list[int]:
-        """
-        Get row counts for each row group in this file.
-
-        Returns
-        -------
-        list
-            A list with the row count per row group in this file.
-
-        Notes
-        -----
-        Equivalent to, but faster than, checking each row groups' num_rows:
-
-        .. code-block:: python
-
-           >>> [rg.num_rows for rg in file_metadata.row_groups]
-        """
+    def row_group_num_rows(self) -> list[int]: ...
     @property
-    def columnchunk_metadata(self) -> dict[str, list[int]]:
-        """
-        Get a map of dotted column paths to lists of
-        `total_uncompressed_size` values from every column chunk in
-        this file.
-
-        Returns
-        -------
-        dict[str, list[int]]
-            Map of dotted column paths (``".".join(path_in_schema)``)
-            to lists of `total_uncompressed_size` metadata from all
-            their column chunks.
-
-        Notes
-        -----
-        Equivalent to, but faster than, walking each row group's columns:
-
-        .. code-block:: python
-
-           >>> result: dict[str, list[int]] = {}
-           >>> for rg in file_metadata.row_groups:
-           ...     for col in rg.columns:
-           ...         name = ".".join(col.meta_data.path_in_schema)
-           ...         result.setdefault(name, []).append(
-           ...             col.meta_data.total_uncompressed_size
-           ...         )
-        """
+    def columnchunk_metadata(self) -> dict[str, list[int]]: ...
     @classmethod
-    def from_bytes(cls, footer_bytes: Buffer) -> FileMetaData:
-        """Build ``FileMetaData`` from parquet footer bytes.
+    def from_bytes(cls, footer_bytes: Buffer) -> FileMetaData: ...
 
-        Parameters
-        ----------
-        footer_bytes : Buffer
-            A contiguous bytes-like object containing parquet footer bytes.
-            The bytes are forwarded as-is to
-            :cpp:class:`cudf::io::parquet::experimental::hybrid_scan_reader`
-            without Python-side preprocessing. This method does not strip the
-            parquet footer suffix (4-byte footer length + ``PAR1`` magic), so
-            callers should generally pass only the footer region bytes.
-
-        Returns
-        -------
-        FileMetaData
-            Parsed parquet file footer metadata.
-        """
-
-def read_parquet_metadata(src_info: SourceInfo) -> ParquetMetadata:
-    """
-    Reads metadata of parquet dataset.
-
-    Parameters
-    ----------
-    src_info : SourceInfo
-        Dataset source.
-
-    Returns
-    -------
-    ParquetMetadata
-        Parquet_metadata with parquet schema, number of rows,
-        number of row groups and key-value metadata.
-
-    See Also
-    --------
-    read_parquet_footers
-        To read the pre-materialized file footer metadata used
-        in :func:`pylibcudf.io.parquet.read_parquet`.
-    """
-def read_parquet_footers(src_info: SourceInfo) -> list:
-    """
-    Read parquet file footers as ``FileMetaData`` objects.
-
-    Parameters
-    ----------
-    src_info : SourceInfo
-        Dataset source.
-
-    Returns
-    -------
-    list[FileMetaData]
-        One footer metadata object per input source.
-    """
+def read_parquet_metadata(src_info: SourceInfo) -> ParquetMetadata: ...
+def read_parquet_footers(src_info: SourceInfo) -> list: ...

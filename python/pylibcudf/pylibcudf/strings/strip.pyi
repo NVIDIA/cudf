@@ -11,25 +11,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['strip']
 
-def strip(input: Column, side: side_type=side_type.BOTH, to_strip: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Removes the specified characters from the beginning
-    or end (or both) of each string.
-
-    For details, see :cpp:func:`strip`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings column for this operation
-    side : SideType, default SideType.BOTH
-        Indicates characters are to be stripped from the beginning,
-        end, or both of each string; Default is both
-    to_strip : Scalar
-        UTF-8 encoded characters to strip from each string;
-        Default is empty string which indicates strip whitespace characters
-
-    Returns
-    -------
-    pylibcudf.Column
-        New strings column.
-    """
+def strip(input: Column, side: side_type=side_type.BOTH, to_strip: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

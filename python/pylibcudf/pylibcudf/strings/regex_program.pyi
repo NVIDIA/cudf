@@ -8,32 +8,8 @@ from pylibcudf.libcudf.strings.regex_flags import regex_flags
 __all__ = ['RegexProgram']
 
 class RegexProgram:
-    """Regex program class.
-
-    This is the Cython representation of
-    :cpp:class:`cudf::strings::regex_program`.
-
-    Do not instantiate this class directly, use the `create` method.
-
-    """
     __hash__ = None
 
     def __init__(self, *args, **kwargs): ...
     @staticmethod
-    def create(pattern: str, flags: regex_flags):
-        """Create a program from a pattern.
-
-        For detils, see :cpp:func:`create`.
-
-        Parameters
-        ----------
-        pattern : str
-            Regex pattern
-        flags : RegexFlags
-            Regex flags for interpreting special characters in the pattern
-
-        Returns
-        -------
-        RegexProgram
-            A new RegexProgram
-        """
+    def create(pattern: str, flags: regex_flags) -> RegexProgram: ...

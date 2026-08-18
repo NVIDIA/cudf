@@ -12,65 +12,6 @@ from .table import Table
 
 __all__ = ['interleave_columns', 'tile', 'table_to_array']
 
-def interleave_columns(source_table: Table, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Interleave columns of a table into a single column.
-
-    Converts the column major table `input` into a row major column.
-
-    Example:
-    in     = [[A1, A2, A3], [B1, B2, B3]]
-    return = [A1, B1, A2, B2, A3, B3]
-
-    For details, see :cpp:func:`interleave_columns`.
-
-    Parameters
-    ----------
-    source_table: Table
-        The input table to interleave
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        A new column which is the result of interleaving the input columns
-    """
-def tile(source_table: Table, count: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """Repeats the rows from input table count times to form a new table.
-
-    For details, see :cpp:func:`tile`.
-
-    Parameters
-    ----------
-    source_table: Table
-        The input table containing rows to be repeated
-    count: size_type
-        The number of times to tile "rows". Must be non-negative
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned table's device memory.
-
-    Returns
-    -------
-    Table
-        The table containing the tiled "rows"
-    """
-def table_to_array(input_table: Table, ptr: int, size: int, stream: CudaStreamLike | None=None) -> None:
-    """
-    Copy a table into a preallocated column-major device array.
-
-    Parameters
-    ----------
-    input_table : Table
-        A table with fixed-width, non-nullable columns of the same type.
-    ptr : uintptr_t
-        A device pointer to the beginning of the output buffer.
-    size : size_t
-        The total number of bytes available at `ptr`.
-        Must be at least `num_rows * num_columns * sizeof(dtype)`.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    """
+def interleave_columns(source_table: Table, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def tile(source_table: Table, count: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
+def table_to_array(input_table: Table, ptr: int, size: int, stream: CudaStreamLike | None=None) -> None: ...

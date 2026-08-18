@@ -11,28 +11,4 @@ from .table import Table
 
 __all__ = ['merge']
 
-def merge(tables_to_merge: list[Table], key_cols: list[int], column_order: list[Order], null_precedence: list[NullOrder], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """Merge a set of sorted tables.
-
-    For details see :cpp:func:`merge`.
-
-    Parameters
-    ----------
-    tables_to_merge : list
-        List of tables to merge.
-    key_cols : list
-        List of column indexes to merge on.
-    column_order : List[ColumnOrder]
-        Whether each column should be sorted in ascending or descending order.
-    null_precedence : List[NullOrder]
-        Whether nulls should come before or after non-nulls.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned table's device memory.
-
-    Returns
-    -------
-    Table
-        The merged table.
-    """
+def merge(tables_to_merge: list[Table], key_cols: list[int], column_order: list[Order], null_precedence: list[NullOrder], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...

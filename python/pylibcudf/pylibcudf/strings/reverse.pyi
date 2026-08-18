@@ -9,22 +9,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['reverse']
 
-def reverse(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Reverses the characters within each string.
-
-    Any null string entries return corresponding null output column entries.
-
-    For details, see :cpp:func:`reverse`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings column for this operation
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    pylibcudf.Column
-        New strings column
-    """
+def reverse(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

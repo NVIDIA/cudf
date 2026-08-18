@@ -10,53 +10,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['from_durations', 'to_durations']
 
-def to_durations(input: Column, duration_type: DataType, format: str, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a new duration column converting a strings column into
-    durations using the provided format pattern.
-
-    For details, see cpp:func:`cudf::strings::to_durations`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation.
-
-    duration_type : DataType
-        The duration type used for creating the output column.
-
-    format : str
-        String specifying the duration format in strings.
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New duration column.
-    """
-def from_durations(durations: Column, format: str | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a new strings column converting a duration column into
-    strings using the provided format pattern.
-
-    For details, see cpp:func:`cudf::strings::from_durations`
-
-    Parameters
-    ----------
-    durations : Column
-        Duration values to convert.
-
-    format : str
-        The string specifying output format.
-        Default format is "%D days %H:%M:%S".
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column with formatted durations.
-    """
+def to_durations(input: Column, duration_type: DataType, format: str, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def from_durations(durations: Column, format: str | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

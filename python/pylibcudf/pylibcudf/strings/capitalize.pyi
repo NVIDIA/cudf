@@ -11,53 +11,6 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['capitalize', 'is_title', 'title']
 
-def capitalize(input: Column, delimiters: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Returns a column of capitalized strings.
-
-    For details, see :cpp:func:`capitalize`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-    delimiters : Scalar, default None
-        Characters for identifying words to capitalize
-
-    Returns
-    -------
-    pylibcudf.Column
-        Column of strings capitalized from the input column
-    """
-def title(input: Column, sequence_type: string_character_types=string_character_types.ALPHA, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Modifies first character of each word to upper-case and lower-cases
-    the rest.
-
-    For details, see :cpp:func:`title`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-    sequence_type : string_character_types, default string_character_types.ALPHA
-        The character type that is used when identifying words
-
-    Returns
-    -------
-    pylibcudf.Column
-        Column of titled strings
-    """
-def is_title(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Checks if the strings in the input column are title formatted.
-
-    For details, see :cpp:func:`is_title`.
-
-    Parameters
-    ----------
-    input : Column
-        String column
-
-    Returns
-    -------
-    pylibcudf.Column
-        Column of type BOOL8
-    """
+def capitalize(input: Column, delimiters: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def title(input: Column, sequence_type: string_character_types=string_character_types.ALPHA, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def is_title(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

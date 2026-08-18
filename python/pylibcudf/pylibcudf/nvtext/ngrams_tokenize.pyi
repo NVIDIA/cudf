@@ -11,29 +11,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['ngrams_tokenize']
 
-def ngrams_tokenize(input: Column, ngrams: size_type, delimiter: Scalar, separator: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a single column of strings by tokenizing the input strings column
-    and then producing ngrams of each string.
-
-    For details, see :cpp:func:`ngrams_tokenize`
-
-    Parameters
-    ----------
-    input : Column
-        Input strings
-    ngrams : size_type
-        The ngram number to generate
-    delimiter : Scalar
-        UTF-8 characters used to separate each string into tokens.
-        An empty string will separate tokens using whitespace.
-    separator : Scalar
-        The string to use for separating ngram tokens
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings columns of tokens
-    """
+def ngrams_tokenize(input: Column, ngrams: size_type, delimiter: Scalar, separator: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

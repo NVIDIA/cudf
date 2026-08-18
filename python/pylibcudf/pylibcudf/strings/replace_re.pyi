@@ -12,51 +12,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['replace_re', 'replace_with_backrefs']
 
-def replace_re(input: Column, pattern: RegexProgram, replacement: Scalar | None=None, max_replace_count: size_type=-1, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    For each string, replaces any character sequence matching the given patterns
-    with the provided replacement.
-
-    For details, see :cpp:func:`replace_re`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation.
-    pattern: RegexProgram
-        The regex to match to each string and replace.
-    replacement : Scalar
-        The string used to replace the matched sequence in each string.
-    max_replace_count : int
-        The maximum number of times to replace the matched pattern
-        within each string.
-        Default replaces every substring that is matched.
-
-    Returns
-    -------
-    Column
-        New strings column
-    """
-def replace_with_backrefs(input: Column, prog: RegexProgram, replacement: str, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    For each string, replaces any character sequence matching the given regex
-    using the replacement template for back-references.
-
-    For details, see :cpp:func:`replace_with_backrefs`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation.
-
-    prog: RegexProgram
-        Regex program instance.
-
-    replacement : str
-         The replacement template for creating the output string.
-
-    Returns
-    -------
-    Column
-        New strings column.
-    """
+def replace_re(input: Column, pattern: RegexProgram, replacement: Scalar | None=None, max_replace_count: size_type=-1, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def replace_with_backrefs(input: Column, prog: RegexProgram, replacement: str, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

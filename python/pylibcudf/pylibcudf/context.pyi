@@ -5,19 +5,5 @@
 
 __all__ = ['clear_jit_cache', 'enable_jit_cache']
 
-def enable_jit_cache(enable: bool):
-    """Enable or disable the JIT program cache.
-
-    When disabled, the cache will not be used for storing or retrieving
-    compiled programs. When enabled, the cache will be used as normal.
-
-    Parameters
-    ----------
-    enable : bool
-        If ``True``, the JIT program cache is enabled; if ``False``, it is
-        disabled.
-    """
-def clear_jit_cache():
-    """Clear the JIT program cache, removing all cached programs from memory
-    and disk.
-    """
+def enable_jit_cache(enable: bool): ...
+def clear_jit_cache(): ...

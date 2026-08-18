@@ -13,47 +13,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['StringCharacterTypes', 'all_characters_of_type', 'filter_characters_of_type']
 
-def all_characters_of_type(source_strings: Column, types: string_character_types, verify_types: string_character_types, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Identifies strings where all characters match the specified type.
-
-    Parameters
-    ----------
-    source_strings : Column
-        Strings instance for this operation
-    types : StringCharacterTypes
-        The character types to check in each string
-    verify_types : StringCharacterTypes
-        Only verify against these character types.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column of boolean results for each string
-    """
-def filter_characters_of_type(source_strings: Column, types_to_remove: string_character_types, replacement: Scalar, types_to_keep: string_character_types, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Filter specific character types from a column of strings.
-
-    Parameters
-    ----------
-    source_strings : Column
-        Strings instance for this operation
-    types_to_remove : StringCharacterTypes
-        The character types to check in each string.
-    replacement : Scalar
-        The replacement character to use when removing characters
-    types_to_keep : StringCharacterTypes
-        Default `ALL_TYPES` means all characters of `types_to_remove`
-        will be filtered.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column with the specified characters filtered out and
-        replaced with the specified replacement string.
-    """
+def all_characters_of_type(source_strings: Column, types: string_character_types, verify_types: string_character_types, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def filter_characters_of_type(source_strings: Column, types_to_remove: string_character_types, replacement: Scalar, types_to_keep: string_character_types, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

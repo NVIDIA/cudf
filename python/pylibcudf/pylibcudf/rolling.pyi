@@ -19,165 +19,25 @@ WindowType = TypeVar('WindowType', Column, size_type)
 __all__ = ['BoundedClosed', 'BoundedOpen', 'CurrentRow', 'RollingRequest', 'Unbounded', 'grouped_range_rolling_window', 'rolling_window']
 
 class Unbounded:
-    """
-    An unbounded rolling window.
-
-    This window runs to the begin/end of the current row's group.
-    """
     def __init__(self): ...
 
 class CurrentRow:
-    """
-    A current row rolling window.
-
-    This window contains all rows that are equal to the current row in the group.
-    """
     def __init__(self): ...
 
 class BoundedClosed:
-    """
-    A bounded closed window.
-
-    This window contains rows with delta of the current row, endpoints included.
-
-    Parameters
-    ----------
-    delta
-        Offset from current row, must be valid. If floating point must not be inf/nan.
-    """
     delta: Scalar
 
     def __init__(self, delta: Scalar): ...
 
 class BoundedOpen:
-    """
-    A bounded open window.
-
-    This window contains rows with delta of the current row, endpoints excluded.
-
-    Parameters
-    ----------
-    delta
-        Offset from current row, must be valid. If floating point must not be inf/nan.
-    """
     delta: Scalar
 
     def __init__(self, delta: Scalar): ...
 
 class RollingRequest:
-    """
-    A request for a rolling aggregation.
-
-    Parameters
-    ----------
-    values
-        The column of values to aggregate.
-    min_periods
-        The minimum number of observations required for a valid result
-        in a given window.
-    aggregation
-        The aggregation to perform.
-    """
     def __init__(self, values: Column, min_periods: size_type, aggregation: Aggregation): ...
 
-def grouped_range_rolling_window(group_keys: Table, orderby: Column, order: order, null_order: null_order, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, requests: list[RollingRequest], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """
-    Perform grouping-aware range-based rolling window aggregations on some columns.
-
-    Parameters
-    ----------
-    group_keys
-        Possibly empty table of sorted keys defining groups.
-    orderby
-        Column defining window ranges. Must be sorted, if
-        ``group_keys`` is not empty, must be sorted groupwise.
-    order
-        Sort order of the ``orderby`` column.
-    null_order
-        Null sort order in the sorted ``orderby`` column
-    preceding
-        The type of the preceding window offset.
-    following
-        The type of the following window offset.
-    requests
-        List of :class:`RollingRequest` objects.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned table's device memory.
-
-    Returns
-    -------
-    A table of results, one column per input request, in order of the
-    input requests.
-    """
-def rolling_window(source: Column, preceding_window: WindowType, following_window: WindowType, min_periods: size_type, agg: Aggregation, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Perform a rolling window operation on a column
-
-    For details, see ``cudf::rolling_window`` documentation.
-
-    Parameters
-    ----------
-    source : Column
-        The column to perform the rolling window operation on.
-    preceding_window : Union[Column, size_type]
-        The column containing the preceding window sizes or a scalar value
-        indicating the sizes of all windows.
-    following_window : Union[Column, size_type]
-        The column containing the following window sizes or a scalar value
-        indicating the sizes of all windows.
-    min_periods : int
-        The minimum number of periods to include in the result.
-    agg : Aggregation
-        The aggregation to perform.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        The result of the rolling window operation.
-    """
-def is_valid_rolling_aggregation(source: DataType, agg: Aggregation) -> bool:
-    """
-    Return if a rolling aggregation is supported for a given datatype.
-
-    Parameters
-    ----------
-    source
-        The type of the column the aggregation is being performed on.
-    agg
-        The aggregation.
-
-    Returns
-    -------
-    True if the aggregation is supported.
-    """
-def make_range_windows(group_keys: Table, orderby: Column, order: order, null_order: null_order, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple:
-    """
-    Constructs preceding and following columns given window range specifications.
-
-    Parameters
-    ----------
-    group_keys
-        Possibly empty table of sorted keys defining groups.
-    orderby
-        Column defining window ranges. Must be sorted, if
-       ``group_keys`` is not empty, must be sorted groupwise.
-    order
-        Sort order of the ``orderby`` column.
-    null_order
-        Null sort order in the sorted ``orderby`` column
-    preceding
-        The type of the preceding window offset.
-    following
-        The type of the following window offset.
-
-    Returns
-    -------
-    tuple[Column, Column]
-        A tuple of preceding and following columns that define the window bounds
-        for each row suitable for passing to `rolling_window`.
-    """
+def grouped_range_rolling_window(group_keys: Table, orderby: Column, order: order, null_order: null_order, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, requests: list[RollingRequest], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
+def rolling_window(source: Column, preceding_window: WindowType, following_window: WindowType, min_periods: size_type, agg: Aggregation, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def is_valid_rolling_aggregation(source: DataType, agg: Aggregation) -> bool: ...
+def make_range_windows(group_keys: Table, orderby: Column, order: order, null_order: null_order, preceding: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, following: BoundedClosed | BoundedOpen | CurrentRow | Unbounded, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> tuple: ...

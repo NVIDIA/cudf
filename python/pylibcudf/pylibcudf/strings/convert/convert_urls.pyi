@@ -9,41 +9,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['url_decode', 'url_encode']
 
-def url_encode(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Encodes each string using URL encoding.
-
-    For details, see :cpp:func:`url_encode`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation.
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column.
-    """
-def url_decode(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Decodes each string using URL encoding.
-
-    For details, see :cpp:func:`url_decode`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation.
-
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column.
-    """
+def url_encode(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def url_decode(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

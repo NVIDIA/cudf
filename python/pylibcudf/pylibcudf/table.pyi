@@ -15,113 +15,18 @@ from .types import DataType
 
 __all__ = ['Table']
 
-class _ArrowTableHolder:
-    """A holder for an Arrow table for gpumemoryview lifetime management."""
-
 class Table:
-    """A list of columns of the same size.
-
-    If the list of columns is empty, the table's row count may still be non-zero.
-
-    Parameters
-    ----------
-    columns : Sequence[Column]
-        The columns in this table.
-    num_rows : int | None
-        Optional explicit row count. Only used to preserve the row count of a
-        table with zero columns. When `columns` is non-empty, `num_rows` must
-        equal the size of every column.
-    """
     __hash__ = None
 
     def __init__(self, columns: Sequence[Column], num_rows=None): ...
-    def to_arrow(self, metadata: list[ColumnMetadata | str] | None=None, stream: Stream | None=None) -> ArrowLike:
-        """Create a pyarrow table from a pylibcudf table.
-
-        Parameters
-        ----------
-        metadata : list[ColumnMetadata | str] | None
-            The metadata to attach to the columns of the table.
-        stream : Stream | None
-            CUDA stream on which to perform the operation.
-
-        Returns
-        -------
-        pyarrow.Table
-        """
+    def to_arrow(self, metadata: list[ColumnMetadata | str] | None=None, stream: Stream | None=None) -> ArrowLike: ...
     @staticmethod
-    def from_arrow(obj: ArrowLike, dtype: DataType | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-        """
-        Create a Table from an Arrow-like object using the Arrow C data interface.
-
-        This method supports constructing a `pylibcudf.Table` from an object that
-        implements one of the Arrow C data interface protocols, such as:
-
-        - `__arrow_c_device_array__`: Returns a tuple of (ArrowSchema, ArrowDeviceArray)
-          representing columnar device memory.
-        - `__arrow_c_stream__`: Returns an ArrowArrayStream pointer representing
-          a stream of host columnar batches.
-        - `__arrow_c_device_stream__`: Not yet implemented.
-        - `__arrow_c_array__`: Not yet implemented.
-
-        Parameters
-        ----------
-        obj : Arrow-like type
-            An object implementing one of the Arrow C data interface methods.
-        dtype: DataType
-            The pylibcudf data type.
-        stream : Stream | None
-            CUDA stream on which to perform the operation.
-        mr : DeviceMemoryResource | None
-            Device memory resource for allocations.
-
-        Returns
-        -------
-        Table
-            A Table constructed from the Arrow-like input.
-
-        Raises
-        ------
-        NotImplementedError
-            If the input is a device or host stream not yet supported.
-            If the dtype argument is not None.
-        ValueError
-            If the input does not implement a supported Arrow C interface.
-        """
-    def num_columns(self) -> int:
-        """The number of columns in this table."""
-    def num_rows(self) -> int:
-        """The number of rows in this table."""
-    def columns(self) -> tuple:
-        """The columns in this table."""
-    def release(self) -> list:
-        """Release ownership of this table's columns and leave it empty.
-
-        Returns
-        -------
-        list
-            The columns that were in this table.
-        """
-    def shape(self) -> tuple:
-        """The shape of this table"""
-    def copy(self, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-        """Create a deep copy of the table.
-
-        Parameters
-        ----------
-        stream : Stream | None
-            CUDA stream on which to perform the operation.
-        mr : DeviceMemoryResource | None
-            Device memory resource for allocations.
-
-        Returns
-        -------
-        Table
-            A new Table with deep copies of all columns.
-        """
-    def _to_schema(self, metadata=None):
-        """Create an Arrow schema from this table."""
-    def _to_host_array(self, stream: CudaStreamLike): ...
-    def _to_device_array(self): ...
+    def from_arrow(obj: ArrowLike, dtype: DataType | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
+    def num_columns(self) -> int: ...
+    def num_rows(self) -> int: ...
+    def columns(self) -> tuple: ...
+    def release(self) -> list: ...
+    def shape(self) -> tuple[int, int]: ...
+    def copy(self, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
     def __arrow_c_array__(self, requested_schema=None): ...
     def __arrow_c_device_array__(self, requested_schema=None, **kwargs): ...

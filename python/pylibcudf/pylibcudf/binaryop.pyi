@@ -14,54 +14,5 @@ from .types import DataType
 
 __all__ = ['BinaryOperator', 'binary_operation', 'is_supported_operation']
 
-def binary_operation(lhs: Column | Scalar, rhs: Column | Scalar, op: binary_operator, output_type: DataType, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """Perform a binary operation between a column and another column or scalar.
-
-    ``lhs`` and ``rhs`` may be a
-    :py:class:`~pylibcudf.column.Column` or a
-    :py:class:`~pylibcudf.scalar.Scalar`, but at least one must be a
-    :py:class:`~pylibcudf.column.Column`.
-
-    For details, see :cpp:func:`binary_operation`.
-
-    Parameters
-    ----------
-    lhs : Union[Column, Scalar]
-        The left hand side argument.
-    rhs : Union[Column, Scalar]
-        The right hand side argument.
-    op : BinaryOperator
-        The operation to perform.
-    output_type : DataType
-        The data type to use for the output.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    pylibcudf.Column
-        The result of the binary operation
-    """
-def is_supported_operation(out: DataType, lhs: DataType, rhs: DataType, op: binary_operator) -> bool:
-    """Check if an operation is supported for the given data types.
-
-    For details, see :cpp:func:`is_supported_operation`.
-
-    Parameters
-    ----------
-    out : DataType
-        The output data type.
-    lhs : DataType
-        The left hand side data type.
-    rhs : DataType
-        The right hand side data type.
-    op : BinaryOperator
-        The operation to check.
-
-    Returns
-    -------
-    bool
-        True if the operation is supported, False otherwise
-    """
+def binary_operation(lhs: Column | Scalar, rhs: Column | Scalar, op: binary_operator, output_type: DataType, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def is_supported_operation(out: DataType, lhs: DataType, rhs: DataType, op: binary_operator) -> bool: ...

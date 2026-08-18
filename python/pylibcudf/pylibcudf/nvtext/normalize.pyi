@@ -10,50 +10,9 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 __all__ = ['CharacterNormalizernormalize_characters', 'normalize_spaces']
 
 class CharacterNormalizer:
-    """The normalizer object to be used with ``normalize_characters``.
-
-    For details, see :cpp:class:`cudf::nvtext::character_normalizer`.
-    """
     __hash__ = None
 
     def __init__(self, do_lower_case: bool, tokens: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None): ...
 
-def normalize_spaces(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns a new strings column by normalizing the whitespace in
-    each string in the input column.
-
-    For details, see :cpp:func:`normalize_spaces`
-
-    Parameters
-    ----------
-    input : Column
-        Input strings
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings columns of normalized strings.
-    """
-def normalize_characters(input: Column, normalizer: CharacterNormalizer, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Normalizes strings characters for tokenizing.
-
-    For details, see :cpp:func:`normalize_characters`
-
-    Parameters
-    ----------
-    input : Column
-        Input strings
-    normalizer : CharacterNormalizer
-        Normalizer object used for modifying the input column text
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        Normalized strings column
-    """
+def normalize_spaces(input: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def normalize_characters(input: Column, normalizer: CharacterNormalizer, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

@@ -26,314 +26,60 @@ ColumnNameSpec: TypeAlias = tuple[str, list['ColumnNameSpec']]
 ChildNameSpec: TypeAlias = Mapping[str, 'ChildNameSpec']
 
 class PartitionInfo:
-    """
-    Information used while writing partitioned datasets.
-
-    Parameters
-    ----------
-    start_row : int
-        The start row of the partition.
-
-    num_rows : int
-        The number of rows in the partition.
-    """
     def __init__(self, start_row: size_type, num_rows: size_type): ...
 
 class ColumnInMetadata:
-    """
-    Metadata for a column
-    """
     def __init__(self): ...
-    def set_name(self, name: str) -> ColumnInMetadata:
-        """
-        Set the name of this column.
-
-        Parameters
-        ----------
-        name : str
-            Name of the column
-
-        Returns
-        -------
-        Self
-        """
-    def set_nullability(self, nullable: bool) -> ColumnInMetadata:
-        """
-        Set the nullability of this column.
-
-        Parameters
-        ----------
-        nullable : bool
-            Whether this column is nullable
-
-        Returns
-        -------
-        Self
-        """
-    def set_list_column_as_map(self) -> ColumnInMetadata:
-        """
-        Specify that this list column should be encoded as a map in the
-        written file.
-
-        Returns
-        -------
-        Self
-        """
-    def set_int96_timestamps(self, req: bool) -> ColumnInMetadata:
-        """
-        Specifies whether this timestamp column should be encoded using
-        the deprecated int96.
-
-        Parameters
-        ----------
-        req : bool
-            True = use int96 physical type. False = use int64 physical type.
-
-        Returns
-        -------
-        Self
-        """
-    def set_decimal_precision(self, precision: int) -> ColumnInMetadata:
-        """
-        Set the decimal precision of this column.
-        Only valid if this column is a decimal (fixed-point) type.
-
-        Parameters
-        ----------
-        precision : int
-            The integer precision to set for this decimal column
-
-        Returns
-        -------
-        Self
-        """
-    def child(self, i: size_type) -> ColumnInMetadata:
-        """
-        Get reference to a child of this column.
-
-        Parameters
-        ----------
-        i : int
-            Index of the child to get.
-
-        Returns
-        -------
-        ColumnInMetadata
-        """
-    def set_output_as_binary(self, binary: bool) -> ColumnInMetadata:
-        """
-        Specifies whether this column should be written as binary or string data.
-
-        Parameters
-        ----------
-        binary : bool
-            True = use binary data type. False = use string data type
-
-        Returns
-        -------
-        Self
-        """
-    def set_type_length(self, type_length: int) -> ColumnInMetadata:
-        """
-        Sets the length of fixed length data.
-
-        Parameters
-        ----------
-        type_length : int
-            Size of the data type in bytes
-
-        Returns
-        -------
-        Self
-        """
-    def set_skip_compression(self, skip: bool) -> ColumnInMetadata:
-        """
-        Specifies whether this column should not be compressed
-        regardless of the compression.
-
-        Parameters
-        ----------
-        skip : bool
-            If `true` do not compress this column
-
-        Returns
-        -------
-        Self
-        """
-    def set_encoding(self, encoding: column_encoding) -> ColumnInMetadata:
-        """
-        Specifies whether this column should not be compressed
-        regardless of the compression.
-
-        Parameters
-        ----------
-        encoding : ColumnEncoding
-            The encoding to use
-
-        Returns
-        -------
-        ColumnInMetadata
-        """
-    def get_name(self) -> str:
-        """
-        Get the name of this column.
-
-        Returns
-        -------
-        str
-            The name of this column
-        """
+    def set_name(self, name: str) -> ColumnInMetadata: ...
+    def set_nullability(self, nullable: bool) -> ColumnInMetadata: ...
+    def set_list_column_as_map(self) -> ColumnInMetadata: ...
+    def set_int96_timestamps(self, req: bool) -> ColumnInMetadata: ...
+    def set_decimal_precision(self, precision: int) -> ColumnInMetadata: ...
+    def child(self, i: size_type) -> ColumnInMetadata: ...
+    def set_output_as_binary(self, binary: bool) -> ColumnInMetadata: ...
+    def set_type_length(self, type_length: int) -> ColumnInMetadata: ...
+    def set_skip_compression(self, skip: bool) -> ColumnInMetadata: ...
+    def set_encoding(self, encoding: column_encoding) -> ColumnInMetadata: ...
+    def get_name(self) -> str: ...
 
 class TableInputMetadata:
-    """
-    Metadata for a table
-
-    Parameters
-    ----------
-    table : Table
-        The Table to construct metadata for
-    """
     def __init__(self, table: Table): ...
     @property
     def column_metadata(self) -> list[ColumnInMetadata]: ...
 
 class TableWithMetadata:
-    """A container holding a table and its associated metadata
-    (e.g. column names)
-
-    For details, see :cpp:class:`cudf::io::table_with_metadata`.
-
-    Parameters
-    ----------
-    tbl : Table
-        The input table.
-    column_names : list
-        A list of tuples each containing the name of each column
-        and the names of its child columns (in the same format).
-        e.g.
-        [("id", []), ("name", [("first", []), ("last", [])])]
-
-    """
     __hash__ = None
     tbl: Table
 
     def __init__(self, tbl: Table, column_names: list[ColumnNameSpec]): ...
     @property
-    def columns(self) -> tuple[Column, ...]:
-        """
-        Return a tuple containing the columns of the table
-        """
-    def column_names(self, include_children=False) -> list[str] | list[ColumnNameSpec]:
-        """
-        Return a list containing the column names of the table
-        """
+    def columns(self) -> tuple[Column, ...]: ...
+    def column_names(self, include_children=False) -> list[str] | list[ColumnNameSpec]: ...
     @property
-    def child_names(self) -> ChildNameSpec:
-        """
-        Return a dictionary mapping the names of columns with children
-        to the names of their child columns. Columns without children
-        get an empty dictionary.
-        """
+    def child_names(self) -> ChildNameSpec: ...
     @property
-    def per_file_user_data(self) -> list[Mapping[bytes, bytes]]:
-        """
-        Returns a list containing a dict
-        containing file-format specific metadata,
-        for each file being read in.
-        """
+    def per_file_user_data(self) -> list[Mapping[bytes, bytes]]: ...
     @property
-    def num_rows_per_source(self) -> list[int]:
-        """
-        Returns a list containing the number
-        of rows for each file being read in.
-        """
+    def num_rows_per_source(self) -> list[int]: ...
     @property
-    def num_input_row_groups(self) -> int:
-        """
-        Returns the total number of input
-        Parquet row groups across all data sources.
-        """
+    def num_input_row_groups(self) -> int: ...
     @property
-    def num_row_groups_after_stats_filter(self) -> int | None:
-        """
-        Returns the number of remaining Parquet row groups
-        after stats filter. None if no filtering done.
-        """
+    def num_row_groups_after_stats_filter(self) -> int | None: ...
     @property
-    def num_row_groups_after_bloom_filter(self) -> int | None:
-        """
-        Returns the number of remaining Parquet row groups
-        after bloom filter. None if no filtering done.
-        """
+    def num_row_groups_after_bloom_filter(self) -> int | None: ...
 
 class FilepathSource:
-    """
-    A file path or URL with an optional known size in bytes.
-
-    When ``size`` is set for a remote URL, libcudf passes it to KvikIO at open
-    time so the remote server is not queried for file size (avoiding HEAD
-    requests). An incorrect size will cause read failures.
-
-    Parameters
-    ----------
-    path : str or os.PathLike
-        Path or URL of the input file.
-    size : int, optional
-        Known file size in bytes. Omit to query size via KvikIO (HEAD for remote URLs).
-    """
     path: object
     size: object
 
     def __init__(self, path: str | os.PathLike[Any], size: int | None=None): ...
 
 class SourceInfo:
-    """
-    A class containing details on a source to read from.
-
-    For details, see :cpp:class:`cudf::io::source_info`.
-
-    Parameters
-    ----------
-    sources : List[Union[
-        str,
-        os.PathLike,
-        FilepathSource,
-        bytes,
-        io.BytesIO,
-        DataSource,
-        rmm.DeviceBuffer,
-    ]]
-        A homogeneous list of sources to read from. Mixing
-        different types of sources will raise a `ValueError`.
-        If an empty list, constructs an empty SourceInfo.
-    """
     __hash__ = None
 
     def __init__(self, sources: Sequence[str] | Sequence[os.PathLike[Any]] | Sequence[FilepathSource] | Sequence[Datasource] | Sequence[io.StringIO] | Sequence[bytes] | Sequence[io.BytesIO] | Sequence[Span]): ...
-    @staticmethod
-    def _is_remote_uri(path: str | os.PathLike) -> bool: ...
-    def _init_byte_like_sources(self, sources: list, expected_type: type): ...
 
 class SinkInfo:
-    """
-    A class containing details about destinations (sinks) to write data to.
-
-    For more details, see :cpp:class:`cudf::io::sink_info`.
-
-    Parameters
-    ----------
-    sinks : list of str, PathLike, or io.IOBase instances
-        A list of sinks to write data to. Each sink can be:
-
-        - A string representing a filename.
-        - A PathLike object.
-        - An instance of a Python I/O class that is a subclass of io.IOBase
-          (eg., io.BytesIO, io.StringIO).
-
-        The list must be homogeneous in type unless all sinks are instances
-        of subclasses of io.IOBase. Mixing different types of sinks
-        (that are not all io.IOBase instances) will raise a ValueError.
-    """
     __hash__ = None
 
     def __init__(self, sinks: list[str] | list[os.PathLike[Any]] | list[io.IOBase]): ...

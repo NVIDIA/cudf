@@ -11,35 +11,8 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 __all__ = ['WordPieceVocabulary', 'wordpiece_tokenize']
 
 class WordPieceVocabulary:
-    """The Vocabulary object to be used with ``wordpiece_tokenize``.
-
-    For details, see :cpp:class:`cudf::nvtext::wordpiece_tokenize`.
-    """
     __hash__ = None
 
     def __init__(self, vocab: Column, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None): ...
 
-def wordpiece_tokenize(input: Column, vocabulary: WordPieceVocabulary, max_words_per_row: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns the token ids for the input string by looking
-    up each delimited token in the given vocabulary.
-    The input is expected to be normalized.
-
-    For details, see cpp:func:`cudf::nvtext::wordpiece_tokenize`
-
-    Parameters
-    ----------
-    input : Column
-        Normalized strings column to tokenize
-    vocabulary : WordPieceVocabulary
-        Used to lookup tokens within ``input``
-    max_words_per_row : size_type
-        Maximum number of words to tokenize per input row
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        Lists column of token ids
-    """
+def wordpiece_tokenize(input: Column, vocabulary: WordPieceVocabulary, max_words_per_row: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

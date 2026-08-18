@@ -11,54 +11,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['filter_tokens', 'replace_tokens']
 
-def replace_tokens(input: Column, targets: Column, replacements: Column, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Replaces specified tokens with corresponding replacement strings.
-
-    For details, see :cpp:func:`replace_tokens`
-
-    Parameters
-    ----------
-    input : Column
-        Strings column to replace
-    targets : Column
-        Strings to compare against tokens found in ``input``
-    replacements : Column
-        Replacement strings for each string in ``targets``
-    delimiter : Scalar, optional
-        Characters used to separate each string into tokens.
-        The default of empty string will identify tokens using whitespace.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column with replaced strings
-    """
-def filter_tokens(input: Column, min_token_length: size_type, replacement: Scalar | None=None, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Removes tokens whose lengths are less than a specified number of characters.
-
-    For details, see :cpp:func:`filter_tokens`
-
-    Parameters
-    ----------
-    input : Column
-        Strings column to replace
-    min_token_length : size_type
-        The minimum number of characters to retain a
-        token in the output string
-    replacement : Scalar, optional
-        Optional replacement string to be used in place of removed tokens
-    delimiter : Scalar, optional
-        Characters used to separate each string into tokens.
-        The default of empty string will identify tokens using whitespace.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New strings column of filtered strings
-    """
+def replace_tokens(input: Column, targets: Column, replacements: Column, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def filter_tokens(input: Column, min_token_length: size_type, replacement: Scalar | None=None, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

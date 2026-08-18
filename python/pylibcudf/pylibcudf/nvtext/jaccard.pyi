@@ -10,27 +10,4 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['jaccard_index']
 
-def jaccard_index(input1: Column, input2: Column, width: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Returns the Jaccard similarity between individual rows in two strings columns.
-
-    For details, see :cpp:func:`jaccard_index`
-
-    Parameters
-    ----------
-    input1 : Column
-        Input strings column
-    input2 : Column
-        Input strings column
-    width : size_type
-        The ngram number to generate
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        Index calculation values
-    """
+def jaccard_index(input1: Column, input2: Column, width: size_type, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

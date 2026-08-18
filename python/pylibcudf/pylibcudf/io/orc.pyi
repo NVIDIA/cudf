@@ -27,11 +27,6 @@ class OrcColumnStatistics:
     def get(self, item, default=None): ...
 
 class ParsedOrcStatistics:
-    """
-    Holds column names and parsed file-level and stripe-level statistics.
-
-    For details, see :cpp:class:`cudf::io::parsed_orc_statistics`
-    """
     __hash__ = None
 
     @property
@@ -42,507 +37,56 @@ class ParsedOrcStatistics:
     def stripes_stats(self): ...
 
 class OrcReaderOptions:
-    """
-    The settings to use for ``read_orc``
-
-    For details, see :cpp:class:`cudf::io::orc_reader_options`
-    """
     @staticmethod
-    def builder(source: SourceInfo):
-        """
-        Create a OrcReaderOptionsBuilder object
-
-        For details, see :cpp:func:`cudf::io::orc_reader_options::builder`
-
-        Parameters
-        ----------
-        sink : SourceInfo
-            The source to read the ORC file from.
-
-        Returns
-        -------
-        OrcReaderOptionsBuilder
-            Builder to build OrcReaderOptions
-        """
-    def set_num_rows(self, nrows: int) -> None:
-        """
-        Sets number of row to read.
-
-        Parameters
-        ----------
-        nrows: int64_t
-            Number of rows
-
-        Returns
-        -------
-        None
-        """
-    def set_skip_rows(self, skip_rows: int) -> None:
-        """
-        Sets number of rows to skip from the start.
-
-        Parameters
-        ----------
-        skip_rows: int64_t
-            Number of rows
-
-        Returns
-        -------
-        None
-        """
-    def set_stripes(self, stripes: list[list[int]]) -> None:
-        """
-        Sets list of stripes to read for each input source.
-
-        Parameters
-        ----------
-        stripes: list[list[size_type]]
-            List of lists, mapping stripes to read to input sources
-
-        Returns
-        -------
-        None
-        """
-    def set_decimal128_columns(self, val: list[str]) -> None:
-        """
-        Set columns that should be read as 128-bit Decimal.
-
-        Parameters
-        ----------
-        val: list[str]
-            List of fully qualified column names
-
-        Returns
-        -------
-        None
-        """
-    def set_timestamp_type(self, type_: DataType) -> None:
-        """
-        Sets timestamp type to which timestamp column will be cast.
-
-        Parameters
-        ----------
-        type_: DataType
-            Type of timestamp
-
-        Returns
-        -------
-        None
-        """
-    def set_columns(self, col_names: list[str]) -> None:
-        """
-        Sets names of the column to read.
-
-        Parameters
-        ----------
-        col_names: list[str]
-            List of column names
-
-        Returns
-        -------
-        None
-        """
-    def set_source(self, src: SourceInfo) -> None:
-        """
-        Set a new source info location.
-
-        Parameters
-        ----------
-        src : SourceInfo
-            New source information, replacing existing information.
-
-        Returns
-        -------
-        None
-        """
+    def builder(source: SourceInfo) -> OrcReaderOptionsBuilder: ...
+    def set_num_rows(self, nrows: int) -> None: ...
+    def set_skip_rows(self, skip_rows: int) -> None: ...
+    def set_stripes(self, stripes: list[list[int]]) -> None: ...
+    def set_decimal128_columns(self, val: list[str]) -> None: ...
+    def set_timestamp_type(self, type_: DataType) -> None: ...
+    def set_columns(self, col_names: list[str]) -> None: ...
+    def set_source(self, src: SourceInfo) -> None: ...
 
 class OrcReaderOptionsBuilder:
-    def use_index(self, use: bool) -> OrcReaderOptionsBuilder:
-        """
-        Enable/Disable use of row index to speed-up reading.
-
-        Parameters
-        ----------
-        use : bool
-            Boolean value to enable/disable row index use
-
-        Returns
-        -------
-        OrcReaderOptionsBuilder
-        """
-    def build(self) -> OrcReaderOptions:
-        """Create a OrcReaderOptions object"""
+    def use_index(self, use: bool) -> OrcReaderOptionsBuilder: ...
+    def build(self) -> OrcReaderOptions: ...
 
 class OrcWriterOptions:
-    def set_stripe_size_bytes(self, size_bytes: int) -> None:
-        """
-        Sets the maximum stripe size, in bytes.
-
-        For details, see :cpp:func:`cudf::io::orc_writer_options::set_stripe_size_bytes`
-
-        Parameters
-        ----------
-        size_bytes: size_t
-            Sets the maximum stripe size, in bytes.
-
-        Returns
-        -------
-        None
-        """
-    def set_stripe_size_rows(self, size_rows: size_type) -> None:
-        """
-        Sets the maximum stripe size, in rows.
-
-        If the stripe size is smaller that the row group size,
-        row group size will be reduced to math the stripe size.
-
-        For details, see :cpp:func:`cudf::io::orc_writer_options::set_stripe_size_rows`
-
-        Parameters
-        ----------
-        size_bytes: size_type
-            Maximum stripe size, in rows to be set
-
-        Returns
-        -------
-        None
-        """
-    def set_row_index_stride(self, stride: size_type) -> None:
-        """
-        Sets the row index stride.
-
-        Rounded down to a multiple of 8.
-
-        For details, see :cpp:func:`cudf::io::orc_writer_options::set_row_index_stride`
-
-        Parameters
-        ----------
-        size_bytes: size_type
-            Maximum stripe size, in rows to be set
-
-        Returns
-        -------
-        None
-        """
+    def set_stripe_size_bytes(self, size_bytes: int) -> None: ...
+    def set_stripe_size_rows(self, size_rows: size_type) -> None: ...
+    def set_row_index_stride(self, stride: size_type) -> None: ...
     @staticmethod
-    def builder(sink: SinkInfo, table: Table):
-        """
-        Create builder to create OrcWriterOptions.
-
-        For details, see :cpp:func:`cudf::io::orc_writer_options::builder`
-
-        Parameters
-        ----------
-        sink: SinkInfo
-            The sink used for writer output
-        table: Table
-            Table to be written to output
-
-        Returns
-        -------
-        OrcWriterOptionsBuilder
-        """
+    def builder(sink: SinkInfo, table: Table) -> OrcWriterOptionsBuilder: ...
 
 class OrcWriterOptionsBuilder:
-    def compression(self, comp: compression_type) -> OrcWriterOptionsBuilder:
-        """
-        Sets compression type.
-
-        For details, see :cpp:func:`cudf::io::orc_writer_options_builder::compression`
-
-        Parameters
-        ----------
-        comp: CompressionType
-            The compression type to use
-
-        Returns
-        -------
-        OrcWriterOptionsBuilder
-        """
-    def enable_statistics(self, val: statistics_freq) -> OrcWriterOptionsBuilder:
-        """
-        Choose granularity of column statistics to be written.
-
-        For details, see :cpp:func:`enable_statistics`
-
-        Parameters
-        ----------
-        val: StatisticsFreq
-            Level of statistics collection
-
-        Returns
-        -------
-        OrcWriterOptionsBuilder
-        """
-    def key_value_metadata(self, kvm: dict[str, str]) -> OrcWriterOptionsBuilder:
-        """
-        Sets Key-Value footer metadata.
-
-        Parameters
-        ----------
-        kvm: dict
-            Key-Value footer metadata
-
-        Returns
-        -------
-        OrcWriterOptionsBuilder
-        """
-    def metadata(self, meta: TableInputMetadata) -> OrcWriterOptionsBuilder:
-        """
-        Sets associated metadata.
-
-        For details, see :cpp:func:`cudf::io::orc_writer_options_builder::metadata`
-
-        Parameters
-        ----------
-        meta: TableInputMetadata
-            Associated metadata
-
-        Returns
-        -------
-        OrcWriterOptionsBuilder
-        """
-    def build(self) -> OrcWriterOptions:
-        """Moves the ORC writer options builder"""
+    def compression(self, comp: compression_type) -> OrcWriterOptionsBuilder: ...
+    def enable_statistics(self, val: statistics_freq) -> OrcWriterOptionsBuilder: ...
+    def key_value_metadata(self, kvm: dict[str, str]) -> OrcWriterOptionsBuilder: ...
+    def metadata(self, meta: TableInputMetadata) -> OrcWriterOptionsBuilder: ...
+    def build(self) -> OrcWriterOptions: ...
 
 class OrcChunkedWriter:
-    def close(self) -> None:
-        """
-        Closes the chunked ORC writer.
-
-        Returns
-        -------
-        None
-        """
-    def write(self, table: Table) -> None:
-        """
-        Writes table to output.
-
-        Parameters
-        ----------
-        table: Table
-            able that needs to be written
-
-        Returns
-        -------
-        None
-        """
+    def close(self) -> None: ...
+    def write(self, table: Table) -> None: ...
     @staticmethod
-    def from_options(options: ChunkedOrcWriterOptions, stream: CudaStreamLike | None=None) -> OrcChunkedWriter:
-        """
-        Creates a chunked ORC writer from options
-
-        Parameters
-        ----------
-        options: ChunkedOrcWriterOptions
-            Settings for controlling writing behavior
-        stream : Stream | None
-            CUDA stream used for device memory operations and kernel launches
-
-        Returns
-        -------
-        OrcChunkedWriter
-        """
+    def from_options(options: ChunkedOrcWriterOptions, stream: CudaStreamLike | None=None) -> OrcChunkedWriter: ...
 
 class ChunkedOrcWriterOptions:
-    def set_stripe_size_bytes(self, size_bytes: int) -> None:
-        """
-        Sets the maximum stripe size, in bytes.
-
-        Parameters
-        ----------
-        size_bytes: size_t
-            Sets the maximum stripe size, in bytes.
-
-        Returns
-        -------
-        None
-        """
-    def set_stripe_size_rows(self, size_rows: size_type) -> None:
-        """
-        Sets the maximum stripe size, in rows.
-
-        If the stripe size is smaller that the row group size,
-        row group size will be reduced to math the stripe size.
-
-        Parameters
-        ----------
-        size_bytes: size_type
-            Maximum stripe size, in rows to be set
-
-        Returns
-        -------
-        None
-        """
-    def set_row_index_stride(self, stride: size_type) -> None:
-        """
-        Sets the row index stride.
-
-        Rounded down to a multiple of 8.
-
-        Parameters
-        ----------
-        size_bytes: size_type
-            Maximum stripe size, in rows to be set
-
-        Returns
-        -------
-        None
-        """
+    def set_stripe_size_bytes(self, size_bytes: int) -> None: ...
+    def set_stripe_size_rows(self, size_rows: size_type) -> None: ...
+    def set_row_index_stride(self, stride: size_type) -> None: ...
     @staticmethod
-    def builder(sink: SinkInfo):
-        """
-        Create builder to create ChunkedOrcWriterOptions.
-
-        Parameters
-        ----------
-        sink: SinkInfo
-            The sink used for writer output
-        table: Table
-            Table to be written to output
-
-        Returns
-        -------
-        ChunkedOrcWriterOptionsBuilder
-        """
+    def builder(sink: SinkInfo) -> ChunkedOrcWriterOptionsBuilder: ...
 
 class ChunkedOrcWriterOptionsBuilder:
-    def compression(self, comp: compression_type) -> ChunkedOrcWriterOptionsBuilder:
-        """
-        Sets compression type.
+    def compression(self, comp: compression_type) -> ChunkedOrcWriterOptionsBuilder: ...
+    def enable_statistics(self, val: statistics_freq) -> ChunkedOrcWriterOptionsBuilder: ...
+    def key_value_metadata(self, kvm: dict[str, str]) -> ChunkedOrcWriterOptionsBuilder: ...
+    def metadata(self, meta: TableInputMetadata) -> ChunkedOrcWriterOptionsBuilder: ...
+    def build(self) -> ChunkedOrcWriterOptions: ...
 
-        Parameters
-        ----------
-        comp: CompressionType
-            The compression type to use
-
-        Returns
-        -------
-        ChunkedOrcWriterOptionsBuilder
-        """
-    def enable_statistics(self, val: statistics_freq) -> ChunkedOrcWriterOptionsBuilder:
-        """
-        Choose granularity of column statistics to be written.
-
-        Parameters
-        ----------
-        val: StatisticsFreq
-            Level of statistics collection
-
-        Returns
-        -------
-        ChunkedOrcWriterOptionsBuilder
-        """
-    def key_value_metadata(self, kvm: dict[str, str]) -> ChunkedOrcWriterOptionsBuilder:
-        """
-        Sets Key-Value footer metadata.
-
-        Parameters
-        ----------
-        kvm: dict
-            Key-Value footer metadata
-
-        Returns
-        -------
-        ChunkedOrcWriterOptionsBuilder
-        """
-    def metadata(self, meta: TableInputMetadata) -> ChunkedOrcWriterOptionsBuilder:
-        """
-        Sets associated metadata.
-
-        Parameters
-        ----------
-        meta: TableInputMetadata
-            Associated metadata
-
-        Returns
-        -------
-        ChunkedOrcWriterOptionsBuilder
-        """
-    def build(self) -> ChunkedOrcWriterOptions:
-        """Create a OrcWriterOptions object"""
-
-def read_orc(options: OrcReaderOptions, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> TableWithMetadata:
-    """
-    Read from ORC format.
-
-    The source to read from and options are encapsulated
-    by the `options` object.
-
-    For details, see :cpp:func:`read_orc`.
-
-    Parameters
-    ----------
-    options: OrcReaderOptions
-        Settings for controlling reading behavior
-    stream : Stream | None
-        CUDA stream used for device memory operations and kernel launches
-    mr : DeviceMemoryResource, optional
-        Device memory resource used to allocate the returned table's device memory.
-    """
-def read_parsed_orc_statistics(source_info: SourceInfo, stream: CudaStreamLike | None=None) -> ParsedOrcStatistics:
-    """
-    Read ORC statistics from a source.
-
-    Parameters
-    ----------
-    source_info : SourceInfo
-        The source to read statistics from.
-    stream : Stream | None
-        CUDA stream used for device memory operations and kernel launches.
-
-    Returns
-    -------
-    ParsedOrcStatistics
-        The parsed ORC statistics.
-    """
-def write_orc(options: OrcWriterOptions, stream: CudaStreamLike | None=None) -> None:
-    """
-    Write to ORC format.
-
-    The table to write, output paths, and options are encapsulated
-    by the `options` object.
-
-    For details, see :cpp:func:`write_orc`.
-
-    Parameters
-    ----------
-    options: OrcWriterOptions
-        Settings for controlling writing behavior
-    stream : Stream | None
-        CUDA stream used for device memory operations and kernel launches
-
-    Returns
-    -------
-    None
-    """
-def is_supported_read_orc(compression: compression_type) -> bool:
-    """Check if the compression type is supported for reading ORC files.
-
-    For details, see :cpp:func:`is_supported_read_orc`.
-
-    Parameters
-    ----------
-    compression : CompressionType
-        The compression type to check
-
-    Returns
-    -------
-    bool
-        True if the compression type is supported for reading ORC files
-    """
-def is_supported_write_orc(compression: compression_type) -> bool:
-    """Check if the compression type is supported for writing ORC files.
-
-    For details, see :cpp:func:`is_supported_write_orc`.
-
-    Parameters
-    ----------
-    compression : CompressionType
-        The compression type to check
-
-    Returns
-    -------
-    bool
-        True if the compression type is supported for writing ORC files
-    """
+def read_orc(options: OrcReaderOptions, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> TableWithMetadata: ...
+def read_parsed_orc_statistics(source_info: SourceInfo, stream: CudaStreamLike | None=None) -> ParsedOrcStatistics: ...
+def write_orc(options: OrcWriterOptions, stream: CudaStreamLike | None=None) -> None: ...
+def is_supported_read_orc(compression: compression_type) -> bool: ...
+def is_supported_write_orc(compression: compression_type) -> bool: ...

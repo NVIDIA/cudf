@@ -12,52 +12,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['FilterType', 'filter_characters', 'translate']
 
-def translate(input: Column, chars_table: dict[int | str, int | str], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Translates individual characters within each string.
-
-    For details, see :cpp:func:`translate`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-
-    chars_table : dict
-        Table of UTF-8 character mappings
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column with padded strings.
-    """
-def filter_characters(input: Column, characters_to_filter: dict[int | str, int | str], keep_characters: filter_type, replacement: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column:
-    """
-    Removes ranges of characters from each string in a strings column.
-
-    For details, see :cpp:func:`filter_characters`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-
-    characters_to_filter : dict
-        Table of character ranges to filter on
-
-    keep_characters : FilterType
-        If true, the `characters_to_filter` are retained
-        and all other characters are removed.
-
-    replacement : Scalar
-        Replacement string for each character removed.
-    stream : Stream | None
-        CUDA stream on which to perform the operation.
-
-    Returns
-    -------
-    Column
-        New column with filtered strings.
-    """
+def translate(input: Column, chars_table: dict[int | str, int | str], stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...
+def filter_characters(input: Column, characters_to_filter: dict[int | str, int | str], keep_characters: filter_type, replacement: Scalar, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Column: ...

@@ -5,11 +5,7 @@
 
 __all__ = ['disable', 'disable_debugging', 'enable', 'enable_debugging']
 
-def enable():
-    """Turn on prefetching of managed memory."""
-def disable():
-    """Turn off prefetching of managed memory."""
-def enable_debugging():
-    """Enable prefetch debugging."""
-def disable_debugging():
-    """Disable prefetch debugging."""
+def enable(): ...
+def disable(): ...
+def enable_debugging(): ...
+def disable_debugging(): ...

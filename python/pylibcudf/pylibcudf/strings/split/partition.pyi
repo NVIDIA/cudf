@@ -11,43 +11,5 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 __all__ = ['partition', 'rpartition']
 
-def partition(input: Column, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """
-    Returns a set of 3 columns by splitting each string using the
-    specified delimiter.
-
-    For details, see :cpp:func:`partition`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-
-    delimiter : Scalar
-        UTF-8 encoded string indicating where to split each string.
-
-    Returns
-    -------
-    Table
-        New table of strings columns
-    """
-def rpartition(input: Column, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table:
-    """
-    Returns a set of 3 columns by splitting each string using the
-    specified delimiter starting from the end of each string.
-
-    For details, see :cpp:func:`rpartition`.
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-
-    delimiter : Scalar
-        UTF-8 encoded string indicating where to split each string.
-
-    Returns
-    -------
-    Table
-       New strings columns
-    """
+def partition(input: Column, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...
+def rpartition(input: Column, delimiter: Scalar | None=None, stream: CudaStreamLike | None=None, mr: DeviceMemoryResource | None=None) -> Table: ...

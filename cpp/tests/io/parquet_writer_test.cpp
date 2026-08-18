@@ -14,6 +14,8 @@
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
@@ -34,11 +36,42 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <random>
+#include <stdexcept>
 
 using cudf::test::iterators::no_nulls;
 
-using ParquetCompressionTest = CompressionTest<ParquetWriterTest>;
+namespace {
+
+/**
+ * @brief Create a list column with `num_rows` rows of `rows_per_row` values each.
+ */
+template <typename T>
+std::unique_ptr<cudf::column> make_wide_list_column(cudf::size_type num_rows,
+                                                    cudf::size_type rows_per_row)
+  requires(cudf::is_integral_not_bool<T>())
+{
+  // Compute in int64_t and validate before narrowing to cudf::size_type to avoid overflow
+  auto const total_values = static_cast<int64_t>(num_rows) * static_cast<int64_t>(rows_per_row);
+  CUDF_EXPECTS(total_values <= std::numeric_limits<cudf::size_type>::max(),
+               "Total list values exceeds cudf::size_type");
+  auto const offsets =
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [rows_per_row](auto row) {
+      return static_cast<cudf::size_type>(static_cast<int64_t>(rows_per_row) * row);
+    });
+  auto child = cudf::sequence(static_cast<cudf::size_type>(total_values),
+                              cudf::numeric_scalar<T>(0),
+                              cudf::numeric_scalar<T>(1));
+
+  return cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets, offsets + num_rows + 1)
+      .release(),
+    std::move(child),
+    0,
+    rmm::device_buffer{});
+}
 
 template <typename mask_op_t>
 void test_durations(mask_op_t mask_op, bool use_byte_stream_split, bool arrow_schema)
@@ -108,6 +141,8 @@ void test_durations(mask_op_t mask_op, bool use_byte_stream_split, bool arrow_sc
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(durations_us, result.tbl->view().column(3));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(durations_ns, result.tbl->view().column(4));
 }
+
+}  // namespace
 
 TEST_F(ParquetWriterTest, Durations)
 {
@@ -934,7 +969,7 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedAcrossFragments)
 
 TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedNested)
 {
-  // NaN detection must reach a float leaf nested in a LIST column (rapidsai/cudf#22817).
+  // NaN detection must reach a float leaf nested in a LIST column (NVIDIA/cudf#22817).
   auto constexpr nanf = std::numeric_limits<float>::quiet_NaN();
   cudf::test::lists_column_wrapper<float> list_col{{1.0f, nanf, 3.0f}, {4.0f, 5.0f}};
   auto const expected = table_view{{list_col}};
@@ -1534,6 +1569,8 @@ TEST_F(ParquetWriterTest, UserNullabilityInvalid)
   // Can't write a column with nulls as not nullable
   EXPECT_THROW(cudf::io::write_parquet(write_opts), cudf::logic_error);
 }
+
+using ParquetCompressionTest = CompressionTest<ParquetWriterTest>;
 
 TEST_P(ParquetCompressionTest, CompStats)
 {
@@ -2856,4 +2893,71 @@ TEST_F(ParquetWriterTest, DISABLED_SizeTypeOverflow)
   auto const result = cudf::io::read_parquet(read_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({col->view()}), result.tbl->view());
+}
+
+TEST_F(ParquetWriterTest, OversizedRowThrows)
+{
+  // A single 2.4GB row cannot be split any further, so report a catchable host error.
+  auto const col      = make_wide_list_column<int32_t>(1, 600'000'000);
+  auto const expected = cudf::table_view{{col->view()}};
+
+  std::vector<char> buffer;
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .stats_level(cudf::io::STATISTICS_NONE);
+
+  EXPECT_THROW(cudf::io::write_parquet(out_opts), std::overflow_error);
+}
+
+struct ParquetWriterSizeLimitsPageModeTest : public ParquetWriterTest,
+                                             public ::testing::WithParamInterface<bool> {};
+
+INSTANTIATE_TEST_CASE_P(PageHeaderVersion,
+                        ParquetWriterSizeLimitsPageModeTest,
+                        ::testing::Values(false, true));
+
+TEST_P(ParquetWriterSizeLimitsPageModeTest, DISABLED_WideRowsSplitFragmentsAndRowGroups)
+{
+  auto const write_v2_headers = GetParam();
+
+  // Four rows of 1GB data each. The writer must shrink page fragments to fit them in a page, and
+  // then also produce at least two row groups to keep each buffer within `EncColumnChunk`'s
+  // addressable range (UINT32_MAX).
+  constexpr cudf::size_type num_rows         = 4;
+  constexpr cudf::size_type elements_per_row = 250'000'000;
+
+  auto const col      = make_wide_list_column<int32_t>(num_rows, elements_per_row);
+  auto const expected = cudf::table_view{{col->view()}};
+
+  auto const filepath = temp_env->get_temp_filepath("WideRowsSplitFragments.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .stats_level(cudf::io::STATISTICS_NONE)
+      .write_v2_headers(write_v2_headers)
+      .row_group_size_bytes(std::numeric_limits<size_t>::max())
+      .row_group_size_rows(1'000'000)
+      .max_page_size_bytes(512 * 1024)
+      .max_page_size_rows(20'000)
+      .max_page_fragment_size(5'000);
+  cudf::io::write_parquet(out_opts);
+
+  auto const metadata = cudf::io::read_parquet_metadata(cudf::io::source_info{filepath});
+  EXPECT_EQ(metadata.num_rows(), num_rows);
+  EXPECT_GT(metadata.num_rowgroups(), 1);
+
+  auto const last_rowgroup = metadata.num_rowgroups() - 1;
+  auto const rows_in_last_rowgroup =
+    static_cast<cudf::size_type>(metadata.rowgroup_metadata()[last_rowgroup].at("num_rows"));
+  cudf::io::parquet_reader_options const in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .row_groups({{last_rowgroup}});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  auto const expected_tail =
+    cudf::slice(col->view(), {num_rows - rows_in_last_rowgroup, num_rows}).front();
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected_tail);
 }

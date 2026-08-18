@@ -355,7 +355,7 @@ class GPUInfo:
         except pynvml.NVMLError_NotSupported:
             # Happens on systems without traditional GPU memory (e.g., Grace Hopper),
             # where nvmlDeviceGetMemoryInfo is not supported.
-            # See: https://github.com/rapidsai/cudf/issues/19427
+            # See: https://github.com/NVIDIA/cudf/issues/19427
             return cls(
                 name=pynvml.nvmlDeviceGetName(handle),
                 index=index,

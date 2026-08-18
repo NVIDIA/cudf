@@ -45,7 +45,7 @@ repos:
           "polars>=1.35,<1.43",
           "numpy>=1.26",
           "pyarrow-stubs>=19.0",
-          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/rapidsai/cudf/issues/22229
+          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
           "pytest>=8.0.0,<9.1.0",
           "types-cachetools>=5.5.0",
           "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'",

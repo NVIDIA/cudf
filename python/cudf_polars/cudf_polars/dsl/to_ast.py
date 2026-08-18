@@ -240,7 +240,7 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 f"Parquet filters don't support {node.name} on columns"
             )
         if node.children[0].dtype.id() in (plc.TypeId.STRUCT, plc.TypeId.LIST):
-            # TODO: Remove once https://github.com/rapidsai/cudf/issues/23397 is resolved.
+            # TODO: Remove once https://github.com/NVIDIA/cudf/issues/23397 is resolved.
             raise NotImplementedError(
                 f"Parquet filters don't support {node.name} on nested types"
             )

@@ -212,7 +212,7 @@ def test_over_noncol_key_fallback(request, streaming_engine_factory, expr) -> No
         # invisible to ``pytest.warns``.
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/22405",
+                reason="https://github.com/NVIDIA/cudf/issues/22405",
                 strict=False,
             )
         )
@@ -344,7 +344,7 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
         # doesn't preserve row order.
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/22405",
+                reason="https://github.com/NVIDIA/cudf/issues/22405",
                 strict=False,
             )
         )

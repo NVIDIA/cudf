@@ -379,7 +379,7 @@ TEST_F(StringsReplaceRegexTest, ReplaceBackrefsWithEmptyCapture)
   cudf::test::strings_column_wrapper input({"one\ntwo", "three\n\n", "four\r\n"});
   auto sv = cudf::strings_column_view(input);
 
-  // https://github.com/rapidsai/cudf/issues/13404
+  // https://github.com/NVIDIA/cudf/issues/13404
   auto pattern       = std::string("(\r\n|\r)?$");
   auto repl_template = std::string("[\\1]");
   auto expected =
@@ -388,7 +388,7 @@ TEST_F(StringsReplaceRegexTest, ReplaceBackrefsWithEmptyCapture)
   auto results = cudf::strings::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  // https://github.com/rapidsai/cudf/issues/22707
+  // https://github.com/NVIDIA/cudf/issues/22707
   pattern  = std::string("^(a?)");
   expected = cudf::test::strings_column_wrapper({"[]one\ntwo", "[]three\n\n", "[]four\r\n"});
   prog     = cudf::strings::regex_program::create(pattern);

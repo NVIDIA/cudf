@@ -1890,7 +1890,7 @@ def test_parquet_writer_bytes_io(simple_gdf, store_schema):
 )
 def test_parquet_writer_row_group_size(tmp_path, row_group_size_kwargs):
     # Check that row_group_size options are exposed in Python
-    # See https://github.com/rapidsai/cudf/issues/10978
+    # See https://github.com/NVIDIA/cudf/issues/10978
 
     size = 20000
     gdf = cudf.DataFrame({"a": range(size), "b": [1] * size})
@@ -3607,7 +3607,7 @@ def test_parquet_write_lz4():
 def test_parquet_reader_zstd_huff_tables(datadir):
     # Ensure that this zstd-compressed file does not overrun buffers. The
     # problem was fixed in nvcomp 3.0.6.
-    # See https://github.com/rapidsai/cudf/issues/15096
+    # See https://github.com/NVIDIA/cudf/issues/15096
     fname = datadir / "zstd_huff_tables_bug.parquet"
 
     expected = pa.parquet.read_table(fname).to_pandas()
@@ -4687,7 +4687,7 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
 
 @pytest.mark.skipif(
     pa.__version__ == "19.0.0",
-    reason="https://github.com/apache/arrow/issues/45283, https://github.com/rapidsai/cudf/issues/17806",
+    reason="https://github.com/apache/arrow/issues/45283, https://github.com/NVIDIA/cudf/issues/17806",
 )
 @pytest.mark.parametrize(
     "stats_fname,bloom_filter_fname",

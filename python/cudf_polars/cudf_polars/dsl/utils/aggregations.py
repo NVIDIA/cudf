@@ -284,7 +284,7 @@ def decompose_single_agg(
                 # first_non_null extracts the selected value, and separately
                 # sum the predicate to validate item cardinality.
                 # TODO: Use libcudf predicated aggregations when available:
-                # https://github.com/rapidsai/cudf/issues/22947
+                # https://github.com/NVIDIA/cudf/issues/22947
                 aggs, _ = decompose_single_agg(
                     expr.NamedExpr(next(name_generator), selected),
                     name_generator,

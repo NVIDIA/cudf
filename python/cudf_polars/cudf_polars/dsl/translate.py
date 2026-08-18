@@ -247,7 +247,7 @@ class Translator:
             return None
         unique_errors = sorted({str(e): e for e in self.errors}.values(), key=str)
         # TODO: Display these errors in user-friendly way, tracked in
-        # https://github.com/rapidsai/cudf/issues/17051
+        # https://github.com/NVIDIA/cudf/issues/17051
         formatted_errors = "\n".join(
             f"- {e.__class__.__name__}: {e}" for e in unique_errors
         )
@@ -426,7 +426,7 @@ def _(node: plrs._ir_nodes.PythonScan, translator: Translator, schema: Schema) -
         )
     if nrows is not None:
         # A global row limit cannot be enforced independently per rank; tracked
-        # in https://github.com/rapidsai/cudf/issues/22918.
+        # in https://github.com/NVIDIA/cudf/issues/22918.
         raise NotImplementedError(
             "A row limit (head/limit) on a PythonScan source is not supported."
         )
@@ -1063,12 +1063,12 @@ def _(
             # cudf-polars has no concept of chunking, so we can just
             # drop it.
             # Note: This could be a plan hook for explicit repartition for streaming engines
-            # https://github.com/rapidsai/cudf/pull/23192#discussion_r3553113408
+            # https://github.com/NVIDIA/cudf/pull/23192#discussion_r3553113408
             (child,) = children
             return child
         if name == "fused":
             # TODO: fuse into a single kernel via JIT transform, see
-            # https://github.com/rapidsai/cudf/issues/21456. We don't use
+            # https://github.com/NVIDIA/cudf/issues/21456. We don't use
             # libcudf AST here because it widens the dtype for integer types
             # narrower than int32 (e.g. int8*int8 to int32), then fails
             # with a type mismatch when doing the add/sub with the third operand.

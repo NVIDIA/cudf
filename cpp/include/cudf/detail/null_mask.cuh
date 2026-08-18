@@ -166,7 +166,6 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
   // Process one segment per warp.
   auto const segment_id = cudf::detail::grid_1d::global_thread_id() / warp.size();
 
-  // Exit early if this warp doesn't have a valid segment, before indexing anything by `segment_id`
   if (segment_id >= num_segments) { return; }
 
   auto const segment_start = segment_offsets[segment_id];
@@ -184,8 +183,7 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
   // Process the mask such that each thread in warp handles different words
   for (size_type destination_word_index = lane; destination_word_index < destination_size;
        destination_word_index += warp.size()) {
-    // Seeding with the identity keeps an empty segment well defined and avoids indexing `sources`
-    // with a segment's start offset before knowing that the segment contains anything.
+        
     bitmask_type destination_word = identity;
 
     // Apply the binary operation with each source mask in the segment

@@ -32,9 +32,6 @@ auto setup_masks(nvbench::state& state)
 
   // Create segments
   std::mt19937 generator(seed);
-  // Poisson draws are non-negative and its mean equals the parameter, so
-  // `expected_masks_per_segment` is the true average segment size. Empty segments are valid input
-  // and are kept.
   std::poisson_distribution<cudf::size_type> segment_size_dist(
     static_cast<double>(expected_masks_per_segment));
   std::vector<cudf::size_type> segments(num_segments + 1);

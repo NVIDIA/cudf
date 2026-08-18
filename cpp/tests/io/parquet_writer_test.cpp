@@ -1423,7 +1423,7 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
   constexpr cudf::size_type max_dict_entries = max_dict_size / sizeof(int32_t);
 
   constexpr cudf::size_type vals_per_row_under = 20;
-  auto const col0 = make_list_col(vals_per_row_under, max_dict_entries);
+  auto const col0                             = make_list_col(vals_per_row_under, max_dict_entries);
   constexpr cudf::size_type vals_per_row_over = 40;
   auto const col1 = make_list_col(vals_per_row_over, max_dict_entries + 1);
 
@@ -1486,7 +1486,7 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
 
   std::vector<bool> const valid{true, true, false, true, true};
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valid.begin(), valid.end());
-  auto null_and_empty_lists     = cudf::make_lists_column(
+  auto null_and_empty_lists    = cudf::make_lists_column(
     5,
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 2, 2, 2, 4}.release(),
     cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4}.release(),

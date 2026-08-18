@@ -53,7 +53,7 @@ cdef class CsvReaderOptions:
     For details, see :cpp:class:`cudf::io::csv_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> CsvReaderOptionsBuilder:
         """
         Create a CsvWriterOptionsBuilder object
 
@@ -715,7 +715,7 @@ cdef class CsvWriterOptions:
     For details, see :cpp:class:`cudf::io::csv_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> CsvWriterOptionsBuilder:
         """Create a CsvWriterOptionsBuilder object
 
         For details, see :cpp:func:`cudf::io::csv_writer_options::builder`

@@ -256,7 +256,7 @@ cdef class Scalar:
         dtype: DataType | None = None,
         stream: Stream | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a Python standard library object to a Scalar.
 
@@ -288,7 +288,7 @@ cdef class Scalar:
         np_val,
         stream: Stream | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a NumPy scalar to a Scalar.
 
@@ -311,7 +311,9 @@ cdef class Scalar:
         mr = _get_memory_resource(mr)
         return _from_numpy(np_val, _stream, mr)
 
-    def to_py(self, stream: Stream | None = None):
+    def to_py(
+        self, stream: Stream | None = None
+    ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.
 

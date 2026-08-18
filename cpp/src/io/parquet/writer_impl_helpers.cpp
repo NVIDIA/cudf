@@ -21,8 +21,6 @@
 #include <algorithm>
 #include <format>
 #include <functional>
-#include <ranges>
-#include <stdexcept>
 #include <string>
 
 namespace cudf::io::parquet::detail {

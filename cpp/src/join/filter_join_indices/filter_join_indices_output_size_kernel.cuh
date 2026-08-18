@@ -16,9 +16,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/atomic>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -108,10 +107,10 @@ void launch_filter_output_size_kernel(
   std::size_t shmem_per_block,
   cudf::join_kind join_kind,
   cudf::size_type* output_counts,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   filter_join_indices_output_size_kernel<has_nulls, has_complex_type>
-    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.value()>>>(
+    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.get()>>>(
       left_table,
       right_table,
       left_indices,

@@ -13,7 +13,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstddef>
 
@@ -57,6 +57,6 @@ void launch_filter_output_size_kernel(
   std::size_t shmem_per_block,
   cudf::join_kind join_kind,
   cudf::size_type* output_counts,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace cudf::detail

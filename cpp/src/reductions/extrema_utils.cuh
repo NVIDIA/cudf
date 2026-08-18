@@ -14,10 +14,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/extrema.h>
 
 namespace cudf::reduction::simple::detail {
@@ -61,7 +61,7 @@ class arg_minmax_dispatcher {
   template <typename InputIterator, typename... Args>
   size_type find_extremum_idx(InputIterator it,
                               size_type size,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               Args&&... args) const
   {
     auto const pos = [&] {
@@ -83,8 +83,7 @@ class arg_minmax_dispatcher {
   }
 
   template <typename ElementType>
-  [[nodiscard]] size_type find_arg_minmax(column_view const& input,
-                                          rmm::cuda_stream_view stream) const
+  [[nodiscard]] size_type find_arg_minmax(column_view const& input, cuda::stream_ref stream) const
     requires(cudf::is_nested<ElementType>())
   {
     using Op = std::conditional_t<K == aggregation::ARGMIN,
@@ -103,8 +102,7 @@ class arg_minmax_dispatcher {
   // the lexicographic self_comparator compares `keys[indices[i]]` for dictionary columns
   // directly, so no decoding is required and no assumption is made that the keys are sorted.
   template <typename ElementType>
-  [[nodiscard]] size_type find_arg_minmax(column_view const& input,
-                                          rmm::cuda_stream_view stream) const
+  [[nodiscard]] size_type find_arg_minmax(column_view const& input, cuda::stream_ref stream) const
     requires(not cudf::is_nested<ElementType>() and not cudf::is_numeric<ElementType>())
   {
     // Nulls are considered "greater" (ARGMIN), or "less" (ARGMAX) than non-null values.
@@ -122,7 +120,7 @@ class arg_minmax_dispatcher {
 
   template <typename ElementType>
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
-                                          rmm::cuda_stream_view stream) const
+                                          cuda::stream_ref stream) const
     requires(cudf::is_numeric<ElementType>())  // integer + floating point numbers
   {
     using Op = std::conditional_t<K == aggregation::ARGMIN,
@@ -138,7 +136,7 @@ class arg_minmax_dispatcher {
           Op{}.template get_null_replacing_element_transformer<ElementType>();
         auto const p =
           cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*d_dict, true);
-        auto const it = thrust::make_transform_iterator(p, transformer);
+        auto const it = cuda::transform_iterator(p, transformer);
         return find_extremum_idx(it, input.size(), stream);
       }
       auto const it = cudf::dictionary::detail::make_dictionary_iterator<ElementType>(*d_dict);
@@ -148,7 +146,7 @@ class arg_minmax_dispatcher {
       auto const d_input     = column_device_view::create(input, stream);
       auto const transformer = Op{}.template get_null_replacing_element_transformer<ElementType>();
       auto const it =
-        thrust::make_transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);
+        cuda::transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);
       return find_extremum_idx(it, input.size(), stream);
     } else {
       return find_extremum_idx(input.begin<ElementType>(), input.size(), stream);
@@ -166,7 +164,7 @@ class arg_minmax_dispatcher {
    */
   template <typename ElementType>
   [[nodiscard]] std::unique_ptr<scalar> operator()(column_view const& input,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const
     requires(is_supported<ElementType>())
   {
@@ -176,7 +174,7 @@ class arg_minmax_dispatcher {
 
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not is_supported<ElementType>())
   {

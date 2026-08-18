@@ -9,9 +9,8 @@
 
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/logical.h>
 
 #include <future>
@@ -20,7 +19,7 @@
 namespace cudf::io::parquet::detail {
 
 #if defined(PREPROCESS_DEBUG)
-void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, rmm::cuda_stream_view stream);
+void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, cuda::stream_ref stream);
 #endif  // PREPROCESS_DEBUG
 
 /**
@@ -68,7 +67,7 @@ void generate_depth_remappings(
   size_t end_chunk,
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -80,13 +79,13 @@ void generate_depth_remappings(
  * @return The total number of pages
  */
 [[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 /**
  * @brief Count the total number of pages using page index information.
  */
 [[nodiscard]] size_t count_page_headers_with_pgidx(
-  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, rmm::cuda_stream_view stream);
+  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, cuda::stream_ref stream);
 
 /**
  * @brief Set fields on the pages that can be derived from page indexes.
@@ -95,7 +94,7 @@ void generate_depth_remappings(
  */
 void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
                        device_span<PageInfo> pages,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream);
 
 /**
  * @brief Returns a string representation of known encodings
@@ -121,7 +120,7 @@ std::string encoding_to_string(Encoding encoding);
  * @returns Human readable string with unsupported encodings
  */
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
-                                                     rmm::cuda_stream_view stream);
+                                                     cuda::stream_ref stream);
 
 /**
  * @brief Decode the page information for a given pass.
@@ -134,7 +133,7 @@ std::string encoding_to_string(Encoding encoding);
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          bool has_offset_index,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Decode page information using one exact span per logical indexed page
@@ -149,7 +148,7 @@ void decode_page_headers(pass_intermediate_data& pass,
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          host_span<cudf::device_span<uint8_t const> const> page_data,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Check if the column chunk has a string (byte array or FLBA) type

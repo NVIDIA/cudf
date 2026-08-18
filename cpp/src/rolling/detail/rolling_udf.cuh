@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -49,7 +49,7 @@ inline std::unique_ptr<column> rolling_window_udf_impl(
   cudf::detail::window_wrapper_base const& following_window,
   size_type min_periods,
   rolling_aggregation const& agg,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   static_assert(warp_size == cudf::detail::size_in_bits<cudf::bitmask_type>(),
@@ -115,7 +115,7 @@ inline std::unique_ptr<column> rolling_window_udf_impl(
   output->set_null_count(output->size() - device_valid_count.value(stream));
 
   // check the stream for debugging
-  CUDF_CHECK_CUDA(stream.value());
+  CUDF_CHECK_CUDA(stream.get());
 
   return output;
 }
@@ -127,7 +127,7 @@ std::unique_ptr<column> rolling_window_udf(column_view const& input,
                                            FollowingWindowIterator following_window,
                                            size_type min_periods,
                                            rolling_aggregation const& agg,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   return rolling_window_udf_impl(input,

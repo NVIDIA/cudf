@@ -16,7 +16,7 @@ cdef class Table:
 
     cpdef int num_columns(self)
     cpdef int num_rows(self)
-    cpdef tuple shape(self)
+    cpdef tuple[int, int] shape(self)
 
     @staticmethod
     cdef Table from_libcudf(

@@ -18,10 +18,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <cstdint>
@@ -137,9 +137,9 @@ struct stripe_size_limits {
  *
  */
 struct intermediate_statistics {
-  explicit intermediate_statistics(rmm::cuda_stream_view stream) : stripe_stat_chunks(0, stream) {}
+  explicit intermediate_statistics(cuda::stream_ref stream) : stripe_stat_chunks(0, stream) {}
 
-  intermediate_statistics(orc_table_view const& table, rmm::cuda_stream_view stream);
+  intermediate_statistics(orc_table_view const& table, cuda::stream_ref stream);
 
   intermediate_statistics(std::vector<col_stats_blob> rb,
                           rmm::device_uvector<statistics_chunk> sc,
@@ -181,7 +181,7 @@ struct persisted_statistics {
   void persist(uint64_t num_table_rows,
                single_write_mode write_mode,
                intermediate_statistics&& intermediate_stats,
-               rmm::cuda_stream_view stream);
+               cuda::stream_ref stream);
 
   std::vector<rmm::device_uvector<statistics_chunk>> stripe_stat_chunks;
   std::vector<cudf::detail::hostdevice_vector<statistics_merge_group>> stripe_stat_merge;
@@ -227,7 +227,7 @@ class writer::impl {
   explicit impl(std::unique_ptr<data_sink> sink,
                 orc_writer_options const& options,
                 single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -240,7 +240,7 @@ class writer::impl {
   explicit impl(std::unique_ptr<data_sink> sink,
                 chunked_orc_writer_options const& options,
                 single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Destructor to complete any incomplete write and release resources.
@@ -315,7 +315,7 @@ class writer::impl {
 
  private:
   // CUDA stream.
-  rmm::cuda_stream_view const _stream;
+  cuda::stream_ref const _stream;
 
   // Writer options.
   stripe_size_limits const _max_stripe_size;

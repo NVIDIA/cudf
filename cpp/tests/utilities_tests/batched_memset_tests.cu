@@ -17,7 +17,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <type_traits>
 

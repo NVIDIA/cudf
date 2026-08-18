@@ -21,10 +21,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -160,7 +160,7 @@ struct device_cast {
 template <typename T>
 std::unique_ptr<column> rescale(column_view input,
                                 numeric::scale_type scale,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
   requires(is_fixed_point<T>())
 {
@@ -226,7 +226,7 @@ struct dispatch_unary_cast_to {
 
   template <typename TargetT, typename SourceT = _SourceT>
   std::unique_ptr<column> operator()(data_type type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_non_fixed_point_cast<SourceT, TargetT>())
   {
@@ -250,7 +250,7 @@ struct dispatch_unary_cast_to {
 
   template <typename TargetT, typename SourceT = _SourceT>
   std::unique_ptr<column> operator()(data_type type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_point<SourceT>() && cudf::is_numeric<TargetT>())
   {
@@ -277,7 +277,7 @@ struct dispatch_unary_cast_to {
 
   template <typename TargetT, typename SourceT = _SourceT>
   std::unique_ptr<column> operator()(data_type type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_numeric<SourceT>() && cudf::is_fixed_point<TargetT>())
   {
@@ -317,7 +317,7 @@ struct dispatch_unary_cast_to {
 
   template <typename TargetT, typename SourceT = _SourceT>
   std::unique_ptr<column> operator()(data_type type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_point<SourceT>() && cudf::is_fixed_point<TargetT>() &&
              std::is_same_v<SourceT, TargetT>)
@@ -331,7 +331,7 @@ struct dispatch_unary_cast_to {
 
   template <typename TargetT, typename SourceT = _SourceT>
   std::unique_ptr<column> operator()(data_type type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_point<SourceT>() && cudf::is_fixed_point<TargetT>() &&
              not std::is_same_v<SourceT, TargetT>)
@@ -374,9 +374,7 @@ struct dispatch_unary_cast_to {
   }
 
   template <typename TargetT, typename SourceT = _SourceT>
-  std::unique_ptr<column> operator()(data_type,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref)
+  std::unique_ptr<column> operator()(data_type, cuda::stream_ref, rmm::device_async_resource_ref)
 
     requires(not is_supported_cast<SourceT, TargetT>())
   {
@@ -398,7 +396,7 @@ struct dispatch_unary_cast_from {
 
   template <typename T>
   std::unique_ptr<column> operator()(data_type type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_width<T>())
   {
@@ -416,7 +414,7 @@ struct dispatch_unary_cast_from {
 
 std::unique_ptr<column> cast(column_view const& input,
                              data_type type,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_fixed_width(type), "Unary cast type must be fixed-width.");
@@ -436,7 +434,7 @@ struct is_supported_cast_impl {
 
 std::unique_ptr<column> cast(column_view const& input,
                              data_type type,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -11,9 +11,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/span>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -127,10 +126,10 @@ class approx_distinct_count {
    * @param mr Device memory resource used to allocate the sketch storage
    */
   approx_distinct_count(table_view const& input,
-                        std::int32_t precision       = 12,
-                        null_policy null_handling    = null_policy::EXCLUDE,
-                        nan_policy nan_handling      = nan_policy::NAN_IS_NULL,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream(),
+                        std::int32_t precision    = 12,
+                        null_policy null_handling = null_policy::EXCLUDE,
+                        nan_policy nan_handling   = nan_policy::NAN_IS_NULL,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
                         cuda::mr::any_resource<cuda::mr::device_accessible> mr =
                           cudf::get_current_device_resource_ref());
 
@@ -157,9 +156,9 @@ class approx_distinct_count {
    */
   approx_distinct_count(table_view const& input,
                         desired_standard_error error,
-                        null_policy null_handling    = null_policy::EXCLUDE,
-                        nan_policy nan_handling      = nan_policy::NAN_IS_NULL,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream(),
+                        null_policy null_handling = null_policy::EXCLUDE,
+                        nan_policy nan_handling   = nan_policy::NAN_IS_NULL,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
                         cuda::mr::any_resource<cuda::mr::device_accessible> mr =
                           cudf::get_current_device_resource_ref());
 
@@ -201,7 +200,7 @@ class approx_distinct_count {
    * @param input Table whose rows will be added
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
-  void add(table_view const& input, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  void add(table_view const& input, cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Merges another sketch into this sketch
@@ -216,7 +215,7 @@ class approx_distinct_count {
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
   void merge(approx_distinct_count const& other,
-             rmm::cuda_stream_view stream = cudf::get_default_stream());
+             cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Merges a sketch from raw bytes into this sketch
@@ -232,7 +231,7 @@ class approx_distinct_count {
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
   void merge(cuda::std::span<cuda::std::byte const> sketch_span,
-             rmm::cuda_stream_view stream = cudf::get_default_stream());
+             cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Estimates the approximate number of distinct rows in the sketch
@@ -240,8 +239,7 @@ class approx_distinct_count {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return Approximate number of distinct rows
    */
-  [[nodiscard]] std::size_t estimate(
-    rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] std::size_t estimate(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Gets the raw sketch bytes for serialization or external merging

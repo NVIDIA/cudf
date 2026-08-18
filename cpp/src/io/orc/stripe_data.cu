@@ -9,10 +9,9 @@
 
 #include <cudf/io/orc_types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cub/cub.cuh>
 #include <cuda/functional>
+#include <cuda/stream>
 
 namespace cudf::io::orc::detail {
 
@@ -2065,12 +2064,12 @@ void __host__ decode_nulls_and_string_dictionaries(column_desc* chunks,
                                                    size_type num_columns,
                                                    size_type num_stripes,
                                                    int64_t first_row,
-                                                   rmm::cuda_stream_view stream)
+                                                   cuda::stream_ref stream)
 {
   dim3 dim_grid(num_columns * num_stripes, 2);
 
   decode_nulls_and_string_dictionaries_kernel<block_size>
-    <<<dim_grid, block_size, 0, stream.value()>>>(
+    <<<dim_grid, block_size, 0, stream.get()>>>(
       chunks, global_dictionary, num_columns, num_stripes, first_row);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -2102,10 +2101,10 @@ void __host__ decode_column_data(column_desc* chunks,
                                  size_type rowidx_stride,
                                  size_t level,
                                  size_type* error_count,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   auto const num_blocks = num_columns * (num_rowgroups > 0 ? num_rowgroups : num_stripes);
-  decode_column_data_kernel<block_size><<<num_blocks, block_size, 0, stream.value()>>>(
+  decode_column_data_kernel<block_size><<<num_blocks, block_size, 0, stream.get()>>>(
     chunks, global_dictionary, tz_table, row_groups, first_row, rowidx_stride, level, error_count);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

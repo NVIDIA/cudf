@@ -21,7 +21,6 @@
 #include <cuda/std/algorithm>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>

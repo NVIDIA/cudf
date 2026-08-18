@@ -52,7 +52,7 @@ class primitive_keys_fn {
  public:
   CUDF_HOST_DEVICE constexpr primitive_keys_fn(hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }
@@ -72,7 +72,7 @@ class build_keys_fn {
  public:
   CUDF_HOST_DEVICE constexpr build_keys_fn(hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }

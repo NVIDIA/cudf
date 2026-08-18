@@ -94,7 +94,8 @@ class make_key_pair {
  public:
   CUDF_HOST_DEVICE constexpr make_key_pair(Hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(cudf::size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(
+    cudf::size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }

@@ -11,6 +11,7 @@ from functools import partial, reduce
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import polars as pl
+from polars.exceptions import ComputeError
 
 import pylibcudf as plc
 
@@ -122,6 +123,12 @@ class BooleanFunction(Expr):
                     raise NotImplementedError(
                         f"arguments for `is_in` have different lengths ({len(needles.value)} != {len(haystack.value)})"
                     )
+        if self.name is BooleanFunction.Name.IsClose:
+            abs_tol, rel_tol, _ = self.options
+            if abs_tol < 0.0:
+                raise ComputeError(f"`abs_tol` must be non-negative but got {abs_tol}")
+            if rel_tol < 0.0:
+                raise ComputeError(f"`rel_tol` must be non-negative but got {rel_tol}")
 
     @staticmethod
     def _distinct(

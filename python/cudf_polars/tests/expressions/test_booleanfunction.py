@@ -333,6 +333,21 @@ def test_boolean_is_close_dtypes(engine: pl.GPUEngine, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"abs_tol": -0.1},
+        {"rel_tol": -0.1},
+        {"abs_tol": -1.0, "rel_tol": 0.1},
+        {"abs_tol": 0.1, "rel_tol": -1.0},
+    ],
+)
+def test_boolean_is_close_negative_tol_raises(engine: pl.GPUEngine, kwargs):
+    ldf = pl.LazyFrame({"a": [1.0], "b": [1.0]})
+    q = ldf.select(pl.col("a").is_close(pl.col("b"), **kwargs))
+    assert_ir_translation_raises(q, engine, pl.exceptions.ComputeError)
+
+
 @pytest.mark.skipif(
     POLARS_VERSION_LT_141,
     reason="has_nulls added to polars' BooleanFunction in 1.41",

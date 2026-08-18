@@ -58,9 +58,9 @@ std::string make_value_string(int value)
   return std::string{utf8_prefixes[value % utf8_prefixes.size()]} + "_" + std::to_string(value);
 }
 
-cudf::test::strings_column_wrapper make_low_cardinality_strings()
+cudf::test::strings_column_wrapper make_low_cardinality_strings(unsigned int col_seed = seed)
 {
-  std::mt19937 engine(seed);
+  std::mt19937 engine(col_seed);
   std::uniform_int_distribution<int> value_dist(0, cardinality - 1);
   std::bernoulli_distribution null_dist(null_probability);
 
@@ -517,4 +517,33 @@ TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
   // Check if the decoded column is equal to the original input.
   auto const decoded = cudf::dictionary::decode(dict_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
+}
+
+// Two flat, low-cardinality string columns across multiple row groups. Their per-row-group
+// dictionaries interleave in the reader's shared key buffer (`pass.str_dict_index`), so each
+// column's keys are strided within it -- exercising the multi-column (concatenate) branch of the
+// multi-row-group assembly, as opposed to the single-column contiguous fast path. Both columns
+// must transcode to DICTIONARY32 and decode back to their (distinct) inputs.
+TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
+{
+  auto col_a = make_low_cardinality_strings();                  // default seed
+  auto col_b = make_low_cardinality_strings(seed ^ 0xBEEF01u);  // distinct data
+
+  auto const input_tbl = cudf::table_view{{col_a, col_b}};
+  auto const filepath  = temp_env->get_temp_filepath("MultiStringColumnsDictTranscode.parquet");
+  write_parquet(input_tbl, filepath);  // row_group_size rows/group -> multiple row groups
+
+  auto const read_table = read_parquet_as_dict(filepath).tbl;
+  ASSERT_EQ(read_table->num_rows(), num_rows);
+  ASSERT_EQ(read_table->num_columns(), 2);
+
+  auto const read_a = read_table->view().column(0);
+  auto const read_b = read_table->view().column(1);
+  ASSERT_EQ(read_a.type().id(), cudf::type_id::DICTIONARY32);
+  ASSERT_EQ(read_b.type().id(), cudf::type_id::DICTIONARY32);
+
+  auto const decoded_a = cudf::dictionary::decode(cudf::dictionary_column_view(read_a));
+  auto const decoded_b = cudf::dictionary::decode(cudf::dictionary_column_view(read_b));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(col_a, decoded_a->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(col_b, decoded_b->view());
 }

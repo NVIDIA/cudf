@@ -22,6 +22,10 @@ class StreamPoolTest : public cudf::test::BaseFixture {};
 
 namespace {
 
+// A thread has no use for more than 64 streams, so a request of this size exceeds the maximum of
+// any pool worth configuring and cycles through every stream in it.
+auto constexpr more_streams_than_any_pool = 128;
+
 std::vector<cudaStream_t> get_streams_from_pool(std::size_t count)
 {
   auto const streams = cudf::detail::current_cuda_stream_pool().get_streams(count);
@@ -70,29 +74,24 @@ TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
 {
   // The pool is capped, so a request this large is served by repeating streams instead of creating
   // one stream per request.
-  auto constexpr count = 256;
-
-  auto const streams = get_streams_from_pool(count);
-  EXPECT_EQ(streams.size(), count);
+  auto const streams = get_streams_from_pool(more_streams_than_any_pool);
+  EXPECT_EQ(streams.size(), more_streams_than_any_pool);
 
   auto const unique = std::unordered_set<cudaStream_t>(streams.begin(), streams.end());
-  EXPECT_LT(unique.size(), count);
+  EXPECT_LT(unique.size(), more_streams_than_any_pool);
 }
 
 TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
 {
-  // A request larger than any pool grows this thread's pool to its maximum and cycles through every
-  // stream in it, so the set holds the whole pool this thread leaves behind.
+  // A request larger than max pool size to get all streams in the pool
   std::unordered_set<cudaStream_t> first_thread_streams;
-  std::thread first([&] {
-    auto const streams = get_streams_from_pool(64);
+  std::thread([&] {
+    auto const streams = get_streams_from_pool(more_streams_than_any_pool);
     first_thread_streams.insert(streams.begin(), streams.end());
-  });
-  first.join();
+  }).join();
 
   std::vector<cudaStream_t> second_thread_streams;
-  std::thread second([&] { second_thread_streams = get_streams_from_pool(4); });
-  second.join();
+  std::thread([&] { second_thread_streams = get_streams_from_pool(4); }).join();
 
   EXPECT_FALSE(second_thread_streams.empty());
   // A thread that adopted the retired pool can only be handed streams from it

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import itertools
@@ -119,6 +119,17 @@ def test_multiindex_droplevel_index(level):
     level = list(level)
     gdfIndex = cudf.from_pandas(pdfIndex)
     assert_eq(pdfIndex.droplevel(level), gdfIndex.droplevel(level))
+
+
+@pytest.mark.parametrize("level", [-3, 2])
+def test_multiindex_droplevel_out_of_bounds(level):
+    data = [(1, 2), (3, 4)]
+    pidx = pd.MultiIndex.from_tuples(data, names=["l0", "l1"])
+    gidx = cudf.MultiIndex.from_tuples(data, names=["l0", "l1"])
+    with pytest.raises(IndexError, match="Too many levels"):
+        pidx.droplevel(level)
+    with pytest.raises(IndexError, match="Too many levels"):
+        gidx.droplevel(level)
 
 
 def test_multiindex_droplevel_single_level_none_names():

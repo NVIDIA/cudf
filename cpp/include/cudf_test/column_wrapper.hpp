@@ -33,12 +33,12 @@
 #include <cuda/std/functional>
 #include <thrust/copy.h>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <algorithm>
 #include <iterator>
 #include <memory>
 #include <numeric>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
@@ -162,10 +162,10 @@ rmm::device_buffer make_elements(InputIterator begin,
                                  cudf::memory_resources mr)
 {
   static_assert(cudf::is_fixed_width<ElementTo>(), "Unexpected non-fixed width type.");
-  auto transformer     = fixed_width_type_converter<ElementFrom, ElementTo>{};
-  auto transform_begin = thrust::make_transform_iterator(begin, transformer);
-  auto const size      = cudf::distance(begin, end);
-  auto const elements  = thrust::host_vector<ElementTo>(transform_begin, transform_begin + size);
+  auto const size = cudf::distance(begin, end);
+  auto elements   = thrust::host_vector<ElementTo>(size);
+  std::transform(
+    begin, end, elements.begin(), fixed_width_type_converter<ElementFrom, ElementTo>{});
   rmm::device_buffer buffer{elements.data(), size * sizeof(ElementTo), stream, mr.get_output_mr()};
   stream.synchronize();  // wait for async H2D before host source is destroyed
   return buffer;
@@ -197,11 +197,10 @@ rmm::device_buffer make_elements(InputIterator begin,
                                  rmm::cuda_stream_view stream,
                                  cudf::memory_resources mr)
 {
-  using RepType        = typename ElementTo::rep;
-  auto transformer     = fixed_width_type_converter<ElementFrom, RepType>{};
-  auto transform_begin = thrust::make_transform_iterator(begin, transformer);
-  auto const size      = cudf::distance(begin, end);
-  auto const elements  = thrust::host_vector<RepType>(transform_begin, transform_begin + size);
+  using RepType   = typename ElementTo::rep;
+  auto const size = cudf::distance(begin, end);
+  auto elements   = thrust::host_vector<RepType>(size);
+  std::transform(begin, end, elements.begin(), fixed_width_type_converter<ElementFrom, RepType>{});
   rmm::device_buffer buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
   stream.synchronize();  // wait for async H2D before host source is destroyed
   return buffer;
@@ -235,10 +234,9 @@ rmm::device_buffer make_elements(InputIterator begin,
   CUDF_EXPECTS(std::all_of(begin, end, [](ElementFrom v) { return v.scale() == 0; }),
                "Only zero-scale fixed-point values are supported");
 
-  auto to_rep            = [](ElementTo fp) { return fp.value(); };
-  auto transformer_begin = thrust::make_transform_iterator(begin, to_rep);
-  auto const size        = cudf::distance(begin, end);
-  auto const elements = thrust::host_vector<RepType>(transformer_begin, transformer_begin + size);
+  auto const size = cudf::distance(begin, end);
+  auto elements   = thrust::host_vector<RepType>(size);
+  std::transform(begin, end, elements.begin(), [](ElementTo const fp) { return fp.value(); });
   rmm::device_buffer buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
   stream.synchronize();  // wait for async H2D before host source is destroyed
   return buffer;
@@ -572,13 +570,17 @@ class fixed_width_column_wrapper : public detail::column_wrapper {
                              rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
                              cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
   {
-    auto begin =
-      thrust::make_transform_iterator(elements.begin(), [](auto const& e) { return e.first; });
-    auto end = begin + elements.size();
-    auto v =
-      thrust::make_transform_iterator(elements.begin(), [](auto const& e) { return e.second; });
-    wrapped =
-      fixed_width_column_wrapper<ElementTo, ElementFrom>(begin, end, v, stream, mr).release();
+    auto values   = std::vector<ElementFrom>{};
+    auto validity = std::vector<bool>{};
+    values.reserve(elements.size());
+    validity.reserve(elements.size());
+    for (auto const& [value, valid] : elements) {
+      values.push_back(value);
+      validity.push_back(valid);
+    }
+    wrapped = fixed_width_column_wrapper<ElementTo, ElementFrom>(
+                values.begin(), values.end(), validity.begin(), stream, mr)
+                .release();
   }
 };
 
@@ -1009,12 +1011,16 @@ class strings_column_wrapper : public detail::column_wrapper {
                          rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
                          cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
   {
-    auto begin =
-      thrust::make_transform_iterator(strings.begin(), [](auto const& s) { return s.first; });
-    auto end = begin + strings.size();
-    auto v =
-      thrust::make_transform_iterator(strings.begin(), [](auto const& s) { return s.second; });
-    wrapped = strings_column_wrapper(begin, end, v, stream, mr).release();
+    auto values   = std::vector<std::string>{};
+    auto validity = std::vector<bool>{};
+    values.reserve(strings.size());
+    validity.reserve(strings.size());
+    for (auto const& [value, valid] : strings) {
+      values.push_back(value);
+      validity.push_back(valid);
+    }
+    wrapped =
+      strings_column_wrapper(values.begin(), values.end(), validity.begin(), stream, mr).release();
   }
 };
 

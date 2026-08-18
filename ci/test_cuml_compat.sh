@@ -14,7 +14,7 @@ source ./ci/test_python_common.sh test_python_cudf test_cuml
 # what the current working directory is.
 RAPIDS_BRANCH="$(cat "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../RAPIDS_BRANCH)"
 rapids-logger "Cloning cuml at branch ${RAPIDS_BRANCH}"
-git clone https://github.com/rapidsai/cuml.git --branch "${RAPIDS_BRANCH}" --depth 1 /tmp/cuml
+git clone https://github.com/NVIDIA/cuml.git --branch "${RAPIDS_BRANCH}" --depth 1 /tmp/cuml
 
 
 CUML_TESTS_DIR=/tmp/cuml/python/cuml/tests

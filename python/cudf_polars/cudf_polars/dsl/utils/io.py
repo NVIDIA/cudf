@@ -9,6 +9,8 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import kvikio
+
 import pylibcudf as plc
 
 from cudf_polars.dsl.tracing import nvtx_annotate_cudf_polars
@@ -68,24 +70,17 @@ def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetI
     metadata
         The list of ``FileMetaData`` objects for the ``paths``.
     """
-    # TODO: https://github.com/rapidsai/cudf/issues/22734, use object metadata from polars
+    # TODO: https://github.com/NVIDIA/cudf/issues/22734, use object metadata from polars
     # For now, we'll just use kvikio to explicitly get the size.
     sizes: list[int | None] = []
 
-    try:  # pragma: no cover; kvikio is optional
-        import kvikio
-    except ImportError:
-        kvikio = None
-
     for path in paths:
-        if (
-            paths and kvikio is not None and plc.io.SourceInfo._is_remote_uri(path)
-        ):  # pragma: no cover; kvikio is optional
+        if paths and plc.io.SourceInfo._is_remote_uri(path):
             # We're OK to use `kvikio.RemoteFile.open` here. It does make an HTTP HEAD
             # request for S3/HTTP endpoints, but that's the entire reason we're running
             # this code. So long as it makes just *one* HTTP request, there's no advantage
             # to inferring the endpoint type.
-            with kvikio.RemoteFile.open(path) as remote_file:
+            with kvikio.RemoteFile.open(path) as remote_file:  # pragma: no cover
                 sizes.append(remote_file.nbytes())
         else:
             sizes.append(None)

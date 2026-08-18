@@ -222,7 +222,7 @@ def test_groupby_agg_decimal(groupby_reduction_methods, request):
 
     # The unique is necessary because otherwise if there are duplicates idxmin
     # and idxmax may return different results than pandas (see
-    # https://github.com/rapidsai/cudf/issues/7756). This is not relevant to
+    # https://github.com/NVIDIA/cudf/issues/7756). This is not relevant to
     # the current version of the test, because idxmin and idxmax simply don't
     # work with pandas Series composed of Decimal objects (see
     # https://github.com/pandas-dev/pandas/issues/40685). However, if that is

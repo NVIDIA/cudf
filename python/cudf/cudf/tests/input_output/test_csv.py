@@ -128,7 +128,7 @@ def test_csv_reader_numeric_data(numeric_types_as_str, tmp_path):
 
 
 @pytest.mark.skip(
-    reason="Disabled until https://github.com/rapidsai/cudf/pull/22094 is fixed"
+    reason="Disabled until https://github.com/NVIDIA/cudf/pull/22094 is fixed"
 )
 @pytest.mark.parametrize("parse_dates", [["date2"], [0], ["date1", 1, "bad"]])
 def test_csv_reader_datetime(parse_dates):
@@ -1862,7 +1862,7 @@ def test_csv_write_empty_dataframe(idx, index):
                 }
             ),
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/16533, np.nan/None coerced to NA since pandas 3"
+                reason="https://github.com/NVIDIA/cudf/issues/16533, np.nan/None coerced to NA since pandas 3"
             ),
         ),
         pd.DataFrame({"": [1, None, 3, 4]}),
@@ -2042,7 +2042,7 @@ def test_csv_sep_error():
 
 def test_to_csv_encoding_error():
     # TODO: Remove this test once following
-    # issue is fixed: https://github.com/rapidsai/cudf/issues/2957
+    # issue is fixed: https://github.com/NVIDIA/cudf/issues/2957
     df = cudf.DataFrame({"a": ["你好", "test"]})
     encoding = "utf-8-sig"
     error_message = (

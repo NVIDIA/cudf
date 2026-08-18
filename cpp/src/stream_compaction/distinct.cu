@@ -86,8 +86,9 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
     return rmm::device_uvector<size_type>(0, stream, mr);
   }
 
+  auto temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+    cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const has_nulls          = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
 
@@ -105,19 +106,15 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                         d_hash,
                                         {},
                                         {},
-                                        rmm::mr::polymorphic_allocator<char>{},
+                                        rmm::mr::polymorphic_allocator<char>{temp_mr},
                                         stream.value()};
     return reduce_func(set);
   };
 
   if (has_nested_columns) {
     if (keep == duplicate_keep_option::KEEP_ANY) {
-      auto const hashes =
-        cudf::hashing::detail::murmurhash3_x86_32(preprocessed_input,
-                                                  num_rows,
-                                                  cudf::DEFAULT_HASH_SEED,
-                                                  stream,
-                                                  cudf::get_current_device_resource_ref());
+      auto const hashes = cudf::hashing::detail::murmurhash3_x86_32(
+        preprocessed_input, num_rows, cudf::DEFAULT_HASH_SEED, stream, temp_mr);
       auto const d_hash = distinct_precomputed_hash{hashes->view().data<hash_value_type>()};
       return dispatch_row_equal<true>(
         nulls_equal, nans_equal, has_nulls, row_equal, [&](auto const& d_equal) {

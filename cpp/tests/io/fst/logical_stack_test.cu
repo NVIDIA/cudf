@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,8 +11,9 @@
 #include <cudf/types.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <src/io/fst/logical_stack.cuh>
 
@@ -153,7 +154,7 @@ TEST_F(LogicalStackTest, GroundTruth)
 
   // Prepare cuda stream for data transfers & kernels
   rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  cuda::stream_ref stream_view{stream.value()};
 
   // Test input,
   std::string input = R"(  {)"

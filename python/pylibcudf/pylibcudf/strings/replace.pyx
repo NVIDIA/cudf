@@ -137,7 +137,7 @@ cpdef Column replace_multiple(
 cpdef Column replace_slice(
     Column input,
     # TODO: default scalar values
-    # https://github.com/rapidsai/cudf/issues/15505
+    # https://github.com/NVIDIA/cudf/issues/15505
     Scalar repl=None,
     size_type start=0,
     size_type stop=-1,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
 #include <thrust/copy.h>
 
 #include <iterator>
@@ -214,7 +214,7 @@ class output_builder {
    */
   output_builder(size_type max_write_size,
                  size_type max_growth,
-                 rmm::cuda_stream_view stream,
+                 cuda::stream_ref stream,
                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
     : _max_write_size{max_write_size}, _max_growth{max_growth}
   {
@@ -237,7 +237,7 @@ class output_builder {
    * @return A `split_device_span` starting directly after the last output and providing at least
    *         `max_write_size` entries of storage.
    */
-  [[nodiscard]] split_device_span<T> next_output(rmm::cuda_stream_view stream)
+  [[nodiscard]] split_device_span<T> next_output(cuda::stream_ref stream)
   {
     auto head_it   = _chunks.end() - (_chunks.size() > 1 and _chunks.back().is_empty() ? 2 : 1);
     auto head_span = get_free_span(*head_it);
@@ -264,7 +264,7 @@ class output_builder {
    *               reallocate, this only changes the stream of the internally stored vectors,
    *               impacting their subsequent copy and destruction behavior.
    */
-  void advance_output(size_type actual_size, rmm::cuda_stream_view stream)
+  void advance_output(size_type actual_size, cuda::stream_ref stream)
   {
     CUDF_EXPECTS(actual_size <= _max_write_size, "Internal error");
     if (_chunks.size() < 2) {
@@ -287,7 +287,7 @@ class output_builder {
    * @param stream The stream used to access the element.
    * @return The first element that was written to the output.
    */
-  [[nodiscard]] T front_element(rmm::cuda_stream_view stream) const
+  [[nodiscard]] T front_element(cuda::stream_ref stream) const
   {
     return _chunks.front().front_element(stream);
   }
@@ -298,7 +298,7 @@ class output_builder {
    * @param stream The stream used to access the element.
    * @return The last element that was written to the output.
    */
-  [[nodiscard]] T back_element(rmm::cuda_stream_view stream) const
+  [[nodiscard]] T back_element(cuda::stream_ref stream) const
   {
 #if defined(__GNUC__) && (__GNUC__ >= 14)
 #pragma GCC diagnostic push
@@ -322,7 +322,7 @@ class output_builder {
    * @param mr The memory resource used to allocate the output vector.
    * @return The output vector.
    */
-  [[nodiscard]] rmm::device_uvector<T> gather(rmm::cuda_stream_view stream,
+  [[nodiscard]] rmm::device_uvector<T> gather(cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr) const
   {
     rmm::device_uvector<T> output{size(), stream, mr};
@@ -349,7 +349,7 @@ class output_builder {
    */
   static void inplace_resize(rmm::device_uvector<T>& vector,
                              size_type new_size,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
   {
     CUDF_EXPECTS(new_size <= vector.capacity(), "Internal error");
     vector.resize(new_size, stream);

@@ -220,7 +220,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def total_seconds(self) -> ColumnBase:
         conversion = unit_to_nanoseconds_conversion[self.time_unit] / 1e9
         # Typecast to decimal128 to avoid floating point precision issues
-        # https://github.com/rapidsai/cudf/issues/17664
+        # https://github.com/NVIDIA/cudf/issues/17664
         result = (
             (self.astype(self._UNDERLYING_DTYPE) * conversion)
             .astype(

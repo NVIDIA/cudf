@@ -615,7 +615,7 @@ cdef class Column:
         DataType dtype,
         size_type size,
         children: Iterable[Column],
-    ):
+    ) -> Column:
         """
         Create a Column from an RMM DeviceBuffer.
 
@@ -825,7 +825,7 @@ cdef class Column:
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """Create a Column from a Scalar.
 
         Parameters
@@ -894,7 +894,7 @@ cdef class Column:
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """Create an all null column from a template.
 
         Parameters
@@ -988,7 +988,7 @@ cdef class Column:
         cls,
         obj: SupportsArrayInterface,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> Column:
         """
         Create a Column from an object implementing the NumPy Array Interface.
 
@@ -1046,7 +1046,7 @@ cdef class Column:
         cls,
         obj: SupportsCudaArrayInterface,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> Column:
         """
         Create a Column from an object implementing the CUDA Array Interface.
 
@@ -1089,7 +1089,7 @@ cdef class Column:
         cls,
         obj: SupportsCudaArrayInterface | SupportsArrayInterface,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> Column:
         """
         Create a Column from any object which supports the NumPy
         or CUDA array interface.
@@ -1308,7 +1308,7 @@ cdef class Column:
                     release_arrow_array_raw(raw_host_array_ptr)
 
     @classmethod
-    def struct_from_children(cls, children: Iterable[Column]):
+    def struct_from_children(cls, children: Iterable[Column]) -> Column:
         """
         Create a struct Column from a list of child columns.
 
@@ -1338,7 +1338,7 @@ cdef class Column:
             and reference_child.size() == child.size()
             and reference_child.null_count() == child.null_count()
             # We assume the null masks are equivalent but may be expensive to
-            # check: https://github.com/rapidsai/cudf/pull/19357#issuecomment-3071033448
+            # check: https://github.com/NVIDIA/cudf/pull/19357#issuecomment-3071033448
             for child in children
         ):
             raise ValueError(

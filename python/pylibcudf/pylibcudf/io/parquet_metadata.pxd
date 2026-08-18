@@ -58,7 +58,7 @@ cdef class ParquetMetadata:
 
     cpdef int num_rowgroups(self)
 
-    cpdef list num_rowgroups_per_file(self)
+    cpdef list[int] num_rowgroups_per_file(self)
 
     cpdef dict metadata(self)
 

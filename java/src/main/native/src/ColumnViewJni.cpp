@@ -1390,7 +1390,7 @@ Java_ai_rapids_cudf_ColumnView_castTo(JNIEnv* env, jclass, jlong handle, jint ty
     } else if (cudf::is_timestamp(n_data_type) && cudf::is_numeric(column->type())) {
       // This is a temporary workaround to allow Java to cast from integral types into a timestamp
       // without forcing an intermediate duration column to be manifested.  Ultimately this style of
-      // "reinterpret" casting will be supported via https://github.com/rapidsai/cudf/pull/5358
+      // "reinterpret" casting will be supported via https://github.com/NVIDIA/cudf/pull/5358
       if (n_data_type.id() == cudf::type_id::TIMESTAMP_DAYS) {
         if (column->type().id() != cudf::type_id::INT32) {
           JNI_THROW_NEW(env,
@@ -1413,7 +1413,7 @@ Java_ai_rapids_cudf_ColumnView_castTo(JNIEnv* env, jclass, jlong handle, jint ty
     } else if (cudf::is_timestamp(column->type()) && cudf::is_numeric(n_data_type)) {
       // This is a temporary workaround to allow Java to cast from timestamp types to integral types
       // without forcing an intermediate duration column to be manifested.  Ultimately this style of
-      // "reinterpret" casting will be supported via https://github.com/rapidsai/cudf/pull/5358
+      // "reinterpret" casting will be supported via https://github.com/NVIDIA/cudf/pull/5358
       cudf::data_type duration_type   = cudf::jni::timestamp_to_duration(column->type());
       cudf::column_view duration_view = cudf::column_view(
         duration_type, column->size(), column->head(), column->null_mask(), column->null_count());

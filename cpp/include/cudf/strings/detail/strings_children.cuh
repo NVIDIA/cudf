@@ -42,6 +42,7 @@ namespace detail {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Offsets column and total bytes
+ * @throw std::overflow_error if the output exceeds the column size limit
  */
 std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);

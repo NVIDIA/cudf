@@ -1390,7 +1390,12 @@ def _build_source_info(
         paths = tuple(ir.paths)
         use_hybrid_scan = config_options.parquet_options.use_hybrid_scan
         return _build_parquet_source(
-            paths, needed_cols, schema, max_footer, max_rg, use_hybrid_scan
+            paths,
+            needed_cols,
+            schema,
+            max_footer,
+            max_rg,
+            parse_hybrid_metadata=use_hybrid_scan,
         )
     else:  # pragma: no cover
         raise ValueError(f"Unsupported Scan type: {ir.typ}")

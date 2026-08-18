@@ -5,9 +5,7 @@
 cuDF can move eligible buffers from GPU device memory to CPU host memory when spilling is enabled.
 This can help workloads whose cuDF buffers exceed available device memory.
 Spilling is disabled by default because moving data between host and device memory adds transfer cost.
-
 When cuDF needs a device pointer for spilled data, cuDF moves that data back to device memory automatically.
-Host access can remain on the CPU without moving the buffer back to device memory.
 Spilling can reduce device memory pressure, but it cannot guarantee that every allocation succeeds.
 
 ## Enabling Spilling
@@ -47,8 +45,6 @@ See {ref}`api.options` for the public options reference.
 
 cuDF spills eligible buffers in least-recently-accessed order.
 A spilled buffer returns to device memory when cuDF needs a device pointer for it.
-That unspill transfer, and later spill transfers, can slow a workload.
-
 `spill_device_limit` is a soft byte limit over cuDF buffers that the spill manager tracks and that are currently unspilled.
 It is not a limit on total GPU memory usage.
 Some buffers can be temporarily or permanently unspillable while their device pointers are exposed or in use, and those buffers can cause the tracked unspilled total to exceed the limit.

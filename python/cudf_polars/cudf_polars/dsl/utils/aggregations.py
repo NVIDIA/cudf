@@ -118,6 +118,50 @@ def decompose_single_agg(
     """
     agg = named_expr.value
     name = named_expr.name
+    if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
+        if context != ExecutionContext.GROUPBY:
+            raise NotImplementedError(
+                f"{agg.name} is only supported in groupby context"
+            )
+        val, by = agg.children
+        for child in (val, by):
+            child_aggs, _ = decompose_single_agg(
+                expr.NamedExpr(next(name_generator), child),
+                name_generator,
+                is_top=False,
+                context=context,
+            )
+            if any(nested_agg for _, nested_agg in child_aggs):
+                raise NotImplementedError("Nested aggs in groupby not supported")
+        if plc.traits.is_floating_point(by.dtype.plc_type):
+            by = expr.UnaryFunction(by.dtype, "mask_nans", (), by)
+        is_null = expr.BooleanFunction(
+            DataType(pl.Boolean()),
+            expr.BooleanFunction.Name.IsNull,
+            (),
+            by,
+        )
+        val = expr.Ternary(
+            val.dtype,
+            is_null,
+            expr.Literal(val.dtype, None),
+            val,
+        )
+        descending = agg.name == "max_by"
+        return [
+            (
+                named_expr.reconstruct(
+                    expr.SortedAgg(
+                        agg.dtype,
+                        "first",
+                        (False, (True,), (descending,)),
+                        val,
+                        by,
+                    )
+                ),
+                True,
+            )
+        ], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, expr.UnaryFunction) and agg.name in _WINDOW_ONLY_UNARY_FUNCTIONS:
         if context != ExecutionContext.WINDOW:
             raise NotImplementedError(

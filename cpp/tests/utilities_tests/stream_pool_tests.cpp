@@ -22,11 +22,7 @@ class StreamPoolTest : public cudf::test::BaseFixture {};
 
 namespace {
 
-/**
- * @brief Requests `count` streams from the calling thread's pool, as values that can be compared
- * and hashed.
- */
-std::vector<cudaStream_t> stream_values(std::size_t count)
+std::vector<cudaStream_t> get_streams_from_pool(std::size_t count)
 {
   auto const streams = cudf::detail::thread_cuda_stream_pool().get_streams(count);
   auto values        = std::vector<cudaStream_t>{};
@@ -44,12 +40,13 @@ TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
   auto constexpr num_streams  = 8;
 
   // Both threads request repeatedly so that a shared round-robin counter would be very likely to
-  // hand the same stream to both of them. The latch keeps them alive at the same time; otherwise
-  // the second thread could adopt the pool the first one retired and pass trivially.
+  // hand the same stream to both of them. The latch makes them overlap, which is the case under
+  // test: a thread that started after the other exited would correctly adopt the retired pool and
+  // observe the very streams this test requires to be disjoint.
   auto collect = [](std::unordered_set<cudaStream_t>& out, std::latch& ready) {
     ready.arrive_and_wait();
     for (auto request = 0; request < num_requests; request++) {
-      auto const streams = stream_values(num_streams);
+      auto const streams = get_streams_from_pool(num_streams);
       out.insert(streams.begin(), streams.end());
     }
   };
@@ -75,7 +72,7 @@ TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
   // one stream per request.
   auto constexpr count = 256;
 
-  auto const streams = stream_values(count);
+  auto const streams = get_streams_from_pool(count);
   EXPECT_EQ(streams.size(), count);
 
   auto const unique = std::unordered_set<cudaStream_t>(streams.begin(), streams.end());
@@ -86,7 +83,7 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
 {
   std::unordered_set<cudaStream_t> first_thread_streams;
   std::thread first([&] {
-    auto const streams = stream_values(4);
+    auto const streams = get_streams_from_pool(4);
     first_thread_streams.insert(streams.begin(), streams.end());
   });
   first.join();
@@ -96,7 +93,7 @@ TEST_F(StreamPoolTest, PoolIsReusedAfterThreadExits)
   // created a fresh pool would observe entirely different streams.
   std::unordered_set<cudaStream_t> second_thread_streams;
   std::thread second([&] {
-    auto const streams = stream_values(256);
+    auto const streams = get_streams_from_pool(256);
     second_thread_streams.insert(streams.begin(), streams.end());
   });
   second.join();

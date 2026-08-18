@@ -611,7 +611,7 @@ cdef class ChunkedParquetReader:
         size_t chunk_read_limit=0,
         size_t pass_read_limit=1024000000,
         object parquet_metadatas: Sequence[FileMetaData] | None = None,
-    ):
+    ) -> None:
         self._stream = _get_stream(stream)
         self.mr = _get_memory_resource(mr)
         cdef vector[unique_ptr[datasource]] sources

@@ -58,7 +58,7 @@ cpdef ColumnOrTable empty_like(
 cpdef Column allocate_like(
     Column input_column,
     mask_allocation_policy policy,
-    size=*,
+    object size=*,
     object stream = *,
     DeviceMemoryResource mr=*,
 )

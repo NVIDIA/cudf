@@ -56,10 +56,12 @@ from pylibcudf.types cimport DataType
 from pylibcudf.variant cimport get_if, holds_alternative
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+
+T = TypeVar("T")
 
 
 __all__ = [
@@ -215,10 +217,10 @@ cdef class OrcColumnStatistics:
     def __getitem__(self, item: str) -> Any:
         return self.column_stats[item]
 
-    def __contains__(self, item):
+    def __contains__(self, item: str) -> bool:
         return item in self.column_stats
 
-    def get(self, item: str, default=None) -> Any:
+    def get(self, item: str, default: None | T = None) -> T | None:
         return self.column_stats.get(item, default)
 
     @staticmethod

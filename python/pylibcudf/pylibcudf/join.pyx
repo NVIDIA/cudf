@@ -916,7 +916,7 @@ cdef class FilteredJoin:
         null_equality compare_nulls: NullEquality = null_equality.EQUAL,
         double load_factor=0.5,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> None:
         """
         Construct a filtered hash join object for subsequent probe calls.
 

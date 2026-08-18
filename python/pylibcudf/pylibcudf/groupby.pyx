@@ -57,7 +57,9 @@ cdef class GroupByRequest:
     aggregations : List[Aggregation]
         The list of aggregations to perform.
     """
-    def __init__(self, Column values, list aggregations: list[Aggregation]):
+    def __init__(
+        self, Column values, list aggregations: list[Aggregation]
+    ) -> None:
         self._values = values
         self._aggregations = aggregations
 
@@ -122,7 +124,7 @@ cdef class GroupBy:
         sorted keys_are_sorted: Sorted = sorted.NO,
         list column_order: list[Order] | None = None,
         list null_precedence: list[NullOrder] | None = None,
-    ):
+    ) -> None:
         self._column_order = make_unique[vector[order]]()
         self._null_precedence = make_unique[vector[null_order]]()
         if column_order is not None:

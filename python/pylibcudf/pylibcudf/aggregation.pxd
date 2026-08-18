@@ -38,7 +38,7 @@ ctypedef rolling_aggregation * roa_ptr
 
 cdef class Aggregation:
     cdef unique_ptr[aggregation] c_obj
-    cpdef kind(self)
+    cpdef kind_t kind(self)
     cdef void _unsupported_agg_error(self, str alg)
     cdef unique_ptr[groupby_aggregation] clone_underlying_as_groupby(self) except *
     cdef unique_ptr[groupby_scan_aggregation] clone_underlying_as_groupby_scan(

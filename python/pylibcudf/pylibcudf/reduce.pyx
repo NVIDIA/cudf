@@ -388,7 +388,7 @@ cdef class ApproxDistinctCount:
         nan_policy nan_handling=nan_policy.NAN_IS_NULL,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> None:
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
@@ -475,7 +475,7 @@ cdef class ApproxDistinctCount:
         return dereference(self.c_obj).standard_error()
 
     @staticmethod
-    def sketch_bytes(int32_t precision):
+    def sketch_bytes(int32_t precision) -> int:
         """Return the bytes required for sketch storage at a given precision.
 
         Parameters

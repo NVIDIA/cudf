@@ -326,6 +326,12 @@ def test_sum_all_null_decimal_dtype(
         pl.Series([], dtype=pl.Int64),
         pl.Series([None, None], dtype=pl.Int64),
         pl.Series([float("nan"), float("nan")], dtype=pl.Float64),
+        pl.Series([1.0, float("inf")], dtype=pl.Float64),
+        pl.Series([float("-inf"), 1.0], dtype=pl.Float64),
+        pl.Series([float("-inf"), float("inf")], dtype=pl.Float64),
+        pl.Series([1.0, 2.0, float("inf"), 3.0], dtype=pl.Float64),
+        pl.Series([float("inf"), float("inf")], dtype=pl.Float64),
+        pl.Series([float("-inf"), float("-inf")], dtype=pl.Float64),
     ],
 )
 def test_hist(engine: pl.GPUEngine, bin_count: int, data: pl.Series) -> None:

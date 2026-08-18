@@ -628,18 +628,37 @@ class UnaryFunction(Expr):
                 stream=df.stream,
             )
             if labels.null_count() > 0:
-                labels = plc.replace.replace_nulls(
-                    labels,
+                assign_left = plc.transform.compute_column(
+                    plc.Table([labels, hist_values]),
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOGICAL_AND,
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.IS_NULL,
+                            plc.expressions.ColumnReference(0),
+                        ),
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.EQUAL,
+                            plc.expressions.ColumnReference(1),
+                            plc.expressions.Literal(
+                                plc.Scalar.from_py(breaks[0], f64, stream=df.stream)
+                            ),
+                        ),
+                    ),
+                    stream=df.stream,
+                )
+                labels = plc.copying.copy_if_else(
                     plc.Scalar.from_py(0, labels.type(), stream=df.stream),
+                    labels,
+                    assign_left,
                     stream=df.stream,
                 )
             (keys_table, (counts_table,)) = plc.groupby.GroupBy(
-                plc.Table([labels]), null_handling=plc.types.NullPolicy.INCLUDE
+                plc.Table([labels]), null_handling=plc.types.NullPolicy.EXCLUDE
             ).aggregate(
                 [
                     plc.groupby.GroupByRequest(
                         labels,
-                        [plc.aggregation.count(plc.types.NullPolicy.INCLUDE)],
+                        [plc.aggregation.count(plc.types.NullPolicy.EXCLUDE)],
                     )
                 ],
                 stream=df.stream,

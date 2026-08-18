@@ -525,7 +525,7 @@ TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
 // must transcode to DICTIONARY32 and decode back to their (distinct) inputs.
 TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
 {
-  auto col_a = make_low_cardinality_strings();                  // default seed
+  auto col_a = make_low_cardinality_strings();                   // default seed
   auto col_b = make_low_cardinality_strings(seed ^ 0xBE'EF01u);  // distinct data
 
   auto const input_tbl = cudf::table_view{{col_a, col_b}};
@@ -540,6 +540,16 @@ TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
   auto const read_b = read_table->view().column(1);
   ASSERT_EQ(read_a.type().id(), cudf::type_id::DICTIONARY32);
   ASSERT_EQ(read_b.type().id(), cudf::type_id::DICTIONARY32);
+
+  // Keys must be deduplicated in both columns -- the strided multi-column branch must produce
+  // unique keys (no larger than the cardinality) just like the contiguous single-column path.
+  for (auto const& read_col : {read_a, read_b}) {
+    auto const keys = cudf::dictionary_column_view(read_col).keys();
+    auto const num_distinct =
+      cudf::distinct_count(keys, cudf::null_policy::INCLUDE, cudf::nan_policy::NAN_IS_VALID);
+    EXPECT_EQ(num_distinct, keys.size());
+    EXPECT_LE(keys.size(), cardinality);
+  }
 
   auto const decoded_a = cudf::dictionary::decode(cudf::dictionary_column_view(read_a));
   auto const decoded_b = cudf::dictionary::decode(cudf::dictionary_column_view(read_b));

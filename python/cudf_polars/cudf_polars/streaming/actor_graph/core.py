@@ -258,8 +258,6 @@ def generate_network(
     # Determine which nodes need fanout
     fanout_nodes = determine_fanout_nodes(ir, partition_info, ir_dep_count)
     partitioning_hints = collect_partitioning_hints(ir, partition_info)
-    # import pdb; pdb.set_trace()
-    # pass
 
     # Generate the network
     state: GenState = {

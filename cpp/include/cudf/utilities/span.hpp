@@ -107,6 +107,7 @@ struct host_span {
 
   /// Constructor from container
   /// @param in The container to construct the span from
+  // NOLINTBEGIN(modernize-type-traits)
   template <typename C,
             // Only supported containers of types convertible to T
             std::enable_if_t<is_host_span_supported_container<C>::value &&
@@ -130,6 +131,7 @@ struct host_span {
   constexpr host_span(C const& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
+  // NOLINTEND(modernize-type-traits)
 
   // Copy construction to support const conversion
   /// @param other The span to copy

@@ -35,6 +35,18 @@ struct row_group_stats_caster : public stats_caster_base {
   using result_type = std::
     tuple<std::unique_ptr<column>, std::unique_ptr<column>, std::optional<std::unique_ptr<column>>>;
 
+  template <typename T>
+  [[nodiscard]] static constexpr bool can_use_deprecated_minmax()
+  {
+    if constexpr (std::is_same_v<T, string_view>) {
+      return false;
+    } else if constexpr (cudf::is_integral<T>() and not cudf::is_boolean<T>()) {
+      return cudf::is_signed<T>();
+    } else {
+      return true;
+    }
+  }
+
   size_type total_row_groups;
   std::vector<metadata> const& per_file_metadata;
   host_span<std::vector<size_type> const> row_group_indices;
@@ -101,16 +113,18 @@ struct row_group_stats_caster : public stats_caster_base {
                                   });
           if (col != std::end(row_group.columns)) {
             auto const& colchunk = *col;
-            // To support deprecated min, max fields.
-            auto const& min_value = colchunk.meta_data.statistics.min_value.has_value()
-                                      ? colchunk.meta_data.statistics.min_value
-                                      : colchunk.meta_data.statistics.min;
-            auto const& max_value = colchunk.meta_data.statistics.max_value.has_value()
-                                      ? colchunk.meta_data.statistics.max_value
-                                      : colchunk.meta_data.statistics.max;
+            auto const& stats    = colchunk.meta_data.statistics;
+            // Deprecated min/max use signed physical ordering, so only fall back
+            // when that ordering is compatible with the output type.
+            auto const* min_value = &stats.min_value;
+            auto const* max_value = &stats.max_value;
+            if constexpr (can_use_deprecated_minmax<T>()) {
+              if (not min_value->has_value()) { min_value = &stats.min; }
+              if (not max_value->has_value()) { max_value = &stats.max; }
+            }
             // translate binary data to Type then to <T>
-            min.set_index(stats_idx, min_value, colchunk.meta_data.type, ts_scale);
-            max.set_index(stats_idx, max_value, colchunk.meta_data.type, ts_scale);
+            min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
+            max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
             // Check the nullability of this column chunk
             if (has_is_null_operator) {
               if (colchunk.meta_data.statistics.null_count.has_value()) {

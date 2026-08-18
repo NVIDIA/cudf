@@ -201,26 +201,31 @@ class BooleanFunction(Expr):
         y = prep(right)
         table = plc.Table(table_columns)
 
-        def maximum(
+        def maximum_nonnegative(
             lhs: plc.expressions.Expression, rhs: plc.expressions.Expression
         ) -> plc.expressions.Operation:
-            # max(a, b) == (a + b + |a - b|) / 2. Only used on the finite
-            # branch, so NaN contamination from non-finite inputs is masked out.
+            half = plc.expressions.Literal(plc.Scalar.from_py(0.5, f64, stream=stream))
             return plc.expressions.Operation(
-                plc.expressions.ASTOperator.DIV,
+                plc.expressions.ASTOperator.ADD,
                 plc.expressions.Operation(
                     plc.expressions.ASTOperator.ADD,
                     plc.expressions.Operation(
-                        plc.expressions.ASTOperator.ADD, lhs, rhs
+                        plc.expressions.ASTOperator.MUL, lhs, half
                     ),
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.MUL, rhs, half
+                    ),
+                ),
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.MUL,
                     plc.expressions.Operation(
                         plc.expressions.ASTOperator.ABS,
                         plc.expressions.Operation(
                             plc.expressions.ASTOperator.SUB, lhs, rhs
                         ),
                     ),
+                    half,
                 ),
-                plc.expressions.Literal(plc.Scalar.from_py(2.0, f64, stream=stream)),
             )
 
         inf = plc.expressions.Literal(
@@ -233,13 +238,13 @@ class BooleanFunction(Expr):
             plc.expressions.Operation(plc.expressions.ASTOperator.SUB, x, y),
         )
 
-        tol = maximum(
+        tol = maximum_nonnegative(
             plc.expressions.Operation(
                 plc.expressions.ASTOperator.MUL,
                 plc.expressions.Literal(
                     plc.Scalar.from_py(rel_tol, f64, stream=stream)
                 ),
-                maximum(absx, absy),
+                maximum_nonnegative(absx, absy),
             ),
             plc.expressions.Literal(plc.Scalar.from_py(abs_tol, f64, stream=stream)),
         )

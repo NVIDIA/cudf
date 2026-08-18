@@ -335,6 +335,21 @@ def test_boolean_is_close_dtypes(engine: pl.GPUEngine, dtype):
 
 
 @pytest.mark.parametrize(
+    "a,b",
+    [
+        (1.0e308, 1.1e308),
+        (1.0e308, -1.0e308),
+        (1.0e308, 0.0),
+        (-1.0e308, -1.1e308),
+    ],
+)
+def test_boolean_is_close_large_values(engine: pl.GPUEngine, a, b):
+    ldf = pl.LazyFrame({"a": [a], "b": [b]})
+    q = ldf.select(pl.col("a").is_close(pl.col("b")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
     "kwargs",
     [
         {"abs_tol": -0.1},

@@ -741,10 +741,10 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 {
   clear_marks(stream);
 
-  auto const preprocessed_right = [right, stream] {
+  auto const temp_mr            = cudf::get_current_device_resource_ref();
+  auto const preprocessed_right = [&right, stream, temp_mr] {
     cudf::scoped_range range{"mark_join::semi_anti_join::preprocessed_right"};
-    return cudf::detail::row::equality::preprocessed_table::create(
-      right, stream, cudf::get_current_device_resource_ref());
+    return cudf::detail::row::equality::preprocessed_table::create(right, stream, temp_mr);
   }();
 
   if (is_primitive_row_op_compatible(_left)) {

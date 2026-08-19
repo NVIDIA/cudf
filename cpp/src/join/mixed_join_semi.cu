@@ -158,8 +158,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     row_set.insert_async(iter, iter + right_num_rows, stream.get());
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
-    auto const [row_bitmask, _] =
-      cudf::detail::bitmask_and(right, stream, cudf::get_current_device_resource_ref());
+    auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
     row_is_valid pred{static_cast<bitmask_type const*>(row_bitmask.data())};
 
     // insert valid rows

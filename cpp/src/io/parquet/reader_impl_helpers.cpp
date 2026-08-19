@@ -90,7 +90,7 @@ namespace {
 
 [[nodiscard]] std::unique_ptr<column> make_size_type_column(
   cudf::detail::host_vector<size_type> const& values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto data = cudf::detail::make_device_uvector_async(
@@ -1426,8 +1426,8 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
 }
 
 column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
-  host_span<std::string const> column_names,
-  rmm::cuda_stream_view stream,
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
@@ -1459,12 +1459,10 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
                                            {}};
   result.bounds.reserve(column_names.size());
 
-  row_group_stats_caster const stats_col{
-    .total_row_groups     = total_row_groups,
-    .per_file_metadata    = per_file_metadata,
-    .row_group_indices    = host_span<std::vector<size_type> const>{input_row_group_indices.data(),
-                                                                    input_row_group_indices.size()},
-    .has_is_null_operator = false};
+  row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
+                                         .per_file_metadata    = per_file_metadata,
+                                         .row_group_indices    = input_row_group_indices,
+                                         .has_is_null_operator = false};
 
   for (auto const& column_name : column_names) {
     auto per_source_schema_indices = std::vector<int>(per_file_metadata.size());
@@ -1472,8 +1470,7 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
 
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
       auto const& schema_tree = get_schema_tree(src_idx);
-      auto const schema_idx   = find_leaf_schema_index(
-        std::span<SchemaElement const>{schema_tree.data(), schema_tree.size()}, column_name);
+      auto const schema_idx   = find_leaf_schema_index(schema_tree, column_name);
       auto const source_dtype = statistics_dtype(schema_tree[schema_idx]);
 
       if (src_idx == 0) {
@@ -1489,12 +1486,7 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
     }
 
     auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype,
-      stats_col,
-      host_span<int const>{per_source_schema_indices.data(), per_source_schema_indices.size()},
-      dtype,
-      stream,
-      mr);
+      dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
     std::vector<std::unique_ptr<column>> columns;
     columns.reserve(2);
     columns.push_back(std::move(min_col));
@@ -1788,8 +1780,7 @@ aggregate_reader_metadata::select_row_groups(
                    });
 
     // Set the current span of row group indices to the vector of all row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>{
-      all_row_group_indices.data(), all_row_group_indices.size()};
+    current_row_group_indices = host_span<std::vector<size_type> const>(all_row_group_indices);
   }
   // Otherwise, set the current span of row group indices to the specified input row group indices
   else {
@@ -1818,8 +1809,7 @@ aggregate_reader_metadata::select_row_groups(
       apply_row_bounds_filter(current_row_group_indices, rows_to_skip, rows_to_read);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>{
-      trimmed_row_group_indices.data(), trimmed_row_group_indices.size()};
+    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
   }
 
   // Flag to check if the row groups will be filtered using byte bounds
@@ -1838,8 +1828,7 @@ aggregate_reader_metadata::select_row_groups(
       apply_byte_bounds_filter(current_row_group_indices, skip_bytes_opt, byte_count_opt);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>{
-      trimmed_row_group_indices.data(), trimmed_row_group_indices.size()};
+    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
   }
 
   // Compute number of input row groups after row or byte bounds trimming
@@ -1867,9 +1856,8 @@ aggregate_reader_metadata::select_row_groups(
     // rows to skip relative to the first surviving row group
     if (filtered_row_group_indices.has_value()) {
       // Update the current span of row group indices
-      auto const& filtered_indices = filtered_row_group_indices.value();
       current_row_group_indices =
-        host_span<std::vector<size_type> const>{filtered_indices.data(), filtered_indices.size()};
+        host_span<std::vector<size_type> const>(filtered_row_group_indices.value());
 
       // Only need to update the rows to skip relative to the first surviving row group
       // if row bounds were previously applied
@@ -2421,24 +2409,3 @@ std::vector<Type> aggregate_reader_metadata::get_parquet_types(
 }
 
 }  // namespace cudf::io::parquet::detail
-
-namespace cudf::io {
-
-column_chunk_bounds_result column_chunk_bounds(std::vector<parquet::FileMetaData> parquet_metadatas,
-                                               std::span<std::string const> column_names,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-
-  auto metadata = parquet::detail::aggregate_reader_metadata{
-    std::move(parquet_metadatas),
-    false,  // use_arrow_schema
-    false   // has_cols_from_mismatched_srcs
-  };
-
-  return metadata.column_chunk_bounds(
-    host_span<std::string const>{column_names.data(), column_names.size()}, stream, mr);
-}
-
-}  // namespace cudf::io

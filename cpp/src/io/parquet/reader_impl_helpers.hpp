@@ -525,8 +525,8 @@ class aggregate_reader_metadata {
    * @return Decoded min/max bounds and row-group identifiers
    */
   [[nodiscard]] column_chunk_bounds_result column_chunk_bounds(
-    host_span<std::string const> column_names,
-    rmm::cuda_stream_view stream,
+    std::span<std::string const> column_names,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
 
   /**

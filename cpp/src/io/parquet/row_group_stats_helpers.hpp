@@ -40,7 +40,7 @@ struct row_group_stats_caster : public stats_caster_base {
   {
     if constexpr (std::is_same_v<T, string_view>) {
       return false;
-    } else if constexpr (cudf::is_integral<T>() and not cudf::is_boolean<T>()) {
+    } else if constexpr (cudf::is_integral_not_bool<T>()) {
       return cudf::is_signed<T>();
     } else {
       return true;
@@ -55,7 +55,7 @@ struct row_group_stats_caster : public stats_caster_base {
   template <typename T>
   result_type operator()(host_span<int const> per_source_schema_indices,
                          cudf::data_type dtype,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),

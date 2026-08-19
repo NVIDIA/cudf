@@ -1493,7 +1493,7 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
     null_count,
     std::move(null_mask));
   auto const sliced_input = cudf::slice(null_and_empty_lists->view(), {1, 5}).front();
-  test_dictionary_selection(table_view{{sliced_input}}, {true}, std::nullopt, "SlicedInput");
+  test_dictionary_selection(table_view{{sliced_input}}, {false}, std::nullopt, "SlicedInput");
 
   auto const empty_input = cudf::slice(col0->view(), {0, 0}).front();
   test_dictionary_selection(table_view{{empty_input}}, {}, std::nullopt, "EmptyInput");

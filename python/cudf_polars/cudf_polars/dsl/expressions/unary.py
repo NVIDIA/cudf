@@ -455,6 +455,23 @@ class UnaryFunction(Expr):
             dtype=self.dtype,
         )
 
+    def _horizontal_broadcast_columns(
+        self, df: DataFrame, *, context: ExecutionContext
+    ) -> list[plc.Column]:
+        return [
+            col.obj
+            for col in broadcast(
+                *(
+                    child.evaluate(df, context=context).astype(
+                        self.dtype, stream=df.stream
+                    )
+                    for child in self.children
+                ),
+                target_length=df.num_rows,
+                stream=df.stream,
+            )
+        ]
+
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:
@@ -1513,19 +1530,7 @@ class UnaryFunction(Expr):
             return Column(clamped, dtype=self.dtype)
         elif self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
-            columns = [
-                col.obj
-                for col in broadcast(
-                    *(
-                        child.evaluate(df, context=context).astype(
-                            self.dtype, stream=df.stream
-                        )
-                        for child in self.children
-                    ),
-                    target_length=df.num_rows,
-                    stream=df.stream,
-                )
-            ]
+            columns = self._horizontal_broadcast_columns(df, context=context)
             result = columns[0]
             for other in columns[1:]:
                 result = plc.binaryop.binary_operation(
@@ -1536,19 +1541,7 @@ class UnaryFunction(Expr):
             (ignore_nulls,) = self.options
             add = plc.binaryop.BinaryOperator.ADD
             denominator: plc.Column | plc.Scalar
-            columns = [
-                col.obj
-                for col in broadcast(
-                    *(
-                        child.evaluate(df, context=context).astype(
-                            self.dtype, stream=df.stream
-                        )
-                        for child in self.children
-                    ),
-                    target_length=df.num_rows,
-                    stream=df.stream,
-                )
-            ]
+            columns = self._horizontal_broadcast_columns(df, context=context)
             if ignore_nulls:
                 zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
                 filled = [
@@ -1610,19 +1603,7 @@ class UnaryFunction(Expr):
             )
         elif self.name == "sum_horizontal":
             (ignore_nulls,) = self.options
-            columns = [
-                col.obj
-                for col in broadcast(
-                    *(
-                        child.evaluate(df, context=context).astype(
-                            self.dtype, stream=df.stream
-                        )
-                        for child in self.children
-                    ),
-                    target_length=df.num_rows,
-                    stream=df.stream,
-                )
-            ]
+            columns = self._horizontal_broadcast_columns(df, context=context)
             if ignore_nulls:
                 # Treat nulls as the additive identity so that a row is only
                 # null when Polars would produce null (never, for sum).

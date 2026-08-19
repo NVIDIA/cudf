@@ -56,33 +56,47 @@ class OrderPartitioningHint:
 PartitioningHint: TypeAlias = StrictPartitioningHint | OrderPartitioningHint
 
 
-def collect_partitioning_hints(ir: IR) -> dict[IR, PartitioningHint]:
-    """Collect non-conflicting upstream partitioning hints for each IR node."""
-    hints: dict[IR, PartitioningHint | None] = {}
+def collect_partitioning_hints(ir: IR) -> dict[IR, tuple[PartitioningHint, ...]]:
+    """Collect candidate upstream partitioning hints for each IR node."""
+    hints: dict[IR, tuple[PartitioningHint, ...]] = {}
     for node in reversed(list(post_traversal([ir]))):
-        for child, child_hint in _construct_child_hints(node):
-            _record_hint(hints, child, child_hint)
+        child_hints = list(_construct_child_hints(node))
 
-        node_hint = hints.get(node)
+        node_hints = hints.get(node)
         if (
-            node_hint is None
-            or len(node.children) != 1
-            or not isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
+            node_hints is not None
+            and len(node.children) == 1
+            and isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
         ):
-            continue
-
-        remapped = _remap_hint(
-            node_hint,
-            {
+            remapping = {
                 output_name: binding.name
                 for output_name, binding in column_domain_bindings(node).items()
                 if binding.child_index == 0
-            },
-        )
-        if remapped is not None:
-            _record_hint(hints, node.children[0], remapped)
+            }
+            child_hints.extend(
+                (node.children[0], remapped)
+                for node_hint in node_hints
+                if (remapped := _remap_hint(node_hint, remapping)) is not None
+            )
 
-    return {node: hint for node, hint in hints.items() if hint is not None}
+        for child, child_hint in child_hints:
+            candidates: list[PartitioningHint] = []
+            new_hint = child_hint
+            insertion_index: int | None = None
+            for existing_hint in hints.get(child, ()):
+                if (merged := _merge_hints(existing_hint, new_hint)) is None:
+                    candidates.append(existing_hint)
+                else:
+                    new_hint = merged
+                    if insertion_index is None:
+                        insertion_index = len(candidates)
+            if insertion_index is None:
+                candidates.append(new_hint)
+            else:
+                candidates.insert(insertion_index, new_hint)
+            hints[child] = tuple(candidates)
+
+    return hints
 
 
 def _construct_child_hints(ir: IR) -> Iterator[tuple[IR, PartitioningHint]]:
@@ -161,17 +175,6 @@ def _remap_hint(
             return None
         remapped_keys.append(NamedOrderKey(new_name, key.descending, key.nulls_last))
     return OrderPartitioningHint(tuple(remapped_keys), hint.strict_key_count)
-
-
-def _record_hint(
-    hints: dict[IR, PartitioningHint | None],
-    node: IR,
-    hint: PartitioningHint,
-) -> None:
-    if node not in hints:
-        hints[node] = hint
-    elif (current := hints[node]) is not None:
-        hints[node] = _merge_hints(current, hint)
 
 
 def _merge_hints(

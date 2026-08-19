@@ -80,6 +80,17 @@ def make_hint_sorted(
     )
 
 
+def make_groupby(child: IR, *names: str) -> GroupBy:
+    return GroupBy(
+        dict.fromkeys(names, I64),
+        tuple(named_col(name) for name in names),
+        (),
+        maintain_order=False,
+        zlice=None,
+        df=child,
+    )
+
+
 def test_sort_creates_order_partition_hint() -> None:
     scan = make_scan("a", "b")
     sort = make_sort(
@@ -92,11 +103,13 @@ def test_sort_creates_order_partition_hint() -> None:
 
     hints = collect_partitioning_hints(sort)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (
-            NamedOrderKey("a", descending=False, nulls_last=True),
-            NamedOrderKey("b", descending=True, nulls_last=False),
-        )
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (
+                NamedOrderKey("a", descending=False, nulls_last=True),
+                NamedOrderKey("b", descending=True, nulls_last=False),
+            )
+        ),
     )
 
 
@@ -112,9 +125,29 @@ def test_select_remaps_order_partition_hint() -> None:
 
     hints = collect_partitioning_hints(sort)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=False, nulls_last=False),)
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
     )
+
+
+def test_non_column_sort_does_not_create_hint() -> None:
+    scan = make_scan("a")
+    order, null_order = sort_order((False,), nulls_last=(False,), num_keys=1)
+    sort = Sort(
+        scan.schema,
+        (expr.NamedExpr("literal", expr.Literal(I64, 1)),),
+        order,
+        null_order,
+        stable=False,
+        zlice=None,
+        df=scan,
+    )
+
+    hints = collect_partitioning_hints(sort)
+
+    assert hints == {}
 
 
 def test_hint_sorted_creates_order_partition_hint() -> None:
@@ -123,9 +156,78 @@ def test_hint_sorted_creates_order_partition_hint() -> None:
 
     hints = collect_partitioning_hints(hint_sorted)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=True, nulls_last=False),)
+    assert hints[scan] == (
+        OrderPartitioningHint((NamedOrderKey("a", descending=True, nulls_last=False),)),
     )
+
+
+def test_select_remaps_strict_partition_hint() -> None:
+    scan = make_scan("a")
+    select = Select(
+        {"x": I64},
+        (expr.NamedExpr("x", expr.Col(I64, "a")),),
+        should_broadcast=False,
+        df=scan,
+    )
+    right = make_scan("x")
+    join = Join(
+        {"x": I64},
+        (named_col("x"),),
+        (named_col("x"),),
+        ("Inner", False, None, "_right", True, "none"),
+        select,
+        right,
+    )
+
+    hints = collect_partitioning_hints(join)
+
+    assert hints[scan] == (StrictPartitioningHint(("a",)),)
+    assert hints[right] == (StrictPartitioningHint(("x",)),)
+
+
+def test_select_drops_order_hint_on_non_column_output() -> None:
+    scan = make_scan("a")
+    select = Select(
+        {"x": I64},
+        (expr.NamedExpr("x", expr.Literal(I64, 1)),),
+        should_broadcast=False,
+        df=scan,
+    )
+    sort = make_sort(select, "x")
+
+    hints = collect_partitioning_hints(sort)
+
+    assert hints[select] == (
+        OrderPartitioningHint(
+            (NamedOrderKey("x", descending=False, nulls_last=False),)
+        ),
+    )
+    assert scan not in hints
+
+
+def test_select_drops_strict_hint_on_non_column_output() -> None:
+    scan = make_scan("a")
+    select = Select(
+        {"x": I64},
+        (expr.NamedExpr("x", expr.Literal(I64, 1)),),
+        should_broadcast=False,
+        df=scan,
+    )
+    right = make_scan("x")
+    join = Join(
+        {"x": I64},
+        (named_col("x"),),
+        (named_col("x"),),
+        ("Inner", False, None, "_right", True, "none"),
+        select,
+        right,
+    )
+
+    hints = collect_partitioning_hints(join)
+
+    assert hints[select] == (StrictPartitioningHint(("x",)),)
+    assert hints[right] == (StrictPartitioningHint(("x",)),)
+    assert scan not in hints
 
 
 def test_hint_sorted_keeps_declared_order_with_compatible_downstream_sort() -> None:
@@ -135,8 +237,10 @@ def test_hint_sorted_keeps_declared_order_with_compatible_downstream_sort() -> N
 
     hints = collect_partitioning_hints(sort)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=False, nulls_last=False),)
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
     )
 
 
@@ -147,8 +251,10 @@ def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> Non
 
     hints = collect_partitioning_hints(sort)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=False, nulls_last=False),)
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
     )
 
 
@@ -159,28 +265,31 @@ def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() ->
 
     hints = collect_partitioning_hints(sort)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=True, nulls_last=False),)
+    assert hints[scan] == (
+        OrderPartitioningHint((NamedOrderKey("a", descending=True, nulls_last=False),)),
     )
 
 
 def test_groupby_remaps_order_partition_hint() -> None:
     scan = make_scan("a", "b")
-    groupby = GroupBy(
-        {"key": I64},
-        (expr.NamedExpr("key", expr.Col(I64, "a")),),
-        (),
-        maintain_order=False,
-        zlice=None,
-        df=scan,
+    groupby = make_groupby(
+        Select(
+            {"key": I64},
+            (expr.NamedExpr("key", expr.Col(I64, "a")),),
+            should_broadcast=False,
+            df=scan,
+        ),
+        "key",
     )
     sort = make_sort(groupby, "key")
 
     hints = collect_partitioning_hints(sort)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=False, nulls_last=False),),
-        strict_key_count=1,
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),),
+            strict_key_count=1,
+        ),
     )
 
 
@@ -196,11 +305,13 @@ def test_fanout_keeps_more_specific_compatible_order_hint() -> None:
 
     hints = collect_partitioning_hints(root)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (
-            NamedOrderKey("a", descending=False, nulls_last=False),
-            NamedOrderKey("b", descending=False, nulls_last=False),
-        )
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (
+                NamedOrderKey("a", descending=False, nulls_last=False),
+                NamedOrderKey("b", descending=False, nulls_last=False),
+            )
+        ),
     )
 
 
@@ -225,17 +336,116 @@ def test_fanout_marks_compatible_order_hint_as_strict() -> None:
 
     hints = collect_partitioning_hints(root)
 
-    assert hints[scan] == OrderPartitioningHint(
-        (
-            NamedOrderKey("a", descending=False, nulls_last=False),
-            NamedOrderKey("b", descending=False, nulls_last=False),
+    assert hints[scan] == (
+        OrderPartitioningHint(
+            (
+                NamedOrderKey("a", descending=False, nulls_last=False),
+                NamedOrderKey("b", descending=False, nulls_last=False),
+            ),
+            strict_key_count=1,
         ),
-        strict_key_count=1,
     )
-    assert hints[right] == StrictPartitioningHint(("a",))
+    assert hints[right] == (StrictPartitioningHint(("a",)),)
 
 
-def test_conflicting_fanout_drops_hint() -> None:
+def test_fanout_merges_compatible_strict_hints() -> None:
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_groupby(scan, "a"),
+        make_groupby(scan, "a", "b"),
+    )
+
+    hints = collect_partitioning_hints(root)
+
+    assert hints[scan] == (StrictPartitioningHint(("a",)),)
+
+
+def test_fanout_keeps_incompatible_strict_candidates() -> None:
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_groupby(scan, "a"),
+        make_groupby(scan, "b"),
+    )
+
+    hints = collect_partitioning_hints(root)
+
+    assert set(hints[scan]) == {
+        StrictPartitioningHint(("a",)),
+        StrictPartitioningHint(("b",)),
+    }
+
+
+def test_fanout_keeps_incompatible_order_and_strict_candidates() -> None:
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_sort(scan, "a"),
+        make_groupby(scan, "b"),
+    )
+
+    hints = collect_partitioning_hints(root)
+
+    assert set(hints[scan]) == {
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
+        StrictPartitioningHint(("b",)),
+    }
+
+
+def test_compatible_hint_merging_is_not_directional() -> None:
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_groupby(scan, "a", "b"),
+        make_groupby(scan, "a"),
+    )
+    assert collect_partitioning_hints(root)[scan] == (StrictPartitioningHint(("a",)),)
+
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_groupby(scan, "b"),
+        make_sort(scan, "a"),
+    )
+    assert set(collect_partitioning_hints(root)[scan]) == {
+        StrictPartitioningHint(("b",)),
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
+    }
+
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_sort(scan, "a", "b"),
+        make_sort(scan, "a"),
+    )
+    assert collect_partitioning_hints(root)[scan] == (
+        OrderPartitioningHint(
+            (
+                NamedOrderKey("a", descending=False, nulls_last=False),
+                NamedOrderKey("b", descending=False, nulls_last=False),
+            )
+        ),
+    )
+
+
+def test_conflicting_fanout_keeps_candidate_hints() -> None:
     scan = make_scan("a", "b")
     root = Union(
         scan.schema,
@@ -247,4 +457,35 @@ def test_conflicting_fanout_drops_hint() -> None:
 
     hints = collect_partitioning_hints(root)
 
-    assert scan not in hints
+    assert set(hints[scan]) == {
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
+        OrderPartitioningHint(
+            (NamedOrderKey("b", descending=False, nulls_last=False),)
+        ),
+    }
+
+
+def test_repeated_fanout_candidate_is_merged() -> None:
+    scan = make_scan("a", "b")
+    root = Union(
+        scan.schema,
+        None,
+        False,  # noqa: FBT003
+        make_sort(scan, "a"),
+        make_sort(scan, "b"),
+        make_sort(scan, "a"),
+    )
+
+    hints = collect_partitioning_hints(root)
+
+    assert len(hints[scan]) == 2
+    assert set(hints[scan]) == {
+        OrderPartitioningHint(
+            (NamedOrderKey("a", descending=False, nulls_last=False),)
+        ),
+        OrderPartitioningHint(
+            (NamedOrderKey("b", descending=False, nulls_last=False),)
+        ),
+    }

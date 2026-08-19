@@ -471,9 +471,11 @@ void reader_impl::assemble_dict_transcoded_columns(
       // Remap every row's index onto the compact key space in place. Null rows carry a zero index
       // (fill_pruned_offsets); the shift keeps them in range and the null mask (carried by
       // `indices_owner`) still nullifies them in `decode`.
-      auto const d_row_offsets = cudf::detail::make_device_uvector_async(
+      //
+      // These H2D copies are synchronous
+      auto const d_row_offsets = cudf::detail::make_device_uvector(
         chunk_row_offsets, _stream, get_current_device_resource_ref());
-      auto const d_key_counts_prefix = cudf::detail::make_device_uvector_async(
+      auto const d_key_counts_prefix = cudf::detail::make_device_uvector(
         key_counts_prefix, _stream, get_current_device_resource_ref());
       remap_dict_indices_by_chunk(
         indices_owner->mutable_view().data<int32_t>(),

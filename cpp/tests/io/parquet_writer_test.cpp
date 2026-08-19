@@ -1464,9 +1464,9 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
     ASSERT_EQ(fmd.row_groups[0].columns.size(), expected_dictionary.size());
     auto used_dict = [&fmd](size_t col_idx) {
       auto const& encodings = fmd.row_groups[0].columns[col_idx].meta_data.encodings;
-      return not std::all_of(encodings.cbegin(), encodings.cend(), [](auto enc) {
-        return enc != cudf::io::parquet::Encoding::PLAIN_DICTIONARY and
-               enc != cudf::io::parquet::Encoding::RLE_DICTIONARY;
+      return std::any_of(encodings.cbegin(), encodings.cend(), [](auto enc) {
+        return enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+               enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
       });
     };
 

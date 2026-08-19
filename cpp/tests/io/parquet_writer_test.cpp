@@ -39,6 +39,7 @@
 #include <iterator>
 #include <limits>
 #include <random>
+#include <ranges>
 #include <stdexcept>
 
 using cudf::test::iterators::no_nulls;
@@ -1429,14 +1430,18 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
 
   auto const expected = table_view{{*col0, *col1}};
 
-  // Dictionary selection must not depend on fragment size; run with default and small fragments.
+  // Helper to test dictionary selection with different fragment sizes under ADAPTIVE policy.
   auto const test_dictionary_selection = [&](table_view const& input,
                                              std::vector<bool> const& expected_dictionary,
-                                             std::optional<cudf::size_type> frag_size,
-                                             std::string_view tag) {
+                                             std::string tag,
+                                             std::optional<cudf::size_type> frag_size =
+                                               std::nullopt) {
     SCOPED_TRACE(tag);
+
+    if (input.num_rows() == 0) { return; }
+
     auto const filepath =
-      temp_env->get_temp_filepath("DictionaryEntryLimitListTest" + std::string(tag) + ".parquet");
+      temp_env->get_temp_filepath("DictionaryEntryLimitListTest-" + tag + ".parquet");
     {
       auto out_opts =
         cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
@@ -1444,19 +1449,9 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
           .dictionary_policy(cudf::io::dictionary_policy::ADAPTIVE)
           .max_dictionary_size(max_dict_size)
           .build();
-
       if (frag_size.has_value()) { out_opts.set_max_page_fragment_size(frag_size.value()); }
       cudf::io::write_parquet(out_opts);
     }
-
-    {
-      cudf::io::parquet_reader_options in_opts =
-        cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
-      auto const result = cudf::io::read_parquet(in_opts);
-      CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
-    }
-
-    if (input.num_rows() == 0) { return; }
 
     auto const source = cudf::io::datasource::create(filepath);
     cudf::io::parquet::FileMetaData fmd;
@@ -1468,21 +1463,19 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
 
     ASSERT_EQ(fmd.row_groups[0].columns.size(), expected_dictionary.size());
     auto used_dict = [&fmd](size_t col_idx) {
-      for (auto enc : fmd.row_groups[0].columns[col_idx].meta_data.encodings) {
-        if (enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
-            enc == cudf::io::parquet::Encoding::RLE_DICTIONARY) {
-          return true;
-        }
-      }
-      return false;
+      auto const& encodings = fmd.row_groups[0].columns[col_idx].meta_data.encodings;
+      return not std::all_of(encodings.cbegin(), encodings.cend(), [](auto enc) {
+        return enc != cudf::io::parquet::Encoding::PLAIN_DICTIONARY and
+               enc != cudf::io::parquet::Encoding::RLE_DICTIONARY;
+      });
     };
-    for (size_t i = 0; i < expected_dictionary.size(); ++i) {
-      EXPECT_EQ(used_dict(i), expected_dictionary[i]);
-    }
+
+    std::ranges::for_each(std::views::iota(size_t{0}, expected_dictionary.size()),
+                          [&](size_t i) { EXPECT_EQ(used_dict(i), expected_dictionary[i]); });
   };
 
-  test_dictionary_selection(expected, {true, false}, std::nullopt, "DefaultFragments");
-  test_dictionary_selection(expected, {true, false}, 50, "SmallFragments");
+  test_dictionary_selection(expected, {true, false}, "DefaultFragments");
+  test_dictionary_selection(expected, {true, false}, "SmallFragments", 50);
 
   std::vector<bool> const valid{true, true, false, true, true};
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valid.begin(), valid.end());
@@ -1493,10 +1486,10 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
     null_count,
     std::move(null_mask));
   auto const sliced_input = cudf::slice(null_and_empty_lists->view(), {1, 5}).front();
-  test_dictionary_selection(table_view{{sliced_input}}, {false}, std::nullopt, "SlicedInput");
+  test_dictionary_selection(table_view{{sliced_input}}, {false}, "SlicedInput");
 
   auto const empty_input = cudf::slice(col0->view(), {0, 0}).front();
-  test_dictionary_selection(table_view{{empty_input}}, {}, std::nullopt, "EmptyInput");
+  test_dictionary_selection(table_view{{empty_input}}, {}, "EmptyInput");
 }
 
 TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)

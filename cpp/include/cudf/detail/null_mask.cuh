@@ -166,6 +166,7 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
   // Process one segment per warp.
   auto const segment_id = cudf::detail::grid_1d::global_thread_id() / warp.size();
 
+  // Exit early if this warp doesn't have a valid segment
   if (segment_id >= num_segments) { return; }
 
   auto const segment_start = segment_offsets[segment_id];
@@ -376,8 +377,8 @@ size_type inplace_bitmask_binop(Binop op,
  * @param[in] masks Host span of pointers to source bitmasks to be operated on
  * @param[in] masks_begin_bits The bit offsets from which each source mask is to be operated on
  * @param[in] mask_size_bits The number of bits to be operated on in each mask
- * @param[in] segment_offsets Host span of offsets defining the segments for the operation; must be
- * non-decreasing. An empty segment writes `identity` to its destination mask
+ * @param[in] segment_offsets Host span of offsets defining the segments for the operation. An empty
+ * segment writes `identity` to its destination mask.
  * @param[in] identity Identity element of `op`; the all-set mask for bitwise AND, zero for bitwise
  * OR. Passing a value that is not the identity of `op` silently changes every segment's result
  * @param[in] stream CUDA stream used for device memory operations and kernel launches

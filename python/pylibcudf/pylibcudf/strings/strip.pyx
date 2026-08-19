@@ -15,6 +15,10 @@ from pylibcudf.libcudf.strings cimport strip as cpp_strip
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.side_type cimport side_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -25,7 +29,7 @@ cpdef Column strip(
     Column input,
     side_type side=side_type.BOTH,
     Scalar to_strip=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Removes the specified characters from the beginning

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,9 +20,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -53,7 +53,7 @@ struct contains_scalar_dispatch {
   template <typename Element>
   std::enable_if_t<!is_nested<Element>(), bool> operator()(column_view const& haystack,
                                                            scalar const& needle,
-                                                           rmm::cuda_stream_view stream) const
+                                                           cuda::stream_ref stream) const
   {
     CUDF_EXPECTS(cudf::have_same_types(haystack, needle),
                  "Scalar and column types must match",
@@ -83,7 +83,7 @@ struct contains_scalar_dispatch {
   template <typename Element>
   std::enable_if_t<is_nested<Element>(), bool> operator()(column_view const& haystack,
                                                           scalar const& needle,
-                                                          rmm::cuda_stream_view stream) const
+                                                          cuda::stream_ref stream) const
   {
     CUDF_EXPECTS(cudf::have_same_types(haystack, needle),
                  "Scalar and column types must match",
@@ -137,7 +137,7 @@ struct contains_scalar_dispatch {
 template <>
 bool contains_scalar_dispatch::operator()<cudf::dictionary32>(column_view const& haystack,
                                                               scalar const& needle,
-                                                              rmm::cuda_stream_view stream) const
+                                                              cuda::stream_ref stream) const
 {
   auto const dict_col = cudf::dictionary_column_view(haystack);
   // first, find the needle in the dictionary's key set
@@ -153,7 +153,7 @@ bool contains_scalar_dispatch::operator()<cudf::dictionary32>(column_view const&
 
 }  // namespace
 
-bool contains(column_view const& haystack, scalar const& needle, rmm::cuda_stream_view stream)
+bool contains(column_view const& haystack, scalar const& needle, cuda::stream_ref stream)
 {
   if (haystack.is_empty()) { return false; }
   if (not needle.is_valid(stream)) { return haystack.has_nulls(); }
@@ -164,7 +164,7 @@ bool contains(column_view const& haystack, scalar const& needle, rmm::cuda_strea
 
 }  // namespace detail
 
-bool contains(column_view const& haystack, scalar const& needle, rmm::cuda_stream_view stream)
+bool contains(column_view const& haystack, scalar const& needle, cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::contains(haystack, needle, stream);

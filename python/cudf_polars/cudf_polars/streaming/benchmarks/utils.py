@@ -129,7 +129,7 @@ class NightlyRole:
 
     type: Literal["nightly"] = dataclasses.field(default="nightly", init=False)
     date: str = dataclasses.field(
-        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
+        default_factory=lambda: datetime.now(UTC).date().isoformat()
     )
 
 

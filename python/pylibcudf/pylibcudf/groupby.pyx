@@ -30,6 +30,13 @@ from .types cimport null_order, null_policy, order, sorted
 from .utils cimport _as_vector, _get_stream, _get_memory_resource
 from cuda.bindings.cyruntime cimport cudaStream_t
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.replace import ReplacePolicy
+    from pylibcudf.scalar import Scalar
+    from pylibcudf.typing import CudaStreamLike
+
 
 __all__ = ["GroupBy", "GroupByRequest"]
 
@@ -49,7 +56,7 @@ cdef class GroupByRequest:
     aggregations : List[Aggregation]
         The list of aggregations to perform.
     """
-    def __init__(self, Column values, list aggregations):
+    def __init__(self, Column values, list aggregations: list[Aggregation]):
         self._values = values
         self._aggregations = aggregations
 
@@ -163,7 +170,10 @@ cdef class GroupBy:
         return group_keys, results
 
     cpdef tuple aggregate(
-        self, list requests, object stream=None, DeviceMemoryResource mr=None
+        self,
+        list requests: list[GroupByRequest],
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None,
     ):
         """Compute aggregations on columns.
 
@@ -204,7 +214,10 @@ cdef class GroupBy:
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
     cpdef tuple scan(
-        self, list requests, object stream=None, DeviceMemoryResource mr=None
+        self,
+        list requests: list[GroupByRequest],
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None,
     ):
         """Compute scans on columns.
 
@@ -246,9 +259,9 @@ cdef class GroupBy:
     cpdef tuple shift(
         self,
         Table values,
-        list offset,
-        list fill_values,
-        object stream=None,
+        list offset: list[int],
+        list fill_values: list[Scalar],
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         """Compute shifts on columns.
@@ -299,8 +312,8 @@ cdef class GroupBy:
     cpdef tuple replace_nulls(
         self,
         Table value,
-        list replace_policies,
-        object stream=None,
+        list replace_policies: list[ReplacePolicy],
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         """Replace nulls in columns.
@@ -341,7 +354,7 @@ cdef class GroupBy:
         )
 
     cpdef tuple get_groups(
-        self, Table values=None, object stream=None, DeviceMemoryResource mr=None
+        self, Table values=None, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
     ):
         """Get the grouped keys and values labels for each row.
 

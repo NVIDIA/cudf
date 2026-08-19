@@ -20,7 +20,6 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
-from .types import NullEquality
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -68,7 +67,7 @@ cdef Column _column_from_gather_map(
 cpdef tuple inner_join(
     Table left_keys,
     Table right_keys,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -116,7 +115,7 @@ cpdef tuple inner_join(
 cpdef tuple left_join(
     Table left_keys,
     Table right_keys,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -164,7 +163,7 @@ cpdef tuple left_join(
 cpdef tuple full_join(
     Table left_keys,
     Table right_keys,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -212,7 +211,7 @@ cpdef tuple full_join(
 cpdef Column left_semi_join(
     Table left_keys,
     Table right_keys,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -263,7 +262,7 @@ cpdef Column left_semi_join(
 cpdef Column left_anti_join(
     Table left_keys,
     Table right_keys,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -595,7 +594,7 @@ cpdef tuple mixed_inner_join(
     Table left_conditional,
     Table right_conditional,
     Expression binary_predicate,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -659,7 +658,7 @@ cpdef tuple mixed_left_join(
     Table left_conditional,
     Table right_conditional,
     Expression binary_predicate,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -723,7 +722,7 @@ cpdef tuple mixed_full_join(
     Table left_conditional,
     Table right_conditional,
     Expression binary_predicate,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -787,7 +786,7 @@ cpdef Column mixed_left_semi_join(
     Table left_conditional,
     Table right_conditional,
     Expression binary_predicate,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -845,7 +844,7 @@ cpdef Column mixed_left_anti_join(
     Table left_conditional,
     Table right_conditional,
     Expression binary_predicate,
-    null_equality nulls_equal: NullEquality,
+    null_equality nulls_equal,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -913,7 +912,7 @@ cdef class FilteredJoin:
     def __cinit__(
         self,
         Table right,
-        null_equality compare_nulls: NullEquality = null_equality.EQUAL,
+        null_equality compare_nulls=null_equality.EQUAL,
         double load_factor=0.5,
         object stream: CudaStreamLike | None = None,
     ) -> None:

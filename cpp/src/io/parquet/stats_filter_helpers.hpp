@@ -212,7 +212,7 @@ class stats_caster_base {
     std::vector<bitmask_type> null_mask;
     cudf::size_type null_count = 0;
 
-    host_column(size_type total_row_groups, rmm::cuda_stream_view stream)
+    host_column(size_type total_row_groups, cuda::stream_ref stream)
       : val{cudf::detail::make_host_vector<T>(total_row_groups, stream)},
         chars{cudf::detail::make_empty_host_vector<char>(initial_chars_capacity, stream)},
         null_mask(cudf::util::div_rounding_up_safe<cudf::size_type>(
@@ -255,7 +255,7 @@ class stats_caster_base {
                              rmm::device_uvector<size_type>>
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr)
     {
       auto offsets =
@@ -270,19 +270,19 @@ class stats_caster_base {
       auto d_chars   = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
       auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr);
       auto d_sizes   = cudf::detail::make_device_uvector_async(sizes, stream, mr);
-      stream.synchronize();  // ensures the vectors are not destroyed before the copy is completed
+      stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
     }
 
     [[nodiscard]] std::unique_ptr<column> inline to_device(cudf::data_type dtype,
-                                                           rmm::cuda_stream_view stream,
+                                                           cuda::stream_ref stream,
                                                            rmm::device_async_resource_ref mr) const
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
         auto null_mask_buffer        = rmm::device_buffer{
           null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
-        stream.synchronize();
+        stream.sync();
         return cudf::make_strings_column(
           val.size(),
           std::make_unique<column>(std::move(d_offsets), rmm::device_buffer{0, stream, mr}, 0),
@@ -293,7 +293,7 @@ class stats_caster_base {
       auto data             = cudf::detail::make_device_uvector_async(val, stream, mr);
       auto null_mask_buffer = rmm::device_buffer{
         null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
-      stream.synchronize();
+      stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
     }
@@ -363,7 +363,7 @@ class stats_expression_converter : public stats_columns_collector {
   stats_expression_converter(ast::expression const& expr,
                              size_type num_columns,
                              bool has_is_null_operator,
-                             rmm::cuda_stream_view stream);
+                             cuda::stream_ref stream);
 
   // Bring all overrides of `visit` from stats_columns_collector into scope
   using stats_columns_collector::visit;

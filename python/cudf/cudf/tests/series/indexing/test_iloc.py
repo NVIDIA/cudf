@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -290,7 +290,7 @@ def test_iloc_decimal():
 
 @pytest.mark.parametrize("indexer", [[1], [0, 2]])
 def test_iloc_integer_categorical_issue_13013(indexer):
-    # https://github.com/rapidsai/cudf/issues/13013
+    # https://github.com/NVIDIA/cudf/issues/13013
     s = pd.Series([0, 1, 2])
     index = pd.Categorical(indexer)
     expect = s.iloc[index]
@@ -300,7 +300,7 @@ def test_iloc_integer_categorical_issue_13013(indexer):
 
 
 def test_iloc_incorrect_boolean_mask_length_issue_13015():
-    # https://github.com/rapidsai/cudf/issues/13015
+    # https://github.com/NVIDIA/cudf/issues/13015
     s = pd.Series([0, 1, 2])
     with pytest.raises(IndexError):
         s.iloc[[True, False]]

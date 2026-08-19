@@ -197,6 +197,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
     auto out_col =
       cudf::strings::detail::make_strings_column(d_indices.begin(), d_indices.end(), stream, mr);
     owned.emplace_back(std::move(out_col));
+    stream.synchronize();
     return std::make_tuple<column_view, owned_columns_t>(owned.front()->view(), std::move(owned));
   }
 

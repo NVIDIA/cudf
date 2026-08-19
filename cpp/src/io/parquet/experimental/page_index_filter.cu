@@ -30,13 +30,13 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/gather.h>
 
 #include <algorithm>
@@ -83,7 +83,7 @@ struct page_stats_caster : public stats_caster_base {
     cudf::device_span<size_type const> page_indices,
     cudf::host_span<size_type const> page_row_offsets,
     cudf::data_type dtype,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
     requires(not cudf::is_compound<T>())
   {
@@ -138,7 +138,7 @@ struct page_stats_caster : public stats_caster_base {
     host_column<bool> const& is_null,
     cudf::device_span<size_type const> page_indices,
     cudf::host_span<size_type const> page_row_offsets,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(
@@ -185,7 +185,7 @@ struct page_stats_caster : public stats_caster_base {
                                    size_type host_null_count,
                                    cudf::device_span<size_type const> page_indices,
                                    cudf::host_span<size_type const> page_row_offsets,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr) const
   {
     // Total number of pages in the column
@@ -250,30 +250,22 @@ struct page_stats_caster : public stats_caster_base {
     auto row_str_chars = rmm::device_buffer(total_bytes, stream, mr);
 
     // Iterator for input (page-level) string chars
-    auto src_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
+    auto const page_offsets =
+      cuda::make_permutation_iterator(page_str_offsets.begin(), page_indices.begin());
+    auto src_iter = cuda::transform_iterator(
+      page_offsets,
       cuda::proclaim_return_type<char*>(
-        [chars        = page_str_chars.begin(),
-         offsets      = page_str_offsets.begin(),
-         page_indices = page_indices.begin()] __device__(std::size_t index) {
-          auto const page_index = page_indices[index];
-          return chars + offsets[page_index];
-        }));
+        [chars = page_str_chars.begin()] __device__(auto offset) { return chars + offset; }));
 
     // Iterator for output (row-level) string chars
-    auto dst_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<char*>(
-        [chars   = reinterpret_cast<char*>(row_str_chars.data()),
-         offsets = row_str_offsets.begin()] __device__(std::size_t index) {
-          return chars + offsets[index];
-        }));
+    auto dst_iter =
+      cuda::transform_iterator(row_str_offsets.begin(),
+                               cuda::proclaim_return_type<char*>(
+                                 [chars = reinterpret_cast<char*>(row_str_chars.data())] __device__(
+                                   auto offset) { return chars + offset; }));
 
     // Iterator for string sizes
-    auto size_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<std::size_t>(
-        [sizes = row_str_sizes.begin()] __device__(std::size_t index) { return sizes[index]; }));
+    auto size_iter = row_str_sizes.begin();
 
     // Gather page-level string chars to row-level string chars
     cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, total_rows, stream);
@@ -296,7 +288,7 @@ struct page_stats_caster : public stats_caster_base {
   template <typename T>
   [[nodiscard]] auto compute_host_data(cudf::size_type schema_idx,
                                        cudf::data_type dtype,
-                                       rmm::cuda_stream_view stream) const
+                                       cuda::stream_ref stream) const
   {
     // Compute column chunk level page count offsets and page level row offsets.
     auto const [page_row_offsets, col_chunk_page_offsets] =
@@ -410,7 +402,7 @@ struct page_stats_caster : public stats_caster_base {
     tuple<std::unique_ptr<column>, std::unique_ptr<column>, std::optional<std::unique_ptr<column>>>
     operator()(cudf::size_type schema_idx,
                cudf::data_type dtype,
-               rmm::cuda_stream_view stream,
+               cuda::stream_ref stream,
                rmm::device_async_resource_ref mr) const
   {
     // List, Struct, Dictionary types are not supported
@@ -425,6 +417,7 @@ struct page_stats_caster : public stats_caster_base {
       // Construct a row indices mapping based on page row offsets.
       auto const page_indices = compute_page_indices_async(
         page_row_offsets, total_rows, stream, cudf::get_current_device_resource_ref());
+      stream.sync();
 
       // For non-strings columns, directly gather the page-level column data and bitmask to the
       // row-level.
@@ -547,7 +540,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
     cudf::size_type schema_idx,
     cudf::data_type dtype,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     // List, Struct, Dictionary types are not supported
@@ -591,6 +584,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
               stream)
           : cudf::detail::make_empty_host_vector<bitmask_type>(0, stream);
 
+      stream.sync();
       auto [row_mask_data, row_mask_bitmask] =
         build_data_and_nullmask<bool>(page_mask->mutable_view(),
                                       page_mask_nullmask.data(),
@@ -847,7 +841,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
   std::span<cudf::data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -990,7 +984,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<input_column_info const> input_columns,
   cudf::size_type row_mask_offset,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   CUDF_FUNC_RANGE();
 
@@ -1015,7 +1009,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
                            row_mask.template begin<bool>() + row_mask_offset + total_rows,
                            cuda::std::identity{},
                            stream)) {
-    return thrust::host_vector<bool>(0, stream);
+    return thrust::host_vector<bool>(0);
   }
 
   // Collect column schema indices from the input columns.
@@ -1032,7 +1026,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     CUDF_LOG_WARN(
       "Encountered missing Parquet offset index for one or more output columns. Skipping page "
       "pruning.");
-    return thrust::host_vector<bool>(0, stream);
+    return thrust::host_vector<bool>(0);
   }
 
   // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
@@ -1176,9 +1170,9 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   //  Copy over search results to host
   auto host_results      = cudf::detail::make_pinned_vector_async(device_data_page_mask, stream);
   auto const total_pages = pinned_page_offsets.size() - num_columns;
-  auto data_page_mask    = thrust::host_vector<bool>(total_pages, stream);
+  auto data_page_mask    = thrust::host_vector<bool>(total_pages);
   auto host_results_iter = host_results.begin();
-  stream.synchronize();
+  stream.sync();
 
   // Discard results for invalid ranges. i.e. ranges starting at the last page of a column and
   // ending at the first page of the next column
@@ -1203,13 +1197,13 @@ template thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_
                      std::span<std::vector<size_type> const> row_group_indices,
                      std::span<input_column_info const> input_columns,
                      cudf::size_type row_mask_offset,
-                     rmm::cuda_stream_view stream) const;
+                     cuda::stream_ref stream) const;
 
 template thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask<
   cudf::mutable_column_view>(cudf::mutable_column_view const& row_mask,
                              std::span<std::vector<size_type> const> row_group_indices,
                              std::span<input_column_info const> input_columns,
                              cudf::size_type row_mask_offset,
-                             rmm::cuda_stream_view stream) const;
+                             cuda::stream_ref stream) const;
 
 }  // namespace cudf::io::parquet::experimental::detail

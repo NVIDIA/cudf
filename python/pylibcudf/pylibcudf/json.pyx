@@ -16,6 +16,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["GetJsonObjectOptions", "get_json_object"]
@@ -37,7 +41,7 @@ cdef class GetJsonObjectOptions:
 
     __hash__ = None
 
-    def get_allow_single_quotes(self):
+    def get_allow_single_quotes(self) -> bool:
         """
         Returns true/false depending on whether single-quotes for representing strings
         are allowed.
@@ -49,7 +53,7 @@ cdef class GetJsonObjectOptions:
         """
         return self.options.get_allow_single_quotes()
 
-    def get_strip_quotes_from_single_strings(self):
+    def get_strip_quotes_from_single_strings(self) -> bool:
         """
         Returns true/false depending on whether individually returned string values have
         their quotes stripped.
@@ -61,7 +65,7 @@ cdef class GetJsonObjectOptions:
         """
         return self.options.get_strip_quotes_from_single_strings()
 
-    def get_missing_fields_as_nulls(self):
+    def get_missing_fields_as_nulls(self) -> bool:
         """
         Whether a field not contained by an object is to be interpreted as null.
 
@@ -122,7 +126,7 @@ cpdef Column get_json_object(
     Column col,
     Scalar json_path,
     GetJsonObjectOptions options=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

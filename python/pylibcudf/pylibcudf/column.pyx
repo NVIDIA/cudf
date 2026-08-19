@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterable, Sequence
 from cython.operator cimport dereference
 
 from cpython.exc cimport PyErr_Occurred
@@ -58,15 +59,19 @@ from .traits cimport (
 from .types cimport DataType, size_of, type_id
 from pylibcudf.types import TypeId
 from .utils cimport _get_stream, _get_memory_resource
+from pylibcudf.typing import SupportsArrayInterface, SupportsCudaArrayInterface
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from .gpumemoryview import _datatype_from_dtype_desc
 from ._interop_helpers import ArrowLike, ColumnMetadata, _ObjectWithArrowMetadata
 
+from itertools import accumulate
 import array
 import functools
 import operator
-from itertools import accumulate
-from typing import Iterable
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 try:
@@ -77,7 +82,12 @@ except ImportError as e:
     pa_err = e
 
 
-__all__ = ["Column", "ListsColumnView", "StructsColumnView", "is_c_contiguous"]
+__all__ = [
+    "Column",
+    "ListsColumnView",
+    "StructsColumnView",
+    "is_c_contiguous",
+]
 
 
 cdef is_iterable(obj):
@@ -157,7 +167,7 @@ class ArrayInterfaceWrapper:
         self.__array_interface__ = iface
 
 
-cdef gpumemoryview _copy_array_to_device(object buf, object stream=None):
+cdef gpumemoryview _copy_array_to_device(object buf, object stream: CudaStreamLike | None = None):
     """
     Copy a host-side array.array buffer to device memory.
 
@@ -178,10 +188,12 @@ cdef gpumemoryview _copy_array_to_device(object buf, object stream=None):
     cdef size_t nbytes = len(mv) * mv.itemsize
     cdef Stream _stream = _get_stream(stream)
 
-    return gpumemoryview(DeviceBuffer.to_device(
+    cdef DeviceBuffer dbuf = DeviceBuffer.to_device(
         <const unsigned char[:nbytes:1]><const unsigned char*>ptr,
         _stream
-    ))
+    )
+    _stream.synchronize()
+    return gpumemoryview(dbuf)
 
 
 def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
@@ -346,7 +358,7 @@ cdef class Column:
     def __init__(
         self, DataType data_type not None, size_type size, object data,
         object mask, size_type null_count, size_type offset,
-        children, bint validate=True
+        children: Iterable[Column], bint validate=True
     ):
         children = list(children)
         if not all(isinstance(c, Column) for c in children):
@@ -406,7 +418,7 @@ cdef class Column:
     def from_arrow(
         obj: ArrowLike,
         dtype: DataType | None = None,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ) -> ArrowLike:
         """
@@ -604,8 +616,8 @@ cdef class Column:
         DeviceBuffer buff,
         DataType dtype,
         size_type size,
-        children,
-    ):
+        children: Iterable[Column],
+    ) -> Column:
         """
         Create a Column from an RMM DeviceBuffer.
 
@@ -813,9 +825,9 @@ cdef class Column:
     def from_scalar(
         Scalar slr,
         size_type size,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """Create a Column from a Scalar.
 
         Parameters
@@ -846,7 +858,7 @@ cdef class Column:
             )
         return Column.from_libcudf(move(c_result), _stream, mr)
 
-    cpdef Scalar to_scalar(self, object stream=None, DeviceMemoryResource mr=None):
+    cpdef Scalar to_scalar(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """
         Return the first value of 1-element column as a Scalar.
 
@@ -882,9 +894,9 @@ cdef class Column:
     def all_null_like(
         Column like,
         size_type size,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """Create an all null column from a template.
 
         Parameters
@@ -921,7 +933,7 @@ cdef class Column:
         tuple shape,
         DataType dtype,
         Column base=None,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
     ):
         """
         Construct a list Column from a gpumemoryview and array
@@ -974,7 +986,11 @@ cdef class Column:
         return nested
 
     @classmethod
-    def from_array_interface(cls, obj, object stream=None):
+    def from_array_interface(
+        cls,
+        obj: SupportsArrayInterface,
+        object stream: CudaStreamLike | None = None,
+    ) -> Column:
         """
         Create a Column from an object implementing the NumPy Array Interface.
 
@@ -1020,6 +1036,7 @@ cdef class Column:
             ptr = <const unsigned char*><uintptr_t>data_ptr
             view = (<const unsigned char[:nbytes]> ptr)[:nbytes]
             dbuf = DeviceBuffer.to_device(view, _stream)
+            _stream.synchronize()
         else:
             dbuf = DeviceBuffer(size=0, stream=_stream)
 
@@ -1028,7 +1045,11 @@ cdef class Column:
         )
 
     @classmethod
-    def from_cuda_array_interface(cls, obj, object stream=None):
+    def from_cuda_array_interface(
+        cls,
+        obj: SupportsCudaArrayInterface,
+        object stream: CudaStreamLike | None = None,
+    ) -> Column:
         """
         Create a Column from an object implementing the CUDA Array Interface.
 
@@ -1067,7 +1088,11 @@ cdef class Column:
         )
 
     @classmethod
-    def from_array(cls, obj, object stream=None):
+    def from_array(
+        cls,
+        obj: SupportsCudaArrayInterface | SupportsArrayInterface,
+        object stream: CudaStreamLike | None = None,
+    ) -> Column:
         """
         Create a Column from any object which supports the NumPy
         or CUDA array interface.
@@ -1113,7 +1138,7 @@ cdef class Column:
     def from_iterable_of_py(
         obj: Iterable,
         dtype: DataType | None = None,
-        object stream=None
+        object stream: CudaStreamLike | None = None
     ) -> Column:
         """
         Create a Column from a Python iterable of scalar values or nested iterables.
@@ -1286,7 +1311,7 @@ cdef class Column:
                     release_arrow_array_raw(raw_host_array_ptr)
 
     @classmethod
-    def struct_from_children(cls, children: Iterable[Column]):
+    def struct_from_children(cls, children: Iterable[Column]) -> Column:
         """
         Create a struct Column from a list of child columns.
 
@@ -1316,7 +1341,7 @@ cdef class Column:
             and reference_child.size() == child.size()
             and reference_child.null_count() == child.null_count()
             # We assume the null masks are equivalent but may be expensive to
-            # check: https://github.com/rapidsai/cudf/pull/19357#issuecomment-3071033448
+            # check: https://github.com/NVIDIA/cudf/pull/19357#issuecomment-3071033448
             for child in children
         ):
             raise ValueError(
@@ -1399,7 +1424,7 @@ cdef class Column:
         """The children of the column."""
         return self._children
 
-    cpdef Column copy(self, object stream=None, DeviceMemoryResource mr=None):
+    cpdef Column copy(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """Create a copy of the column."""
         cdef unique_ptr[column] c_result
         cdef Stream _stream = _get_stream(stream)
@@ -1461,7 +1486,7 @@ cdef class Column:
 
         return PyCapsule_New(<void*>raw_schema_ptr, 'arrow_schema', _release_schema)
 
-    def _to_host_array(self, object stream):
+    def _to_host_array(self, object stream: CudaStreamLike):
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
@@ -1532,7 +1557,7 @@ cdef class ListsColumnView:
         """
         return lists_column_view(self._column.view())
 
-    cpdef Column get_sliced_child(self, object stream=None):
+    cpdef Column get_sliced_child(self, object stream: CudaStreamLike | None = None):
         """
         Get the list elements child properly sliced to match parent's view.
 
@@ -1570,7 +1595,7 @@ cdef class StructsColumnView:
         """
         return structs_column_view(self._column.view())
 
-    cpdef Column get_sliced_child(self, int index, object stream=None):
+    cpdef Column get_sliced_child(self, int index, object stream: CudaStreamLike | None = None):
         """
         Get the struct elements child properly sliced to match parent's view.
 

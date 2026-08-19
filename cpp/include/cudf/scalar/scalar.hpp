@@ -12,8 +12,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <span>
 #include <string_view>
@@ -57,7 +58,7 @@ class scalar {
    * @param is_valid true: set the value to valid. false: set it to null.
    * @param stream CUDA stream used for device memory operations.
    */
-  void set_valid_async(bool is_valid, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  void set_valid_async(bool is_valid, cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Indicates whether the scalar contains a valid value.
@@ -69,7 +70,7 @@ class scalar {
    * @return true Value is valid
    * @return false Value is invalid/null
    */
-  [[nodiscard]] bool is_valid(rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] bool is_valid(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Returns a raw pointer to the validity bool in device memory.
@@ -103,7 +104,7 @@ class scalar {
    * @param mr Device memory resource to use for device memory allocation.
    */
   scalar(scalar const& other,
-         rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+         cuda::stream_ref stream           = cudf::get_default_stream(),
          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -119,7 +120,7 @@ class scalar {
    */
   scalar(data_type type,
          bool is_valid                     = false,
-         rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+         cuda::stream_ref stream           = cudf::get_default_stream(),
          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 };
 
@@ -156,7 +157,7 @@ class fixed_width_scalar : public scalar {
    * @param mr Device memory resource to use for device memory allocation.
    */
   fixed_width_scalar(fixed_width_scalar const& other,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -165,7 +166,7 @@ class fixed_width_scalar : public scalar {
    * @param value New value of scalar.
    * @param stream CUDA stream used for device memory operations.
    */
-  void set_value(T value, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  void set_value(T value, cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Get the value of the scalar.
@@ -173,7 +174,7 @@ class fixed_width_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @return Value of the scalar
    */
-  [[nodiscard]] T value(rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] T value(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Returns a raw pointer to the value in device memory.
@@ -200,7 +201,7 @@ class fixed_width_scalar : public scalar {
    */
   fixed_width_scalar(T value,
                      bool is_valid                     = true,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -213,7 +214,7 @@ class fixed_width_scalar : public scalar {
    */
   fixed_width_scalar(cudf::detail::device_scalar<T>&& data,
                      bool is_valid                     = true,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 };
 
@@ -249,7 +250,7 @@ class numeric_scalar : public detail::fixed_width_scalar<T> {
    * @param mr Device memory resource to use for device memory allocation.
    */
   numeric_scalar(numeric_scalar const& other,
-                 rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                 cuda::stream_ref stream           = cudf::get_default_stream(),
                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -262,7 +263,7 @@ class numeric_scalar : public detail::fixed_width_scalar<T> {
    */
   numeric_scalar(T value,
                  bool is_valid                     = true,
-                 rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                 cuda::stream_ref stream           = cudf::get_default_stream(),
                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -275,7 +276,7 @@ class numeric_scalar : public detail::fixed_width_scalar<T> {
    */
   numeric_scalar(cudf::detail::device_scalar<T>&& data,
                  bool is_valid                     = true,
-                 rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                 cuda::stream_ref stream           = cudf::get_default_stream(),
                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 };
 
@@ -312,7 +313,7 @@ class fixed_point_scalar : public scalar {
    * @param mr Device memory resource to use for device memory allocation.
    */
   fixed_point_scalar(fixed_point_scalar const& other,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -327,7 +328,7 @@ class fixed_point_scalar : public scalar {
   fixed_point_scalar(rep_type value,
                      numeric::scale_type scale,
                      bool is_valid                     = true,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -340,7 +341,7 @@ class fixed_point_scalar : public scalar {
    */
   fixed_point_scalar(rep_type value,
                      bool is_valid                     = true,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -353,7 +354,7 @@ class fixed_point_scalar : public scalar {
    */
   fixed_point_scalar(T value,
                      bool is_valid                     = true,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -368,7 +369,7 @@ class fixed_point_scalar : public scalar {
   fixed_point_scalar(cudf::detail::device_scalar<rep_type>&& data,
                      numeric::scale_type scale,
                      bool is_valid                     = true,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -377,7 +378,7 @@ class fixed_point_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @return The value of the scalar
    */
-  [[nodiscard]] rep_type value(rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] rep_type value(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Get the decimal32, decimal64 or decimal128.
@@ -385,8 +386,7 @@ class fixed_point_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @return The decimal32, decimal64 or decimal128 value
    */
-  [[nodiscard]] T fixed_point_value(
-    rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] T fixed_point_value(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Returns a raw pointer to the value in device memory.
@@ -432,7 +432,7 @@ class string_scalar : public scalar {
    * @param mr Device memory resource to use for device memory allocation.
    */
   string_scalar(string_scalar const& other,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -447,7 +447,7 @@ class string_scalar : public scalar {
    */
   string_scalar(std::string_view string,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -462,7 +462,7 @@ class string_scalar : public scalar {
    */
   string_scalar(value_type const& source,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -477,7 +477,7 @@ class string_scalar : public scalar {
    */
   string_scalar(cudf::detail::device_scalar<value_type>& data,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -493,7 +493,7 @@ class string_scalar : public scalar {
    */
   string_scalar(rmm::device_buffer&& data,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -502,8 +502,7 @@ class string_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @return The value of the scalar in a host std::string
    */
-  [[nodiscard]] std::string to_string(
-    rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] std::string to_string(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Get the value of the scalar as a string_view.
@@ -511,7 +510,7 @@ class string_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @return The value of the scalar as a string_view
    */
-  [[nodiscard]] value_type value(rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] value_type value(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Returns the size of the string in bytes.
@@ -560,7 +559,7 @@ class chrono_scalar : public detail::fixed_width_scalar<T> {
    * @param mr Device memory resource to use for device memory allocation.
    */
   chrono_scalar(chrono_scalar const& other,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -573,7 +572,7 @@ class chrono_scalar : public detail::fixed_width_scalar<T> {
    */
   chrono_scalar(T value,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -586,7 +585,7 @@ class chrono_scalar : public detail::fixed_width_scalar<T> {
    */
   chrono_scalar(cudf::detail::device_scalar<T>&& data,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 };
 
@@ -619,7 +618,7 @@ class timestamp_scalar : public chrono_scalar<T> {
    * @param mr Device memory resource to use for device memory allocation.
    */
   timestamp_scalar(timestamp_scalar const& other,
-                   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                   cuda::stream_ref stream           = cudf::get_default_stream(),
                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -635,7 +634,7 @@ class timestamp_scalar : public chrono_scalar<T> {
   template <typename Duration2>
   timestamp_scalar(Duration2 const& value,
                    bool is_valid,
-                   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                   cuda::stream_ref stream           = cudf::get_default_stream(),
                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -643,7 +642,7 @@ class timestamp_scalar : public chrono_scalar<T> {
    * @param stream CUDA stream used for device memory operations.
    * @return The duration in number of ticks since the UNIX epoch
    */
-  rep_type ticks_since_epoch(rmm::cuda_stream_view stream);
+  rep_type ticks_since_epoch(cuda::stream_ref stream);
 };
 
 /**
@@ -675,7 +674,7 @@ class duration_scalar : public chrono_scalar<T> {
    * @param mr Device memory resource to use for device memory allocation.
    */
   duration_scalar(duration_scalar const& other,
-                  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                  cuda::stream_ref stream           = cudf::get_default_stream(),
                   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -688,7 +687,7 @@ class duration_scalar : public chrono_scalar<T> {
    */
   duration_scalar(rep_type value,
                   bool is_valid,
-                  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                  cuda::stream_ref stream           = cudf::get_default_stream(),
                   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -696,7 +695,7 @@ class duration_scalar : public chrono_scalar<T> {
    * @param stream CUDA stream used for device memory operations.
    * @return The duration in number of ticks
    */
-  rep_type count(rmm::cuda_stream_view stream);
+  rep_type count(cuda::stream_ref stream);
 };
 
 /**
@@ -724,7 +723,7 @@ class list_scalar : public scalar {
    * @param mr Device memory resource to use for device memory allocation.
    */
   list_scalar(list_scalar const& other,
-              rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+              cuda::stream_ref stream           = cudf::get_default_stream(),
               rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -739,7 +738,7 @@ class list_scalar : public scalar {
    */
   list_scalar(cudf::column_view const& data,
               bool is_valid                     = true,
-              rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+              cuda::stream_ref stream           = cudf::get_default_stream(),
               rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -752,7 +751,7 @@ class list_scalar : public scalar {
    */
   list_scalar(cudf::column&& data,
               bool is_valid                     = true,
-              rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+              cuda::stream_ref stream           = cudf::get_default_stream(),
               rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -789,7 +788,7 @@ class struct_scalar : public scalar {
    * @param mr Device memory resource to use for device memory allocation.
    */
   struct_scalar(struct_scalar const& other,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -804,7 +803,7 @@ class struct_scalar : public scalar {
    */
   struct_scalar(table_view const& data,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -819,7 +818,7 @@ class struct_scalar : public scalar {
    */
   struct_scalar(std::span<column_view const> data,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -835,7 +834,7 @@ class struct_scalar : public scalar {
    */
   struct_scalar(table&& data,
                 bool is_valid                     = true,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -863,7 +862,7 @@ class struct_scalar : public scalar {
    */
   static table init_data(table&& data,
                          bool is_valid,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr);
 };
 

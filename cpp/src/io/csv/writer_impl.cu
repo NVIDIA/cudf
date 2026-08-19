@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,9 +32,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
 #include <thrust/logical.h>
@@ -114,7 +114,7 @@ struct escape_strings_fn {
 
 struct column_to_strings_fn {
   explicit column_to_strings_fn(csv_writer_options const& options,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
     : options_(options), stream_(stream), mr_(mr)
   {
@@ -255,7 +255,7 @@ struct column_to_strings_fn {
 
  private:
   csv_writer_options const& options_;
-  rmm::cuda_stream_view stream_;
+  cuda::stream_ref stream_;
   rmm::device_async_resource_ref mr_;
 };
 }  // unnamed namespace
@@ -266,7 +266,7 @@ void write_chunked_begin(data_sink* out_sink,
                          table_view const& table,
                          host_span<std::string const> user_column_names,
                          csv_writer_options const& options,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
 {
   if (options.is_enabled_include_header()) {
@@ -332,7 +332,7 @@ void write_chunked_begin(data_sink* out_sink,
 void write_chunked(data_sink* out_sink,
                    strings_column_view const& str_column_view,
                    csv_writer_options const& options,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
 {
   // algorithm outline:
@@ -403,7 +403,7 @@ void write_csv(data_sink* out_sink,
                table_view const& table,
                host_span<std::string const> user_column_names,
                csv_writer_options const& options,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
 {
   // write header: column names separated by delimiter:
   // (even for tables with no rows)

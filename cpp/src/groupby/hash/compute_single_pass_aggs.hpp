@@ -9,8 +9,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {
 
@@ -40,7 +41,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   bitmask_type const* row_bitmask,
   std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::groupby::detail::hash

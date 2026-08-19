@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -85,7 +85,7 @@ size_t multi_host_buffer_source::host_read(size_t offset, size_t size, uint8_t* 
 }
 
 std::unique_ptr<cudf::io::datasource::buffer> multi_host_buffer_source::device_read(
-  size_t offset, size_t size, rmm::cuda_stream_view stream)
+  size_t offset, size_t size, cuda::stream_ref stream)
 {
   rmm::device_buffer buf(size, stream);
   auto dst        = static_cast<uint8_t*>(buf.data());
@@ -101,7 +101,7 @@ std::unique_ptr<cudf::io::datasource::buffer> multi_host_buffer_source::device_r
 size_t multi_host_buffer_source::device_read(size_t offset,
                                              size_t size,
                                              uint8_t* dst,
-                                             rmm::cuda_stream_view stream)
+                                             cuda::stream_ref stream)
 {
   if (size == 0) { return 0; }
   if (offset < 0 || offset >= offsets_.back()) { throw std::runtime_error("bad offset"); }
@@ -114,7 +114,7 @@ size_t multi_host_buffer_source::device_read(size_t offset,
     auto buffer_offset = offset - offsets_[buffer_index];
     auto src           = addrs_[buffer_index] + buffer_offset;
     auto copy_size     = std::min(buffer_left, bytes_left);
-    CUDF_CUDA_TRY(cudaMemcpyAsync(dst, src, copy_size, cudaMemcpyHostToDevice, stream.value()));
+    CUDF_CUDA_TRY(cudaMemcpyAsync(dst, src, copy_size, cudaMemcpyDefault, stream.get()));
     offset += copy_size;
     dst += copy_size;
     bytes_left -= copy_size;
@@ -126,7 +126,7 @@ size_t multi_host_buffer_source::device_read(size_t offset,
 std::future<size_t> multi_host_buffer_source::device_read_async(size_t offset,
                                                                 size_t size,
                                                                 uint8_t* dst,
-                                                                rmm::cuda_stream_view stream)
+                                                                cuda::stream_ref stream)
 {
   std::promise<size_t> p;
   p.set_value(device_read(offset, size, dst, stream));

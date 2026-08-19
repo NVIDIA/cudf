@@ -11,7 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <span>
 #include <vector>
@@ -21,18 +21,18 @@ namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::concatenate(std::span<column_view
- * const>,rmm::cuda_stream_view,rmm::device_async_resource_ref)
+ * const>,cuda::stream_ref,rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::concatenate(std::span<table_view
- * const>,rmm::cuda_stream_view,rmm::device_async_resource_ref)
+ * const>,cuda::stream_ref,rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr);
 
 }  // namespace detail

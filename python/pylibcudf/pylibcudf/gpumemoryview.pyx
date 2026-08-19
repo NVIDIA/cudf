@@ -3,8 +3,11 @@
 
 from libc.stddef cimport size_t
 from libc.stdint cimport uintptr_t, uint64_t
+from collections.abc import Mapping
+import cython
 import functools
 import operator
+from typing import Any
 
 from .types cimport DataType, size_of, type_id
 
@@ -83,7 +86,7 @@ cdef class gpumemoryview:
         self.nbytes = functools.reduce(operator.mul, cai["shape"]) * itemsize
 
     @property
-    def __cuda_array_interface__(self):
+    def __cuda_array_interface__(self) -> Mapping[str, Any]:
         return self.cai
 
     @property
@@ -95,10 +98,11 @@ cdef class gpumemoryview:
         """
         return self.nbytes
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.cai["shape"][0]
 
-    def byte_slice(self, s):
+    @cython.annotation_typing(False)
+    def byte_slice(self, s: slice) -> gpumemoryview:
         """Return a byte-range sub-view of this buffer.
 
         Parameters

@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -238,14 +239,32 @@ TEST_F(EncodeStringsToVariantTest, SingleRowUnicodeEscape)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
 }
 
-TEST_F(EncodeStringsToVariantTest, SingleRowSurrogatePairEscape)
+TEST_F(EncodeStringsToVariantTest, SingleRowLiteralEmojiPassthrough)
 {
-  // U+1F600 (grinning face emoji) as a UTF-16 surrogate pair, unescaped to 4-byte UTF-8.
+  // A literal (non-escaped) 4-byte UTF-8 emoji is copied through unchanged.
   auto variant = encode({R"({"s":"😀"})"}, {"s"});
 
   auto strs = extract_string(variant->view(), "$.s");
   cudf::test::strings_column_wrapper expected{"\xF0\x9F\x98\x80"};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, SingleRowSurrogatePairEscape)
+{
+  // U+1F600 (grinning face emoji) as a JSON \uD83D\uDE00 UTF-16 surrogate pair escape, which
+  // must be combined and unescaped to its 4-byte UTF-8 encoding.
+  auto variant = encode({R"({"s":"\uD83D\uDE00"})"}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{"\xF0\x9F\x98\x80"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, UnpairedSurrogateEscapeRejected)
+{
+  // A high surrogate with no following low surrogate is not valid UTF-16/8 and must be rejected
+  // rather than silently mis-encoded.
+  EXPECT_THROW(encode({R"({"s":"\uD83D"})"}, {"s"}), std::invalid_argument);
 }
 
 TEST_F(EncodeStringsToVariantTest, NestedObjectFieldValueRejected)

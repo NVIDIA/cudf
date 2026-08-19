@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -24,17 +25,19 @@
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/std/cstring>
 #include <cuda/std/optional>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/scan.h>
+#include <thrust/transform.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -411,11 +414,14 @@ __device__ uint8_t* write_json_string_unescaped(char const* s, size_type len, ui
   return out;
 }
 
-// Size in bytes of the VARIANT encoding for one JSON scalar value string. Sets *error_flag (via
-// atomicExch) and returns a harmless placeholder size if `raw` is not a legal scalar (nested
-// object/array or malformed literal) or contains an invalid string escape; callers must check
-// the flag after the kernel completes and fail the whole encode rather than trust the size.
-__device__ size_type encoded_field_size(cudf::string_view raw, int32_t* error_flag)
+// Size in bytes of the VARIANT encoding for one JSON scalar value string. If `error_flag` is
+// non-null, sets *error_flag (via atomicExch) and returns a harmless placeholder size when `raw`
+// is not a legal scalar (nested object/array or malformed literal) or contains an invalid string
+// escape; callers passing a non-null flag must check it after the kernel completes and fail the
+// whole encode rather than trust the size. Callers that have already validated every row via a
+// prior checked pass (see write_values_kernel) may pass nullptr, since INVALID cannot recur for
+// the same input.
+__device__ size_type encoded_field_size(cudf::string_view raw, int32_t* error_flag = nullptr)
 {
   switch (classify_scalar(raw)) {
     case scalar_kind::NUL:
@@ -425,7 +431,7 @@ __device__ size_type encoded_field_size(cudf::string_view raw, int32_t* error_fl
       size_type str_len        = static_cast<size_type>(raw.size_bytes()) - 2;
       auto const unescaped_len = json_string_unescaped_size(raw.data() + 1, str_len);
       if (!unescaped_len.has_value()) {
-        atomicExch(error_flag, 1);
+        if (error_flag != nullptr) { atomicExch(error_flag, 1); }
         return 1;
       }
       if (*unescaped_len <= 63) { return 1 + *unescaped_len; }  // SHORT_STRING
@@ -434,7 +440,9 @@ __device__ size_type encoded_field_size(cudf::string_view raw, int32_t* error_fl
     case scalar_kind::FLOAT:
     case scalar_kind::INT: return 9;  // header + 8-byte double/int64
     case scalar_kind::INVALID:
-    default: atomicExch(error_flag, 1); return 1;
+    default:
+      if (error_flag != nullptr) { atomicExch(error_flag, 1); }
+      return 1;
   }
 }
 
@@ -524,7 +532,7 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void compute_value_sizes_kernel
   size_type num_rows,
   size_type num_fields,
   bitmask_type const* input_null_mask,
-  device_span<size_type> value_sizes,
+  device_span<int64_t> value_sizes,
   int32_t* error_flag)
 {
   auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size_encode>();
@@ -536,8 +544,8 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void compute_value_sizes_kernel
       continue;
     }
 
-    size_type n_present    = 0;
-    size_type values_bytes = 0;
+    size_type n_present  = 0;
+    int64_t values_bytes = 0;
 
     for (size_type si = 0; si < num_fields; ++si) {
       auto const orig = sorted_to_original[si];
@@ -549,7 +557,9 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void compute_value_sizes_kernel
 
     // 1 (value_metadata) + NUM_ELEMENTS_SIZE + n_present*FIELD_ID_SIZE
     // + (n_present+1)*FIELD_OFFSET_SIZE + values_bytes
-    value_sizes[row] = 1 + NUM_ELEMENTS_SIZE + n_present * FIELD_ID_SIZE +
+    // Accumulated as int64_t: a row's total blob size (dominated by values_bytes, which sums
+    // per-field encoded sizes that can each be up to ~4 GB) can exceed the int32 size_type range.
+    value_sizes[row] = int64_t{1} + NUM_ELEMENTS_SIZE + n_present * FIELD_ID_SIZE +
                        (n_present + 1) * FIELD_OFFSET_SIZE + values_bytes;
   }
 }
@@ -566,8 +576,7 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
   size_type num_fields,
   bitmask_type const* input_null_mask,
   device_span<size_type const> value_offsets,
-  uint8_t* output,
-  int32_t* error_flag)
+  uint8_t* output)
 {
   auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size_encode>();
   auto const stride = cudf::detail::grid_1d::grid_stride<block_size_encode>();
@@ -602,7 +611,7 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
       auto const orig = sorted_to_original[si];
       if (extracted[orig].is_null(row)) { continue; }
       write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);
-      cur_offset += encoded_field_size(extracted[orig].element<cudf::string_view>(row), error_flag);
+      cur_offset += encoded_field_size(extracted[orig].element<cudf::string_view>(row));
     }
     write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);  // sentinel
 
@@ -823,21 +832,28 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
     cudf::detail::make_device_uvector(h_views, stream, cudf::get_current_device_resource_ref());
 
   // ── Input null mask ───────────────────────────────────────────────────────
-  // ── Input null mask ───────────────────────────────────────────────────────
   size_type const null_count = input.null_count();
-  // copy_bitmask handles input.offset() and yields an offset-free mask
+  // copy_bitmask handles input.offset() and yields an offset-free mask. This is an internal
+  // scratch buffer (never adopted into the returned column), so it is allocated against the
+  // current device resource rather than the caller-supplied `mr`.
   rmm::device_buffer owned_null_mask =
-    (null_count > 0) ? cudf::detail::copy_bitmask(
-                         input.null_mask(), input.offset(), input.offset() + num_rows, stream, mr)
+    (null_count > 0) ? cudf::detail::copy_bitmask(input.null_mask(),
+                                                  input.offset(),
+                                                  input.offset() + num_rows,
+                                                  stream,
+                                                  cudf::get_current_device_resource_ref())
                      : rmm::device_buffer{};
   bitmask_type const* input_null_mask =
     (null_count > 0) ? static_cast<bitmask_type const*>(owned_null_mask.data()) : nullptr;
 
   // ── Compute per-row value blob sizes ─────────────────────────────────────
-  rmm::device_uvector<size_type> value_sizes(
+  // Accumulated as int64_t: the sum of per-row blob sizes across the whole column can exceed
+  // the int32 size_type range even though the final list-column offsets must be int32.
+  rmm::device_uvector<int64_t> value_sizes(
     num_rows, stream, cudf::get_current_device_resource_ref());
   {
-    rmm::device_scalar<int32_t> error_flag(0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<int32_t> error_flag(
+      0, stream, cudf::get_current_device_resource_ref());
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
     compute_value_sizes_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
       d_views,
@@ -856,30 +872,40 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   }
 
   // ── Prefix-sum to get per-row value offsets ───────────────────────────────
-  rmm::device_uvector<size_type> value_offsets(num_rows + 1, stream, mr);
+  // Scanned in int64_t first so overflow can be detected before truncating into the int32
+  // offsets that the VARIANT value list<uint8> column requires.
+  rmm::device_uvector<int64_t> value_offsets_wide(
+    num_rows + 1, stream, cudf::get_current_device_resource_ref());
   {
-    auto const zero = size_type{0};
-    cudf::detail::cuda_memcpy_async(device_span<size_type>{value_offsets.data(), 1},
-                                    host_span<size_type const>{&zero, 1},
-                                    stream);
+    CUDF_CUDA_TRY(cudaMemsetAsync(value_offsets_wide.data(), 0, sizeof(int64_t), stream.value()));
     thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            value_sizes.begin(),
                            value_sizes.end(),
-                           value_offsets.begin() + 1);
+                           value_offsets_wide.begin() + 1);
   }
 
-  // ── Allocate and write value blobs ────────────────────────────────────────
-  size_type total_value_bytes{};
-  cudf::detail::cuda_memcpy(host_span<size_type>{&total_value_bytes, 1},
-                            device_span<size_type const>{value_offsets.data() + num_rows, 1},
+  int64_t total_value_bytes_wide{};
+  cudf::detail::cuda_memcpy(host_span<int64_t>{&total_value_bytes_wide, 1},
+                            device_span<int64_t const>{value_offsets_wide.data() + num_rows, 1},
                             stream);
+  CUDF_EXPECTS(total_value_bytes_wide <= std::numeric_limits<size_type>::max(),
+               "encode_strings_to_variant output exceeds the VARIANT value list<uint8> column "
+               "size limit (a LIST column's offsets are always 32-bit)",
+               std::overflow_error);
+  size_type const total_value_bytes = static_cast<size_type>(total_value_bytes_wide);
 
+  // Narrow the validated wide offsets down to the int32 offsets the list column needs.
+  rmm::device_uvector<size_type> value_offsets(num_rows + 1, stream, mr);
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    value_offsets_wide.begin(),
+                    value_offsets_wide.end(),
+                    value_offsets.begin(),
+                    cuda::proclaim_return_type<size_type>(
+                      [] __device__(int64_t v) { return static_cast<size_type>(v); }));
+
+  // ── Allocate and write value blobs ────────────────────────────────────────
   auto value_child_data = rmm::device_buffer(static_cast<size_t>(total_value_bytes), stream, mr);
   if (total_value_bytes > 0) {
-    // Values were already validated by compute_value_sizes_kernel above; this flag is only
-    // written defensively and is not checked again.
-    rmm::device_scalar<int32_t> write_error_flag(
-      0, stream, cudf::get_current_device_resource_ref());
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
     write_values_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
       d_views,
@@ -888,8 +914,7 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
       num_fields,
       input_null_mask,
       device_span<size_type const>{value_offsets.data(), static_cast<size_t>(num_rows + 1)},
-      static_cast<uint8_t*>(value_child_data.data()),
-      write_error_flag.data());
+      static_cast<uint8_t*>(value_child_data.data()));
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 

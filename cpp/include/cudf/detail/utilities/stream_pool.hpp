@@ -37,18 +37,18 @@ class cuda_stream_pool {
    * @note Use `get_streams` to obtain multiple streams. Repeated single-stream requests are not
    * guaranteed to return different streams.
    *
-   * @return Stream view.
+   * @return Stream reference.
    */
   virtual cuda::stream_ref get_stream() = 0;
 
   /**
-   * @brief Get a set of `cuda_stream_view` objects from the pool.
+   * @brief Get a set of `cuda::stream_ref` objects from the pool.
    *
    * The returned streams are distinct unless `count` is greater than the maximum number of streams
    * the pool provides, in which case streams are repeated.
    *
-   * @param count The number of stream views to return.
-   * @return Vector containing `count` stream views.
+   * @param count The number of stream references to return.
+   * @return Vector containing `count` stream references.
    */
   virtual std::vector<cuda::stream_ref> get_streams(std::size_t count) = 0;
 
@@ -76,6 +76,8 @@ cuda_stream_pool* create_cuda_stream_pool();
  * The returned streams stay valid for the lifetime of the process and may be used from any thread.
  * Once the thread that obtained them exits its pool is recycled, so another thread can be handed
  * the same streams; holding on to them past that point gives up the isolation the pool provides.
+ *
+ * @return Reference to the calling thread's stream pool for the current device.
  */
 cuda_stream_pool& current_cuda_stream_pool();
 
@@ -83,6 +85,8 @@ cuda_stream_pool& current_cuda_stream_pool();
  * @brief Get the stream pool the calling thread should use for the current device.
  *
  * @deprecated Renamed to `current_cuda_stream_pool`, which does not imply a process-wide pool.
+ *
+ * @return Reference to the calling thread's stream pool for the current device.
  */
 [[deprecated("Use current_cuda_stream_pool instead.")]]  //
 inline cuda_stream_pool&
@@ -92,7 +96,7 @@ global_cuda_stream_pool()
 }
 
 /**
- * @brief Acquire a set of `cuda_stream_view` objects and synchronize them to an event on another
+ * @brief Acquire a set of `cuda::stream_ref` objects and synchronize them to an event on another
  * stream.
  *
  * By default the calling thread's stream pool is used to obtain the streams, so streams are not
@@ -116,8 +120,8 @@ global_cuda_stream_pool()
  * @endcode
  *
  * @param stream Stream that the returned streams will wait on.
- * @param count The number of `cuda_stream_view` objects to return.
- * @return Vector containing `count` stream views.
+ * @param count The number of `cuda::stream_ref` objects to return.
+ * @return Vector containing `count` stream references.
  */
 [[nodiscard]] std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream,
                                                          std::size_t count);

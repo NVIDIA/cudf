@@ -9,6 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/devices>
 #include <cuda/stream>
 
 #include <algorithm>

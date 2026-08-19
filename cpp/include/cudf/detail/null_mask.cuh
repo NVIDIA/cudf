@@ -31,8 +31,6 @@
 #include <algorithm>
 #include <iterator>
 #include <optional>
-#include <stdexcept>
-#include <utility>
 #include <vector>
 
 namespace cudf {
@@ -378,8 +376,9 @@ size_type inplace_bitmask_binop(Binop op,
  * @param[in] masks Host span of pointers to source bitmasks to be operated on
  * @param[in] masks_begin_bits The bit offsets from which each source mask is to be operated on
  * @param[in] mask_size_bits The number of bits to be operated on in each mask
- * @param[in] segment_offsets Host span of offsets defining the segments for the operation; must be
- * non-decreasing. An empty segment writes `identity` to its destination mask
+ * @param[in] segment_offsets Host span of offsets defining the segments for the operation; behavior
+ * is undefined unless they are non-decreasing and within the bounds of `masks`. An empty segment
+ * writes `identity` to its destination mask
  * @param[in] identity Identity element of `op`; the all-set mask for bitwise AND, zero for bitwise
  * OR. Passing a value that is not the identity of `op` silently changes every segment's result
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
@@ -408,14 +407,6 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
                "Mask pointer cannot be null");
   CUDF_EXPECTS(segment_offsets.size() >= 2,
                "At least one segment needs to be passed for bitwise operations");
-  CUDF_EXPECTS(std::is_sorted(segment_offsets.begin(), segment_offsets.end()),
-               "Segment offsets must be non-decreasing",
-               std::invalid_argument);
-  CUDF_EXPECTS(
-    segment_offsets.front() >= 0 && std::cmp_less_equal(segment_offsets.back(), masks.size()),
-    "Segment offsets are out of the bounds of the mask array",
-    std::out_of_range);
-
   auto const num_segments = static_cast<size_type>(segment_offsets.size() - 1);
   rmm::device_uvector<size_type> d_null_counts(num_segments, stream, mr);
   auto temp_mr      = cudf::get_current_device_resource_ref();

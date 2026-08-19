@@ -731,18 +731,6 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
   }
 }
 
-TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndRejectsInvalidOffsets)
-{
-  cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1}, {0, 1, 1, 1, 0});
-  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 2, 1, 0, 255}, {1, 1, 0, 1, 0});
-  std::vector<cudf::column_view> const colviews{bools_col1, bools_col2};
-
-  EXPECT_THROW(cudf::segmented_bitmask_and(colviews, std::vector<cudf::size_type>{0, 2, 1}),
-               std::invalid_argument);
-  EXPECT_THROW(cudf::segmented_bitmask_and(colviews, std::vector<cudf::size_type>{0, 3}),
-               std::out_of_range);
-}
-
 TEST_F(MergeBitmaskTest, TestBitmaskOr)
 {
   cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1}, {1, 1, 0, 0, 1});

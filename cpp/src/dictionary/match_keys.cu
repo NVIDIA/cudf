@@ -159,6 +159,78 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
   return {std::move(dictionary_columns), std::move(updated_tables)};
 }
 
+std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
+  std::span<dictionary_column_view const> input,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
+
+  auto temp_mr = cudf::get_current_device_resource_ref();
+  std::vector<cudf::column_view> keys(input.size());
+  std::transform(input.begin(), input.end(), keys.begin(), [](auto& col) { return col.keys(); });
+  auto all_keys = cudf::detail::concatenate(keys, stream, temp_mr);
+
+  auto new_keys = cudf::type_dispatcher(
+    keys.front().type(), unique_keys_dispatch_fn{}, all_keys->view(), stream, temp_mr);
+  auto keys_view = new_keys->view();
+
+  std::vector<std::unique_ptr<column>> result(input.size());
+  std::transform(input.begin(), input.end(), result.begin(), [keys_view, mr, stream](auto& col) {
+    return remap_indices(col, keys_view, stream, mr);
+  });
+  return result;
+}
+
+std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
+match_dictionaries_to_indices(std::vector<table_view> tables,
+                              cuda::stream_ref stream,
+                              rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(not tables.empty(), "expect at least one table", std::invalid_argument);
+
+  // Make a copy of all the column views from each table_view
+  std::vector<std::vector<column_view>> updated_columns;
+  std::transform(tables.begin(), tables.end(), std::back_inserter(updated_columns), [](auto& t) {
+    return std::vector<column_view>(t.begin(), t.end());
+  });
+
+  // Each column in a table must match in type.
+  // Once a dictionary column is found, all the corresponding column_views in the
+  // other table_views are matched. The matched column_views then replace the originals.
+  std::vector<std::unique_ptr<column>> index_columns;
+  auto first_table = tables.front();
+  for (size_type col_idx = 0; col_idx < first_table.num_columns(); ++col_idx) {
+    auto col = first_table.column(col_idx);
+    if (col.type().id() == type_id::DICTIONARY32) {
+      std::vector<dictionary_column_view> dict_views;  // hold all column_views at col_idx
+      std::transform(
+        tables.begin(), tables.end(), std::back_inserter(dict_views), [col_idx](auto& t) {
+          return dictionary_column_view(t.column(col_idx));
+        });
+      // now match the keys and return index columns
+      auto idx_cols = dictionary::detail::match_dictionaries_to_indices(dict_views, stream, mr);
+      // replace the updated_columns vector entries for the set of columns at col_idx
+      auto dict_col_idx = 0;
+      for (auto& v : updated_columns)
+        v[col_idx] = idx_cols[dict_col_idx++]->view();
+      // move the updated index columns into the main output vector
+      std::move(idx_cols.begin(), idx_cols.end(), std::back_inserter(index_columns));
+    }
+  }
+  // All the new column_views are now included in updated_columns
+
+  // Rebuild the table_views from the column_views
+  std::vector<table_view> updated_tables;
+  std::transform(updated_columns.begin(),
+                 updated_columns.end(),
+                 std::back_inserter(updated_tables),
+                 [](auto& v) { return table_view{v}; });
+
+  // Return the new index columns and table_views
+  return {std::move(index_columns), std::move(updated_tables)};
+}
+
 }  // namespace detail
 
 // external API

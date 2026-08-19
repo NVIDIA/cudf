@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import dataclasses
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
 import pylibcudf as plc
@@ -22,16 +22,14 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.traversal import post_traversal
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
-from cudf_polars.streaming.repartition import Repartition
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
     from cudf_polars.dsl.ir import IR
-    from cudf_polars.streaming.base import PartitionInfo
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclass(frozen=True)
 class NamedOrderKey:
     """Named sort key with logical Polars ordering options."""
 
@@ -40,167 +38,98 @@ class NamedOrderKey:
     nulls_last: bool
 
 
-@dataclasses.dataclass(frozen=True)
-class HashPartitioningHint:
-    """
-    Hint that rows should be co-located by equality keys.
-
-    ``peer_partition_count`` is a planning-time estimate of the partition
-    count that may align with a downstream peer input.
-    """
+@dataclass(frozen=True)
+class StrictPartitioningHint:
+    """Hint that a downstream consumer wants strict partitioning by keys."""
 
     keys: tuple[str, ...]
-    peer_partition_count: int | None = None
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclass(frozen=True)
 class OrderPartitioningHint:
-    """
-    Hint that rows should be ordered by a key sequence.
-
-    ``strict_key_count`` means a downstream consumer would benefit from strict
-    partitioning on the first N ordering keys.
-    ``peer_partition_count`` is a planning-time estimate of the partition
-    count that may align with a downstream peer input.
-    """
+    """Hint that upstream rows should be ordered, optionally with a strict prefix."""
 
     keys: tuple[NamedOrderKey, ...]
     strict_key_count: int | None = None
-    peer_partition_count: int | None = None
 
 
-PartitioningHint: TypeAlias = HashPartitioningHint | OrderPartitioningHint
-_MaybeHint: TypeAlias = PartitioningHint | None
-
-__all__ = [
-    "HashPartitioningHint",
-    "NamedOrderKey",
-    "OrderPartitioningHint",
-    "PartitioningHint",
-    "apply_peer_partition_count_hint",
-    "collect_partitioning_hints",
-]
+PartitioningHint: TypeAlias = StrictPartitioningHint | OrderPartitioningHint
 
 
-def collect_partitioning_hints(
-    ir: IR,
-    partition_info: Mapping[IR, PartitionInfo],
-) -> dict[IR, PartitioningHint]:
-    """
-    Collect physical-layout hints for each IR node.
-
-    Parameters
-    ----------
-    ir
-        The IR to collect partitioning hints for.
-    partition_info : Mapping[IR, PartitionInfo]
-        The partition information for each IR node.
-
-    Returns
-    -------
-    The physical-layout hints for each IR node.
-
-    Notes
-    -----
-    The returned hints describe layouts that downstream consumers would prefer,
-    if practical. These hints are not a strict runtime contract.
-    """
-    hints: dict[IR, _MaybeHint] = {}
+def collect_partitioning_hints(ir: IR) -> dict[IR, PartitioningHint]:
+    """Collect non-conflicting upstream partitioning hints for each IR node."""
+    hints: dict[IR, PartitioningHint | None] = {}
     for node in reversed(list(post_traversal([ir]))):
-        for child, hint in _direct_child_hints(node, partition_info):
-            _record_hint(hints, child, hint)
+        for child, child_hint in _construct_child_hints(node):
+            _record_hint(hints, child, child_hint)
 
-        if (current_hint := hints.get(node)) is not None:
-            for child, child_hint in _propagate_hint(node, current_hint):
-                _record_hint(hints, child, child_hint)
+        node_hint = hints.get(node)
+        if (
+            node_hint is None
+            or len(node.children) != 1
+            or not isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
+        ):
+            continue
+
+        remapped = _remap_hint(
+            node_hint,
+            {
+                output_name: binding.name
+                for output_name, binding in column_domain_bindings(node).items()
+                if binding.child_index == 0
+            },
+        )
+        if remapped is not None:
+            _record_hint(hints, node.children[0], remapped)
 
     return {node: hint for node, hint in hints.items() if hint is not None}
 
 
-def apply_peer_partition_count_hint(
-    partition_count: int,
-    hint: PartitioningHint | None,
-) -> int:
-    """Raise *partition_count* to *hint*'s peer count when present."""
-    if hint is None or hint.peer_partition_count is None:
-        return partition_count
-    return max(partition_count, hint.peer_partition_count)
-
-
-def _direct_child_hints(
-    ir: IR,
-    partition_info: Mapping[IR, PartitionInfo],
-) -> tuple[tuple[IR, PartitioningHint], ...]:
-    """Return hints created directly by *ir* for its children."""
+def _construct_child_hints(ir: IR) -> Iterator[tuple[IR, PartitioningHint]]:
+    """Construct hints for the upstream children of *ir*."""
     if isinstance(ir, Sort):
-        hint = _sort_hint(ir)
-        return () if hint is None else ((ir.children[0], hint),)
+        names = _column_names(ir.by)
+        if names is not None:
+            yield (
+                ir.children[0],
+                _order_hint(
+                    names,
+                    tuple(order == plc.types.Order.DESCENDING for order in ir.order),
+                    tuple(
+                        (order == plc.types.Order.ASCENDING)
+                        == (null_order == plc.types.NullOrder.AFTER)
+                        for order, null_order in zip(
+                            ir.order, ir.null_order, strict=True
+                        )
+                    ),
+                ),
+            )
 
-    if isinstance(ir, Join) and ir.options[0] != "Cross":
+    elif isinstance(ir, MapFunction) and ir.name == "hint_sorted":
+        yield ir.children[0], _order_hint(*ir.options)
+
+    elif isinstance(ir, Join) and ir.options[0] != "Cross":
         left_keys = _column_names(ir.left_on)
         right_keys = _column_names(ir.right_on)
-        if left_keys is None or right_keys is None:
-            return ()
-        peer_partition_count = max(
-            partition_info[ir.children[0]].count,
-            partition_info[ir.children[1]].count,
-        )
-        return (
-            (ir.children[0], HashPartitioningHint(left_keys, peer_partition_count)),
-            (ir.children[1], HashPartitioningHint(right_keys, peer_partition_count)),
-        )
+        if left_keys is not None and right_keys is not None:
+            yield ir.children[0], StrictPartitioningHint(left_keys)
+            yield ir.children[1], StrictPartitioningHint(right_keys)
 
-    if isinstance(ir, GroupBy) and not ir.maintain_order:
+    elif isinstance(ir, GroupBy) and not ir.maintain_order:
         keys = _column_names(ir.keys)
-        return () if keys is None else ((ir.children[0], HashPartitioningHint(keys)),)
-
-    return ()
-
-
-def _propagate_hint(
-    ir: IR, hint: PartitioningHint
-) -> tuple[tuple[IR, PartitioningHint], ...]:
-    """Propagate *hint* through nodes whose children may benefit from it."""
-    if len(ir.children) != 1:
-        return ()
-
-    (child,) = ir.children
-    if isinstance(ir, (Projection, Select)):
-        remapped = _remap_hint(hint, _child_zero_remapping(ir))
-    elif isinstance(ir, (Filter, Slice)):
-        remapped = _clear_peer_partition_count(
-            _remap_hint(hint, _child_zero_remapping(ir))
-        )
-    elif isinstance(ir, GroupBy):
-        # Only group-key outputs remap to the child; aggregate outputs stop here.
-        remapped = _remap_hint(hint, _child_zero_remapping(ir))
-    elif isinstance(ir, Repartition) or (
-        isinstance(ir, MapFunction) and ir.name in {"hint_sorted", "rechunk"}
-    ):
-        remapped = _remap_hint(hint, {name: name for name in ir.schema})
-    elif isinstance(ir, MapFunction) and ir.name == "row_index":
-        remapped = _remap_hint(hint, {name: name for name in child.schema})
-    else:
-        remapped = None
-
-    return () if remapped is None else ((child, remapped),)
+        if keys is not None:
+            yield ir.children[0], StrictPartitioningHint(keys)
 
 
-def _sort_hint(ir: Sort) -> OrderPartitioningHint | None:
-    names = _column_names(ir.by)
-    if names is None:
-        return None
+def _order_hint(
+    names: tuple[str, ...],
+    descending: tuple[bool, ...],
+    nulls_last: tuple[bool, ...],
+) -> OrderPartitioningHint:
     return OrderPartitioningHint(
         tuple(
-            NamedOrderKey(
-                name,
-                order == plc.types.Order.DESCENDING,
-                (order == plc.types.Order.ASCENDING)
-                == (null_order == plc.types.NullOrder.AFTER),
-            )
-            for name, order, null_order in zip(
-                names, ir.order, ir.null_order, strict=True
-            )
+            NamedOrderKey(name, desc, null_last)
+            for name, desc, null_last in zip(names, descending, nulls_last, strict=True)
         )
     )
 
@@ -217,41 +146,25 @@ def _column_names(named_exprs: tuple[expr.NamedExpr, ...]) -> tuple[str, ...] | 
 def _remap_hint(
     hint: PartitioningHint, remapping: Mapping[str, str]
 ) -> PartitioningHint | None:
-    if isinstance(hint, HashPartitioningHint):
+    if isinstance(hint, StrictPartitioningHint):
         remapped_names = []
         for name in hint.keys:
             if (new_name := remapping.get(name)) is None:
                 return None
             remapped_names.append(new_name)
-        return dataclasses.replace(hint, keys=tuple(remapped_names))
+        return StrictPartitioningHint(tuple(remapped_names))
 
     remapped_keys = []
     for key in hint.keys:
         new_name = remapping.get(key.name)
         if new_name is None:
             return None
-        remapped_keys.append(dataclasses.replace(key, name=new_name))
-    return dataclasses.replace(hint, keys=tuple(remapped_keys))
-
-
-def _clear_peer_partition_count(
-    hint: PartitioningHint | None,
-) -> PartitioningHint | None:
-    if hint is None or hint.peer_partition_count is None:
-        return hint
-    return dataclasses.replace(hint, peer_partition_count=None)
-
-
-def _child_zero_remapping(ir: IR) -> dict[str, str]:
-    return {
-        output_name: binding.name
-        for output_name, binding in column_domain_bindings(ir).items()
-        if binding.child_index == 0
-    }
+        remapped_keys.append(NamedOrderKey(new_name, key.descending, key.nulls_last))
+    return OrderPartitioningHint(tuple(remapped_keys), hint.strict_key_count)
 
 
 def _record_hint(
-    hints: dict[IR, _MaybeHint],
+    hints: dict[IR, PartitioningHint | None],
     node: IR,
     hint: PartitioningHint,
 ) -> None:
@@ -264,92 +177,47 @@ def _record_hint(
 def _merge_hints(
     left: PartitioningHint, right: PartitioningHint
 ) -> PartitioningHint | None:
-    peer_partition_count = _merge_peer_partition_count(left, right)
-    if isinstance(left, HashPartitioningHint) and isinstance(
-        right, HashPartitioningHint
-    ):
-        hash_keys = _shortest_common_prefix(left.keys, right.keys)
-        return (
-            None
-            if hash_keys is None
-            else HashPartitioningHint(
-                hash_keys, peer_partition_count=peer_partition_count
-            )
-        )
+    if isinstance(left, StrictPartitioningHint):
+        if isinstance(right, StrictPartitioningHint):
+            if _is_prefix(left.keys, right.keys):
+                return left
+            if _is_prefix(right.keys, left.keys):
+                return right
+            return None
+        return _merge_order_with_strict(right, left)
 
-    if isinstance(left, OrderPartitioningHint) and isinstance(
-        right, OrderPartitioningHint
-    ):
-        order_keys = _longest_common_extension(left.keys, right.keys)
-        return (
-            None
-            if order_keys is None
-            else OrderPartitioningHint(
-                order_keys,
-                strict_key_count=_merge_strict_key_count(
-                    left.strict_key_count, right.strict_key_count
-                ),
-                peer_partition_count=peer_partition_count,
-            )
-        )
+    if isinstance(right, StrictPartitioningHint):
+        return _merge_order_with_strict(left, right)
 
-    if isinstance(left, OrderPartitioningHint):
-        order_hint = left
-        assert isinstance(right, HashPartitioningHint)
-        hash_hint = right
+    if _is_prefix(left.keys, right.keys):
+        keys = right.keys
+    elif _is_prefix(right.keys, left.keys):
+        keys = left.keys
     else:
-        assert isinstance(right, OrderPartitioningHint)
-        order_hint = right
-        hash_hint = left
+        return None
+    return OrderPartitioningHint(
+        keys, _merge_strict_key_count(left.strict_key_count, right.strict_key_count)
+    )
+
+
+def _merge_order_with_strict(
+    order_hint: OrderPartitioningHint, strict_hint: StrictPartitioningHint
+) -> OrderPartitioningHint | None:
     order_names = tuple(key.name for key in order_hint.keys)
-    if _is_prefix(hash_hint.keys, order_names) or _is_prefix(
-        order_names, hash_hint.keys
+    if _is_prefix(strict_hint.keys, order_names) or _is_prefix(
+        order_names, strict_hint.keys
     ):
-        strict_key_count = min(len(hash_hint.keys), len(order_names))
-        return dataclasses.replace(
-            order_hint,
-            strict_key_count=_merge_strict_key_count(
-                order_hint.strict_key_count, strict_key_count
-            ),
-            peer_partition_count=peer_partition_count,
+        strict_key_count = min(len(strict_hint.keys), len(order_names))
+        return OrderPartitioningHint(
+            order_hint.keys,
+            _merge_strict_key_count(order_hint.strict_key_count, strict_key_count),
         )
     return None
-
-
-def _merge_peer_partition_count(
-    left: PartitioningHint, right: PartitioningHint
-) -> int | None:
-    counts = [
-        count
-        for count in (left.peer_partition_count, right.peer_partition_count)
-        if count is not None
-    ]
-    return max(counts) if counts else None
 
 
 def _merge_strict_key_count(*counts: int | None) -> int | None:
     count = max((count for count in counts if count is not None), default=0)
     return count or None
-
-
-def _shortest_common_prefix(
-    left: tuple[str, ...], right: tuple[str, ...]
-) -> tuple[str, ...] | None:
-    if _is_prefix(left, right):
-        return left
-    if _is_prefix(right, left):
-        return right
-    return None
-
-
-def _longest_common_extension(
-    left: tuple[NamedOrderKey, ...], right: tuple[NamedOrderKey, ...]
-) -> tuple[NamedOrderKey, ...] | None:
-    if _is_prefix(left, right):
-        return right
-    if _is_prefix(right, left):
-        return left
-    return None
 
 
 def _is_prefix(left: tuple[object, ...], right: tuple[object, ...]) -> bool:

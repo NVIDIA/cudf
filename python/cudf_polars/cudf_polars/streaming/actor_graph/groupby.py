@@ -45,7 +45,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     shutdown_on_error,
 )
 from cudf_polars.streaming.groupby import _has_stable_sorted_agg, combine, decompose
-from cudf_polars.streaming.partitioning_hints import apply_peer_partition_count_hint
 from cudf_polars.streaming.repartition import Repartition
 
 if TYPE_CHECKING:
@@ -56,7 +55,6 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
-    from cudf_polars.streaming.partitioning_hints import PartitioningHint
     from cudf_polars.typing import Schema
 
 
@@ -517,10 +515,8 @@ async def _choose_strategy(
     input_drained: bool,  # noqa: FBT001
     collective_ids: list[int],
     target_partition_size: int,
-    broadcast_limit: int,
     skip_global_comm: bool,  # noqa: FBT001
     maintain_order: bool,  # noqa: FBT001
-    partitioning_hint: PartitioningHint | None,
     tracer: ActorTracer | None,
 ) -> int:
     """
@@ -544,14 +540,10 @@ async def _choose_strategy(
         The collective IDs.
     target_partition_size
         The target partition size.
-    broadcast_limit
-        The maximum size for broadcast join inputs.
     skip_global_comm
         Whether to skip the global communication.
     maintain_order
         Whether the operation should maintain input ordering semantics.
-    partitioning_hint
-        Optional downstream physical-layout hint.
     tracer
         Optional tracer for runtime metrics.
 
@@ -610,14 +602,6 @@ async def _choose_strategy(
     output_count = min(ideal_count, output_count_limit)
     if not use_tree:
         output_count = max(2, output_count, min_row_limit_count)
-        broadcastable_output = (
-            total_estimated_size < broadcast_limit
-            and total_estimated_rows < MAX_ROWS_PER_PARTITION
-        )
-        if not broadcastable_output:
-            output_count = apply_peer_partition_count_hint(
-                output_count, partitioning_hint
-            )
     if tracer is not None:
         tracer.decision = (
             "tree_local"
@@ -641,9 +625,7 @@ async def groupby_actor(
     ch_out: Channel[TableChunk],
     ch_in: Channel[TableChunk],
     target_partition_size: int,
-    broadcast_limit: int,
     collective_ids: list[int],
-    partitioning_hint: PartitioningHint | None,
 ) -> None:
     """
     Dynamic GroupBy or Distinct actor that selects the best strategy at runtime.
@@ -669,12 +651,8 @@ async def groupby_actor(
         The input channel.
     target_partition_size
         The target partition size.
-    broadcast_limit
-        The maximum size for broadcast join inputs.
     collective_ids
         The collective IDs.
-    partitioning_hint
-        Optional downstream physical-layout hint.
     """
     async with shutdown_on_error(
         context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
@@ -745,10 +723,8 @@ async def groupby_actor(
             input_drained,
             collective_ids,
             target_partition_size,
-            broadcast_limit,
             skip_global_comm,
             maintain_order,
-            partitioning_hint,
             tracer,
         )
 
@@ -803,12 +779,6 @@ def _(
     assert len(collective_ids) == 2, (
         f"{type(ir).__name__} requires 2 collective IDs, got {len(collective_ids)}"
     )
-    hint_options = config_options.executor.dynamic_planning.partitioning_hints
-    partitioning_hint = (
-        rec.state["partitioning_hints"].get(ir)
-        if hint_options is not None and hint_options.use_partition_counts
-        else None
-    )
     actors[ir] = [
         groupby_actor(
             rec.state["context"],
@@ -818,9 +788,7 @@ def _(
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             config_options.executor.target_partition_size,
-            config_options.executor.broadcast_limit,
             collective_ids,
-            partitioning_hint,
         )
     ]
 

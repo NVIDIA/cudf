@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, TypedDict
 from cudf_polars.typing import GenericTransformer
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, MutableMapping
+    from collections.abc import MutableMapping
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
@@ -21,7 +21,6 @@ if TYPE_CHECKING:
         PartitionInfo,
         StatsCollector,
     )
-    from cudf_polars.streaming.partitioning_hints import PartitioningHint
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 
@@ -50,8 +49,6 @@ class GenState(TypedDict):
         Partition information.
     fanout_nodes
         Dictionary mapping IR nodes to fanout information.
-    partitioning_hints
-        Physical-layout hints for IR outputs.
     ir_context
         The execution context for the IR node.
     max_concurrent_io_tasks
@@ -67,7 +64,6 @@ class GenState(TypedDict):
     config_options: ConfigOptions[StreamingExecutor]
     partition_info: MutableMapping[IR, PartitionInfo]
     fanout_nodes: dict[IR, FanoutInfo]
-    partitioning_hints: Mapping[IR, PartitioningHint]
     ir_context: IRExecutionContext
     max_concurrent_io_tasks: int
     stats: StatsCollector

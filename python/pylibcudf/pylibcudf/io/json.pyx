@@ -162,7 +162,7 @@ cdef class JsonReaderOptions:
     For details, see `:cpp:class:`cudf::io::json_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> JsonReaderOptionsBuilder:
         """
         Create a JsonReaderOptionsBuilder object
 
@@ -362,6 +362,8 @@ cdef class JsonReaderOptions:
 
 
 cdef class JsonReaderOptionsBuilder:
+    """Builder to build options for ``read_json``."""
+
     cpdef JsonReaderOptionsBuilder byte_range_offset(self, size_t byte_range_offset):
         """
         Set number of bytes to skip from source start.
@@ -701,7 +703,7 @@ cdef class JsonReaderOptionsBuilder:
         self.c_obj.unquoted_control_chars(val)
         return self
 
-    cpdef build(self):
+    cpdef JsonReaderOptions build(self):
         """Create a JsonReaderOptions object"""
         cdef JsonReaderOptions json_options = JsonReaderOptions.__new__(
             JsonReaderOptions
@@ -911,7 +913,7 @@ cdef class JsonWriterOptions:
     For details, see :cpp:class:`cudf::io::json_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> JsonWriterOptionsBuilder:
         """
         Create a JsonWriterOptionsBuilder object
 
@@ -996,6 +998,8 @@ cdef class JsonWriterOptions:
         self.c_obj.set_compression(comptype)
 
 cdef class JsonWriterOptionsBuilder:
+    """Builder to build options for ``write_json``."""
+
     cpdef JsonWriterOptionsBuilder metadata(self, TableWithMetadata tbl_w_meta):
         """
         Sets optional metadata (with column names).

@@ -228,7 +228,7 @@ def test_serialize_cache_miss():
     assert frames[0].nbytes > 0
     assert frames[1].nbytes > 0
 
-    # https://github.com/rapidsai/cudf/pull/18953
+    # https://github.com/NVIDIA/cudf/pull/18953
     # In a multi-GPU setup, we might attempt to deserialize a column
     # whose type we haven't seen before. polars lets you use either the
     # class (`pl.Int8`) or an instance (`pl.Int8()`) in most places

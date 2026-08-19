@@ -4,14 +4,14 @@
 
 The scripts under `java/ci/` build the cuDF Java JAR for every Maven classifier the
 same way locally and in CI (GitHub Actions is only a thin wrapper that adds
-artifact upload/download). Each script pulls the RAPIDS `ci-conda` build image,
+artifact upload/download). Each script pulls the RAPIDS `ci-wheel` build image,
 runs the build in a throwaway container, and writes its output to a host
 directory. No local `docker build` is required, and no GPU is required to build.
 
 ### Prerequisites
 
 1. Docker is installed and the current user can run `docker`.
-2. Network access to pull `rapidsai/ci-conda:<rapids_version>-latest`.
+2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.11`.
 
 ### Local one-command shortcut
 
@@ -90,6 +90,17 @@ per-entry artifact. The separate `java-gather` job downloads them (with
 `merge-multiple: true`, so all subdirs land in a single parent dir), runs
 Step 3, and uploads the combined `cudf_java_maven_repo` artifact.
 
+### Packaging-aware tests (local)
+
+Plain `cd java && mvn test` does not exercise the classifier JAR. Use
+`java/ci/test_packaged_java_local.sh` (or CI entrypoint
+`ci/test_packaged_java.sh`) to run the existing Java tests against a packaged
+JAR. Needs Docker + GPU.
+
+```bash
+./java/ci/test_packaged_java_local.sh --work-dir /tmp/java-build-test
+```
+
 ## Legacy: manual Dockerfile.rocky build (obsolete)
 
 > The `java/ci/Dockerfile.rocky` + `java/ci/build-in-docker.sh` flow below is the
@@ -119,7 +130,7 @@ nvidia-docker run -it cudf-build:12.9.1-devel-rocky8 bash
 You can download the cuDF repo in the docker container or you can mount it into the container.
 Here I choose to download again in the container.
 ```bash
-git clone --recursive https://github.com/rapidsai/cudf.git -b main
+git clone --recursive https://github.com/NVIDIA/cudf.git -b main
 ```
 
 ```bash

@@ -8,7 +8,7 @@ You will need:
    preferred configuration. Or else, use
    [rustup](https://rust-lang.org/tools/install/)
 2. A [cudf development
-   environment](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
+   environment](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
    The combined devcontainer works, or whatever your favourite approach is.
 
 ```{note}

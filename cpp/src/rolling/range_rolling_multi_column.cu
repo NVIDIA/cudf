@@ -22,13 +22,13 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/copy.h>
 
 #include <memory>
@@ -96,7 +96,7 @@ void select_and_write_offsets(range_window_type const& preceding,
                               mutable_column_view preceding_view,
                               mutable_column_view following_view,
                               size_type num_rows,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   // Write the offsets to the output columns
   auto const write_offsets = [&](auto offset_fn) {
@@ -159,7 +159,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   host_span<null_order const> null_orders,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

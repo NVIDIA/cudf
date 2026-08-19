@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,6 @@ template size_type streaming_groupby::impl::probe_and_insert_first_batch<true>(
   size_type* target_indices,
   size_type* slot_offsets,
   size_type* batch_local_indices,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace cudf::groupby

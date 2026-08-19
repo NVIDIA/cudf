@@ -38,6 +38,10 @@ def _contains_fixed_size_rolling_window(value: expr.Expr) -> bool:
     )
 
 
+def _contains_range_rolling_window(value: expr.Expr) -> bool:
+    return any(isinstance(node, expr.RollingWindow) for node in traversal([value]))
+
+
 def _contains_window_only_unary(value: expr.Expr) -> bool:
     return any(
         isinstance(node, expr.UnaryFunction)
@@ -163,6 +167,19 @@ def decompose_single_agg(
                 "window-only unary expressions"
             )
         return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
+    if isinstance(agg, expr.RollingWindow):
+        if context != ExecutionContext.WINDOW:
+            raise NotImplementedError(
+                "Range rolling is not supported in groupby or rolling context"
+            )
+        if _contains_window_only_unary(agg.children[0]) or (
+            _contains_fixed_size_rolling_window(agg.children[0])
+            or _contains_range_rolling_window(agg.children[0])
+        ):
+            raise NotImplementedError(
+                "Range rolling over a window does not support nested window expressions"
+            )
+        return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, expr.UnaryFunction) and agg.name == "null_count":
         (child,) = agg.children
 
@@ -218,6 +235,32 @@ def decompose_single_agg(
             child = agg.children[0]
         else:
             (child,) = agg.children
+        if (
+            context == ExecutionContext.GROUPBY
+            and agg.name in {"first", "last"}
+            and isinstance(child, expr.SortBy)
+        ):
+            for sort_child in child.children:
+                child_aggs, _ = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), sort_child),
+                    name_generator,
+                    is_top=False,
+                    context=context,
+                )
+                if any(nested_agg for _, nested_agg in child_aggs):
+                    raise NotImplementedError(
+                        "Nested aggs in sorted groupby aggregation not supported"
+                    )
+            return [
+                (
+                    named_expr.reconstruct(
+                        expr.SortedAgg(
+                            agg.dtype, agg.name, child.options, *child.children
+                        )
+                    ),
+                    True,
+                )
+            ], named_expr.reconstruct(expr.Col(agg.dtype, name))
         # Fuse drop_nulls().n_unique() into nunique(null_handling=EXCLUDE)
         # rather than materializing a filtered intermediate column.
         if (
@@ -258,7 +301,7 @@ def decompose_single_agg(
                 # first_non_null extracts the selected value, and separately
                 # sum the predicate to validate item cardinality.
                 # TODO: Use libcudf predicated aggregations when available:
-                # https://github.com/rapidsai/cudf/issues/22947
+                # https://github.com/NVIDIA/cudf/issues/22947
                 aggs, _ = decompose_single_agg(
                     expr.NamedExpr(next(name_generator), selected),
                     name_generator,

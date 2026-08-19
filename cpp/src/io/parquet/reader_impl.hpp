@@ -22,7 +22,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -55,7 +55,7 @@ class reader_impl {
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr);
 
   /**
@@ -104,7 +104,7 @@ class reader_impl {
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr);
 
   reader_impl(reader_impl const&)            = delete;
@@ -504,7 +504,7 @@ class reader_impl {
    */
   [[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
     std::span<std::size_t const> num_rows_per_source,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -520,7 +520,7 @@ class reader_impl {
    * @return Synthesized row index column
    */
   [[nodiscard]] std::unique_ptr<column> synthesize_row_index_column(
-    row_range const& read_info, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+    row_range const& read_info, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Computes the names of columns to be read from the file, if specified.
@@ -538,7 +538,7 @@ class reader_impl {
    */
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
 
-  rmm::cuda_stream_view _stream;
+  cuda::stream_ref _stream;
   rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
 
   // Reader configs.

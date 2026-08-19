@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,10 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <limits>
@@ -21,7 +21,7 @@
 
 namespace cudf::groupby {
 
-void streaming_groupby::impl::do_aggregate(table_view const& data, rmm::cuda_stream_view stream)
+void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
   CUDF_EXPECTS(!_invalidated,
                "streaming_groupby is in an invalidated state from a prior failure; "

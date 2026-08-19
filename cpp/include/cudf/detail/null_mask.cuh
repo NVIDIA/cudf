@@ -376,9 +376,8 @@ size_type inplace_bitmask_binop(Binop op,
  * @param[in] masks Host span of pointers to source bitmasks to be operated on
  * @param[in] masks_begin_bits The bit offsets from which each source mask is to be operated on
  * @param[in] mask_size_bits The number of bits to be operated on in each mask
- * @param[in] segment_offsets Host span of offsets defining the segments for the operation; behavior
- * is undefined unless they are non-decreasing and within the bounds of `masks`. An empty segment
- * writes `identity` to its destination mask
+ * @param[in] segment_offsets Host span of offsets defining the segments for the operation; must be
+ * non-decreasing. An empty segment writes `identity` to its destination mask
  * @param[in] identity Identity element of `op`; the all-set mask for bitwise AND, zero for bitwise
  * OR. Passing a value that is not the identity of `op` silently changes every segment's result
  * @param[in] stream CUDA stream used for device memory operations and kernel launches

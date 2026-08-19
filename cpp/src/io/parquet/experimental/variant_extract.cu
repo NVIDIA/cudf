@@ -657,7 +657,6 @@ constexpr int block_size = 256;
  * `d_sizes[row]` and its offset within the row's value blob to `d_src_offsets[row]`. Rows that are
  * null, or whose path does not resolve, are marked null in `d_null_mask` with a size of 0.
  */
-template <bool HasStatus>
 CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
   cudf::lists_column_device_view metadata,
   cudf::lists_column_device_view values,
@@ -665,7 +664,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
   device_span<size_type> d_sizes,
   device_span<size_type> d_src_offsets,
   bitmask_type* d_null_mask,
-  device_span<op_status> d_status)  // only read/written when HasStatus
+  device_span<op_status> d_status)  // empty when no status was requested
 {
   auto const num_rows = static_cast<size_type>(d_sizes.size());
   auto const tid      = cudf::detail::grid_1d::global_thread_id<block_size>();
@@ -675,22 +674,22 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
     if (!cudf::bit_is_set(d_null_mask, row)) {
       d_sizes[row]       = 0;
       d_src_offsets[row] = 0;
-      if constexpr (HasStatus) { d_status[row] = op_status::ROW_NULL; }
+      if (!d_status.empty()) { d_status[row] = op_status::ROW_NULL; }
       continue;
     }
 
     auto const [meta, val] = metadata_and_value_at(metadata, values, row);
     auto const [field, st] = resolve_path(meta, val, path);
 
+    if (!d_status.empty()) { d_status[row] = st; }
+
     if (field.empty()) {
       d_sizes[row]       = 0;
       d_src_offsets[row] = 0;
       cudf::clear_bit(d_null_mask, row);
-      if constexpr (HasStatus) { d_status[row] = st; }
     } else {
       d_sizes[row]       = static_cast<size_type>(field.size());
       d_src_offsets[row] = static_cast<size_type>(field.data() - val.data());
-      if constexpr (HasStatus) { d_status[row] = st; }
     }
   }
 }
@@ -756,19 +755,19 @@ __device__ op_status cast_status_for_primitive(device_span<uint8_t const> val)
 // `get_variant_field` call (rows already marked non-success are propagated without decoding), then
 // overwritten in place with the final per-row status. Callers with no real incoming status must
 // pre-fill every row with `op_status::SUCCESS` before calling.
-template <typename T, bool HasStatus>
+template <typename T>
 CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
   cudf::lists_column_device_view values,
   device_span<T> d_output,
   bitmask_type* d_null_mask,
-  op_status* d_status)  // only used when HasStatus
+  op_status* d_status)  // nullptr when no status was requested
 {
   auto const num_rows = static_cast<size_type>(d_output.size());
   auto const tid      = cudf::detail::grid_1d::global_thread_id<block_size>();
   auto const stride   = cudf::detail::grid_1d::grid_stride<block_size>();
 
   for (auto row = tid; row < num_rows; row += stride) {
-    if constexpr (HasStatus) {
+    if (d_status != nullptr) {
       // Status column is always non-nullable; row_null replaces the null bit.
       auto const s = d_status[row];
       if (s != op_status::SUCCESS) {
@@ -792,11 +791,11 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
     auto const decoded = decode_primitive<T>(val);
     if (decoded.has_value()) {
       d_output[row] = *decoded;
-      if constexpr (HasStatus) { d_status[row] = op_status::SUCCESS; }
+      if (d_status != nullptr) { d_status[row] = op_status::SUCCESS; }
     } else {
       d_output[row] = T{};
       cudf::clear_bit(d_null_mask, row);
-      if constexpr (HasStatus) { d_status[row] = cast_status_for_primitive<T>(val); }
+      if (d_status != nullptr) { d_status[row] = cast_status_for_primitive<T>(val); }
     }
   }
 }
@@ -863,12 +862,12 @@ struct cast_variant_string_fn {
       // Status column is always non-nullable; row_null replaces the null bit.
       auto const s = d_status[row];
       if (s != op_status::SUCCESS) {
-        if (sizing) { d_sizes[row] = 0; }
+        if (is_sizing_pass) { d_sizes[row] = 0; }
         if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
         return;
       }
       if (!cudf::bit_is_set(d_null_mask, row)) {
-        if (sizing) {
+        if (is_sizing_pass) {
           d_sizes[row]  = 0;
           d_status[row] = op_status::ROW_NULL;
         }
@@ -876,7 +875,7 @@ struct cast_variant_string_fn {
       }
     } else {
       if (!cudf::bit_is_set(d_null_mask, row)) {
-        if (sizing) { d_sizes[row] = 0; }
+        if (is_sizing_pass) { d_sizes[row] = 0; }
         return;
       }
     }
@@ -885,18 +884,18 @@ struct cast_variant_string_fn {
 
     auto const str = decode_string(val);
     if (!str) {
-      if (sizing) { d_sizes[row] = 0; }
+      if (is_sizing_pass) { d_sizes[row] = 0; }
       cudf::clear_bit(d_null_mask, row);
-      if (sizing && d_status) { d_status[row] = cast_status_for_string(val); }
+      if (is_sizing_pass && d_status) { d_status[row] = cast_status_for_string(val); }
       return;
     }
 
-    if (sizing) {
+    if (is_sizing_pass) {
       d_sizes[row] = str->size();
     } else {
       cuda::std::memcpy(d_chars + d_offsets[row], str->data(), str->size());
     }
-    if (sizing && d_status) { d_status[row] = op_status::SUCCESS; }
+    if (is_sizing_pass && d_status) { d_status[row] = op_status::SUCCESS; }
   }
 };
 
@@ -929,15 +928,9 @@ struct cast_variant_fn {
     auto const grid = cudf::detail::grid_1d{num_rows, block_size};
     auto const d_out =
       device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
-    if (d_status != nullptr) {
-      cast_variant_primitive_kernel<T, true>
-        <<<grid.num_blocks, block_size, 0, stream.get()>>>(values, d_out, d_null_mask, d_status);
-      CUDF_CUDA_TRY(cudaGetLastError());
-    } else {
-      cast_variant_primitive_kernel<T, false>
-        <<<grid.num_blocks, block_size, 0, stream.get()>>>(values, d_out, d_null_mask, nullptr);
-      CUDF_CUDA_TRY(cudaGetLastError());
-    }
+    cast_variant_primitive_kernel<T>
+      <<<grid.num_blocks, block_size, 0, stream.get()>>>(values, d_out, d_null_mask, d_status);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
@@ -963,19 +956,19 @@ struct cast_variant_fn {
                       d_out = static_cast<bool*>(data.data()),
                       dnm   = this->d_null_mask,
                       dp_s] __device__(size_type row) {
-                   auto const fail = [&](op_status s) {
-                     d_out[row] = false;
-                     if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
-                     if (dp_s) { dp_s[row] = s; }
-                   };
-                   if (dp_s and dp_s[row] != op_status::SUCCESS) { return fail(dp_s[row]); }
-                   // Status column is always non-nullable; ROW_NULL replaces the null bit.
-                   if (!cudf::bit_is_set(dnm, row)) { return fail(op_status::ROW_NULL); }
-                   auto const val     = list_row_span(vals, row);
-                   auto const decoded = decode_bool(val);
-                   if (!decoded) { return fail(cast_status_for_bool(val)); }
-                   d_out[row] = *decoded;
-                   if (dp_s) { dp_s[row] = op_status::SUCCESS; }
+                       auto const fail = [&](op_status s) {
+                         d_out[row] = false;
+                         if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
+                         if (dp_s) { dp_s[row] = s; }
+                       };
+                       if (dp_s and dp_s[row] != op_status::SUCCESS) { return fail(dp_s[row]); }
+                       // Status column is always non-nullable; ROW_NULL replaces the null bit.
+                       if (!cudf::bit_is_set(dnm, row)) { return fail(op_status::ROW_NULL); }
+                       auto const val     = list_row_span(vals, row);
+                       auto const decoded = decode_bool(val);
+                       if (!decoded) { return fail(cast_status_for_bool(val)); }
+                       d_out[row] = *decoded;
+                       if (dp_s) { dp_s[row] = op_status::SUCCESS; }
                      });
 
     auto const null_count =
@@ -1146,27 +1139,20 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
 
   auto grid = cudf::detail::grid_1d{num_rows, block_size};
 
-  if (status.has_value()) {
-    locate_variant_fields_kernel<true><<<grid.num_blocks, block_size, 0, stream.get()>>>(
-      meta_lists_device_view,
-      val_lists_device_view,
-      *path_device_view,
-      d_sizes,
-      d_src_offsets,
-      d_null_mask,
-      {reinterpret_cast<op_status*>(status->data<uint8_t>()), static_cast<std::size_t>(num_rows)});
-    CUDF_CUDA_TRY(cudaGetLastError());
-  } else {
-    locate_variant_fields_kernel<false>
-      <<<grid.num_blocks, block_size, 0, stream.get()>>>(meta_lists_device_view,
-                                                         val_lists_device_view,
-                                                         *path_device_view,
-                                                         d_sizes,
-                                                         d_src_offsets,
-                                                         d_null_mask,
-                                                         {});
-    CUDF_CUDA_TRY(cudaGetLastError());
-  }
+  auto const d_status =
+    status.has_value()
+      ? device_span<op_status>{reinterpret_cast<op_status*>(status->data<uint8_t>()),
+                               static_cast<std::size_t>(num_rows)}
+      : device_span<op_status>{};
+  locate_variant_fields_kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
+    meta_lists_device_view,
+    val_lists_device_view,
+    *path_device_view,
+    d_sizes,
+    d_src_offsets,
+    d_null_mask,
+    d_status);
+  CUDF_CUDA_TRY(cudaGetLastError());
 
   auto [offsets_column, total_bytes] =
     cudf::strings::detail::make_offsets_child_column(d_sizes.begin(), d_sizes.end(), stream, mr);

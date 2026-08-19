@@ -24,12 +24,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -573,7 +573,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   column_device_view const& d_strings,
   string_view const d_delimiter,
   size_type const max_tokens,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(d_delimiter.size_bytes() > 0, "unexpected delimiter");
@@ -660,7 +660,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   strings_column_view const& input,
   Tokenizer tokenizer,
   DelimiterFn delimiter_fn,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
@@ -676,7 +676,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     auto const num_blocks                = util::div_rounding_up_safe(
       util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
     count_delimiters_kernel<DelimiterFn, block_size, bytes_per_thread>
-      <<<num_blocks, block_size, 0, stream.value()>>>(delimiter_fn, chars_bytes, d_count.data());
+      <<<num_blocks, block_size, 0, stream.get()>>>(delimiter_fn, chars_bytes, d_count.data());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 

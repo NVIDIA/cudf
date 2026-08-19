@@ -326,7 +326,7 @@ def _find_rank_aware_source(scan_fn: Callable[..., Any]) -> RankAwareSource | No
     This reaches into Polars' ``register_io_source`` closure layout (the captured
     source object). It is the only available hook today. When Polars exposes a
     supported way to thread state into a source this should move to it. See
-    https://github.com/rapidsai/cudf/issues/22917.
+    https://github.com/NVIDIA/cudf/issues/22917.
     """
     for cell in getattr(scan_fn, "__closure__", ()):
         source = cell.cell_contents

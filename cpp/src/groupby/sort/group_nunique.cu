@@ -15,7 +15,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace groupby {
@@ -78,8 +77,10 @@ std::unique_ptr<column> group_nunique(column_view const& values,
 
   if (num_groups == 0) { return result; }
 
+  auto temp_mr           = cudf::get_current_device_resource_ref();
   auto const values_view = table_view{{values}};
-  auto const comparator  = cudf::detail::row::equality::self_comparator{values_view, stream};
+  auto const comparator =
+    cudf::detail::row::equality::self_comparator{values_view, stream, temp_mr};
 
   auto const d_values_view = column_device_view::create(values, stream);
 
@@ -92,7 +93,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                     null_handling,
                                     group_offsets.data(),
                                     group_labels.data()};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{values.size()},
                       d_result.begin(),

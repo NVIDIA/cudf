@@ -35,7 +35,6 @@
 #include <thrust/equal.h>
 #include <thrust/execution_policy.h>
 #include <thrust/generate.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/logical.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
@@ -542,10 +541,8 @@ struct column_comparator_impl {
     auto lhs_tview = table_view{{lhs}};
     auto rhs_tview = table_view{{rhs}};
 
-    // TODO: Pass `mr` once two_table_comparator / equality preprocessed_table::create accept
-    // memory_resources instead of allocating from the current device resource.
-    auto const comparator =
-      cudf::detail::row::equality::two_table_comparator{lhs_tview, rhs_tview, stream};
+    auto const comparator = cudf::detail::row::equality::two_table_comparator{
+      lhs_tview, rhs_tview, stream, mr.get_temporary_mr()};
     auto const has_nulls = cudf::has_nulls(lhs_tview) or cudf::has_nulls(rhs_tview);
 
     auto const device_comparator = comparator.equal_to<false>(cudf::nullate::DYNAMIC{has_nulls});
@@ -627,11 +624,11 @@ struct column_comparator_impl<list_view, check_exact_equality> {
     // left side
     size_type lhs_shift =
       cudf::detail::get_value<size_type>(lhs_l.offsets(), lhs_l.offset(), stream);
-    auto lhs_offsets = thrust::make_transform_iterator(
+    auto lhs_offsets = cuda::transform_iterator(
       lhs_l.offsets().begin<size_type>() + lhs_l.offset(),
       cuda::proclaim_return_type<size_type>(
         [lhs_shift] __device__(size_type offset) { return offset - lhs_shift; }));
-    auto lhs_valids = thrust::make_transform_iterator(
+    auto lhs_valids = cuda::transform_iterator(
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::proclaim_return_type<bool>(
         [mask = lhs_l.null_mask(), offset = lhs_l.offset()] __device__(size_type index) {
@@ -641,11 +638,11 @@ struct column_comparator_impl<list_view, check_exact_equality> {
     // right side
     size_type rhs_shift =
       cudf::detail::get_value<size_type>(rhs_l.offsets(), rhs_l.offset(), stream);
-    auto rhs_offsets = thrust::make_transform_iterator(
+    auto rhs_offsets = cuda::transform_iterator(
       rhs_l.offsets().begin<size_type>() + rhs_l.offset(),
       cuda::proclaim_return_type<size_type>(
         [rhs_shift] __device__(size_type offset) { return offset - rhs_shift; }));
-    auto rhs_valids = thrust::make_transform_iterator(
+    auto rhs_valids = cuda::transform_iterator(
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::proclaim_return_type<bool>(
         [mask = rhs_l.null_mask(), offset = rhs_l.offset()] __device__(size_type index) {
@@ -1013,9 +1010,11 @@ std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(column_view
   auto col_span       = cudf::device_span<Rep const>(c.begin<Rep>(), c.size());
   auto host_rep_types = cudf::detail::make_host_vector(col_span, stream);
 
-  auto to_fp = [&](Rep val) { return T{scaled_integer<Rep>{val, scale_type{c.type().scale()}}}; };
-  auto begin = thrust::make_transform_iterator(std::cbegin(host_rep_types), to_fp);
-  auto const host_fixed_points = thrust::host_vector<T>(begin, begin + c.size());
+  auto host_fixed_points = thrust::host_vector<T>(c.size());
+  std::transform(
+    host_rep_types.cbegin(), host_rep_types.cend(), host_fixed_points.begin(), [&](Rep val) {
+      return T{scaled_integer<Rep>{val, scale_type{c.type().scale()}}};
+    });
 
   return {std::move(host_fixed_points), bitmask_to_host(c, stream, mr)};
 }

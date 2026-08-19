@@ -30,12 +30,11 @@
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {
 /**
- * @brief Convenience wrapper for creating a `thrust::transform_iterator` over a
+ * @brief Convenience wrapper for creating a `cuda::transform_iterator` over a
  * `cuda::counting_iterator` within the range [0, INT_MAX].
  *
  *
@@ -65,7 +64,7 @@ CUDF_HOST_DEVICE inline auto make_counting_transform_iterator(CountingIterType s
         cuda::std::numeric_limits<cudf::size_type>::digits,
     "The `start` for the counting_transform_iterator must be size_type or smaller type");
 
-  return thrust::make_transform_iterator(cuda::counting_iterator{start}, f);
+  return cuda::transform_iterator(cuda::counting_iterator{start}, f);
 }
 
 /**
@@ -381,8 +380,8 @@ auto inline make_scalar_iterator(scalar const& scalar_value)
 {
   CUDF_EXPECTS(data_type(type_to_id<Element>()) == scalar_value.type(), "the data type mismatch");
   CUDF_EXPECTS(scalar_value.is_valid(), "the scalar value must be valid");
-  return thrust::make_transform_iterator(cuda::make_constant_iterator<size_type>(0),
-                                         scalar_value_accessor<Element>{scalar_value});
+  return cuda::transform_iterator(cuda::make_constant_iterator<size_type>(0),
+                                  scalar_value_accessor<Element>{scalar_value});
 }
 
 /**
@@ -577,7 +576,7 @@ auto inline make_optional_iterator(scalar const& scalar_value, Nullate has_nulls
 {
   CUDF_EXPECTS(type_id_matches_device_storage_type<Element>(scalar_value.type().id()),
                "the data type mismatch");
-  return thrust::make_transform_iterator(
+  return cuda::transform_iterator(
     cuda::make_constant_iterator<size_type>(0),
     scalar_optional_accessor<Element, Nullate>{scalar_value, has_nulls});
 }
@@ -608,8 +607,8 @@ auto inline make_pair_iterator(scalar const& scalar_value)
 {
   CUDF_EXPECTS(type_id_matches_device_storage_type<Element>(scalar_value.type().id()),
                "the data type mismatch");
-  return thrust::make_transform_iterator(cuda::make_constant_iterator<size_type>(0),
-                                         scalar_pair_accessor<Element>{scalar_value});
+  return cuda::transform_iterator(cuda::make_constant_iterator<size_type>(0),
+                                  scalar_pair_accessor<Element>{scalar_value});
 }
 
 /**

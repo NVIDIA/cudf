@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -87,7 +86,7 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::struc
     std::vector<std::unique_ptr<cudf::column>> output_struct_members;
     for (size_type child_idx = 0; child_idx < num_children; ++child_idx) {
       // Collect children columns from the input structs columns at index `child_idx`.
-      auto const child_iter = thrust::make_transform_iterator(
+      auto const child_iter = cuda::transform_iterator(
         structs_columns.begin(), [&stream = stream, child_idx](auto const& col) {
           return structs_column_view(col).get_sliced_child(child_idx, stream);
         });

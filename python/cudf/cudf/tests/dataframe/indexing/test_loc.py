@@ -98,7 +98,7 @@ def test_multiindex_wildcard_selection_partial():
         pytest.param(
             ["7", "8"],
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/11298"
+                reason="https://github.com/NVIDIA/cudf/issues/11298"
             ),
         ),
     ],
@@ -114,7 +114,7 @@ def test_loc_setitem_string_11298(value):
     assert_eq(df, cdf)
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/11944")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/11944")
 def test_loc_setitem_list_11944():
     df = pd.DataFrame(
         data={"a": ["yes", "no"], "b": [["l1", "l2"], ["c", "d"]]}
@@ -125,7 +125,7 @@ def test_loc_setitem_list_11944():
     assert_eq(df, cdf)
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12504")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12504")
 def test_loc_setitem_extend_empty_12504():
     df = pd.DataFrame(columns=["a"])
     cdf = cudf.from_pandas(df)
@@ -167,7 +167,7 @@ def test_loc_setitem_list_arg_missing_raises():
         pdf.loc[[1], "a"] = 1
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12801")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12801")
 def test_loc_setitem_add_column_partial_12801():
     df = pd.DataFrame({"a": [0, 1, 2]})
     cdf = cudf.from_pandas(df)
@@ -969,7 +969,7 @@ def test_dataframe_indexing_setitem_np_cp_array(
 
 
 class TestLocIndexWithOrder:
-    # https://github.com/rapidsai/cudf/issues/12833
+    # https://github.com/NVIDIA/cudf/issues/12833
     @pytest.fixture(params=["increasing", "decreasing", "neither"])
     def order(self, request):
         return request.param
@@ -1049,7 +1049,7 @@ class TestLocIndexWithOrder:
 
 
 def test_loc_single_row_from_slice():
-    # see https://github.com/rapidsai/cudf/issues/11930
+    # see https://github.com/NVIDIA/cudf/issues/11930
     pdf = pd.DataFrame({"a": [10, 20, 30], "b": [1, 2, 3]}).set_index("a")
     df = cudf.from_pandas(pdf)
     assert_eq(pdf.loc[5:10], df.loc[5:10])
@@ -1085,7 +1085,7 @@ def test_boolean_mask_columns_wrong_length(indexer, mask):
 @pytest.mark.parametrize("index_type", ["single", "slice"])
 def test_loc_timestamp_issue_8585(index_type):
     rng = np.random.default_rng(seed=0)
-    # https://github.com/rapidsai/cudf/issues/8585
+    # https://github.com/NVIDIA/cudf/issues/8585
     start = pd.Timestamp("2021-03-12 00:00")
     end = pd.Timestamp("2021-03-12 11:00")
     timestamps = pd.date_range(start, end, periods=12)
@@ -1110,20 +1110,20 @@ def test_loc_timestamp_issue_8585(index_type):
         pytest.param(
             "slice",
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/8585"
+                reason="https://github.com/NVIDIA/cudf/issues/8585"
             ),
         ),
         pytest.param(
             "date_range",
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/8585"
+                reason="https://github.com/NVIDIA/cudf/issues/8585"
             ),
         ),
     ],
 )
 def test_loc_multiindex_timestamp_issue_8585(index_type):
     rng = np.random.default_rng(seed=0)
-    # https://github.com/rapidsai/cudf/issues/8585
+    # https://github.com/NVIDIA/cudf/issues/8585
     start = pd.Timestamp("2021-03-12 00:00")
     end = pd.Timestamp("2021-03-12 03:00")
     timestamps = pd.date_range(start, end, periods=4)
@@ -1153,7 +1153,7 @@ def test_loc_multiindex_timestamp_issue_8585(index_type):
     "indexer", [(..., 0), (0, ...)], ids=["row_ellipsis", "column_ellipsis"]
 )
 def test_loc_ellipsis_as_slice_issue_13268(indexer):
-    # https://github.com/rapidsai/cudf/issues/13268
+    # https://github.com/NVIDIA/cudf/issues/13268
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
 
@@ -1163,12 +1163,12 @@ def test_loc_ellipsis_as_slice_issue_13268(indexer):
 
 
 @pytest.mark.xfail(
-    reason="https://github.com/rapidsai/cudf/issues/13269 "
-    "and https://github.com/rapidsai/cudf/issues/13273"
+    reason="https://github.com/NVIDIA/cudf/issues/13269 "
+    "and https://github.com/NVIDIA/cudf/issues/13273"
 )
 def test_loc_repeated_column_label_issue_13269():
-    # https://github.com/rapidsai/cudf/issues/13269
-    # https://github.com/rapidsai/cudf/issues/13273
+    # https://github.com/NVIDIA/cudf/issues/13269
+    # https://github.com/NVIDIA/cudf/issues/13273
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
 
@@ -1178,7 +1178,7 @@ def test_loc_repeated_column_label_issue_13269():
 
 
 def test_loc_column_boolean_mask_issue_13270():
-    # https://github.com/rapidsai/cudf/issues/13270
+    # https://github.com/NVIDIA/cudf/issues/13270
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
     expect = df.loc[:, [True, True]]
@@ -1187,7 +1187,7 @@ def test_loc_column_boolean_mask_issue_13270():
 
 
 def test_loc_unsorted_index_slice_lookup_keyerror_issue_12833():
-    # https://github.com/rapidsai/cudf/issues/12833
+    # https://github.com/NVIDIA/cudf/issues/12833
     df = pd.DataFrame({"a": [1, 2, 3]}, index=[7, 0, 4])
     cdf = cudf.from_pandas(df)
 
@@ -1201,7 +1201,7 @@ def test_loc_unsorted_index_slice_lookup_keyerror_issue_12833():
 
 @pytest.mark.parametrize("index", [range(5), list(range(5))])
 def test_loc_missing_label_keyerror_issue_13379(index):
-    # https://github.com/rapidsai/cudf/issues/13379
+    # https://github.com/NVIDIA/cudf/issues/13379
     df = pd.DataFrame({"a": index}, index=index)
     cdf = cudf.from_pandas(df)
     # Check that pandas don't change their mind
@@ -1214,7 +1214,7 @@ def test_loc_missing_label_keyerror_issue_13379(index):
 
 @pytest.mark.parametrize("series", [True, False], ids=["Series", "DataFrame"])
 def test_loc_repeated_label_ordering_issue_13658(series):
-    # https://github.com/rapidsai/cudf/issues/13658
+    # https://github.com/NVIDIA/cudf/issues/13658
     values = range(2048)
     index = [1 for _ in values]
     if series:

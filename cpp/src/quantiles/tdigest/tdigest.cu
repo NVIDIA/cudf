@@ -29,7 +29,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 
@@ -374,7 +373,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
   // if any of the input digests are empty, nullify the corresponding output rows (values will be
   // uninitialized)
   auto [bitmask, null_count] = [stream, mr, &tdv]() {
-    auto tdigest_is_empty = thrust::make_transform_iterator(
+    auto tdigest_is_empty = cuda::transform_iterator(
       detail::size_begin(tdv),
       cuda::proclaim_return_type<size_type>(
         [] __device__(size_type tdigest_size) -> size_type { return tdigest_size == 0; }));

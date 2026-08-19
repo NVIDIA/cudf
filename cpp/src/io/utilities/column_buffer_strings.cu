@@ -12,7 +12,7 @@
 namespace cudf::io::detail {
 
 std::unique_ptr<column> cudf::io::detail::inline_column_buffer::make_string_column_impl(
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // if the size of _string_data is over the threshold for 64bit size_type, _data will contain
   // sizes rather than offsets. need special handling for that case.

@@ -462,6 +462,7 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
         }
       }
 
+      warp.sync();
       if (lane_id == 0) { db->setup_next_mini_block(true); }
       warp.sync();
     }
@@ -782,6 +783,7 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
         }
       }
 
+      warp.sync();
       if (t == 0) { string_lengths.setup_next_mini_block(true); }
       warp.sync();
     }
@@ -951,17 +953,17 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
                                      uint32_t kernel_mask,
                                      bool all_rows,
                                      int level_type_size,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   dim3 const dim_block(preprocess_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    compute_string_page_bounds_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    compute_string_page_bounds_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    compute_string_page_bounds_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    compute_string_page_bounds_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -1003,7 +1005,7 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
 void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pages,
                                      cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
                                      rmm::device_uvector<uint8_t>& temp_string_buf,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   // check for needed temp space for DELTA_BYTE_ARRAY
   auto const need_sizes =
@@ -1374,7 +1376,7 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
                                size_t min_row,
                                size_t num_rows,
                                kernel_error::pointer error_code,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   if (pages.size() == 0) { return; }
 
@@ -1385,13 +1387,13 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   preprocess_string_offsets_kernel<preprocess_block_size, prefetch_size>
-    <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                 chunks,
-                                                 page_string_offset_indices,
-                                                 page_mask,
-                                                 min_row,
-                                                 num_rows,
-                                                 error_code);
+    <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                               chunks,
+                                               page_string_offset_indices,
+                                               page_mask,
+                                               min_row,
+                                               num_rows,
+                                               error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

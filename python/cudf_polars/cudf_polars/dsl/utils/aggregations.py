@@ -38,6 +38,10 @@ def _contains_fixed_size_rolling_window(value: expr.Expr) -> bool:
     )
 
 
+def _contains_range_rolling_window(value: expr.Expr) -> bool:
+    return any(isinstance(node, expr.RollingWindow) for node in traversal([value]))
+
+
 def _contains_window_only_unary(value: expr.Expr) -> bool:
     return any(
         isinstance(node, expr.UnaryFunction)
@@ -163,6 +167,19 @@ def decompose_single_agg(
                 "window-only unary expressions"
             )
         return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
+    if isinstance(agg, expr.RollingWindow):
+        if context != ExecutionContext.WINDOW:
+            raise NotImplementedError(
+                "Range rolling is not supported in groupby or rolling context"
+            )
+        if _contains_window_only_unary(agg.children[0]) or (
+            _contains_fixed_size_rolling_window(agg.children[0])
+            or _contains_range_rolling_window(agg.children[0])
+        ):
+            raise NotImplementedError(
+                "Range rolling over a window does not support nested window expressions"
+            )
+        return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, expr.UnaryFunction) and agg.name == "null_count":
         (child,) = agg.children
 
@@ -284,7 +301,7 @@ def decompose_single_agg(
                 # first_non_null extracts the selected value, and separately
                 # sum the predicate to validate item cardinality.
                 # TODO: Use libcudf predicated aggregations when available:
-                # https://github.com/rapidsai/cudf/issues/22947
+                # https://github.com/NVIDIA/cudf/issues/22947
                 aggs, _ = decompose_single_agg(
                     expr.NamedExpr(next(name_generator), selected),
                     name_generator,

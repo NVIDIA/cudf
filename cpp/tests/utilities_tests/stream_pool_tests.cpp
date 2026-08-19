@@ -68,13 +68,12 @@ TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
 
 TEST_F(StreamPoolTest, RequestLargerThanPoolRepeatsStreams)
 {
-  // The pool is capped below this, so a request this large is served by repeating streams instead
-  // of creating one stream per request.
   auto constexpr count = 128;
 
   auto const streams = get_hashable_streams(count);
   EXPECT_EQ(streams.size(), count);
 
+  // Request this large is served by repeating streams instead of growing the pool
   auto const unique = std::unordered_set<cudaStream_t>(streams.begin(), streams.end());
   EXPECT_LT(unique.size(), count);
 }

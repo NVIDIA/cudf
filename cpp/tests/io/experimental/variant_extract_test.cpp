@@ -31,7 +31,6 @@ namespace avf = cudf::test::apache_variant_fixtures;
 
 namespace {
 
-// ---------------------------------------------------------------------------
 // VARIANT value-header factory helpers.
 //
 // Every VARIANT value begins with a one-byte "value metadata" header. Its bits
@@ -50,39 +49,37 @@ namespace {
 // endianness ambiguity in the bit layout) instead of using magic numbers.
 //
 // [1] https://github.com/apache/parquet-format/blob/master/VariantEncoding.md
-// ---------------------------------------------------------------------------
 using cudf::io::parquet::experimental::variant_basic_type;
 using cudf::io::parquet::experimental::variant_primitive_type;
 
+// Compose a value-metadata header byte from a basic type and its 6-bit value_header.
 constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_header)
 {
   CUDF_EXPECTS(value_header <= 0x3F, "VARIANT value_header must fit in 6 bits");
   return static_cast<uint8_t>(static_cast<uint8_t>(basic) | (value_header << 2));
 }
 
+// Header byte for a primitive value of the given physical type.
 constexpr uint8_t make_variant_primitive(variant_primitive_type type)
 {
   return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));
 }
 
-/**
- * @brief Header byte for a short string of the given length (must fit in 6 bits: 0..63).
- */
+// Header byte for a short string of the given length (must fit in 6 bits: 0..63).
 constexpr uint8_t make_variant_short_string_header(std::size_t length)
 {
   CUDF_EXPECTS(length <= 0x3F, "VARIANT short string length must fit in 6 bits");
   return make_variant_header(variant_basic_type::SHORT_STRING, static_cast<uint8_t>(length));
 }
 
-/**
- * @brief Header byte for an object value with 1-byte field ids and 1-byte offsets
- * (is_large=false), i.e. value_header == 0.
- */
+// Header byte for an object value with 1-byte field ids and 1-byte offsets
+// (is_large=false), i.e. value_header == 0.
 constexpr uint8_t make_variant_object_header()
 {
   return make_variant_header(variant_basic_type::OBJECT, 0);
 }
 
+// Build a struct `column_view` over (metadata, value) without copying.
 inline cudf::column_view wrap_variant_view(cudf::column_view const& metadata,
                                            cudf::column_view const& value)
 {
@@ -97,6 +94,7 @@ inline cudf::column_view wrap_variant_view(cudf::column_view const& metadata,
                            {metadata, value}};
 }
 
+// Wrap a single-row (metadata, value) pair as a VARIANT struct column.
 inline cudf::test::structs_column_wrapper wrap_single_variant(std::vector<uint8_t> const& meta,
                                                               std::vector<uint8_t> const& val)
 {
@@ -105,6 +103,7 @@ inline cudf::test::structs_column_wrapper wrap_single_variant(std::vector<uint8_
   return cudf::test::structs_column_wrapper{{m, v}};
 }
 
+// Wrap an Apache parquet-testing fixture into a single-row VARIANT struct column.
 template <std::size_t M, std::size_t V>
 cudf::test::structs_column_wrapper make_apache_variant(avf::fixture<M, V> const& f)
 {
@@ -113,12 +112,10 @@ cudf::test::structs_column_wrapper make_apache_variant(avf::fixture<M, V> const&
   return cudf::test::structs_column_wrapper{{m, v}};
 }
 
-/**
- * @brief Three-row VARIANT fixture reused by multiple multi-row tests below.
- *   Row 0: dict {x,y}, value { x: INT32(7),  y: "hi"  }
- *   Row 1: dict {x,z}, value { x: INT32(42), z: INT32(99) }
- *   Row 2: dict {y},   value { y: "zzz" }
- */
+// Three-row VARIANT fixture reused by multiple multi-row tests below.
+//   Row 0: dict {x,y}, value { x: INT32(7),  y: "hi"  }
+//   Row 1: dict {x,z}, value { x: INT32(42), z: INT32(99) }
+//   Row 2: dict {y},   value { y: "zzz" }
 inline cudf::test::structs_column_wrapper make_xyz_three_row_variant()
 {
   std::vector<uint8_t> const m1 = {0x01, 0x02, 0x00, 0x01, 0x02, 'x', 'y'};
@@ -428,9 +425,7 @@ TEST_F(ExtractVariantFieldTest, BareNameEqualsDollarPath)
 
 namespace {
 
-/**
- * @brief INT32 primitive blob: primitive int32 header + little-endian 4-byte payload.
- */
+// INT32 primitive blob: primitive int32 header + little-endian 4-byte payload.
 inline std::vector<uint8_t> enc_int32(int32_t v)
 {
   auto const u = static_cast<uint32_t>(v);
@@ -441,6 +436,7 @@ inline std::vector<uint8_t> enc_int32(int32_t v)
           static_cast<uint8_t>((u >> 24) & 0xff)};
 }
 
+// Short-string primitive blob (single-byte header).
 inline std::vector<uint8_t> enc_short_string(std::string_view s)
 {
   CUDF_EXPECTS(s.size() < 64, "short-string length must fit in 6 bits of the single-byte header");
@@ -449,9 +445,7 @@ inline std::vector<uint8_t> enc_short_string(std::string_view s)
   return out;
 }
 
-/**
- * @brief Append `width` little-endian bytes of `bits` to `out`.
- */
+// Append `width` little-endian bytes of `bits` to `out`.
 inline void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
 {
   for (int i = 0; i < width; ++i) {
@@ -459,10 +453,7 @@ inline void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
   }
 }
 
-/**
- * @brief Primitive value blobs (header + fixed payload) for every physical type the cast matrix
- * exercises.
- */
+// Primitive value blobs (header + fixed payload) for every physical type the cast matrix exercises.
 inline std::vector<uint8_t> enc_null()
 {
   return {make_variant_primitive(variant_primitive_type::NULLVAL)};
@@ -500,9 +491,7 @@ inline std::vector<uint8_t> enc_float64(double v)
   return out;
 }
 
-/**
- * @brief Long-string primitive blob: header + 4-byte LE length + payload.
- */
+// Long-string primitive blob: header + 4-byte LE length + payload.
 inline std::vector<uint8_t> enc_long_string(std::string_view s)
 {
   std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::LONG_STRING)};
@@ -513,10 +502,8 @@ inline std::vector<uint8_t> enc_long_string(std::string_view s)
   return out;
 }
 
-/**
- * @brief Build a single-field object value wrapping `inner` under field id `fid`.
- * field_off_size=1, field_id_size=1, is_large=false.
- */
+// Build a single-field object value wrapping `inner` under field id `fid`.
+// field_off_size=1, field_id_size=1, is_large=false.
 inline std::vector<uint8_t> build_single_field_object(uint8_t fid,
                                                       std::vector<uint8_t> const& inner)
 {
@@ -528,12 +515,10 @@ inline std::vector<uint8_t> build_single_field_object(uint8_t fid,
   return out;
 }
 
-/**
- * @brief Build a VARIANT object blob with `n_fields` fields.  Field ids are 0..n_fields-1
- * (in ascending order, matching the dictionary positions) and each field holds a bare INT32 equal
- * to its field id.  Uses 1-byte field_id_size and 1-byte field_off_size; n_fields must be
- * <= 51 so the total value bytes (5 * n_fields) still fit in 1-byte offsets.
- */
+// Build a VARIANT object blob with `n_fields` fields.  Field ids are 0..n_fields-1
+// (in ascending order, matching the dictionary positions) and each field holds a bare INT32 equal
+// to its field id.  Uses 1-byte field_id_size and 1-byte field_off_size; n_fields must be
+// <= 51 so the total value bytes (5 * n_fields) still fit in 1-byte offsets.
 inline std::vector<uint8_t> build_sequential_int32_object(int n_fields)
 {
   std::vector<uint8_t> out{make_variant_object_header(), static_cast<uint8_t>(n_fields)};
@@ -550,9 +535,7 @@ inline std::vector<uint8_t> build_sequential_int32_object(int n_fields)
   return out;
 }
 
-/**
- * @brief Lexicographically ordered dictionary of N zero-padded two-digit keys "k<NN>".
- */
+// Lexicographically ordered dictionary of N zero-padded two-digit keys "k<NN>".
 inline std::vector<std::string> make_numeric_keys(int n)
 {
   std::vector<std::string> out;
@@ -565,11 +548,9 @@ inline std::vector<std::string> make_numeric_keys(int n)
   return out;
 }
 
-/**
- * @brief Wrap per-row (metadata, value) byte vectors into a VARIANT struct column.  Built
- * with make_lists_column + structs_column_wrapper directly so the helper stays
- * self-contained within this test file for dynamic row counts.
- */
+// Wrap per-row (metadata, value) byte vectors into a VARIANT struct column.  Built
+// with make_lists_column + structs_column_wrapper directly so the helper stays
+// self-contained within this test file for dynamic row counts.
 inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
   std::vector<std::vector<uint8_t>> const& meta_rows,
   std::vector<std::vector<uint8_t>> const& val_rows)
@@ -1522,27 +1503,25 @@ struct InvalidInputShapeTest : public cudf::test::BaseFixture {};
 
 namespace {
 
+// A well-formed VARIANT child: a single-row list<uint8> holding `bytes`.
 inline std::unique_ptr<cudf::column> list_u8(std::vector<uint8_t> const& bytes)
 {
   return cudf::test::lists_column_wrapper<uint8_t>(bytes.begin(), bytes.end()).release();
 }
 
-/**
- * @brief A single-row list<int32> (wrong element type for a VARIANT child).
- */
+// A single-row list<int32> (wrong element type for a VARIANT child).
 inline std::unique_ptr<cudf::column> list_i32(std::vector<int32_t> const& values)
 {
   return cudf::test::lists_column_wrapper<int32_t>(values.begin(), values.end()).release();
 }
 
-/**
- * @brief A single-row fixed-width int32 column (a non-list child).
- */
+// A single-row fixed-width int32 column (a non-list child).
 inline std::unique_ptr<cudf::column> scalar_i32()
 {
   return cudf::test::fixed_width_column_wrapper<int32_t>{42}.release();
 }
 
+// A single-row STRUCT column adopting `children`.
 inline std::unique_ptr<cudf::column> struct_of(std::vector<std::unique_ptr<cudf::column>> children)
 {
   return cudf::make_structs_column(1, std::move(children), 0, rmm::device_buffer{});
@@ -1557,6 +1536,7 @@ inline std::vector<std::unique_ptr<cudf::column>> two_children(std::unique_ptr<c
   return v;
 }
 
+// A malformed-shape case: a human-readable label plus the offending column.
 struct broken_shape {
   std::string label;
   std::unique_ptr<cudf::column> column;

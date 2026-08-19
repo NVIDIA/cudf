@@ -358,6 +358,22 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert isinstance(opts.fallback_mode, Unspecified)
 
 
+def test_from_argparse_omitted_flag_still_picks_up_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", "16")
+    monkeypatch.setenv("RAPIDSMPF_NUM_STREAMING_THREADS", "16")
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    args = parser.parse_args([])
+    opts = StreamingOptions._from_argparse(args)
+
+    assert opts.num_py_executors == 16
+    assert opts.to_executor_options()["num_py_executors"] == 16
+    assert opts.num_streaming_threads == 16
+
+
 # ---------------------------------------------------------------------------
 # to_dict / roundtrip
 # ---------------------------------------------------------------------------

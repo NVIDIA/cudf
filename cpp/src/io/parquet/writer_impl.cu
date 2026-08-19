@@ -1374,8 +1374,9 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
     } else {
       chunk.use_dictionary   = true;
       chunk.dict_entry_limit = std::min(chunk.num_values, max_dict_entries);
-      // Each fragment's thread block inserts keys before re-reading the chunk's entry counter, so
-      // up to `num_fragments * dict_encode_block_size` keys can land past `dict_entry_limit`.
+      // Fragment blocks can insert one extra iteration before observing the limit so overshoot by
+      // that amount. In case a thread block inserts two extra iterations, a full cuco static map
+      // still safely rejects.
       auto const overshoot = static_cast<size_t>(chunk.num_fragments) * dict_encode_block_size;
       auto const slack =
         static_cast<size_t>(map_extent(chunk.dict_entry_limit) - chunk.dict_entry_limit);

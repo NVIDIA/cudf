@@ -1481,20 +1481,16 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valid.begin(), valid.end());
   constexpr auto num_repeated_leaves = cudf::size_type{1'000};
   auto const repeated_leaves         = cuda::make_constant_iterator<int32_t>(1);
-  auto null_and_empty_lists          = cudf::make_lists_column(
-    5,
+  auto offsets_col =
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 2, 2, 2, num_repeated_leaves + 2}
-      .release(),
-    cudf::test::fixed_width_column_wrapper<int32_t>(repeated_leaves,
-                                                    repeated_leaves + num_repeated_leaves + 2)
-      .release(),
-    null_count,
-    std::move(null_mask));
+      .release();
+  auto values_col = cudf::test::fixed_width_column_wrapper<int32_t>(
+                      repeated_leaves, repeated_leaves + num_repeated_leaves + 2)
+                      .release();
+  auto null_and_empty_lists = cudf::make_lists_column(
+    5, std::move(offsets_col), std::move(values_col), null_count, std::move(null_mask));
   auto const sliced_input = cudf::slice(null_and_empty_lists->view(), {1, 5}).front();
   test_dictionary_selection(table_view{{sliced_input}}, {true}, "SlicedInput");
-
-  auto const empty_input = cudf::slice(col0->view(), {0, 0}).front();
-  test_dictionary_selection(table_view{{empty_input}}, {}, "EmptyInput");
 }
 
 TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)

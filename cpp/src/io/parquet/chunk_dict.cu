@@ -485,8 +485,8 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cuda::stream_ref stream)
 {
   dim3 const dim_grid(frags.size().second, frags.size().first);
-  populate_chunk_hash_maps_kernel<DEFAULT_BLOCK_SIZE>
-    <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(map_storage, frags);
+  populate_chunk_hash_maps_kernel<dict_encode_block_size>
+    <<<dim_grid, dict_encode_block_size, 0, stream.get()>>>(map_storage, frags);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

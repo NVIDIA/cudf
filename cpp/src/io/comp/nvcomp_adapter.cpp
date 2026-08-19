@@ -21,12 +21,14 @@
 
 #include <mutex>
 
+#define CUDF_NVCOMP_HAS_GZIP_COMPRESSION (NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 3, 0))
+
 namespace cudf::io::detail::nvcomp {
 namespace {
 
 [[nodiscard]] std::string nvcomp_status_to_string(nvcompStatus_t status)
 {
-#if NVCOMP_VER_MAJOR > 5 || (NVCOMP_VER_MAJOR == 5 && NVCOMP_VER_MINOR >= 2)
+#if NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 2, 0)
   if (auto const* str = nvcompGetStatusString(status); str != nullptr) { return str; }
   return "nvcompStatus_t(" + std::to_string(static_cast<int>(status)) + ")";
 #else
@@ -46,7 +48,7 @@ namespace {
     case nvcompStatus_t::nvcompErrorInternal: return "nvcompErrorInternal";
     case nvcompStatus_t::nvcompErrorCannotCompress: return "nvcompErrorCannotCompress";
     case nvcompStatus_t::nvcompErrorWrongInputLength: return "nvcompErrorWrongInputLength";
-#if NVCOMP_VER_MAJOR >= 5 and NVCOMP_VER_MINOR >= 1
+#if NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 1, 0)
     case nvcompStatus_t::nvcompErrorBatchSizeTooLarge: return "nvcompErrorBatchSizeTooLarge";
 #endif
   }
@@ -251,6 +253,15 @@ nvcompStatus_t batched_compress_get_temp_size_async(compression_type compression
                                                       temp_size,
                                                       max_total_uncompressed_bytes);
       break;
+#if CUDF_NVCOMP_HAS_GZIP_COMPRESSION
+    case compression_type::GZIP:
+      return nvcompBatchedGzipCompressGetTempSizeAsync(batch_size,
+                                                       max_uncompressed_chunk_bytes,
+                                                       nvcompBatchedGzipCompressDefaultOpts,
+                                                       temp_size,
+                                                       max_total_uncompressed_bytes);
+      break;
+#endif
     default: UNSUPPORTED_COMPRESSION(compression);
   }
 }
@@ -340,6 +351,21 @@ void batched_compress_async(compression_type compression,
                                                     device_nvcomp_statuses,
                                                     stream.get());
       break;
+#if CUDF_NVCOMP_HAS_GZIP_COMPRESSION
+    case compression_type::GZIP:
+      nvcomp_status = nvcompBatchedGzipCompressAsync(device_uncompressed_ptrs,
+                                                     device_uncompressed_bytes,
+                                                     max_uncompressed_chunk_bytes,
+                                                     batch_size,
+                                                     device_temp_ptr,
+                                                     temp_bytes,
+                                                     device_compressed_ptrs,
+                                                     device_compressed_bytes,
+                                                     nvcompBatchedGzipCompressDefaultOpts,
+                                                     device_nvcomp_statuses,
+                                                     stream.get());
+      break;
+#endif
     default: UNSUPPORTED_COMPRESSION(compression);
   }
   CHECK_NVCOMP_STATUS(nvcomp_status);
@@ -354,6 +380,15 @@ std::optional<std::string> is_compression_disabled_impl(compression_type compres
                                                         feature_status_parameters params)
 {
   switch (compression) {
+    case compression_type::GZIP:
+#if CUDF_NVCOMP_HAS_GZIP_COMPRESSION
+      if (not params.are_stable_integrations_enabled) {
+        return "nvCOMP use is disabled through the `LIBCUDF_NVCOMP_POLICY` environment variable.";
+      }
+      return std::nullopt;
+#else
+      return "GZIP compression requires nvCOMP 5.3 or later";
+#endif
     case compression_type::DEFLATE:
     case compression_type::LZ4:
     case compression_type::SNAPPY:
@@ -588,14 +623,20 @@ size_t compress_max_output_chunk_size(compression_type compression,
         capped_uncomp_bytes, nvcompBatchedSnappyCompressDefaultOpts, &max_comp_chunk_size);
       break;
     case compression_type::DEFLATE:
-    case compression_type::GZIP: {
-      // nvcompBatchedGzipCompressGetMaxOutputChunkSize is not yet available
       status = nvcompBatchedDeflateCompressGetMaxOutputChunkSize(
         capped_uncomp_bytes, nvcompBatchedDeflateCompressDefaultOpts, &max_comp_chunk_size);
-      if (compression == compression_type::GZIP) {
-        // GZIP adds 18 bytes for header and footer
-        max_comp_chunk_size += 18;
-      }
+      break;
+    case compression_type::GZIP: {
+#if CUDF_NVCOMP_HAS_GZIP_COMPRESSION
+      status = nvcompBatchedGzipCompressGetMaxOutputChunkSize(
+        capped_uncomp_bytes, nvcompBatchedGzipCompressDefaultOpts, &max_comp_chunk_size);
+#else
+      // nvcompBatchedGzipCompressGetMaxOutputChunkSize is not available before nvCOMP 5.3
+      status = nvcompBatchedDeflateCompressGetMaxOutputChunkSize(
+        capped_uncomp_bytes, nvcompBatchedDeflateCompressDefaultOpts, &max_comp_chunk_size);
+      // GZIP adds 18 bytes for header and footer
+      max_comp_chunk_size += 18;
+#endif
       break;
     }
     case compression_type::ZSTD:
@@ -748,7 +789,14 @@ size_t compress_required_alignment(compression_type compression)
   nvcompAlignmentRequirements_t alignments{};
   nvcompStatus_t status;
   switch (compression) {
+#if CUDF_NVCOMP_HAS_GZIP_COMPRESSION
     case compression_type::GZIP:
+      status = nvcompBatchedGzipCompressGetRequiredAlignments(nvcompBatchedGzipCompressDefaultOpts,
+                                                              &alignments);
+      break;
+#else
+    case compression_type::GZIP:
+#endif
     case compression_type::DEFLATE:
       status = nvcompBatchedDeflateCompressGetRequiredAlignments(
         nvcompBatchedDeflateCompressDefaultOpts, &alignments);
@@ -802,8 +850,12 @@ size_t decompress_required_alignment(compression_type compression)
 std::optional<size_t> compress_max_allowed_chunk_size(compression_type compression)
 {
   switch (compression) {
-    case compression_type::DEFLATE:
+    case compression_type::DEFLATE: return nvcompDeflateCompressionMaxAllowedChunkSize;
+#if CUDF_NVCOMP_HAS_GZIP_COMPRESSION
+    case compression_type::GZIP: return nvcompGzipCompressionMaxAllowedChunkSize;
+#else
     case compression_type::GZIP: return nvcompDeflateCompressionMaxAllowedChunkSize;
+#endif
     case compression_type::SNAPPY: return nvcompSnappyCompressionMaxAllowedChunkSize;
     case compression_type::ZSTD: return nvcompZstdCompressionMaxAllowedChunkSize;
     case compression_type::LZ4: return nvcompLZ4CompressionMaxAllowedChunkSize;

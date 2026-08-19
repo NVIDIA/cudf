@@ -17,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/cub.cuh>
+#include <cuda/iterator>
 #include <cuda/std/functional>
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
@@ -323,7 +324,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   using StackSymbolToStackOpT = detail::StackSymbolToStackOp<StackOpT, StackSymbolToStackOpTypeT>;
 
   // transform_iterator converting stack symbols to stack operations
-  using TransformInputItT = thrust::transform_iterator<StackSymbolToStackOpT, StackSymbolItT>;
+  using TransformInputItT = cuda::transform_iterator<StackSymbolToStackOpT, StackSymbolItT>;
 
   constexpr bool supports_reset_op = SupportResetOperation == stack_op_support::WITH_RESET_SUPPORT;
 
@@ -354,7 +355,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // with the empty_stack_symbol
   StackOpT const empty_stack{0, empty_stack_symbol};
 
-  thrust::transform_iterator<detail::RemapEmptyStack<StackOpT>, StackOpT*> kv_ops_scan_in(
+  cuda::transform_iterator<detail::RemapEmptyStack<StackOpT>, StackOpT*> kv_ops_scan_in(
     nullptr, detail::RemapEmptyStack<StackOpT>{empty_stack});
   StackOpT* kv_ops_scan_out = nullptr;
 
@@ -367,7 +368,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // operation
   if constexpr (supports_reset_op) {
     // Iterator that returns `1` for every symbol that corresponds to a `reset` operation
-    auto reset_segments_it = thrust::make_transform_iterator(
+    auto reset_segments_it = cuda::transform_iterator(
       d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
@@ -468,7 +469,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // Compute prefix sum of the stack level after each operation
   if constexpr (supports_reset_op) {
     // Iterator that returns `1` for every symbol that corresponds to a `reset` operation
-    auto reset_segments_it = thrust::make_transform_iterator(
+    auto reset_segments_it = cuda::transform_iterator(
       d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
@@ -543,7 +544,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                read_symbol);
 
   // transform_iterator the stack operations to the stack symbol they represent
-  thrust::transform_iterator<detail::StackOpToStackSymbol, StackOpT*> kv_op_to_stack_sym_it(
+  cuda::transform_iterator<detail::StackOpToStackSymbol, StackOpT*> kv_op_to_stack_sym_it(
     kv_ops_scan_out, detail::StackOpToStackSymbol{});
 
   // Scatter the stack symbols to the output tape (spots that are not scattered to have been

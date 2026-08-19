@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import gzip
@@ -243,7 +243,7 @@ def test_read_csv_skipfooter(csv_end_bad_lines):
 def test_read_csv_skipfooter_arrow_string_fail(request, csv_end_bad_lines):
     request.applymarker(
         pytest.mark.xfail(
-            reason="https://github.com/rapidsai/cudf/issues/14915",
+            reason="https://github.com/NVIDIA/cudf/issues/14915",
         )
     )
     ddf_cpu = dd.read_csv(

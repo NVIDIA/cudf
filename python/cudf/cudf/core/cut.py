@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Sequence
@@ -147,7 +147,7 @@ def cut(
 
     # bins can either be an int, sequence of scalars or an intervalIndex
     if isinstance(bins, Sequence):
-        if len(set(bins)) is not len(bins):
+        if len(set(bins)) != len(bins):
             if duplicates == "raise":
                 raise ValueError(
                     f"Bin edges must be unique: {bins!r}.\n"

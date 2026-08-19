@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -59,7 +59,7 @@ MAIN_RUN_ID=$(
     gh run list                       \
         -w "Pandas Test Job"          \
         -b "$(<./RAPIDS_BRANCH)"      \
-        --repo 'rapidsai/cudf'        \
+        --repo 'NVIDIA/cudf'          \
         --status success              \
         --limit 7                     \
         --json 'createdAt,databaseId' \
@@ -73,7 +73,7 @@ fi
 
 rapids-logger "Fetching latest available results from nightly: ${MAIN_RUN_ID}"
 gh run download                  \
-    --repo 'rapidsai/cudf'        \
+    --repo 'NVIDIA/cudf'          \
     --name main-results.json \
     $MAIN_RUN_ID
 

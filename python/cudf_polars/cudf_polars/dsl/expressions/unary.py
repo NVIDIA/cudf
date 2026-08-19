@@ -1667,7 +1667,7 @@ class UnaryFunction(Expr):
         elif self.name in UnaryFunction._supported_cum_aggs:
             column = self.children[0].evaluate(df, context=context)
             (reverse,) = self.options
-            # https://github.com/rapidsai/cudf/issues/23208 for a native reverse scan
+            # https://github.com/NVIDIA/cudf/issues/23208 for a native reverse scan
             if self.name == "cum_count":
                 # cum_count is the cumulative count of non-null values.
                 counts = plc.unary.cast(

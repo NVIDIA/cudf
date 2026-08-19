@@ -33,7 +33,7 @@ class SizedChunks:
     This is an interim cudf-polars API. It exists because Polars' IO-source
     contract returns a plain iterator with no length. It may be removed if Polars
     exposes a supported way to report the chunk count. Tracked in
-    https://github.com/rapidsai/cudf/issues/22917.
+    https://github.com/NVIDIA/cudf/issues/22917.
 
     Parameters
     ----------
@@ -91,7 +91,7 @@ class RankAwareSource(abc.ABC):
     This is an interim cudf-polars API. It exists because Polars' IO-source
     contract has no way to thread rank information into a source. It may be
     removed if Polars exposes a supported mechanism. Tracked in
-    https://github.com/rapidsai/cudf/issues/22917.
+    https://github.com/NVIDIA/cudf/issues/22917.
 
     The `rank` and `nranks` arguments default to `0` and `1` for the in-memory
     cudf-polars engine, the default Polars engine, and single-rank streaming.
@@ -110,7 +110,7 @@ class RankAwareSource(abc.ABC):
     unwrapped instance is recognized; wrapping it in anything else (a
     `functools.partial`, closure, lambda, or decorator) hides it, in which case
     the source is treated as rank-unaware and runs on rank 0 only. This
-    limitation is tracked in https://github.com/rapidsai/cudf/issues/22917.
+    limitation is tracked in https://github.com/NVIDIA/cudf/issues/22917.
 
     Examples
     --------
@@ -171,7 +171,7 @@ class RankAwareSource(abc.ABC):
             Maximum number of rows requested from the scan. cudf-polars does not
             support a pushed-down row limit and rejects it during translation, so
             this is always ``None`` on a GPU engine (see
-            https://github.com/rapidsai/cudf/issues/22918). It may be non-None
+            https://github.com/NVIDIA/cudf/issues/22918). It may be non-None
             on the default Polars CPU engine, where the source must honor it.
         batch_size
             Optional hint for the number of rows to yield per chunk.

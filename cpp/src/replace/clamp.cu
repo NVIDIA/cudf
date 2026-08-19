@@ -34,7 +34,6 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {

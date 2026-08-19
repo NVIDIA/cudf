@@ -89,7 +89,7 @@ class filtered_join {
   struct key_pair_fn {
     CUDF_HOST_DEVICE constexpr key_pair_fn(Hasher const& hasher) : _hasher{hasher} {}
 
-    __device__ __forceinline__ auto operator()(size_type i) const noexcept
+    __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
     {
       return cuco::pair{_hasher(i), T{i}};
     }

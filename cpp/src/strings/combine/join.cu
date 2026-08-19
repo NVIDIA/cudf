@@ -23,10 +23,10 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/constant_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -158,7 +158,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
                std::overflow_error);
 
   // build the offsets: single string output has offsets [0,chars-size]
-  auto sizes_itr      = thrust::constant_iterator(static_cast<size_type>(chars.size()));
+  auto sizes_itr      = cuda::constant_iterator(static_cast<size_type>(chars.size()));
   auto offsets_column = std::get<0>(
     cudf::strings::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr));
 

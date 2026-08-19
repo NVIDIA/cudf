@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -22,7 +22,6 @@
 
 #include <cuda/devices>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <numeric>
 
@@ -239,11 +238,10 @@ TEST_F(HashPartition, LargePartitionCountWithNulls)
   cudf::size_type const num_rows       = 200;
   cudf::size_type const num_partitions = partitions_exceeding_shared_memory();
   auto const iter                      = cuda::counting_iterator<int32_t>{0};
-  auto const valids = thrust::make_transform_iterator(iter, [](auto i) { return i % 4 != 0; });
+  auto const valids = cuda::transform_iterator(iter, [](auto i) { return i % 4 != 0; });
 
   fixed_width_column_wrapper<int32_t> ints(iter, iter + num_rows, valids);
-  auto const str_iter =
-    thrust::make_transform_iterator(iter, [](auto i) { return std::to_string(i); });
+  auto const str_iter = cuda::transform_iterator(iter, [](auto i) { return std::to_string(i); });
   strings_column_wrapper strings(str_iter, str_iter + num_rows, valids);
   auto const input = cudf::table_view({ints, strings});
 
@@ -396,7 +394,7 @@ void run_fixed_width_test(size_t cols,
   if (has_nulls) {
     std::generate_n(std::back_inserter(columns), cols, [rows]() {
       auto iter   = cuda::counting_iterator<int32_t>{0};
-      auto valids = thrust::make_transform_iterator(iter, [](auto i) { return i % 4 != 0; });
+      auto valids = cuda::transform_iterator(iter, [](auto i) { return i % 4 != 0; });
       return fixed_width_column_wrapper<T, int32_t>(iter, iter + rows, valids);
     });
   } else {

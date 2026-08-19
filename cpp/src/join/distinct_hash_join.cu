@@ -52,7 +52,7 @@ class primitive_keys_fn {
  public:
   CUDF_HOST_DEVICE constexpr primitive_keys_fn(hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }
@@ -72,7 +72,7 @@ class build_keys_fn {
  public:
   CUDF_HOST_DEVICE constexpr build_keys_fn(hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }
@@ -157,7 +157,8 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
   : _has_nested_columns{cudf::has_nested_columns(right)},
     _nulls_equal{compare_nulls},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)},
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
+      _right, stream, cudf::get_current_device_resource_ref())},
     _hash_table{cuco::extent{static_cast<std::size_t>(right.num_rows())},
                 checked_load_factor(load_factor),
                 cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(),
@@ -234,7 +235,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
   auto found_indices     = rmm::device_uvector<size_type>(left_table_num_rows, stream);
   auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
       cudf::detail::row::primitive::row_hasher{nullate::DYNAMIC{has_nulls}, preprocessed_left};
@@ -325,7 +327,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   auto const output_begin =
     cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
 
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =

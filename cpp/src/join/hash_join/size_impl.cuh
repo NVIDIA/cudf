@@ -80,8 +80,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                "Left table has nulls while right table was not hashed with null check.",
                std::invalid_argument);
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
 
   return cudf::detail::compute_join_output_size<Join>(_right,
                                                       left,
@@ -109,8 +109,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                "Left table has nulls while right table was not hashed with null check.",
                std::invalid_argument);
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
 
   return cudf::detail::get_full_join_size(_right,
                                           left,

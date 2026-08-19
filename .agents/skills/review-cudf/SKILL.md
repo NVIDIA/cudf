@@ -8,15 +8,15 @@ Use this skill when the user invokes `/review-cudf` with:
 - currently checked out cudf PR
 - specified cudf code changes or a diff
 
-cudf GitHub repository is located at: https://github.com/rapidsai/cudf
+cudf GitHub repository is located at: https://github.com/NVIDIA/cudf
 
 # Review cuDF Pull Request
 
 1. **Fetch PR metadata and diff**
 
 ```bash
-gh pr view <PR_NUMBER> --repo rapidsai/cudf --json title,body,files,additions,deletions,baseRefName,headRefName
-gh pr diff <PR_NUMBER> --repo rapidsai/cudf
+gh pr view <PR_NUMBER> --repo NVIDIA/cudf --json title,body,files,additions,deletions,baseRefName,headRefName
+gh pr diff <PR_NUMBER> --repo NVIDIA/cudf
 ```
 
 Hint: Check if `GH_TOKEN` (or GitHub CLI auth) is already configured in the environment (for example via your secret manager) so `gh` can authenticate and bypass rate limits; do not run `gh auth token` from within the agent. If `gh` auth is unavailable, fall back to GitHub's raw diff/patch URLs, `git fetch` of the PR ref, unauthenticated GitHub REST API with `curl`, or any other available methods.

@@ -147,7 +147,7 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
 
     // Select only columns required by the options and filter.
     // Using as is from:
-    // https://github.com/rapidsai/cudf/blob/a8b25cd205dc5d04b9918dcb0b3abd6b8c4e4a74/cpp/src/io/parquet/reader_impl.cpp#L556-L569
+    // https://github.com/NVIDIA/cudf/blob/a8b25cd205dc5d04b9918dcb0b3abd6b8c4e4a74/cpp/src/io/parquet/reader_impl.cpp#L556-L569
     std::optional<std::vector<std::string>> filter_only_columns_names;
     if (options.get_filter().has_value() and select_column_names.has_value()) {
       filter_only_columns_names = parquet::detail::get_column_names_in_expression(
@@ -284,11 +284,14 @@ hybrid_scan_reader_impl::secondary_filters_byte_ranges(
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
 
+  // Single source: keep only the bloom filter byte ranges, not the source map
   auto const bloom_filter_bytes =
-    _extended_metadata->get_bloom_filter_bytes(row_group_indices,
-                                               output_dtypes,
-                                               _output_column_schemas,
-                                               expr_conv.get_converted_expr().value());
+    _extended_metadata
+      ->bloom_filters_byte_ranges(row_group_indices,
+                                  output_dtypes,
+                                  _output_column_schemas,
+                                  expr_conv.get_converted_expr().value())
+      .first;
   auto const dictionary_page_bytes =
     _extended_metadata
       ->dictionary_pages_byte_ranges(row_group_indices,
@@ -312,6 +315,19 @@ hybrid_scan_reader_impl::dictionary_pages_byte_ranges(
                                                           output_dtypes,
                                                           _output_column_schemas,
                                                           expr_conv.get_converted_expr().value());
+}
+
+std::pair<std::vector<byte_range_info>, std::vector<size_type>>
+hybrid_scan_reader_impl::bloom_filters_byte_ranges(
+  std::span<std::vector<size_type> const> row_group_indices, parquet_reader_options const& options)
+{
+  CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
+  auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
+
+  return _extended_metadata->bloom_filters_byte_ranges(row_group_indices,
+                                                       output_dtypes,
+                                                       _output_column_schemas,
+                                                       expr_conv.get_converted_expr().value());
 }
 
 std::vector<std::vector<size_type>>

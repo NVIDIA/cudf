@@ -2101,17 +2101,28 @@ class MultiIndex(Index):
         """
         Return level index from given level name or index
         """
+        if self.names.count(level) > 1 and not is_integer(level):
+            raise ValueError(
+                f"The name {level} occurs multiple times, use a level number"
+            )
         try:
             return self.names.index(level)
         except ValueError:
             if not is_integer(level):
-                raise KeyError(f"Level {level} not found")
+                raise KeyError(f"Level {level} not found") from None
+            # matches pandas MultiIndex._get_level_number, which words the
+            # underflow and overflow errors differently
             norm = level + self.nlevels if level < 0 else level
-            if not 0 <= norm < self.nlevels:
-                # matches pandas MultiIndex._get_level_number
+            if norm < 0:
                 raise IndexError(
                     f"Too many levels: Index has only {self.nlevels} "
                     f"levels, {level} is not a valid level number"
+                ) from None
+            elif norm >= self.nlevels:
+                # Note: levels are zero-based
+                raise IndexError(
+                    f"Too many levels: Index has only {self.nlevels} levels, "
+                    f"not {norm + 1}"
                 ) from None
             return norm
 
@@ -2365,16 +2376,12 @@ class MultiIndex(Index):
 
     @_performance_tracking
     def _split_columns_by_levels(
-        self, levels: tuple, *, in_levels: bool
+        self, levels: tuple[int, ...], *, in_levels: bool
     ) -> Generator[tuple[Any, ColumnBase], None, None]:
-        # This function assumes that for levels with duplicate names, they are
-        # specified by indices, not name by ``levels``. E.g. [None, None] can
-        # only be specified by 0, 1, not "None".
-        level_names = list(self.names)
-        level_indices = {
-            lv if isinstance(lv, int) else level_names.index(lv)
-            for lv in levels
-        }
+        # ``levels`` are level *numbers*, already normalized by
+        # ``_level_index_from_level`` (so names and negative positions have
+        # been resolved by the caller).
+        level_indices = set(levels)
         for i, (name, col) in enumerate(
             zip(self.names, self._columns, strict=True)
         ):

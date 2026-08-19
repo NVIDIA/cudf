@@ -39,10 +39,14 @@ import java.util.Arrays;
  * chunked reader pipeline.
  *
  * <p>The filter and payload materialization paths accept a boolean that toggles
- * page-level pruning: skips decode of pages the filter (or row mask) proves empty, in
- * exchange for a per-page stats scan and a carried row-mask column. Enable when the
- * workload prunes many pages; requires prior {@link #setupPageIndex(HostMemoryBuffer)} to
- * prune filter column pages using page-level statistics.
+ * page-level pruning: skips decode of pages the filter (or row mask) proves empty. Enable when the
+ * workload prunes many pages. Pruning requirements for the two column materializations differ:
+ * <ul>
+ *   <li>Filter columns seed the row mask from page-index statistics, so
+ *       {@link #setupPageIndex(HostMemoryBuffer)} must have been called first.</li>
+ *   <li>Payload columns only need page row boundaries. These come from the
+ *       {@code OffsetIndex} when page index has been set up, otherwise from the decoded page headers as fallback.</li>
+ * </ul>
  *
  * <p>The reader is created with no filter expression installed. Filter-related APIs
  * behave as though nothing has been filtered out unless a filter is first supplied via
@@ -382,8 +386,7 @@ public class HybridScanReader implements AutoCloseable {
    *                         returned by {@link #payloadColumnChunksByteRanges(int[])}
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
-   *                             mask proves empty; requires prior
-   *                             {@link #setupPageIndex(HostMemoryBuffer)} to avoid fall back path
+   *                             mask proves empty
    * @return the materialized payload column table
    */
   public Table materializePayloadColumns(int[] rowGroupIndices,
@@ -529,8 +532,7 @@ public class HybridScanReader implements AutoCloseable {
    * @param rowGroupIndices  row groups to read
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
-   *                             mask proves empty; requires prior
-   *                             {@link #setupPageIndex(HostMemoryBuffer)} to avoid fall back path
+   *                             mask proves empty
    * @param columnChunkData  device buffers holding the payload column chunks, in the order
    *                         returned by {@link #payloadColumnChunksByteRanges(int[])}
    */

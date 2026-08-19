@@ -125,20 +125,14 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
   std::size_t const _max_size{configured_max_pool_size()};
 
   /**
-   * @brief Creates streams until the pool can serve `count` streams with room to spare.
-   *
-   * Twice the requested count is created so that consecutive requests are served from different
-   * streams. Nested requests, such as decompression forking streams while its caller is using
-   * forked streams of its own, then avoid colliding with the streams they are nested inside,
-   * except where the rotation wraps around a pool that has reached `_max_size`.
+   * @brief Creates streams until the pool holds `size` of them, or has reached `_max_size`.
    */
-  void grow_to(std::size_t count)
+  void grow_to(std::size_t size)
   {
-    // A pool is only ever used with the device it was created on current, so the streams it creates
-    // belong to that device. `cuda::stream` is always non-blocking.
     auto const device = cuda::device_ref{get_current_cuda_device().value()};
-    auto const target = std::min(2 * count, _max_size);
+    auto const target = std::min(size, _max_size);
     while (_streams.size() < target) {
+      // `cuda::stream` creates non-blocking streams.
       _streams.emplace_back(device);
     }
   }
@@ -148,7 +142,9 @@ class growing_cuda_stream_pool : public cuda_stream_pool {
 
   std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    grow_to(count);
+    // Growing to twice the requested count leaves room for consecutive requests to return
+    // different streams.
+    grow_to(2 * count);
     auto const first = std::exchange(_next_stream, _next_stream + count);
     auto streams     = std::vector<cuda::stream_ref>();
     streams.reserve(count);

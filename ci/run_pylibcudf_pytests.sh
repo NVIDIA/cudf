@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -39,8 +39,9 @@ EOF
 # Support invoking run_cudf_pytests.sh outside the script directory
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../python/pylibcudf/
 
+# If the stream testing library was found, split the tests into two passes.
 if [ -n "$TESTING_LIB" ] && [ -f "$TESTING_LIB" ]; then
-    # If the stream testing library was found, split the tests into two passes.
-    LD_PRELOAD="$TESTING_LIB" PYLIBCUDF_STREAM_TESTING=1 pytest --cache-clear -m "not uses_custom_stream" --ignore="benchmarks" "$@" tests
+    # run the custom stream tests without xdist to ease the burden on the compute-sanitizer checks
+    LD_PRELOAD="$TESTING_LIB" PYLIBCUDF_STREAM_TESTING=1 pytest --cache-clear -m "not uses_custom_stream" --ignore="benchmarks" -p no:xdist tests
 fi
 pytest --cache-clear --ignore="benchmarks" "$@" tests

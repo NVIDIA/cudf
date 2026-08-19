@@ -113,6 +113,7 @@ std::unique_ptr<column> from_arrow_stringview(ArrowSchemaView const* schema,
       return {data, size};
     });
 
+  stream.synchronize();
   return cudf::make_strings_column(d_indices, stream, mr);
 }
 

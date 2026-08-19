@@ -1499,8 +1499,7 @@ TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)
   constexpr unsigned int cardinality = 32'768U;
 
   // single value will have a small dictionary
-  auto elements0 = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return "a unique string value suffixed with 1"; });
+  auto const elements0 = cuda::make_constant_iterator("a unique string value suffixed with 1");
   auto const col0 = cudf::test::strings_column_wrapper(elements0, elements0 + nrows);
 
   // high cardinality will have a large dictionary

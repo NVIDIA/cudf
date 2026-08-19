@@ -23,7 +23,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
@@ -104,7 +103,7 @@ std::unique_ptr<column> scatter_impl(rmm::device_uvector<unbound_list_view> cons
   auto const target_lists_column_view =
     lists_column_view(target);  // Checks that target is a list column.
 
-  auto list_size_begin = thrust::make_transform_iterator(
+  auto list_size_begin = cuda::transform_iterator(
     target_vector.begin(),
     cuda::proclaim_return_type<size_type>([] __device__(unbound_list_view l) { return l.size(); }));
   auto offsets_column = std::get<0>(cudf::detail::make_offsets_child_column(

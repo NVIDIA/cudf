@@ -14,9 +14,9 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 
 namespace cudf::reduction::detail {
@@ -35,10 +35,9 @@ std::unique_ptr<cudf::scalar> nth_element(column_view const& col,
     CUDF_EXPECTS(n >= 0 and n < valid_count, "Index out of bounds");
     auto dcol = column_device_view::create(col, stream);
     auto bitmask_iterator =
-      thrust::make_transform_iterator(cudf::detail::make_validity_iterator(*dcol),
-                                      cuda::proclaim_return_type<size_type>([] __device__(auto b) {
-                                        return static_cast<size_type>(b);
-                                      }));
+      cuda::transform_iterator(cudf::detail::make_validity_iterator(*dcol),
+                               cuda::proclaim_return_type<size_type>(
+                                 [] __device__(auto b) { return static_cast<size_type>(b); }));
     rmm::device_uvector<size_type> null_skipped_index(col.size(), stream);
     // null skipped index for valids only.
     thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

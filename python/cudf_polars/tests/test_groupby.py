@@ -163,7 +163,7 @@ def test_groupby_sorted_keys(
         pytest.mark.xfail(
             is_streaming_engine(engine),
             strict=False,
-            reason="https://github.com/rapidsai/cudf/issues/21642 -  no deterministic sort for keys",
+            reason="https://github.com/NVIDIA/cudf/issues/21642 -  no deterministic sort for keys",
         )
     )
     sorted_keys = [
@@ -631,7 +631,7 @@ def test_groupby_nan_minmax_raises(engine: pl.GPUEngine, op):
                 condition=POLARS_VERSION_LT_140,
                 reason="polars < 1.40 emits the list literal at its inner dtype, "
                 "nested per group, which we mishandle: "
-                "https://github.com/rapidsai/cudf/issues/19610",
+                "https://github.com/NVIDIA/cudf/issues/19610",
             ),
         ),
         pl.col("float") * (1 - pl.col("int")),
@@ -894,7 +894,7 @@ def test_groupby_quantile_nearest_even_length(engine: pl.GPUEngine):
 
 @pytest.mark.xfail(
     raises=AssertionError,
-    reason="https://github.com/rapidsai/cudf/issues/19610",
+    reason="https://github.com/NVIDIA/cudf/issues/19610",
 )
 def test_groupby_literal_agg(engine: pl.GPUEngine):
     df = pl.LazyFrame({"c0": [True, False]})

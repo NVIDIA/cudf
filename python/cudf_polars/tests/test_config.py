@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import cast
 
 import pytest
@@ -551,6 +552,16 @@ def test_parquet_options_object_engine_default() -> None:
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
     assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+
+
+def test_parquet_options_unspecified_dict_factory() -> None:
+    parquet_options = ParquetOptions()
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
+    )
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
+    assert result["parquet_options"]["prefetch_file_metadata"] is None
 
 
 def test_validate_raise_on_fail() -> None:

@@ -95,7 +95,7 @@ requirements:
     - nvtx >=0.2.1
   run_constraints:
     - numpy >=2.0,<3.0
-    - pyarrow>=19.0.0,<24  # https://github.com/rapidsai/cudf/issues/22229
+    - pyarrow>=19.0.0,<24  # https://github.com/NVIDIA/cudf/issues/22229
   ignore_run_exports:
     from_package:
       - cuda-cudart-dev

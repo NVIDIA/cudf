@@ -15,10 +15,10 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -56,7 +56,7 @@ std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
     cuda::proclaim_return_type<size_type>([] __device__(string_index_pair item) -> size_type {
       return (item.first != nullptr ? static_cast<size_type>(item.second) : size_type{0});
     });
-  auto offsets_transformer_itr = thrust::make_transform_iterator(begin, offsets_transformer);
+  auto offsets_transformer_itr = cuda::transform_iterator(begin, offsets_transformer);
   auto [offsets_column, bytes] = cudf::strings::detail::make_offsets_child_column(
     offsets_transformer_itr, offsets_transformer_itr + strings_count, stream, mr);
 

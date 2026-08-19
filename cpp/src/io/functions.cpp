@@ -636,8 +636,8 @@ bool is_supported_write_parquet(compression_type compression)
     return true;
   }
 
-  return ((compression == compression_type::LZ4 or compression == compression_type::SNAPPY or
-           compression == compression_type::ZSTD) and
+  return ((compression == compression_type::GZIP or compression == compression_type::LZ4 or
+           compression == compression_type::SNAPPY or compression == compression_type::ZSTD) and
           detail::is_compression_supported(compression));
 }
 

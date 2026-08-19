@@ -935,7 +935,7 @@ std::unique_ptr<column> parse_data(
   }
 
   // Prepare iterator that returns (string_ptr, string_length)-pairs needed by type conversion
-  auto str_tuples = thrust::make_transform_iterator(offset_length_begin, to_string_view_pair{data});
+  auto str_tuples = cuda::transform_iterator(offset_length_begin, to_string_view_pair{data});
 
   if (col_type == cudf::data_type{cudf::type_id::STRING}) {
     return parse_string(

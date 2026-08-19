@@ -27,7 +27,6 @@ from .aggregation cimport Aggregation
 from .column cimport Column
 from .table cimport Table
 from .types cimport null_order, null_policy, order, sorted
-from .types import NullOrder, NullPolicy, Order, Sorted
 from .utils cimport _as_vector, _get_stream, _get_memory_resource
 from cuda.bindings.cyruntime cimport cudaStream_t
 
@@ -120,10 +119,10 @@ cdef class GroupBy:
     def __init__(
         self,
         Table keys,
-        null_policy null_handling: NullPolicy = null_policy.EXCLUDE,
-        sorted keys_are_sorted: Sorted = sorted.NO,
-        list column_order: list[Order] | None = None,
-        list null_precedence: list[NullOrder] | None = None,
+        null_policy null_handling=null_policy.EXCLUDE,
+        sorted keys_are_sorted=sorted.NO,
+        list column_order=None,
+        list null_precedence=None,
     ):
         self._column_order = make_unique[vector[order]]()
         self._null_precedence = make_unique[vector[null_order]]()

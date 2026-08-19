@@ -6,6 +6,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.hpp>
@@ -16,9 +17,19 @@
 
 #include <cuda/stream>
 
+#include <algorithm>
 #include <string>
 
 namespace cudf {
+
+static rmm::device_buffer make_string_device_buffer(std::string_view string,
+                                                    cuda::stream_ref stream,
+                                                    rmm::device_async_resource_ref mr)
+{
+  auto host_data = cudf::detail::make_pinned_vector<char>(string.size(), stream);
+  std::copy(string.begin(), string.end(), host_data.begin());
+  return rmm::device_buffer(host_data.data(), host_data.size(), stream, mr);
+}
 
 scalar::scalar(data_type type,
                bool is_valid,
@@ -51,7 +62,7 @@ string_scalar::string_scalar(std::string_view string,
                              cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
   : scalar(data_type(type_id::STRING), is_valid, stream, mr),
-    _data(string.data(), string.size(), stream, mr)
+    _data(make_string_device_buffer(string, stream, mr))
 {
   CUDF_EXPECTS(
     string.size() <= static_cast<std::size_t>(std::numeric_limits<cudf::size_type>::max()),
@@ -145,7 +156,8 @@ fixed_point_scalar<T>::fixed_point_scalar(rmm::device_scalar<rep_type>&& data,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
-  : scalar{data_type{type_to_id<T>(), scale}, is_valid, stream, mr}, _data{std::move(data)}
+  : scalar{data_type{type_to_id<T>(), scale}, is_valid, stream, mr},
+    _data{data.value(stream), stream, mr}
 {
 }
 
@@ -210,7 +222,7 @@ fixed_width_scalar<T>::fixed_width_scalar(rmm::device_scalar<T>&& data,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
-  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr), _data{std::move(data)}
+  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr), _data{data.value(stream), stream, mr}
 {
 }
 

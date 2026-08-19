@@ -132,6 +132,7 @@ std::unique_ptr<cudf::column> compute_row_index_column(
     row_indices_iter,
     row_indices_iter);
 
+  stream.sync();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::UINT64},
                                         num_rows,
                                         std::move(row_indices),

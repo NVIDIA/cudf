@@ -1513,6 +1513,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
       file_blobs[i].assign(stat_begin, stat_end);
     }
 
+    stream.sync();
     return {{}, std::move(file_blobs)};
   }
 
@@ -1595,6 +1596,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
     file_blobs[i].assign(stat_begin, stat_end);
   }
 
+  stream.sync();
   return {std::move(stripe_blobs), std::move(file_blobs)};
 }
 
@@ -2040,6 +2042,7 @@ orc_table_view make_orc_table_view(table_view const& table,
     },
     stream);
 
+  stream.sync();
   return {std::move(orc_columns),
           std::move(d_orc_columns),
           str_col_indexes,

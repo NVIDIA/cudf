@@ -125,7 +125,6 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputItera
                                                                       cudf::memory_resources mr)
 {
   auto const output_mr = mr.get_output_mr();
-  auto const temp_mr   = mr.get_temporary_mr();
 
   auto constexpr size_type_max = static_cast<int64_t>(std::numeric_limits<size_type>::max());
   auto const lcount            = static_cast<int64_t>(std::distance(begin, end));
@@ -144,7 +143,7 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputItera
     cudf::detail::make_counting_transform_iterator(0, string_offsets_fn{begin, strings_count});
   // Use the sizes-to-offsets iterator to compute the total number of elements
   auto const total_bytes = cudf::detail::sizes_to_offsets(
-    input_itr, input_itr + strings_count + 1, d_offsets, 0, stream, temp_mr);
+    input_itr, input_itr + strings_count + 1, d_offsets, 0, stream, mr);
 
   auto const threshold = cudf::strings::get_offset64_threshold();
   CUDF_EXPECTS(cudf::strings::is_large_strings_enabled() || (total_bytes < threshold),
@@ -156,7 +155,7 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputItera
       data_type{type_id::INT64}, strings_count + 1, mask_state::UNALLOCATED, stream, output_mr);
     auto d_offsets64 = offsets_column->mutable_view().template data<int64_t>();
     cudf::detail::sizes_to_offsets(
-      input_itr, input_itr + strings_count + 1, d_offsets64, 0, stream, temp_mr);
+      input_itr, input_itr + strings_count + 1, d_offsets64, 0, stream, mr);
   }
 
   return std::pair(std::move(offsets_column), total_bytes);

@@ -780,8 +780,12 @@ rmm::device_uvector<cudf::size_type> compute_some_tokens(
                         return cuda::std::min(max_words_per_row, d_str.size_bytes() / 2);
                       }));
 
-  auto const max_size = cudf::detail::sizes_to_offsets(
-    max_word_offsets.begin(), max_word_offsets.end(), max_word_offsets.begin(), 0, stream);
+  auto const max_size = cudf::detail::sizes_to_offsets(max_word_offsets.begin(),
+                                                       max_word_offsets.end(),
+                                                       max_word_offsets.begin(),
+                                                       0,
+                                                       stream,
+                                                       cudf::get_current_device_resource_ref());
 
   auto start_words = rmm::device_uvector<int64_t>(max_size, stream);
   auto word_sizes  = rmm::device_uvector<cudf::size_type>(max_size, stream);

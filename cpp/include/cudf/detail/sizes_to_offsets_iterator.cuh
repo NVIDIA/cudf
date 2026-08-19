@@ -236,7 +236,7 @@ static sizes_to_offsets_iterator<ScanIterator, LastType> make_sizes_to_offsets_i
  *
  * @code{.pseudo}
  *   auto const bytes = cudf::detail::sizes_to_offsets(
- *     d_offsets, d_offsets + strings_count + 1, d_offsets, stream);
+ *     d_offsets, d_offsets + strings_count + 1, d_offsets, 0, stream, mr);
  *   CUDF_EXPECTS(bytes <= static_cast<int64_t>(std::numeric_limits<size_type>::max()),
  *               "Size of output exceeds the column size limit", std::overflow_error);
  * @endcode
@@ -249,18 +249,19 @@ static sizes_to_offsets_iterator<ScanIterator, LastType> make_sizes_to_offsets_i
  * @param result Output iterator for scan result
  * @param initial_offset Initial offset to add to scan
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param temp_mr Device memory resource used for temporary allocations
+ * @param mr Memory resources used for temporary allocations
  * @return The last element of the scan
  */
 template <typename SizesIterator, typename OffsetsIterator>
-auto sizes_to_offsets(
-  SizesIterator begin,
-  SizesIterator end,
-  OffsetsIterator result,
-  int64_t initial_offset,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref())
+auto sizes_to_offsets(SizesIterator begin,
+                      SizesIterator end,
+                      OffsetsIterator result,
+                      int64_t initial_offset,
+                      rmm::cuda_stream_view stream,
+                      cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
+
   using SizeType = cuda::std::iter_value_t<SizesIterator>;
   static_assert(std::is_integral_v<SizeType>,
                 "Only numeric types are supported by sizes_to_offsets");
@@ -326,7 +327,7 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   auto input_itr = cudf::detail::make_counting_transform_iterator(0, map_fn);
   // Use the sizes-to-offsets iterator to compute the total number of elements
   auto const total_elements =
-    sizes_to_offsets(input_itr, input_itr + count + 1, d_offsets, 0, stream, mr.get_temporary_mr());
+    sizes_to_offsets(input_itr, input_itr + count + 1, d_offsets, 0, stream, mr);
   // the offsets are 32-bit so the total must fit in an int32_t
   CUDF_EXPECTS(
     total_elements <= static_cast<decltype(total_elements)>(std::numeric_limits<int32_t>::max()),

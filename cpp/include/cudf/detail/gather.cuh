@@ -104,7 +104,7 @@ struct gather_bitmask_functor {
  * @param gather_map_end End of the gather map
  * @param nullify_out_of_bounds True if map values are checked against `source_size`
  * @param stream CUDA stream used for kernel launches.
- * @param temp_mr Device memory resource used for temporary allocations
+ * @param mr Memory resources used for temporary allocations
  */
 template <typename InputItr, typename OutputItr, typename MapIterator>
 void gather_helper(InputItr source_itr,
@@ -114,9 +114,10 @@ void gather_helper(InputItr source_itr,
                    MapIterator gather_map_end,
                    bool nullify_out_of_bounds,
                    rmm::cuda_stream_view stream,
-                   rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref())
+                   cudf::memory_resources mr)
 {
-  using map_type = typename std::iterator_traits<MapIterator>::value_type;
+  auto const temp_mr = mr.get_temporary_mr();
+  using map_type     = typename std::iterator_traits<MapIterator>::value_type;
   if (nullify_out_of_bounds) {
     thrust::gather_if(rmm::exec_policy_nosync(stream, temp_mr),
                       gather_map_begin,
@@ -223,7 +224,7 @@ struct column_gatherer_impl<Element, std::enable_if_t<is_rep_layout_compatible<E
                   gather_map_end,
                   nullify_out_of_bounds,
                   stream,
-                  mr.get_temporary_mr());
+                  mr);
 
     return destination_column;
   }
@@ -402,7 +403,6 @@ struct column_gatherer_impl<dictionary32> {
                                      cudf::memory_resources mr)
   {
     auto const output_mr = mr.get_output_mr();
-    auto const temp_mr   = mr.get_temporary_mr();
 
     dictionary_column_view dictionary(source_column);
     auto output_count = std::distance(gather_map_begin, gather_map_end);
@@ -427,7 +427,7 @@ struct column_gatherer_impl<dictionary32> {
       gather_map_end,
       nullify_out_of_bounds,
       stream,
-      temp_mr);
+      mr);
     return make_dictionary_column(std::move(keys_copy), std::move(new_indices), stream, output_mr);
   }
 };

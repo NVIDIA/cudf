@@ -136,7 +136,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
     return cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   }();
 
-  auto contains_map            = rmm::device_uvector<bool>(left.num_rows(), stream);
+  auto contains_map            = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
   auto const contains_map_span = cudf::device_span<bool>{contains_map.data(), contains_map.size()};
   if (_right_mode == row_operator_mode::PRIMITIVE) {
     query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);

@@ -246,7 +246,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto indices_column = make_numeric_column(
     all_indices->type(), all_indices->size(), mask_state::UNALLOCATED, stream, mr);
   auto output_view      = indices_column->mutable_view();
-  auto input_view       = column_device_view::create(all_indices->view(), stream);
+  auto input_view       = column_device_view::create(all_indices->view(), stream, temp_mr);
   auto children_offsets = child_offsets_fn.create_children_offsets(stream, temp_mr);
   auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view};
   thrust::transform(

@@ -125,6 +125,12 @@ repos:
         language: pygrep
         types_or: [c, c++, cuda]
         files: '^cpp/(src|include)/'
+      - id: use-cuda-memcpy-default
+        name: use-cuda-memcpy-default
+        description: 'Enforce that cudaMemcpyDefault is used instead of explicit host/device cudaMemcpyKind policies'
+        entry: '\bcudaMemcpy(?:HostToHost|HostToDevice|DeviceToHost|DeviceToDevice)\b'
+        language: pygrep
+        types_or: [c, c++, cuda, cython]
       - id: use-cudf-memcpy-async
         name: use-cudf-memcpy-async
         description: 'Enforce that cudf::detail::memcpy_async or memcpy_batch_async is used instead of cudaMemcpyAsync (see developer guide)'

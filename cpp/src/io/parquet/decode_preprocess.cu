@@ -395,7 +395,7 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
 
   auto* const s      = &state_g;
   auto const block   = cg::this_thread_block();
-  int const page_idx = cg::this_grid().block_rank();
+  int const page_idx = blockIdx.x;
   int const t        = block.thread_rank();
   PageInfo* pp       = &pages[page_idx];
 
@@ -411,13 +411,14 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
 
-  // the level stream decoders. max_output_values is max to remove rolling buffer
-  // logic from the decode step. The chunked-expand rle_stream does not need a
-  // shared-memory ring buffer of run headers; it parses runs directly into
-  // per-chunk tables, so we default-construct the decoders here.
+  // Each page is decoded by two blocks where blockIdx.y maps to def/rep level
+  int const stream_id = blockIdx.y;
+
+  // The chunked-expand rle_stream does not need a shared-memory ring buffer of
+  // run headers; it parses runs directly into per-chunk tables, so we
+  // default-construct the decoder here.
   static constexpr int max_output_values = cuda::std::numeric_limits<int>::max();
   using decoder_stream_t = rle_stream_chunked<level_t, level_decode_block_size, max_output_values>;
-  decoder_stream_t decoders[level_type::NUM_LEVEL_TYPES] = {};
 
   // Shared-memory staging scratch for the encoded level streams. Level streams
   // for a page are usually small (definition/repetition levels are dominated by
@@ -428,56 +429,33 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   __shared__ __align__(16) uint8_t stage[decoder_stream_t::smem_stage_size];
   __shared__ cuda::barrier<cuda::thread_scope_block> copy_barrier;
 
-  // Get the level decode buffers for this page
-  auto* const def = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::DEFINITION]);
-  auto* const rep = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::REPETITION]);
-
   // Determine how many values need to be decoded
   size_t const num_to_decode =
     precompute_page_num_values_in_range(*pp, chunks[pp->chunk_idx], min_row, num_rows);
   if (num_to_decode == 0) { return; }
 
-  // Initialize the stream decoders
+  // Skip if this block's stream is absent for this page.
   bool const process_nulls = should_process_nulls(s);
-  if (has_repetition) {
-    cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
-    block.sync();
-    decoders[level_type::REPETITION].init(block,
-                                          s->setup.col.level_bits[level_type::REPETITION],
-                                          s->stream.abs_lvl_start[level_type::REPETITION],
-                                          s->stream.abs_lvl_end[level_type::REPETITION],
-                                          rep,
-                                          num_to_decode,
-                                          stage,
-                                          &copy_barrier,
-                                          decoder_stream_t::smem_stage_size);
-    copy_barrier.arrive_and_wait();
-    decoders[level_type::REPETITION].decode_next(t, num_to_decode);
-  }
+  if (stream_id == level_type::REPETITION && !has_repetition) { return; }
+  if (stream_id == level_type::DEFINITION && !process_nulls) { return; }
 
-  // Decode levels for this page up to the last row needed.
-  // If skipping the first rows, we still need to decode their levels.
-  // This is because we need to determine the number of non-null values we skipped.
-  // Note that for lists we haven't computed skipped_leaf_values yet; this is used as input for
-  // that.
-  // Must sync as shared variables in decode_next() are shared between decoders!!
+  // Dispatch to the level stream this block owns.
+  auto* const out = reinterpret_cast<level_t*>(pp->lvl_decode_buf[stream_id]);
+
+  decoder_stream_t decoder{};
+  cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
   block.sync();
-
-  if (process_nulls) {
-    cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
-    block.sync();
-    decoders[level_type::DEFINITION].init(block,
-                                          s->setup.col.level_bits[level_type::DEFINITION],
-                                          s->stream.abs_lvl_start[level_type::DEFINITION],
-                                          s->stream.abs_lvl_end[level_type::DEFINITION],
-                                          def,
-                                          num_to_decode,
-                                          stage,
-                                          &copy_barrier,
-                                          decoder_stream_t::smem_stage_size);
-    copy_barrier.arrive_and_wait();
-    decoders[level_type::DEFINITION].decode_next(t, num_to_decode);
-  }
+  decoder.init(block,
+               s->setup.col.level_bits[stream_id],
+               s->stream.abs_lvl_start[stream_id],
+               s->stream.abs_lvl_end[stream_id],
+               out,
+               num_to_decode,
+               stage,
+               &copy_barrier,
+               decoder_stream_t::smem_stage_size);
+  copy_barrier.arrive_and_wait();
+  decoder.decode_next(t, num_to_decode);
 }
 
 }  // anonymous namespace
@@ -533,7 +511,7 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
   if (pages.size() == 0) { return; }
 
   dim3 dim_block(level_decode_block_size, 1);
-  dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
+  dim3 dim_grid(pages.size(), 2);  // 2 threadblocks per page: one per level stream
 
   if (level_type_size == 1) {
     preprocess_levels_kernel<uint8_t, level_decode_block_size>

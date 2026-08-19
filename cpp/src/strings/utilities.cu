@@ -104,7 +104,7 @@ character_flags_table_type const* get_character_flags_table(cuda::stream_ref str
                                           g_character_codepoint_flags,
                                           sizeof(g_character_codepoint_flags),
                                           0,
-                                          cudaMemcpyHostToDevice,
+                                          cudaMemcpyDefault,
                                           stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_codepoint_flags));
     return table;
@@ -122,7 +122,7 @@ character_cases_table_type const* get_character_cases_table(cuda::stream_ref str
                                           g_character_cases_table,
                                           sizeof(g_character_cases_table),
                                           0,
-                                          cudaMemcpyHostToDevice,
+                                          cudaMemcpyDefault,
                                           stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_cases_table));
     return table;
@@ -140,7 +140,7 @@ special_case_mapping const* get_special_case_mapping_table(cuda::stream_ref stre
                                           g_special_case_mappings,
                                           sizeof(g_special_case_mappings),
                                           0,
-                                          cudaMemcpyHostToDevice,
+                                          cudaMemcpyDefault,
                                           stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_special_case_mappings));
     return table;

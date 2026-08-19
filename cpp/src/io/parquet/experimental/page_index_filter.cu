@@ -976,6 +976,68 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
     page_stats_table, stats_expr.get_stats_expr().get(), stream, mr);
 }
 
+thrust::host_vector<bool> compute_row_range_selection_mask(
+  cudf::column_view const& row_mask,
+  cudf::size_type row_mask_offset,
+  cudf::size_type total_rows,
+  std::span<cudf::size_type const> page_row_offsets,
+  cudf::size_type max_page_size,
+  cuda::stream_ref stream)
+{
+  // Need at least two offsets (or one range) to search the Fenwick tree
+  if (page_row_offsets.size() < 2) return thrust::host_vector<bool>{};
+
+  // Return early if all rows are needed.
+  if (cudf::detail::all_of(row_mask.begin<bool>() + row_mask_offset,
+                           row_mask.begin<bool>() + row_mask_offset + total_rows,
+                           cuda::std::identity{},
+                           stream)) {
+    return thrust::host_vector<bool>{};
+  }
+
+  auto const mr                 = cudf::get_current_device_resource_ref();
+  auto const tree_level_offsets = compute_fenwick_tree_level_offsets(total_rows, max_page_size);
+  auto const num_levels         = static_cast<cudf::size_type>(tree_level_offsets.size());
+  auto tree_levels_data         = rmm::device_uvector<bool>(tree_level_offsets.back(), stream, mr);
+  auto host_tree_level_ptrs     = cudf::detail::make_pinned_vector_async<bool*>(num_levels, stream);
+  host_tree_level_ptrs[0]       = const_cast<bool*>(row_mask.begin<bool>()) + row_mask_offset;
+  std::for_each(cuda::counting_iterator<cudf::size_type>{1},
+                cuda::counting_iterator<cudf::size_type>{num_levels},
+                [&](auto const level_idx) {
+                  host_tree_level_ptrs[level_idx] =
+                    tree_levels_data.data() + tree_level_offsets[level_idx - 1];
+                });
+  auto tree_level_ptrs = cudf::detail::make_device_uvector_async(host_tree_level_ptrs, stream, mr);
+
+  auto prev_level_size = total_rows;
+  std::for_each(
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator<cudf::size_type>{num_levels - 1},
+    [&](auto const prev_level) {
+      auto const current_level_size = cudf::util::div_rounding_up_safe(prev_level_size, 2);
+      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<cudf::size_type>{0},
+                       cuda::counting_iterator{current_level_size},
+                       build_fenwick_tree_level_functor{
+                         tree_level_ptrs.data(), prev_level, prev_level_size, current_level_size});
+      prev_level_size = current_level_size;
+    });
+
+  auto const num_ranges    = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
+  auto device_results      = rmm::device_uvector<bool>(num_ranges, stream, mr);
+  auto pinned_page_offsets = cudf::detail::make_pinned_vector(page_row_offsets, stream);
+  auto page_offsets = cudf::detail::make_device_uvector_async(pinned_page_offsets, stream, mr);
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{num_ranges},
+    device_results.begin(),
+    search_fenwick_tree_functor{tree_level_ptrs.data(), page_offsets.data(), num_ranges});
+  auto results = cudf::detail::make_pinned_vector_async(device_results, stream);
+  stream.sync();
+  return thrust::host_vector<bool>(results.begin(), results.end());
+}
+
 template <typename ColumnView>
 thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   ColumnView const& row_mask,
@@ -1113,78 +1175,24 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
                  "Row mask must not contain nulls for payload columns");
   }
 
-  auto const mr = cudf::get_current_device_resource_ref();
+  auto data_page_mask = thrust::host_vector<bool>{};
 
-  // Compute fenwick tree level offsets and total size (level 1 and higher)
-  auto const tree_level_offsets = compute_fenwick_tree_level_offsets(total_rows, max_page_size);
-  auto const num_levels         = static_cast<cudf::size_type>(tree_level_offsets.size());
-  // Buffer to store Fenwick tree levels (level 1 and higher) data
-  auto tree_levels_data = rmm::device_uvector<bool>(tree_level_offsets.back(), stream, mr);
+  auto const row_range_mask = compute_row_range_selection_mask(
+    row_mask, row_mask_offset, total_rows, page_row_offsets, max_page_size, stream);
+  if (row_range_mask.empty()) { return data_page_mask; }
 
-  // Pointers to each Fenwick tree level data
-  auto host_tree_level_ptrs = cudf::detail::make_pinned_vector_async<bool*>(num_levels, stream);
-  // Zeroth level is just the row mask itself
-  host_tree_level_ptrs[0] = const_cast<bool*>(row_mask.template begin<bool>()) + row_mask_offset;
-  std::for_each(cuda::counting_iterator<cudf::size_type>{1},
-                cuda::counting_iterator{num_levels},
-                [&](auto const level_idx) {
-                  host_tree_level_ptrs[level_idx] =
-                    tree_levels_data.data() + tree_level_offsets[level_idx - 1];
-                });
-
-  auto fenwick_tree_level_ptrs =
-    cudf::detail::make_device_uvector_async(host_tree_level_ptrs, stream, mr);
-
-  // Build Fenwick tree levels (zeroth level is just the row mask itself)
-  auto prev_level_size = static_cast<cudf::size_type>(total_rows);
-  std::for_each(
-    cuda::counting_iterator<cudf::size_type>{0},
-    cuda::counting_iterator{num_levels - 1},
-    [&](auto const prev_level) {
-      auto const current_level_size = cudf::util::div_rounding_up_safe(prev_level_size, 2);
-      thrust::for_each(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        cuda::counting_iterator<cudf::size_type>{0},
-        cuda::counting_iterator{current_level_size},
-        build_fenwick_tree_level_functor{
-          fenwick_tree_level_ptrs.data(), prev_level, prev_level_size, current_level_size});
-      prev_level_size = current_level_size;
-    });
-
-  //  Search the Fenwick tree to see if there's a surviving row in each page's row range
-  auto const num_ranges = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
-  rmm::device_uvector<bool> device_data_page_mask(num_ranges, stream, mr);
-  // Use a pinned bounce buffer to avoid pageable h2d copy
-  auto pinned_page_offsets = cudf::detail::make_pinned_vector(
-    cudf::host_span<cudf::size_type const>{page_row_offsets}, stream);
-  auto page_offsets = cudf::detail::make_device_uvector_async(pinned_page_offsets, stream, mr);
-  thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    cuda::counting_iterator<cudf::size_type>{0},
-    cuda::counting_iterator{num_ranges},
-    device_data_page_mask.begin(),
-    search_fenwick_tree_functor{fenwick_tree_level_ptrs.data(), page_offsets.data(), num_ranges});
-
-  //  Copy over search results to host
-  auto host_results      = cudf::detail::make_pinned_vector_async(device_data_page_mask, stream);
-  auto const total_pages = pinned_page_offsets.size() - num_columns;
-  auto data_page_mask    = thrust::host_vector<bool>(total_pages);
-  auto host_results_iter = host_results.begin();
-  stream.sync();
-
+  data_page_mask.reserve(page_row_offsets.size() - num_columns);
   // Discard results for invalid ranges. i.e. ranges starting at the last page of a column and
   // ending at the first page of the next column
-  auto num_pages_inserted = 0;
   std::for_each(cuda::counting_iterator<std::size_t>{0},
                 cuda::counting_iterator{num_columns},
                 [&](auto col_idx) {
                   auto const col_num_pages =
                     col_page_offsets[col_idx + 1] - col_page_offsets[col_idx] - 1;
-                  data_page_mask.insert(data_page_mask.begin() + num_pages_inserted,
-                                        host_results_iter,
-                                        host_results_iter + col_num_pages);
-                  host_results_iter += col_num_pages + 1;
-                  num_pages_inserted += col_num_pages;
+                  auto const first_page_range = col_page_offsets[col_idx];
+                  data_page_mask.insert(data_page_mask.end(),
+                                        row_range_mask.begin() + first_page_range,
+                                        row_range_mask.begin() + first_page_range + col_num_pages);
                 });
   return data_page_mask;
 }

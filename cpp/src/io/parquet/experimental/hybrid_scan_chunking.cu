@@ -40,8 +40,16 @@ void hybrid_scan_reader_impl::handle_chunking(
     // setup the next pass
     setup_next_pass(column_chunk_data);
 
+    // Compute the data page mask from decoded page headers if needed
+    auto const data_page_mask_pghdr = [&]() {
+      if (not _has_offset_index and not _row_mask.is_empty()) {
+        return compute_data_page_mask_with_page_headers();
+      }
+      return thrust::host_vector<bool>(data_page_mask.begin(), data_page_mask.end());
+    }();
+
     // Must be called as soon as we create the pass
-    set_pass_page_mask(data_page_mask);
+    set_pass_page_mask(data_page_mask_pghdr.empty() ? data_page_mask : data_page_mask_pghdr);
   }
 
   auto& pass = *_pass_itm_data;

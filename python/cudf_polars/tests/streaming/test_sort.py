@@ -233,6 +233,89 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
 
 
 @pytest.mark.spmd
+def test_extract_orderscheme_partitioning_projects_order_keys(spmd_engine) -> None:
+    context = spmd_engine.context
+    comm = spmd_engine.comm
+
+    n_chunks = 2
+    n_rows = 4
+    key_start = comm.rank * n_chunks * n_rows
+    order_keys = [OrderKey(1, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)]
+    schema_ir = Empty({"payload": DataType(pl.Int64()), "key": DataType(pl.Int32())})
+
+    async def _run():
+        ch = context.create_channel()
+        stream = context.br().stream_pool.get_stream()
+
+        async def _send() -> None:
+            for i in range(n_chunks):
+                start = key_start + i * n_rows
+                tbl = DataFrame.from_polars(
+                    pl.DataFrame(
+                        {
+                            # Deliberately not sorted by payload.
+                            "payload": pl.Series(
+                                range(-start, -start - n_rows, -1),
+                                dtype=pl.Int64(),
+                            ),
+                            "key": pl.Series(
+                                range(start, start + n_rows),
+                                dtype=pl.Int32(),
+                            ),
+                        }
+                    ),
+                    stream,
+                ).table
+                await ch.send(
+                    context,
+                    Message(
+                        i,
+                        TableChunk.from_pylibcudf_table(
+                            tbl, stream, exclusive_view=True, br=context.br()
+                        ),
+                    ),
+                )
+            await ch.drain(context)
+
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            reserve_op_id() as op_id,
+        ):
+            ir_context = IRExecutionContext(
+                executor, get_cuda_stream=context.br().stream_pool.get_stream
+            )
+            _, scheme = await gather_in_task_group(
+                _send(),
+                extract_orderscheme_partitioning(
+                    context, comm, schema_ir, ir_context, ch, order_keys, op_id
+                ),
+            )
+        return scheme
+
+    partitioning = asyncio.run(_run())
+
+    assert partitioning is not None
+    inter_rank = partitioning.inter_rank
+    assert isinstance(inter_rank, OrderScheme)
+    (ordering,) = inter_rank.orderings
+    assert ordering.keys == tuple(order_keys)
+    assert ordering.strict_boundaries
+    assert ordering.num_boundaries == comm.nranks * n_chunks - 1
+
+    chunk = ordering.get_boundaries(context.br())
+    assert chunk.table_view().num_columns() == 1
+    expected_keys = [i * n_rows for i in range(1, comm.nranks * n_chunks)]
+    actual_keys = (
+        DataFrame.from_table(
+            chunk.table_view(), ["key"], [DataType(pl.Int32())], stream=chunk.stream
+        )
+        .to_polars()["key"]
+        .to_list()
+    )
+    assert actual_keys == expected_keys
+
+
+@pytest.mark.spmd
 def test_extract_orderscheme_partitioning_unsorted(spmd_engine) -> None:
     context = spmd_engine.context
     comm = spmd_engine.comm

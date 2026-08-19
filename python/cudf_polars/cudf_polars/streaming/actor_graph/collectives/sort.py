@@ -77,7 +77,7 @@ if TYPE_CHECKING:
 
 
 def _extract_boundaries(
-    min_max_table: plc.Table,
+    min_max_key_table: plc.Table,
     num_partitions: int,
     stream: Stream,
 ) -> tuple[plc.Table, bool]:
@@ -86,8 +86,8 @@ def _extract_boundaries(
 
     Parameters
     ----------
-    min_max_table
-        The table containing min and max values.
+    min_max_key_table
+        The table containing min and max key values.
     num_partitions
         The number of partitions.
     stream
@@ -99,13 +99,13 @@ def _extract_boundaries(
     """
     partition_ends = plc.concatenate.concatenate(
         plc.copying.slice(
-            min_max_table, list(range(1, 2 * num_partitions - 1)), stream=stream
+            min_max_key_table, list(range(1, 2 * num_partitions - 1)), stream=stream
         ),
         stream=stream,
     )
     partition_starts = plc.concatenate.concatenate(
         plc.copying.slice(
-            min_max_table, list(range(2, 2 * num_partitions)), stream=stream
+            min_max_key_table, list(range(2, 2 * num_partitions)), stream=stream
         ),
         stream=stream,
     )
@@ -233,17 +233,23 @@ async def extract_orderscheme_partitioning(
     if min_max_table is None or (num_partitions := min_max_table.num_rows() // 2) < 2:
         return None
 
+    key_indices = [key.column_index for key in order_keys]
+    min_max_key_table = plc.Table(
+        [min_max_table.columns()[index] for index in key_indices]
+    )
+    del min_max_table
+
     # Return None if the min/max values are not sorted
     column_order = [key.order for key in order_keys]
     null_order = [key.null_order for key in order_keys]
     if not plc.sorting.is_sorted(
-        min_max_table, column_order, null_order, stream=stream
+        min_max_key_table, column_order, null_order, stream=stream
     ):
         return None
 
     # Extract boundaries and construct the Partitioning
-    boundaries, strict = _extract_boundaries(min_max_table, num_partitions, stream)
-    del min_max_table
+    boundaries, strict = _extract_boundaries(min_max_key_table, num_partitions, stream)
+    del min_max_key_table
     boundaries_chunk = TableChunk.from_pylibcudf_table(
         boundaries, stream, exclusive_view=True, br=context.br()
     )

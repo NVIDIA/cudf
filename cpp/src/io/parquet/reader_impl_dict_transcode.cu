@@ -29,7 +29,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <iterator>
 #include <numeric>
 #include <vector>
 
@@ -307,6 +306,28 @@ void reader_impl::assemble_dict_transcoded_columns(
     return all_keys->view();
   };
 
+  // Pre-pass 1: Map each chunk to its dictionary page's key count.
+  // Chunks without a dictionary page keep a count of 0.
+  std::vector<size_type> chunk_dict_key_counts(pass.chunks.size(), 0);
+  for (auto const& page : pass.pages) {
+    if ((page.flags & PAGEINFO_FLAGS_DICTIONARY) == 0) { continue; }
+    auto const chunk_idx = page.chunk_idx;
+    if (chunk_idx < 0 or static_cast<size_t>(chunk_idx) >= pass.chunks.size()) { continue; }
+    if (pass.chunks[chunk_idx].dict_page == nullptr) { continue; }
+    chunk_dict_key_counts[chunk_idx] = static_cast<size_type>(page.num_input_values);
+  }
+
+  // Pre-pass 2: Bucket chunk indices by their source input-column ordinal. Because
+  // `pass.chunks` is laid out row-group-major, appending in index order yields each column's chunks
+  // already in row-group order.
+  std::vector<std::vector<size_t>> chunks_by_input_col(_input_columns.size());
+  for (size_t c = 0; c < pass.chunks.size(); ++c) {
+    auto const col = pass.chunks[c].src_col_index;
+    if (col >= 0 and static_cast<size_t>(col) < _input_columns.size()) {
+      chunks_by_input_col[col].push_back(c);
+    }
+  }
+
   // For each eligible input column, collect its chunks in row-group order and assemble a
   // DICTIONARY32 output.
   //
@@ -320,13 +341,8 @@ void reader_impl::assemble_dict_transcoded_columns(
     [&](size_t i) {
       if (not _dict_transcode_eligible[i]) { return; }
 
-      // Gather chunk indices for this input column in row-group order.
-      std::vector<size_t> chunk_indices;
-      chunk_indices.reserve(pass.chunks.size() / std::max<size_t>(_input_columns.size(), 1));
-      std::copy_if(cuda::counting_iterator<size_t>{0},
-                   cuda::counting_iterator{pass.chunks.size()},
-                   std::back_inserter(chunk_indices),
-                   [&](size_t c) { return pass.chunks[c].src_col_index == static_cast<int>(i); });
+      // This column's chunks, in row-group order (bucketed in pre-pass 2 above).
+      auto const& chunk_indices = chunks_by_input_col[i];
       if (chunk_indices.empty()) { return; }
 
       // `out_columns` is indexed by output-buffer (root column) ordinal, not input-column
@@ -336,22 +352,12 @@ void reader_impl::assemble_dict_transcoded_columns(
       // column, so `nesting[0]` is the correct, and only, output-buffer index to use.
       auto const out_idx = static_cast<size_t>(_input_columns[i].nesting[0]);
 
-      // Per-chunk key counts from the dictionary page's `num_input_values`, mirrored back to
-      // host when `pass.pages` was copied by `decode_page_headers`.
-      std::vector<size_type> chunk_key_counts(chunk_indices.size(), 0);
+      // Per-chunk key counts, looked up from the pre-pass 1 map.
+      std::vector<size_type> chunk_key_counts(chunk_indices.size());
       std::transform(chunk_indices.begin(),
                      chunk_indices.end(),
                      chunk_key_counts.begin(),
-                     [&](size_t chunk_idx) -> size_type {
-                       if (pass.chunks[chunk_idx].dict_page == nullptr) { return 0; }
-                       for (auto const& page : pass.pages) {
-                         if (page.chunk_idx == static_cast<int32_t>(chunk_idx) and
-                             (page.flags & PAGEINFO_FLAGS_DICTIONARY) != 0) {
-                           return static_cast<size_type>(page.num_input_values);
-                         }
-                       }
-                       return size_type{0};
-                     });
+                     [&](size_t chunk_idx) { return chunk_dict_key_counts[chunk_idx]; });
 
       auto& indices_col = out_columns[out_idx];
       CUDF_EXPECTS(indices_col != nullptr and indices_col->type().id() == type_id::INT32,

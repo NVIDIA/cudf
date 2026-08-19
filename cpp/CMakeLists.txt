@@ -68,14 +68,7 @@ set(CUDF_BUILD_STATIC_DEPS
 )
 set_property(CACHE CUDF_BUILD_STATIC_DEPS PROPERTY STRINGS "ON" "OFF" "FORCE")
 
-# cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic linking
-option(CUDA_STATIC_RUNTIME "Statically link the CUDA runtime" OFF)
-# FORCE mode implies static CUDA runtime
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
-  set(CUDA_STATIC_RUNTIME
-      ON
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       ON
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -85,10 +78,6 @@ if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
       CACHE BOOL "Use static linking for nvJitLink" FORCE
   )
 else()
-  set(CUDA_STATIC_RUNTIME
-      OFF
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       OFF
       CACHE BOOL "Use static linking for NVRTC" FORCE

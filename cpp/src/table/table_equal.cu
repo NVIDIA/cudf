@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,11 +31,11 @@ template <bool has_nested_columns>
                                 null_equality nulls_equal,
                                 rmm::cuda_stream_view stream)
 {
-  auto const comparator = detail::row::equality::two_table_comparator{left, right, stream};
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const comparator = detail::row::equality::two_table_comparator{left, right, stream, temp_mr};
   auto const rows_equal = comparator.equal_to<has_nested_columns>(
     nullate::DYNAMIC{has_nested_nulls(left) or has_nested_nulls(right)}, nulls_equal);
-  rmm::device_uvector<bool> eq_rows{
-    static_cast<std::size_t>(left.num_rows()), stream, cudf::get_current_device_resource_ref()};
+  rmm::device_uvector<bool> eq_rows{static_cast<std::size_t>(left.num_rows()), stream, temp_mr};
   CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
     cuda::counting_iterator<size_type>{0},
     eq_rows.begin(),

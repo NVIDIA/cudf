@@ -71,7 +71,7 @@ enum class unary_operator : int32_t {
 std::unique_ptr<cudf::column> unary_operation(
   cudf::column_view const& input,
   cudf::unary_operator op,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -87,7 +87,7 @@ std::unique_ptr<cudf::column> unary_operation(
  */
 std::unique_ptr<cudf::column> is_null(
   cudf::column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -103,7 +103,7 @@ std::unique_ptr<cudf::column> is_null(
  */
 std::unique_ptr<cudf::column> is_valid(
   cudf::column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -117,12 +117,12 @@ std::unique_ptr<cudf::column> is_valid(
  * @param mr Device memory resource used to allocate the returned column's device memory
  *
  * @returns Column of same size as `input` containing result of the cast operation
- * @throw cudf::logic_error if `out_type` is not a fixed-width type
+ * @throw cudf::logic_error if `input` or `out_type` is not a fixed-width type
  */
 std::unique_ptr<column> cast(
   column_view const& input,
   data_type out_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -150,7 +150,7 @@ bool is_supported_cast(data_type from, data_type to) noexcept;
  */
 std::unique_ptr<column> is_nan(
   cudf::column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -169,7 +169,7 @@ std::unique_ptr<column> is_nan(
  */
 std::unique_ptr<column> is_not_nan(
   cudf::column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

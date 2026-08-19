@@ -44,7 +44,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     send_metadata,
     shutdown_on_error,
 )
-from cudf_polars.streaming.groupby import combine, decompose
+from cudf_polars.streaming.groupby import _has_stable_sorted_agg, combine, decompose
 from cudf_polars.streaming.repartition import Repartition
 
 if TYPE_CHECKING:
@@ -498,7 +498,7 @@ def _key_indices(
 
 def _maintain_order(ir: GroupBy | Distinct) -> bool:
     if isinstance(ir, GroupBy):
-        return ir.maintain_order
+        return ir.maintain_order or _has_stable_sorted_agg(ir.agg_requests)
     else:
         return ir.stable or ir.keep in (
             plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,

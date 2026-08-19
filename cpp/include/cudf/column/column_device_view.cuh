@@ -19,8 +19,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 #include <functional>
 
@@ -228,7 +227,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @brief Iterator for navigating this column
    */
   template <typename T>
-  using const_iterator = thrust::transform_iterator<detail::value_accessor<T>, count_it>;
+  using const_iterator = cuda::transform_iterator<detail::value_accessor<T>, count_it>;
 
   /**
    * @brief Return an iterator to the first element of the column.
@@ -276,14 +275,14 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, typename Nullate>
   using const_optional_iterator =
-    thrust::transform_iterator<detail::optional_accessor<T, Nullate>, count_it>;
+    cuda::transform_iterator<detail::optional_accessor<T, Nullate>, count_it>;
 
   /**
    * @brief Pair iterator for navigating this column
    */
   template <typename T, bool has_nulls>
   using const_pair_iterator =
-    thrust::transform_iterator<detail::pair_accessor<T, has_nulls>, count_it>;
+    cuda::transform_iterator<detail::pair_accessor<T, has_nulls>, count_it>;
 
   /**
    * @brief Pair rep iterator for navigating this column
@@ -292,7 +291,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, bool has_nulls>
   using const_pair_rep_iterator =
-    thrust::transform_iterator<detail::pair_rep_accessor<T, has_nulls>, count_it>;
+    cuda::transform_iterator<detail::pair_rep_accessor<T, has_nulls>, count_it>;
 
   /**
    * @brief Return an optional iterator to the first element of the column.
@@ -701,7 +700,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * @brief Iterator for navigating this column
    */
   template <typename T>
-  using iterator = thrust::transform_iterator<detail::mutable_value_accessor<T>, count_it>;
+  using iterator = cuda::transform_iterator<detail::mutable_value_accessor<T>, count_it>;
 
   /**
    * @brief Return first element (accounting for offset) after underlying data

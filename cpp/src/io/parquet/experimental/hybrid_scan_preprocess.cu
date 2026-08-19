@@ -18,12 +18,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 
 #include <numeric>
@@ -48,7 +48,7 @@ void decode_dictionary_page_headers(
   cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
   cudf::detail::hostdevice_span<PageInfo> pages,
   cudf::host_span<cudf::device_span<uint8_t const> const> dict_page_data,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -93,7 +93,7 @@ void decode_dictionary_page_headers(
 
   pages.device_to_host_async(stream);
   chunks.device_to_host_async(stream);
-  stream.synchronize();
+  stream.sync();
 }
 
 }  // namespace
@@ -219,7 +219,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   std::span<int const> dictionary_col_schemas,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Create row group information for the input row group indices
   auto const row_groups_info = std::get<2>(
@@ -313,7 +313,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
   // Create page infos for each column chunk's dictionary page
   cudf::detail::hostdevice_vector<PageInfo> pages(total_column_chunks, stream);
-  CUDF_CUDA_TRY(cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream));
+  CUDF_CUDA_TRY(
+    cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream.get()));
 
   // Decode dictionary page headers
   decode_dictionary_page_headers(
@@ -360,7 +361,7 @@ struct is_row_pruned_fn {
 }  // namespace
 
 bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_mask,
-                                                  rmm::cuda_stream_view stream) const
+                                                  cuda::stream_ref stream) const
 {
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
@@ -374,7 +375,7 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,
                                               cudf::mutable_column_view& out_row_mask,
                                               cudf::size_type out_row_mask_offset,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -393,7 +394,7 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
     out_row_mask.begin<bool>() + out_row_mask_offset,
     total_rows,
     row_mask_update_fn{in_row_mask.nullable(), in_row_mask.begin<bool>(), in_row_mask.null_mask()},
-    stream.value()));
+    stream.get()));
 
   // Make sure the null mask of the output row mask column is all valid after the update. This is
   // to correctly assess if a payload column data page can be pruned. An invalid row in the row mask

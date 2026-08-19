@@ -24,9 +24,8 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -536,11 +535,11 @@ rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
     static_cast<size_type>(std::distance(first_bit_indices_begin, first_bit_indices_end));
   rmm::device_uvector<size_type> d_bit_counts(num_ranges, stream);
 
-  auto num_set_bits_in_word = thrust::make_transform_iterator(bitmask, popcount{});
+  auto num_set_bits_in_word = cuda::transform_iterator(bitmask, popcount{});
   auto first_word_indices =
-    thrust::make_transform_iterator(first_bit_indices_begin, bit_to_word_index{true});
+    cuda::transform_iterator(first_bit_indices_begin, bit_to_word_index{true});
   auto last_word_indices =
-    thrust::make_transform_iterator(last_bit_indices_begin, bit_to_word_index{false});
+    cuda::transform_iterator(last_bit_indices_begin, bit_to_word_index{false});
 
   // Allocate temporary memory.
   size_t temp_storage_bytes{0};
@@ -577,7 +576,7 @@ rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
     // Convert from set bits counts to unset bits by subtracting the number of
     // set bits from the length of the segment.
     auto segments_begin = cuda::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);
-    auto segment_length_iterator = thrust::transform_iterator(
+    auto segment_length_iterator = cuda::transform_iterator(
       segments_begin, cuda::proclaim_return_type<size_type>([] __device__(auto const& segment) {
         auto const begin = cuda::std::get<0>(segment);
         auto const end   = cuda::std::get<1>(segment);
@@ -683,10 +682,10 @@ std::vector<size_type> segmented_count_bits(bitmask_type const* bitmask,
     make_device_uvector_async(h_indices, stream, cudf::get_current_device_resource_ref());
 
   // Compute the bit counts over each segment.
-  auto first_bit_indices_begin = thrust::make_transform_iterator(
+  auto first_bit_indices_begin = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0}, index_alternator{false, d_indices.data()});
   auto const first_bit_indices_end = first_bit_indices_begin + num_segments;
-  auto last_bit_indices_begin      = thrust::make_transform_iterator(
+  auto last_bit_indices_begin      = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0}, index_alternator{true, d_indices.data()});
   rmm::device_uvector<size_type> d_bit_counts =
     cudf::detail::segmented_count_bits(bitmask,
@@ -794,7 +793,7 @@ std::pair<rmm::device_buffer, size_type> segmented_null_mask_reduction(
 {
   auto const segments_begin =
     cuda::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);
-  auto const segment_length_iterator = thrust::make_transform_iterator(
+  auto const segment_length_iterator = cuda::transform_iterator(
     segments_begin, cuda::proclaim_return_type<size_type>([] __device__(auto const& segment) {
       auto const begin = cuda::std::get<0>(segment);
       auto const end   = cuda::std::get<1>(segment);

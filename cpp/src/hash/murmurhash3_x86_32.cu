@@ -15,6 +15,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
@@ -66,8 +67,8 @@ std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            rmm::cuda_stream_view stream,
                                            rmm::device_async_resource_ref mr)
 {
-  auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+  auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(
+    input, stream, cudf::get_current_device_resource_ref());
   return murmurhash3_x86_32_impl(
     preprocessed_input, input.num_rows(), seed, nullate::DYNAMIC{has_nulls(input)}, stream, mr);
 }

@@ -13,9 +13,10 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -52,7 +53,7 @@ class sort_merge_join {
   sort_merge_join(table_view const& right,
                   sorted is_right_sorted,
                   null_equality compare_nulls,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Returns the row indices for an inner join.
@@ -65,7 +66,7 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(table_view const& left,
-             rmm::cuda_stream_view stream,
+             cuda::stream_ref stream,
              rmm::device_async_resource_ref mr) const;
 
   /**
@@ -79,7 +80,7 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(table_view const& left,
-            rmm::cuda_stream_view stream,
+            cuda::stream_ref stream,
             rmm::device_async_resource_ref mr) const;
 
   /**
@@ -91,7 +92,7 @@ class sort_merge_join {
    * @return A unique_ptr to join_match_context
    */
   std::unique_ptr<join_match_context> inner_join_match_context(
-    table_view const& left, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
+    table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -104,7 +105,7 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(cudf::join_partition_context const& context,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr) const;
 
  private:
@@ -141,7 +142,7 @@ class sort_merge_join {
     static preprocessed_table create(table_view const& table,
                                      null_equality compare_nulls,
                                      sorted is_sorted,
-                                     rmm::cuda_stream_view stream);
+                                     cuda::stream_ref stream);
 
     /**
      * @brief Mark rows in unprocessed table with nulls at root or child levels by populating the
@@ -149,28 +150,28 @@ class sort_merge_join {
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
      */
-    void populate_nonnull_filter(rmm::cuda_stream_view stream);
+    void populate_nonnull_filter(cuda::stream_ref stream);
 
     /**
      * @brief Apply _validity_mask to the _table_view to create a null-free table
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
      */
-    void apply_nonnull_filter(rmm::cuda_stream_view stream);
+    void apply_nonnull_filter(cuda::stream_ref stream);
 
     /**
      * @brief Pre-process the unprocessed table when null equality is set to unequal
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
      */
-    void preprocess_unprocessed_table(rmm::cuda_stream_view stream);
+    void preprocess_unprocessed_table(cuda::stream_ref stream);
 
     /**
      * @brief Compute sorted ordering of the processed table
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
      */
-    void compute_sorted_order(rmm::cuda_stream_view stream);
+    void compute_sorted_order(cuda::stream_ref stream);
 
     /**
      * @brief Create mapping from processed table indices to unprocessed table indices
@@ -179,7 +180,7 @@ class sort_merge_join {
      * @return A device vector containing the mapping from processed table indices to unprocessed
      * table indices
      */
-    rmm::device_uvector<size_type> map_table_to_unprocessed(rmm::cuda_stream_view stream) const;
+    rmm::device_uvector<size_type> map_table_to_unprocessed(cuda::stream_ref stream) const;
   };
 
   /**
@@ -229,7 +230,7 @@ class sort_merge_join {
   void postprocess_indices(preprocessed_table const& preprocessed_left,
                            device_span<size_type> smaller_indices,
                            device_span<size_type> larger_indices,
-                           rmm::cuda_stream_view stream) const;
+                           cuda::stream_ref stream) const;
 
   /**
    * @brief Core merge operation implementation for the sort-merge join algorithm.
@@ -245,7 +246,7 @@ class sort_merge_join {
   auto invoke_merge(table_view right_view,
                     table_view left_view,
                     MergeOperation&& op,
-                    rmm::cuda_stream_view stream) const;
+                    cuda::stream_ref stream) const;
 };
 
 }  // namespace detail

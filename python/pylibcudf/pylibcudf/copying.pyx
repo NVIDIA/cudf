@@ -59,6 +59,7 @@ __all__ = [
     "empty_like",
     "gather",
     "get_element",
+    "reverse",
     "scatter",
     "shift",
     "slice",
@@ -453,6 +454,47 @@ cpdef Column shift(
                 mr.get_mr()
             )
     return Column.from_libcudf(move(c_result), _stream, mr)
+
+
+cpdef ColumnOrTable reverse(
+    ColumnOrTable input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
+):
+    """Reverse the rows of a column or table.
+
+    For details, see :cpp:func:`reverse`.
+
+    Parameters
+    ----------
+    input : Union[Column, Table]
+        The column or table to reverse.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned result's memory.
+
+    Returns
+    -------
+    Union[Column, Table]
+        The reversed column or table.
+    """
+    cdef unique_ptr[table] c_tbl_result
+    cdef unique_ptr[column] c_col_result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().value()
+    cdef column_view c_input_column
+    cdef table_view c_input_table
+
+    mr = _get_memory_resource(mr)
+    if ColumnOrTable is Column:
+        c_input_column = input.view()
+        with nogil:
+            c_col_result = cpp_copying.reverse(c_input_column, _cs, mr.get_mr())
+        return Column.from_libcudf(move(c_col_result), _stream, mr)
+    else:
+        c_input_table = input.view()
+        with nogil:
+            c_tbl_result = cpp_copying.reverse(c_input_table, _cs, mr.get_mr())
+        return Table.from_libcudf(move(c_tbl_result), _stream, mr)
 
 
 cpdef list slice(

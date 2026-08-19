@@ -12,7 +12,9 @@ cdef extern from * nogil:
     """
     #include <cudf/detail/utilities/stream_pool.hpp>
     #include <cudf/utilities/span.hpp>
-    #include <rmm/cuda_stream_view.hpp>
+
+    #include <cuda/stream_ref>
+
     #include <vector>
 
     namespace {
@@ -20,8 +22,8 @@ cdef extern from * nogil:
         cudf::host_span<cudaStream_t const> streams,
         cudaStream_t stream
     ) {
-        std::vector<rmm::cuda_stream_view> stream_views(streams.begin(), streams.end());
-        cudf::detail::join_streams(stream_views, stream);
+        std::vector<cuda::stream_ref> stream_refs(streams.begin(), streams.end());
+        cudf::detail::join_streams(stream_refs, stream);
     }
     }
     """

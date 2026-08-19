@@ -39,10 +39,9 @@ TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
   auto constexpr num_requests = 20;
   auto constexpr num_streams  = 8;
 
-  // Both threads request repeatedly so that a shared round-robin counter would be very likely to
-  // hand the same stream to both of them. The latch makes them overlap, which is the case under
-  // test: a thread that started after the other exited would correctly adopt the retired pool and
-  // observe the very streams this test requires to be disjoint.
+  // Repeated requests make a shared round-robin counter very likely to hand the same stream to both
+  // threads. The latch makes them overlap; a thread starting after the other exited would adopt its
+  // retired pool and see the same streams.
   auto collect = [](std::unordered_set<cudaStream_t>& out, std::latch& ready) {
     ready.arrive_and_wait();
     for (auto request = 0; request < num_requests; request++) {

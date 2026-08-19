@@ -5158,7 +5158,7 @@ class DatetimeProperties(BaseDatelikeProperties):
             )
 
         # TODO: Remove following validations
-        # once https://github.com/rapidsai/cudf/issues/5991
+        # once https://github.com/NVIDIA/cudf/issues/5991
         # is implemented
         not_implemented_formats = {
             "%c",
@@ -5170,7 +5170,7 @@ class DatetimeProperties(BaseDatelikeProperties):
                 raise NotImplementedError(
                     f"{d_format} date-time format is not "
                     f"supported yet, Please follow this issue "
-                    f"https://github.com/rapidsai/cudf/issues/5991 "
+                    f"https://github.com/NVIDIA/cudf/issues/5991 "
                     f"for tracking purposes."
                 )
         if isinstance(self.series.dtype, pd.ArrowDtype):

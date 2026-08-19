@@ -10,9 +10,8 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cub/cub.cuh>
+#include <cuda/stream>
 
 namespace cudf::io::detail {
 constexpr int32_t batch_size    = (1 << 5);
@@ -711,7 +710,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
 void gpu_unsnap(device_span<device_span<uint8_t const> const> inputs,
                 device_span<device_span<uint8_t> const> outputs,
                 device_span<codec_exec_result> results,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
 {
   if (inputs.empty()) { return; }
 
@@ -719,7 +718,7 @@ void gpu_unsnap(device_span<device_span<uint8_t const> const> inputs,
   dim3 dim_grid(inputs.size(), 1);  // TODO: Check max grid dimensions vs max expected count
 
   unsnap_kernel_no_racecheck<128>
-    <<<dim_grid, dim_block, 0, stream.value()>>>(inputs, outputs, results);
+    <<<dim_grid, dim_block, 0, stream.get()>>>(inputs, outputs, results);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -751,7 +750,7 @@ CUDF_KERNEL void get_snappy_uncompressed_size_kernel(
 
 void get_snappy_uncompressed_size(device_span<device_span<uint8_t const> const> inputs,
                                   device_span<size_t> uncompressed_sizes,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   if (inputs.empty()) { return; }
 
@@ -759,7 +758,7 @@ void get_snappy_uncompressed_size(device_span<device_span<uint8_t const> const> 
   auto const num_blocks =
     cudf::util::div_rounding_up_safe<size_t>(inputs.size(), threads_per_block);
 
-  get_snappy_uncompressed_size_kernel<<<num_blocks, threads_per_block, 0, stream.value()>>>(
+  get_snappy_uncompressed_size_kernel<<<num_blocks, threads_per_block, 0, stream.get()>>>(
     inputs, uncompressed_sizes);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

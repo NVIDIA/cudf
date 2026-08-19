@@ -6,7 +6,7 @@
 
 #include <cudf/column/column.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <memory>
 

@@ -11,8 +11,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -65,8 +66,8 @@ class sort_merge_join {
    */
   sort_merge_join(table_view const& right,
                   sorted is_right_sorted,
-                  null_equality compare_nulls  = null_equality::EQUAL,
-                  rmm::cuda_stream_view stream = cudf::get_default_stream());
+                  null_equality compare_nulls = null_equality::EQUAL,
+                  cuda::stream_ref stream     = cudf::get_default_stream());
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing
@@ -87,7 +88,7 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(table_view const& left,
-             rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+             cuda::stream_ref stream           = cudf::get_default_stream(),
              rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -112,7 +113,7 @@ class sort_merge_join {
                             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(table_view const& left,
              sorted is_left_sorted,
-             rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+             cuda::stream_ref stream           = cudf::get_default_stream(),
              rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -133,7 +134,7 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(table_view const& left,
-            rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+            cuda::stream_ref stream           = cudf::get_default_stream(),
             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -158,7 +159,7 @@ class sort_merge_join {
                             std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(table_view const& left,
             sorted is_left_sorted,
-            rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+            cuda::stream_ref stream           = cudf::get_default_stream(),
             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -187,7 +188,7 @@ class sort_merge_join {
    */
   std::unique_ptr<join_match_context> inner_join_match_context(
     table_view const& left,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -209,7 +210,7 @@ class sort_merge_join {
   inner_join_match_context(
     table_view const& left,
     sorted is_left_sorted,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -268,7 +269,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(
     cudf::join_partition_context const& context,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:

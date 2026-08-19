@@ -25,6 +25,9 @@ jobs:
       - conda-python-cudf-tests
       - conda-python-other-tests
       - conda-java-tests
+      - java-build-matrix
+      - java-build
+      - java-tests
       - conda-notebook-tests
       - docs-build
       - publish-api-docs
@@ -441,7 +444,7 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_cpp.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-build:
     needs: [build-details, conda-cpp-build]
@@ -488,7 +491,7 @@ jobs:
     with:
       build_type: pull-request
       script: "ci/test_python_cudf.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-other-tests:
     # Tests for dask_cudf, cudf_polars, custreamz, cudf_kafka are separated for CI parallelism
@@ -504,10 +507,10 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda
     with:
       build_type: pull-request
-      # https://github.com/rapidsai/cudf/pull/22381/changes#r3196736965
+      # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_python_other.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-java-tests:
     needs: [conda-cpp-build, changed-files]
@@ -526,6 +529,75 @@ jobs:
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_java.sh"
+  # Build and test the cuDF Java JAR for every Maven classifier.
+  java-build-matrix:
+    needs: [checks]
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: pull-request
+      matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
+  java-build:
+    needs: [build-details, java-build-matrix, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    with:
+      build_type: pull-request
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      arch: ${{ matrix.ARCH }}
+      node_type: cpu16
+      container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/build_java.sh"
+      file_to_upload: output_jars
+      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
+  java-tests:
+    needs: [java-build, java-build-matrix]
+    if: ${{ !cancelled() && needs.java-build.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    runs-on: linux-${{ matrix.ARCH }}-gpu-l4-latest-1
+    container:
+      image: rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }} # zizmor: ignore[unpinned-images]
+      env:
+        NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Download java-build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
+          path: java_pkg
+      - name: Run Java tests
+        env:
+          LIBCUDF_LARGE_STRINGS_ENABLED: "0"
+        run: |
+          . java/ci/java_classifier.sh
+          JAVA_JAR="$(cudf_java_resolve_artifact_jar java_pkg)"
+          export JAVA_JAR
+          ci/test_packaged_java.sh
   conda-notebook-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -651,7 +723,7 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf_streaming.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-build-pylibcudf:
     needs: [build-details, checks, wheel-build-libcudf]
@@ -705,7 +777,7 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-build-cudf-polars:
     needs: [build-details, wheel-build-pylibcudf]
@@ -833,7 +905,7 @@ jobs:
     if: (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
     with:
       # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
-      # Filter out GB300 due to https://github.com/rapidsai/cudf/issues/23498
+      # Filter out GB300 due to https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: group_by([(.ARCH), (.CUDA_VER|split(".")|map(tonumber)|.[0])]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))])) | map(select(.GPU != "gb300" and .GPU != "gh200"))
       build_type: pull-request
       script: ci/cudf_pandas_scripts/run_tests.sh
@@ -868,7 +940,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_cudf_polars_nor_dask_cudf
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}

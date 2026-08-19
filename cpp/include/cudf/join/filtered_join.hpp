@@ -11,8 +11,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 /**
  * @file
@@ -70,7 +71,7 @@ class filtered_join {
    */
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
-                rmm::cuda_stream_view stream,
+                cuda::stream_ref stream,
                 cuda::mr::any_resource<cuda::mr::device_accessible> mr =
                   cudf::get_current_device_resource_ref());
 
@@ -93,7 +94,7 @@ class filtered_join {
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 double load_factor,
-                rmm::cuda_stream_view stream,
+                cuda::stream_ref stream,
                 cuda::mr::any_resource<cuda::mr::device_accessible> mr =
                   cudf::get_current_device_resource_ref());
 
@@ -119,7 +120,7 @@ class filtered_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> semi_join(
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -144,7 +145,7 @@ class filtered_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> anti_join(
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:

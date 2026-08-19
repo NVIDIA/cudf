@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from cython.operator cimport dereference
 from libc.stdint cimport uint8_t, uintptr_t
 from libc.stddef cimport size_t
 from libcpp.memory cimport make_unique, unique_ptr
@@ -26,6 +27,7 @@ from pylibcudf.libcudf.io.hybrid_scan cimport (
     hybrid_scan_reader as cpp_hybrid_scan_reader,
     use_data_page_mask as cpp_use_data_page_mask,
 )
+from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData as cpp_FileMetaData
 from pylibcudf.libcudf.io.text cimport byte_range_info
 from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
@@ -115,7 +117,7 @@ cdef class HybridScanReader:
         """
         cdef HybridScanReader reader = HybridScanReader.__new__(HybridScanReader)
         reader.c_obj = make_unique[cpp_hybrid_scan_reader](
-            metadata.c_obj,
+            dereference(metadata.c_obj),
             options.c_obj
         )
         return reader
@@ -128,7 +130,12 @@ cdef class HybridScanReader:
         FileMetaData
             Parquet file footer metadata
         """
-        return c_FileMetaData.from_cpp(self.c_obj.get()[0].parquet_metadata())
+        cdef unique_ptr[cpp_FileMetaData] metadata
+        with nogil:
+            metadata = make_unique[cpp_FileMetaData](
+                self.c_obj.get()[0].parquet_metadata()
+            )
+        return c_FileMetaData.from_libcudf(move(metadata))
 
     def page_index_byte_range(self) -> ByteRangeInfo:
         """Get the byte range of the page index.

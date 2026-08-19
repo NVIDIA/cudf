@@ -24,6 +24,7 @@
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+#include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -173,83 +174,340 @@ __device__ bool is_float_number(cudf::string_view s)
   return false;
 }
 
-// Size in bytes of the VARIANT encoding for one JSON scalar value string.
-// `raw` is the string returned by get_json_object with strip_quotes_from_single_strings=false.
-__device__ size_type encoded_field_size(cudf::string_view raw)
+// Validates `s` against the strict JSON number grammar (no leading zeros, digit required
+// before/after '.', digit required after 'e'/'E', etc). Anything that fails this check is not
+// a legal JSON number and must not be silently coerced into 0.0 by parse_float64.
+__device__ bool is_valid_json_number(cudf::string_view s)
 {
-  if (raw == cudf::string_view("null", 4)) { return 1; }
-  if (raw == cudf::string_view("true", 4) || raw == cudf::string_view("false", 5)) { return 1; }
+  auto const* data = s.data();
+  auto const n     = s.size_bytes();
+  if (n == 0) { return false; }
 
-  if (raw.size_bytes() >= 2 && raw.data()[0] == '"') {
-    // JSON string: strip surrounding quotes
-    size_type str_len = static_cast<size_type>(raw.size_bytes()) - 2;
-    if (str_len <= 63) { return 1 + str_len; }  // SHORT_STRING
-    return 1 + 4 + str_len;                     // LONG_STRING (1 hdr + 4-byte len + bytes)
+  size_type i = 0;
+  if (data[i] == '-') {
+    ++i;
+    if (i >= n) { return false; }
   }
+  if (data[i] == '0') {
+    ++i;
+  } else if (data[i] >= '1' && data[i] <= '9') {
+    ++i;
+    while (i < n && data[i] >= '0' && data[i] <= '9') {
+      ++i;
+    }
+  } else {
+    return false;
+  }
+  if (i < n && data[i] == '.') {
+    ++i;
+    if (i >= n || data[i] < '0' || data[i] > '9') { return false; }
+    while (i < n && data[i] >= '0' && data[i] <= '9') {
+      ++i;
+    }
+  }
+  if (i < n && (data[i] == 'e' || data[i] == 'E')) {
+    ++i;
+    if (i < n && (data[i] == '+' || data[i] == '-')) { ++i; }
+    if (i >= n || data[i] < '0' || data[i] > '9') { return false; }
+    while (i < n && data[i] >= '0' && data[i] <= '9') {
+      ++i;
+    }
+  }
+  return i == n;
+}
 
-  if (is_float_number(raw)) { return 9; }  // header + 8-byte double
-  return 9;                                // header + 8-byte int64
+// Classification of a get_json_object result string, used to drive both size computation and
+// encoding so the two stay in lock-step.
+enum class scalar_kind : uint8_t { NUL, BOOL_TRUE, BOOL_FALSE, STRING, INT, FLOAT, INVALID };
+
+// `raw` is the string returned by get_json_object with strip_quotes_from_single_strings=false.
+// Anything that is not one of JSON null/true/false/string/number (in particular a nested
+// object/array, or a malformed literal) is reported as INVALID rather than guessed at.
+__device__ scalar_kind classify_scalar(cudf::string_view raw)
+{
+  if (raw.size_bytes() == 0) { return scalar_kind::INVALID; }
+  if (raw == cudf::string_view("null", 4)) { return scalar_kind::NUL; }
+  if (raw == cudf::string_view("true", 4)) { return scalar_kind::BOOL_TRUE; }
+  if (raw == cudf::string_view("false", 5)) { return scalar_kind::BOOL_FALSE; }
+  if (raw.data()[0] == '"') {
+    if (raw.size_bytes() >= 2 && raw.data()[raw.size_bytes() - 1] == '"') {
+      return scalar_kind::STRING;
+    }
+    return scalar_kind::INVALID;
+  }
+  if (!is_valid_json_number(raw)) { return scalar_kind::INVALID; }
+  return is_float_number(raw) ? scalar_kind::FLOAT : scalar_kind::INT;
+}
+
+__device__ int hex_digit(char c)
+{
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+  return -1;
+}
+
+// Encodes `cp` as UTF-8 into `out` (which must have room for up to 4 bytes) and returns the
+// number of bytes written.
+__device__ int encode_utf8(uint32_t cp, uint8_t* out)
+{
+  if (cp <= 0x7Fu) {
+    out[0] = static_cast<uint8_t>(cp);
+    return 1;
+  }
+  if (cp <= 0x7FFu) {
+    out[0] = static_cast<uint8_t>(0xC0u | (cp >> 6u));
+    out[1] = static_cast<uint8_t>(0x80u | (cp & 0x3Fu));
+    return 2;
+  }
+  if (cp <= 0xFFFFu) {
+    out[0] = static_cast<uint8_t>(0xE0u | (cp >> 12u));
+    out[1] = static_cast<uint8_t>(0x80u | ((cp >> 6u) & 0x3Fu));
+    out[2] = static_cast<uint8_t>(0x80u | (cp & 0x3Fu));
+    return 3;
+  }
+  out[0] = static_cast<uint8_t>(0xF0u | (cp >> 18u));
+  out[1] = static_cast<uint8_t>(0x80u | ((cp >> 12u) & 0x3Fu));
+  out[2] = static_cast<uint8_t>(0x80u | ((cp >> 6u) & 0x3Fu));
+  out[3] = static_cast<uint8_t>(0x80u | (cp & 0x3Fu));
+  return 4;
+}
+
+// Computes the number of UTF-8 bytes that JSON-unescaping `[s, s+len)` (the content between the
+// quotes of a JSON string) would produce, without writing anything. Returns nullopt if the
+// content contains an invalid or truncated escape sequence.
+__device__ cuda::std::optional<size_type> json_string_unescaped_size(char const* s, size_type len)
+{
+  size_type count = 0;
+  size_type i     = 0;
+  while (i < len) {
+    char c = s[i];
+    if (c != '\\') {
+      ++count;
+      ++i;
+      continue;
+    }
+    ++i;
+    if (i >= len) { return cuda::std::nullopt; }
+    char e = s[i];
+    switch (e) {
+      case '"':
+      case '\\':
+      case '/':
+      case 'b':
+      case 'f':
+      case 'n':
+      case 'r':
+      case 't':
+        ++count;
+        ++i;
+        break;
+      case 'u': {
+        ++i;
+        if (i + 4 > len) { return cuda::std::nullopt; }
+        int cp = 0;
+        for (int k = 0; k < 4; ++k) {
+          int d = hex_digit(s[i + k]);
+          if (d < 0) { return cuda::std::nullopt; }
+          cp = (cp << 4) | d;
+        }
+        i += 4;
+        auto codepoint = static_cast<uint32_t>(cp);
+        if (codepoint >= 0xD800u && codepoint <= 0xDBFFu) {
+          if (i + 6 > len || s[i] != '\\' || s[i + 1] != 'u') { return cuda::std::nullopt; }
+          int lo = 0;
+          for (int k = 0; k < 4; ++k) {
+            int d = hex_digit(s[i + 2 + k]);
+            if (d < 0) { return cuda::std::nullopt; }
+            lo = (lo << 4) | d;
+          }
+          if (lo < 0xDC00 || lo > 0xDFFF) { return cuda::std::nullopt; }
+          i += 6;
+          codepoint =
+            0x10000u + ((codepoint - 0xD800u) << 10u) + (static_cast<uint32_t>(lo) - 0xDC00u);
+        } else if (codepoint >= 0xDC00u && codepoint <= 0xDFFFu) {
+          return cuda::std::nullopt;  // unpaired low surrogate
+        }
+        uint8_t buf[4];
+        count += encode_utf8(codepoint, buf);
+        break;
+      }
+      default: return cuda::std::nullopt;
+    }
+  }
+  return count;
+}
+
+// JSON-unescapes `[s, s+len)` into `out`. Assumes the content was already validated by
+// json_string_unescaped_size (same grammar); returns the pointer past the last byte written.
+__device__ uint8_t* write_json_string_unescaped(char const* s, size_type len, uint8_t* out)
+{
+  size_type i = 0;
+  while (i < len) {
+    char c = s[i];
+    if (c != '\\') {
+      *out++ = static_cast<uint8_t>(c);
+      ++i;
+      continue;
+    }
+    ++i;
+    char e = s[i];
+    switch (e) {
+      case '"':
+        *out++ = static_cast<uint8_t>('"');
+        ++i;
+        break;
+      case '\\':
+        *out++ = static_cast<uint8_t>('\\');
+        ++i;
+        break;
+      case '/':
+        *out++ = static_cast<uint8_t>('/');
+        ++i;
+        break;
+      case 'b':
+        *out++ = static_cast<uint8_t>('\b');
+        ++i;
+        break;
+      case 'f':
+        *out++ = static_cast<uint8_t>('\f');
+        ++i;
+        break;
+      case 'n':
+        *out++ = static_cast<uint8_t>('\n');
+        ++i;
+        break;
+      case 'r':
+        *out++ = static_cast<uint8_t>('\r');
+        ++i;
+        break;
+      case 't':
+        *out++ = static_cast<uint8_t>('\t');
+        ++i;
+        break;
+      case 'u': {
+        ++i;
+        int cp = 0;
+        for (int k = 0; k < 4; ++k) {
+          cp = (cp << 4) | hex_digit(s[i + k]);
+        }
+        i += 4;
+        auto codepoint = static_cast<uint32_t>(cp);
+        if (codepoint >= 0xD800u && codepoint <= 0xDBFFu) {
+          int lo = 0;
+          for (int k = 0; k < 4; ++k) {
+            lo = (lo << 4) | hex_digit(s[i + 2 + k]);
+          }
+          i += 6;
+          codepoint =
+            0x10000u + ((codepoint - 0xD800u) << 10u) + (static_cast<uint32_t>(lo) - 0xDC00u);
+        }
+        out += encode_utf8(codepoint, out);
+        break;
+      }
+      default: break;
+    }
+  }
+  return out;
+}
+
+// Size in bytes of the VARIANT encoding for one JSON scalar value string. Sets *error_flag (via
+// atomicExch) and returns a harmless placeholder size if `raw` is not a legal scalar (nested
+// object/array or malformed literal) or contains an invalid string escape; callers must check
+// the flag after the kernel completes and fail the whole encode rather than trust the size.
+__device__ size_type encoded_field_size(cudf::string_view raw, int32_t* error_flag)
+{
+  switch (classify_scalar(raw)) {
+    case scalar_kind::NUL:
+    case scalar_kind::BOOL_TRUE:
+    case scalar_kind::BOOL_FALSE: return 1;
+    case scalar_kind::STRING: {
+      size_type str_len        = static_cast<size_type>(raw.size_bytes()) - 2;
+      auto const unescaped_len = json_string_unescaped_size(raw.data() + 1, str_len);
+      if (!unescaped_len.has_value()) {
+        atomicExch(error_flag, 1);
+        return 1;
+      }
+      if (*unescaped_len <= 63) { return 1 + *unescaped_len; }  // SHORT_STRING
+      return 1 + 4 + *unescaped_len;  // LONG_STRING (1 hdr + 4-byte len + bytes)
+    }
+    case scalar_kind::FLOAT:
+    case scalar_kind::INT: return 9;  // header + 8-byte double/int64
+    case scalar_kind::INVALID:
+    default: atomicExch(error_flag, 1); return 1;
+  }
 }
 
 // Write VARIANT bytes for one JSON scalar value string into `out`.
-// Returns pointer past the last written byte.
+// Returns pointer past the last written byte. Assumes `raw` was already validated by a prior
+// call to encoded_field_size that did not set the error flag.
 __device__ uint8_t* write_field_value(uint8_t* out, cudf::string_view raw)
 {
   auto make_prim_header = [](primitive_type pt) -> uint8_t {
     return static_cast<uint8_t>(basic_type::PRIMITIVE) | (static_cast<uint8_t>(pt) << 2u);
   };
 
-  if (raw == cudf::string_view("null", 4)) {
-    *out++ = make_prim_header(primitive_type::NULLVAL);
-    return out;
-  }
-  if (raw == cudf::string_view("true", 4)) {
-    *out++ = make_prim_header(primitive_type::BOOLEAN_TRUE);
-    return out;
-  }
-  if (raw == cudf::string_view("false", 5)) {
-    *out++ = make_prim_header(primitive_type::BOOLEAN_FALSE);
-    return out;
-  }
-
-  if (raw.size_bytes() >= 2 && raw.data()[0] == '"') {
-    auto const* str_start = raw.data() + 1;
-    size_type str_len     = static_cast<size_type>(raw.size_bytes()) - 2;
-
-    if (str_len <= 63) {
-      *out++ =
-        static_cast<uint8_t>(basic_type::SHORT_STRING) | (static_cast<uint8_t>(str_len) << 2u);
-      cuda::std::memcpy(out, str_start, str_len);
-      return out + str_len;
+  switch (classify_scalar(raw)) {
+    case scalar_kind::NUL: {
+      *out++ = make_prim_header(primitive_type::NULLVAL);
+      return out;
     }
-    // LONG_STRING
-    *out++         = make_prim_header(primitive_type::LONG_STRING);
-    uint32_t len32 = static_cast<uint32_t>(str_len);
-    cuda::std::memcpy(out, &len32, 4);
-    out += 4;
-    cuda::std::memcpy(out, str_start, str_len);
-    return out + str_len;
+    case scalar_kind::BOOL_TRUE: {
+      *out++ = make_prim_header(primitive_type::BOOLEAN_TRUE);
+      return out;
+    }
+    case scalar_kind::BOOL_FALSE: {
+      *out++ = make_prim_header(primitive_type::BOOLEAN_FALSE);
+      return out;
+    }
+    case scalar_kind::STRING: {
+      auto const* str_start    = raw.data() + 1;
+      size_type str_len        = static_cast<size_type>(raw.size_bytes()) - 2;
+      auto const unescaped_len = json_string_unescaped_size(str_start, str_len);
+      if (!unescaped_len.has_value()) {
+        // Should be unreachable: already validated by encoded_field_size.
+        *out++ = make_prim_header(primitive_type::NULLVAL);
+        return out;
+      }
+      auto const n = *unescaped_len;
+      if (n <= 63) {
+        *out++ = static_cast<uint8_t>(basic_type::SHORT_STRING) | (static_cast<uint8_t>(n) << 2u);
+        return write_json_string_unescaped(str_start, str_len, out);
+      }
+      // LONG_STRING
+      *out++         = make_prim_header(primitive_type::LONG_STRING);
+      uint32_t len32 = static_cast<uint32_t>(n);
+      cuda::std::memcpy(out, &len32, 4);
+      out += 4;
+      return write_json_string_unescaped(str_start, str_len, out);
+    }
+    case scalar_kind::FLOAT: {
+      *out++     = make_prim_header(primitive_type::FLOAT64);
+      double val = parse_float64(raw);
+      cuda::std::memcpy(out, &val, sizeof(double));
+      return out + sizeof(double);
+    }
+    case scalar_kind::INT: {
+      auto parsed = try_parse_int64(raw);
+      if (parsed.has_value()) {
+        *out++       = make_prim_header(primitive_type::INT64);
+        int64_t ival = *parsed;
+        cuda::std::memcpy(out, &ival, sizeof(int64_t));
+        return out + sizeof(int64_t);
+      }
+      // Failed to parse as INT64 (out-of-range): fall back to FLOAT64.
+      *out++     = make_prim_header(primitive_type::FLOAT64);
+      double val = parse_float64(raw);
+      cuda::std::memcpy(out, &val, sizeof(double));
+      return out + sizeof(double);
+    }
+    case scalar_kind::INVALID:
+    default: {
+      // Should be unreachable: already validated by encoded_field_size.
+      *out++ = make_prim_header(primitive_type::NULLVAL);
+      return out;
+    }
   }
-
-  if (is_float_number(raw)) {
-    *out++     = make_prim_header(primitive_type::FLOAT64);
-    double val = parse_float64(raw);
-    cuda::std::memcpy(out, &val, sizeof(double));
-    return out + sizeof(double);
-  }
-
-  auto parsed = try_parse_int64(raw);
-  if (parsed.has_value()) {
-    *out++       = make_prim_header(primitive_type::INT64);
-    int64_t ival = *parsed;
-    cuda::std::memcpy(out, &ival, sizeof(int64_t));
-    return out + sizeof(int64_t);
-  }
-  // Failed to parse as INT64 (e.g. out-of-range): fall back to FLOAT64.
-  *out++     = make_prim_header(primitive_type::FLOAT64);
-  double val = parse_float64(raw);
-  cuda::std::memcpy(out, &val, sizeof(double));
-  return out + sizeof(double);
 }
 
 // ─── kernels ──────────────────────────────────────────────────────────────────
@@ -266,7 +524,8 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void compute_value_sizes_kernel
   size_type num_rows,
   size_type num_fields,
   bitmask_type const* input_null_mask,
-  device_span<size_type> value_sizes)
+  device_span<size_type> value_sizes,
+  int32_t* error_flag)
 {
   auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size_encode>();
   auto const stride = cudf::detail::grid_1d::grid_stride<block_size_encode>();
@@ -284,7 +543,8 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void compute_value_sizes_kernel
       auto const orig = sorted_to_original[si];
       if (extracted[orig].is_null(row)) { continue; }
       ++n_present;
-      values_bytes += encoded_field_size(extracted[orig].element<cudf::string_view>(row));
+      values_bytes +=
+        encoded_field_size(extracted[orig].element<cudf::string_view>(row), error_flag);
     }
 
     // 1 (value_metadata) + NUM_ELEMENTS_SIZE + n_present*FIELD_ID_SIZE
@@ -306,7 +566,8 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
   size_type num_fields,
   bitmask_type const* input_null_mask,
   device_span<size_type const> value_offsets,
-  uint8_t* output)
+  uint8_t* output,
+  int32_t* error_flag)
 {
   auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size_encode>();
   auto const stride = cudf::detail::grid_1d::grid_stride<block_size_encode>();
@@ -341,7 +602,7 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
       auto const orig = sorted_to_original[si];
       if (extracted[orig].is_null(row)) { continue; }
       write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);
-      cur_offset += encoded_field_size(extracted[orig].element<cudf::string_view>(row));
+      cur_offset += encoded_field_size(extracted[orig].element<cudf::string_view>(row), error_flag);
     }
     write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);  // sentinel
 
@@ -576,10 +837,22 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   rmm::device_uvector<size_type> value_sizes(
     num_rows, stream, cudf::get_current_device_resource_ref());
   {
+    rmm::device_scalar<int32_t> error_flag(0, stream, cudf::get_current_device_resource_ref());
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
     compute_value_sizes_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
-      d_views, d_sorted_to_original, num_rows, num_fields, input_null_mask, value_sizes);
+      d_views,
+      d_sorted_to_original,
+      num_rows,
+      num_fields,
+      input_null_mask,
+      value_sizes,
+      error_flag.data());
     CUDF_CUDA_TRY(cudaGetLastError());
+    CUDF_EXPECTS(error_flag.value(stream) == 0,
+                 "encode_strings_to_variant encountered a JSON value that is not a supported "
+                 "scalar (nested object/array), or a malformed literal or string escape; "
+                 "VARIANT encoding requires scalar, non-nested field values only",
+                 std::invalid_argument);
   }
 
   // ── Prefix-sum to get per-row value offsets ───────────────────────────────
@@ -603,6 +876,10 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
 
   auto value_child_data = rmm::device_buffer(static_cast<size_t>(total_value_bytes), stream, mr);
   if (total_value_bytes > 0) {
+    // Values were already validated by compute_value_sizes_kernel above; this flag is only
+    // written defensively and is not checked again.
+    rmm::device_scalar<int32_t> write_error_flag(
+      0, stream, cudf::get_current_device_resource_ref());
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
     write_values_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
       d_views,
@@ -611,7 +888,8 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
       num_fields,
       input_null_mask,
       device_span<size_type const>{value_offsets.data(), static_cast<size_t>(num_rows + 1)},
-      static_cast<uint8_t*>(value_child_data.data()));
+      static_cast<uint8_t*>(value_child_data.data()),
+      write_error_flag.data());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 

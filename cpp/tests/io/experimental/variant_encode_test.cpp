@@ -207,6 +207,58 @@ TEST_F(EncodeStringsToVariantTest, SingleRowLongStringNonAscii)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
 }
 
+TEST_F(EncodeStringsToVariantTest, SingleRowEscapedString)
+{
+  // The JSON string contains an escaped quote and an escaped backslash; the VARIANT payload
+  // must contain the unescaped bytes a"b\c, not the raw escape sequences.
+  auto variant = encode({R"({"s":"a\"b\\c"})"}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{"a\"b\\c"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, SingleRowCommonEscapes)
+{
+  // \n \t \r \b \f \/ all unescape to single control/ASCII bytes.
+  auto variant = encode({R"({"s":"a\nb\tc\rd\be\ff\/g"})"}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{"a\nb\tc\rd\be\ff/g"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+TEST_F(EncodeStringsToVariantTest, SingleRowUnicodeEscape)
+{
+  // \u00e9 is the JSON \uXXXX escape for U+00E9 (e-acute), which must be unescaped to its
+  // 2-byte UTF-8 encoding, not copied as the literal 6-character escape sequence.
+  auto variant = encode({R"({"s":"caf\u00e9"})"}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{"café"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, SingleRowSurrogatePairEscape)
+{
+  // U+1F600 (grinning face emoji) as a UTF-16 surrogate pair, unescaped to 4-byte UTF-8.
+  auto variant = encode({R"({"s":"😀"})"}, {"s"});
+
+  auto strs = extract_string(variant->view(), "$.s");
+  cudf::test::strings_column_wrapper expected{"\xF0\x9F\x98\x80"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strs, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, NestedObjectFieldValueRejected)
+{
+  // The encoder only supports scalar, non-nested field values.
+  EXPECT_THROW(encode({R"({"a":{"x":1}})"}, {"a"}), std::invalid_argument);
+}
+
+TEST_F(EncodeStringsToVariantTest, NestedArrayFieldValueRejected)
+{
+  EXPECT_THROW(encode({R"({"a":[1,2,3]})"}, {"a"}), std::invalid_argument);
+}
+
 TEST_F(EncodeStringsToVariantTest, SingleRowNullValue)
 {
   // JSON null value → VARIANT null; cast_variant returns null for that row

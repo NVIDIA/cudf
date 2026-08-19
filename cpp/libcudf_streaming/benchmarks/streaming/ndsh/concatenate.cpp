@@ -9,6 +9,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
+#include <cudf_streaming/detail/stream_adapter.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
 #include <rapidsmpf/cuda_event.hpp>
@@ -55,15 +56,16 @@ streaming::Actor concatenate(std::shared_ptr<streaming::Context> ctx,
     views.reserve(messages.size());
     for (auto&& msg : messages) {
       auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
-      cuda_stream_join(concat_stream, chunk.stream(), &event);
+      cudf_streaming::detail::cuda_stream_join(concat_stream, chunk.stream(), &event);
       views.push_back(chunk.table_view());
       chunks.push_back(std::move(chunk));
     }
     auto result = std::make_unique<cudf_streaming::table_chunk>(
       cudf::concatenate(views, concat_stream, ctx->br()->device_mr()), concat_stream);
-    cuda_stream_join(chunks | std::views::transform([](auto&& chunk) { return chunk.stream(); }),
-                     std::ranges::single_view(concat_stream),
-                     &event);
+    cudf_streaming::detail::cuda_stream_join(
+      chunks | std::views::transform([](auto&& chunk) { return chunk.stream(); }),
+      std::ranges::single_view(concat_stream),
+      &event);
     chunks.clear();
     co_await ch_out->send(cudf_streaming::to_message(0, std::move(result)));
   }

@@ -9,6 +9,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cudf_streaming/detail/stream_adapter.hpp>
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/utils.hpp>
 
@@ -176,7 +177,7 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
   // underlying device buffers to use `stream` going forward. This ensures
   // the packed data are not deallocated before we have a chance to
   // concatenate them on `stream`.
-  rapidsmpf::cuda_stream_join(std::views::single(stream), packed_data_streams);
+  cudf_streaming::detail::cuda_stream_join(std::views::single(stream), packed_data_streams);
   for (cudf::packed_columns& packed_columns : references) {
     packed_columns.gpu_data->set_stream(stream);
   }

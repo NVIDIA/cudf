@@ -74,7 +74,7 @@ static void BM_PartitionAndPack(benchmark::State& state)
                                                               stream,
                                                               br.get());
     benchmark::DoNotOptimize(pack_partitions);
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream));
+    stream.sync();
   }
 
   // Set metrics
@@ -125,7 +125,7 @@ static void BM_PartitionAndPackCurrentImpl(benchmark::State& state)
                                                                 br.get());
       benchmark::DoNotOptimize(pack_partitions);
     }
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream));
+    stream.sync();
   }
 
   // Set metrics

@@ -520,9 +520,8 @@ TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
 
 // Two flat, low-cardinality string columns across multiple row groups. Their per-row-group
 // dictionaries interleave in the reader's shared key buffer (`pass.str_dict_index`), so each
-// column's keys are strided within it -- exercising the multi-column (concatenate) branch of the
-// multi-row-group assembly, as opposed to the single-column contiguous fast path. Both columns
-// must transcode to DICTIONARY32 and decode back to their (distinct) inputs.
+// column's keys are strided within it. Both columns must transcode to DICTIONARY32
+// and decode back to their (distinct) inputs.
 TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
 {
   auto col_a = make_low_cardinality_strings();                   // default seed

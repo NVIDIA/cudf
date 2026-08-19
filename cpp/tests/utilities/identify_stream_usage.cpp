@@ -218,6 +218,10 @@ void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
           CHECK_STREAM_ARG(cudaMemcpy3DPeerAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync_ptsz, 7000, stream);
+#if CUDART_VERSION >= 13000
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync, 13000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync_ptsz, 13000, stream);
+#endif
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyToSymbolAsync, 3020, stream);

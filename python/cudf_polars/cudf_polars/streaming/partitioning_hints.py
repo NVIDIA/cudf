@@ -24,7 +24,7 @@ from cudf_polars.dsl.traversal import post_traversal
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Mapping
 
     from cudf_polars.dsl.ir import IR
 
@@ -57,82 +57,103 @@ PartitioningHint: TypeAlias = StrictPartitioningHint | OrderPartitioningHint
 
 
 def collect_partitioning_hints(ir: IR) -> dict[IR, tuple[PartitioningHint, ...]]:
-    """Collect candidate upstream partitioning hints for each IR node."""
+    """Collect upstream partitioning hints for an IR graph."""
     hints: dict[IR, tuple[PartitioningHint, ...]] = {}
     for node in reversed(list(post_traversal([ir]))):
-        child_hints = list(_construct_child_hints(node))
-
-        node_hints = hints.get(node)
-        if (
-            node_hints is not None
-            and len(node.children) == 1
-            and isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
-        ):
-            remapping = {
-                output_name: binding.name
-                for output_name, binding in column_domain_bindings(node).items()
-                if binding.child_index == 0
-            }
-            child_hints.extend(
-                (node.children[0], remapped)
-                for node_hint in node_hints
-                if (remapped := _remap_hint(node_hint, remapping)) is not None
-            )
-
+        child_hints = _direct_child_hints(node)
+        child_hints.extend(_propagated_child_hints(node, hints))
         for child, child_hint in child_hints:
-            candidates: list[PartitioningHint] = []
-            new_hint = child_hint
-            insertion_index: int | None = None
-            for existing_hint in hints.get(child, ()):
-                if (merged := _merge_hints(existing_hint, new_hint)) is None:
-                    candidates.append(existing_hint)
-                else:
-                    new_hint = merged
-                    if insertion_index is None:
-                        insertion_index = len(candidates)
-            if insertion_index is None:
-                candidates.append(new_hint)
-            else:
-                candidates.insert(insertion_index, new_hint)
-            hints[child] = tuple(candidates)
-
+            hints[child] = _merge_candidate_hint(hints.get(child, ()), child_hint)
     return hints
 
 
-def _construct_child_hints(ir: IR) -> Iterator[tuple[IR, PartitioningHint]]:
-    """Construct hints for the upstream children of *ir*."""
+def _direct_child_hints(ir: IR) -> list[tuple[IR, PartitioningHint]]:
+    """Create hints implied directly by operators that consume a partitioning."""
     if isinstance(ir, Sort):
         names = _column_names(ir.by)
         if names is not None:
-            yield (
-                ir.children[0],
-                _order_hint(
-                    names,
-                    tuple(order == plc.types.Order.DESCENDING for order in ir.order),
-                    tuple(
-                        (order == plc.types.Order.ASCENDING)
-                        == (null_order == plc.types.NullOrder.AFTER)
-                        for order, null_order in zip(
-                            ir.order, ir.null_order, strict=True
-                        )
+            return [
+                (
+                    ir.children[0],
+                    _order_hint(
+                        names,
+                        tuple(
+                            order == plc.types.Order.DESCENDING for order in ir.order
+                        ),
+                        tuple(
+                            (order == plc.types.Order.ASCENDING)
+                            == (null_order == plc.types.NullOrder.AFTER)
+                            for order, null_order in zip(
+                                ir.order, ir.null_order, strict=True
+                            )
+                        ),
                     ),
-                ),
-            )
+                )
+            ]
 
-    elif isinstance(ir, MapFunction) and ir.name == "hint_sorted":
-        yield ir.children[0], _order_hint(*ir.options)
+    if isinstance(ir, MapFunction) and ir.name == "hint_sorted":
+        return [(ir.children[0], _order_hint(*ir.options))]
 
-    elif isinstance(ir, Join) and ir.options[0] != "Cross":
+    if isinstance(ir, Join) and ir.options[0] != "Cross":
         left_keys = _column_names(ir.left_on)
         right_keys = _column_names(ir.right_on)
         if left_keys is not None and right_keys is not None:
-            yield ir.children[0], StrictPartitioningHint(left_keys)
-            yield ir.children[1], StrictPartitioningHint(right_keys)
+            return [
+                (ir.children[0], StrictPartitioningHint(left_keys)),
+                (ir.children[1], StrictPartitioningHint(right_keys)),
+            ]
 
-    elif isinstance(ir, GroupBy) and not ir.maintain_order:
+    if isinstance(ir, GroupBy) and not ir.maintain_order:
         keys = _column_names(ir.keys)
         if keys is not None:
-            yield ir.children[0], StrictPartitioningHint(keys)
+            return [(ir.children[0], StrictPartitioningHint(keys))]
+
+    return []
+
+
+def _propagated_child_hints(
+    node: IR, hints: dict[IR, tuple[PartitioningHint, ...]]
+) -> list[tuple[IR, PartitioningHint]]:
+    """Push compatible downstream hints through single-child operators."""
+    child_hints: list[tuple[IR, PartitioningHint]] = []
+    node_hints = hints.get(node)
+    if (
+        node_hints is not None
+        and len(node.children) == 1
+        and isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
+    ):
+        remapping = {
+            output_name: binding.name
+            for output_name, binding in column_domain_bindings(node).items()
+            if binding.child_index == 0
+        }
+        child_hints.extend(
+            (node.children[0], remapped)
+            for node_hint in node_hints
+            if (remapped := _remap_hint(node_hint, remapping)) is not None
+        )
+    return child_hints
+
+
+def _merge_candidate_hint(
+    existing_hints: tuple[PartitioningHint, ...], child_hint: PartitioningHint
+) -> tuple[PartitioningHint, ...]:
+    """Merge one hint into compatible candidates and preserve incompatible ones."""
+    candidates: list[PartitioningHint] = []
+    new_hint = child_hint
+    insertion_index: int | None = None
+    for existing_hint in existing_hints:
+        if (merged := _merge_hints(existing_hint, new_hint)) is None:
+            candidates.append(existing_hint)
+        else:
+            new_hint = merged
+            if insertion_index is None:
+                insertion_index = len(candidates)
+    if insertion_index is None:
+        candidates.append(new_hint)
+    else:
+        candidates.insert(insertion_index, new_hint)
+    return tuple(candidates)
 
 
 def _order_hint(
@@ -160,6 +181,7 @@ def _column_names(named_exprs: tuple[expr.NamedExpr, ...]) -> tuple[str, ...] | 
 def _remap_hint(
     hint: PartitioningHint, remapping: Mapping[str, str]
 ) -> PartitioningHint | None:
+    """Rewrite hint column names through a child-to-parent name mapping."""
     if isinstance(hint, StrictPartitioningHint):
         remapped_names = []
         for name in hint.keys:
@@ -180,6 +202,7 @@ def _remap_hint(
 def _merge_hints(
     left: PartitioningHint, right: PartitioningHint
 ) -> PartitioningHint | None:
+    """Merge compatible hints, or return None if both should remain candidates."""
     if isinstance(left, StrictPartitioningHint):
         if isinstance(right, StrictPartitioningHint):
             if _is_prefix(left.keys, right.keys):
@@ -206,6 +229,7 @@ def _merge_hints(
 def _merge_order_with_strict(
     order_hint: OrderPartitioningHint, strict_hint: StrictPartitioningHint
 ) -> OrderPartitioningHint | None:
+    """Fold strict-key requirements into compatible ordering hints."""
     order_names = tuple(key.name for key in order_hint.keys)
     if _is_prefix(strict_hint.keys, order_names) or _is_prefix(
         order_names, strict_hint.keys

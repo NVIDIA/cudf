@@ -1239,7 +1239,12 @@ def _finalize_benchmark_run(
                 f"{len(validation_failures)} queries failed validation: "
                 f"{sorted(set(validation_failures))}"
             )
-        else:
+        if query_failures:
+            print(
+                "⚠️  Validation was skipped for queries that failed to run: "
+                f"{sorted({q_id for q_id, _ in query_failures})}"
+            )
+        if not validation_failures and not query_failures:
             print("✅ All validated queries passed.")
     args.output.write(json.dumps(serializable_engine_config))
     args.output.write("\n")

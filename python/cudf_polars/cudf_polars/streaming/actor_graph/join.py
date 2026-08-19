@@ -56,6 +56,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     send_metadata,
     shutdown_on_error,
 )
+from cudf_polars.streaming.partitioning_hints import apply_peer_partition_count_hint
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat
 
@@ -71,6 +72,7 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.streaming.base import PartitionInfo
+    from cudf_polars.streaming.partitioning_hints import PartitioningHint
     from cudf_polars.utils.config import StreamingExecutor
 
 
@@ -714,6 +716,7 @@ def _choose_strategy_from_samples(
     left_sample: TableSizeStats,
     right_sample: TableSizeStats,
     chunkwise: bool,
+    partitioning_hint: PartitioningHint | None,
     tracer: ActorTracer | None,
 ) -> JoinStrategy:
     """Choose potential broadcast side and minimum shuffle modulus."""
@@ -795,6 +798,9 @@ def _choose_strategy_from_samples(
             estimated_rows_count + MAX_ROWS_PER_PARTITION - 1
         ) // MAX_ROWS_PER_PARTITION
         min_shuffle_modulus = max(min_shuffle_modulus, min_partitions_for_row_limit)
+    min_shuffle_modulus = apply_peer_partition_count_hint(
+        min_shuffle_modulus, partitioning_hint
+    )
 
     shuffle_modulus = _choose_shuffle_modulus(
         comm,
@@ -859,6 +865,7 @@ async def _choose_strategy(
     right_metadata: ChannelMetadata,
     executor: StreamingExecutor,
     collective_ids: list[int],
+    partitioning_hint: PartitioningHint | None,
     *,
     tracer: ActorTracer | None,
 ) -> tuple[TableSizeStats, TableSizeStats, JoinStrategy]:
@@ -878,9 +885,10 @@ async def _choose_strategy(
     hash_chunkwise = isinstance(
         left_partitioning.inter_rank_scheme, HashScheme
     ) and isinstance(right_partitioning.inter_rank_scheme, HashScheme)
-    if hash_chunkwise and left_partitioning.is_aligned_with(
+    aligned = hash_chunkwise and left_partitioning.is_aligned_with(
         right_partitioning, context.br()
-    ):
+    )
+    if aligned:
         # We can use a chunkwise join
         chunkwise = True
         left_sample = TableSizeStats(
@@ -932,6 +940,7 @@ async def _choose_strategy(
         left_sample=left_sample,
         right_sample=right_sample,
         chunkwise=chunkwise,
+        partitioning_hint=partitioning_hint,
         tracer=tracer,
     )
 
@@ -949,6 +958,7 @@ async def join_actor(
     ch_right: Channel[TableChunk],
     executor: StreamingExecutor,
     collective_ids: list[int],
+    partitioning_hint: PartitioningHint | None,
 ) -> None:
     """
     Dynamic Join actor that selects the best strategy at runtime.
@@ -977,6 +987,8 @@ async def join_actor(
         Streaming executor configuration.
     collective_ids
         List of collective IDs for shuffle/broadcast; consumed as needed.
+    partitioning_hint
+        Optional downstream physical-layout hint.
     """
     async with shutdown_on_error(
         context,
@@ -1001,6 +1013,7 @@ async def join_actor(
             right_metadata,
             executor,
             collective_ids,
+            partitioning_hint,
             tracer=tracer,
         )
         ch_left_replay = context.create_channel()
@@ -1150,6 +1163,12 @@ def _(
                 f"{len(collective_ids)} for this Join. "
                 "Ensure ReserveOpIDs is run with dynamic_planning enabled."
             )
+        hint_options = executor.dynamic_planning.partitioning_hints
+        partitioning_hint = (
+            rec.state["partitioning_hints"].get(ir)
+            if hint_options is not None and hint_options.use_partition_counts
+            else None
+        )
         actors[ir] = [
             join_actor(
                 rec.state["context"],
@@ -1161,6 +1180,7 @@ def _(
                 channels[right].reserve_output_slot(),
                 executor,
                 collective_ids,
+                partitioning_hint,
             )
         ]
         return actors, channels

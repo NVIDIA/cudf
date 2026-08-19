@@ -257,7 +257,16 @@ def generate_network(
 
     # Determine which nodes need fanout
     fanout_nodes = determine_fanout_nodes(ir, partition_info, ir_dep_count)
-    partitioning_hints = collect_partitioning_hints(ir, partition_info)
+    dynamic_planning = config_options.executor.dynamic_planning
+    hint_options = (
+        None if dynamic_planning is None else dynamic_planning.partitioning_hints
+    )
+    partitioning_hints = (
+        collect_partitioning_hints(ir, partition_info)
+        if hint_options is not None
+        and (hint_options.use_partition_counts or hint_options.use_ordering)
+        else {}
+    )
 
     # Generate the network
     state: GenState = {

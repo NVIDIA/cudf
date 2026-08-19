@@ -35,6 +35,7 @@ from cudf_polars.utils.config import (
     JoinFilterPushdownOptions,
     MemoryResourceConfig,
     ParquetOptions,
+    PartitioningHintOptions,
     StreamingExecutor,
     Unspecified,
 )
@@ -693,7 +694,121 @@ def test_dynamic_planning_defaults() -> None:
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 2
+    assert config.executor.dynamic_planning.partitioning_hints is not None
+    assert config.executor.dynamic_planning.partitioning_hints.use_partition_counts
+    assert config.executor.dynamic_planning.partitioning_hints.use_ordering
     assert config.executor.join_filter_pushdown is None
+
+
+def test_dynamic_planning_partitioning_hints_from_dict() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={
+                "dynamic_planning": {
+                    "partitioning_hints": {
+                        "use_partition_counts": False,
+                        "use_ordering": True,
+                    }
+                }
+            },
+        )
+    )
+
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.partitioning_hints is not None
+    assert not config.executor.dynamic_planning.partitioning_hints.use_partition_counts
+    assert config.executor.dynamic_planning.partitioning_hints.use_ordering
+
+
+def test_dynamic_planning_partitioning_hints_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__PARTITIONING_HINTS__USE_PARTITION_COUNTS",
+        "0",
+    )
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__PARTITIONING_HINTS__USE_ORDERING",
+        "1",
+    )
+
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.partitioning_hints is not None
+    assert not config.executor.dynamic_planning.partitioning_hints.use_partition_counts
+    assert config.executor.dynamic_planning.partitioning_hints.use_ordering
+
+
+def test_dynamic_planning_partitioning_hints_disabled_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__PARTITIONING_HINTS", "0"
+    )
+
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.partitioning_hints is None
+
+
+def test_dynamic_planning_partitioning_hints_disabled() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"dynamic_planning": {"partitioning_hints": None}},
+        )
+    )
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.partitioning_hints is None
+
+
+def test_dynamic_planning_partitioning_hints_from_instance() -> None:
+    options = PartitioningHintOptions(use_partition_counts=False, use_ordering=False)
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={
+                "dynamic_planning": DynamicPlanningOptions(partitioning_hints=options),
+            },
+        )
+    )
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.partitioning_hints is options
+
+
+def test_validate_dynamic_planning_partitioning_hints() -> None:
+    with pytest.raises(TypeError, match="use_partition_counts must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "dynamic_planning": {
+                        "partitioning_hints": {"use_partition_counts": object()}
+                    }
+                },
+            )
+        )
+    with pytest.raises(TypeError, match="use_ordering must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "dynamic_planning": {
+                        "partitioning_hints": {"use_ordering": object()}
+                    }
+                },
+            )
+        )
+    with pytest.raises(TypeError, match="partitioning_hints must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"dynamic_planning": {"partitioning_hints": object()}},
+            )
+        )
 
 
 def test_dynamic_planning_disabled_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

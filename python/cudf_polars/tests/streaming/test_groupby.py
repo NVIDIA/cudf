@@ -19,6 +19,7 @@ from cudf_polars.containers import DataFrame
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph import groupby as groupby_actor_graph
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
+from cudf_polars.streaming.partitioning_hints import HashPartitioningHint
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
 
@@ -73,13 +74,85 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
             True,  # noqa: FBT003
             [0],
             1_000_000_000,
+            0,
             False,  # noqa: FBT003
             False,  # noqa: FBT003
+            None,
             tracer,
         )
     )
 
     assert output_count == 4
+    assert tracer.decision == "shuffle"
+
+
+def test_dynamic_groupby_strategy_uses_peer_partition_count(
+    monkeypatch, strategy_chunk
+):
+    """A partition-count hint may raise the shuffle output count."""
+
+    async def fake_allgather_reduce(_context, _comm, _op_id, *local_values):
+        estimated_size = strategy_chunk.data_alloc_size() * 4
+        assert local_values == (estimated_size, 32, 4, 1)
+        return (estimated_size, 32, 4, 1)
+
+    monkeypatch.setattr(groupby_actor_graph, "allgather_reduce", fake_allgather_reduce)
+    tracer = SimpleNamespace(decision=None)
+
+    output_count = asyncio.run(
+        groupby_actor_graph._choose_strategy(
+            None,
+            None,
+            4,
+            strategy_chunk,
+            1,
+            False,  # noqa: FBT003
+            [0],
+            1_000_000_000,
+            0,
+            False,  # noqa: FBT003
+            False,  # noqa: FBT003
+            HashPartitioningHint(("key",), peer_partition_count=6),
+            tracer,
+        )
+    )
+
+    assert output_count == 6
+    assert tracer.decision == "shuffle"
+
+
+def test_dynamic_groupby_strategy_skips_peer_partition_count_for_broadcastable_output(
+    monkeypatch, strategy_chunk
+):
+    """Ignore peer partition count when grouped output is already broadcast-sized."""
+
+    async def fake_allgather_reduce(_context, _comm, _op_id, *local_values):
+        estimated_size = strategy_chunk.data_alloc_size() * 4
+        assert local_values == (estimated_size, 32, 4, 1)
+        return (estimated_size, 32, 4, 1)
+
+    monkeypatch.setattr(groupby_actor_graph, "allgather_reduce", fake_allgather_reduce)
+    tracer = SimpleNamespace(decision=None)
+
+    output_count = asyncio.run(
+        groupby_actor_graph._choose_strategy(
+            None,
+            None,
+            4,
+            strategy_chunk,
+            1,
+            False,  # noqa: FBT003
+            [0],
+            1_000_000_000,
+            1_000_000_000,
+            False,  # noqa: FBT003
+            False,  # noqa: FBT003
+            HashPartitioningHint(("key",), peer_partition_count=6),
+            tracer,
+        )
+    )
+
+    assert output_count == 2
     assert tracer.decision == "shuffle"
 
 

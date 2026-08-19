@@ -57,6 +57,7 @@ __all__ = [
     "InMemoryExecutor",
     "JoinFilterPushdownOptions",
     "ParquetOptions",
+    "PartitioningHintOptions",
     "RayContext",
     "SPMDContext",
     "StreamingExecutor",
@@ -368,6 +369,48 @@ def default_broadcast_limit(min_device_size: int | None) -> int:
 
 
 @dataclasses.dataclass(frozen=True)
+class PartitioningHintOptions:
+    """
+    Configuration for dynamic partitioning-hint usage.
+
+    Parameters
+    ----------
+    use_partition_counts
+        Whether shuffle actors may use compatible downstream partition-count
+        hints. Default is True.
+    use_ordering
+        Whether ordered actors may use compatible downstream ordering hints.
+        Default is True.
+    """
+
+    _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__PARTITIONING_HINTS"
+
+    use_partition_counts: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__USE_PARTITION_COUNTS", _bool_converter, default=True
+        )
+    )
+    use_ordering: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__USE_ORDERING", _bool_converter, default=True
+        )
+    )
+
+    def __post_init__(self) -> None:  # noqa: D105
+        if not isinstance(self.use_partition_counts, bool):
+            raise TypeError("use_partition_counts must be a bool")
+        if not isinstance(self.use_ordering, bool):
+            raise TypeError("use_ordering must be a bool")
+
+
+def _default_partitioning_hints() -> PartitioningHintOptions | None:
+    enabled = os.environ.get(PartitioningHintOptions._env_prefix)
+    if enabled is not None and not _bool_converter(enabled):
+        return None
+    return PartitioningHintOptions()
+
+
+@dataclasses.dataclass(frozen=True)
 class DynamicPlanningOptions:
     """
     Configuration for dynamic shuffle planning.
@@ -387,6 +430,9 @@ class DynamicPlanningOptions:
     sample_chunk_count
         The maximum number of chunks to sample before making
         dynamic-planning decisions. Default is 2.
+    partitioning_hints
+        Options controlling dynamic partitioning hints. ``None`` disables
+        partitioning-hint collection.
     """
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
@@ -396,8 +442,24 @@ class DynamicPlanningOptions:
             f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
         )
     )
+    partitioning_hints: PartitioningHintOptions | None = dataclasses.field(
+        default_factory=_default_partitioning_hints
+    )
 
     def __post_init__(self) -> None:  # noqa: D105
+        if isinstance(self.partitioning_hints, dict):
+            object.__setattr__(
+                self,
+                "partitioning_hints",
+                PartitioningHintOptions(**self.partitioning_hints),
+            )
+        if self.partitioning_hints is not None and not isinstance(
+            self.partitioning_hints, PartitioningHintOptions
+        ):
+            raise TypeError(
+                "partitioning_hints must be a PartitioningHintOptions "
+                "instance, dict, or None"
+            )
         if not isinstance(self.sample_chunk_count, int):
             raise TypeError("sample_chunk_count must be an int")
         if self.sample_chunk_count < 1:
@@ -877,6 +939,13 @@ class StreamingExecutor:
                 self,
                 "dynamic_planning",
                 DynamicPlanningOptions(**self.dynamic_planning),
+            )
+        if self.dynamic_planning is not None and not isinstance(
+            self.dynamic_planning, DynamicPlanningOptions
+        ):
+            raise TypeError(
+                "dynamic_planning must be a DynamicPlanningOptions "
+                "instance, dict, or None"
             )
 
         if isinstance(self.join_filter_pushdown, dict):

@@ -58,11 +58,14 @@ class OrderPartitioningHint:
     """
     Hint that rows should be ordered by a key sequence.
 
+    ``strict_key_count`` means a downstream consumer would benefit from strict
+    partitioning on the first N ordering keys.
     ``peer_partition_count`` is a planning-time estimate of the partition
     count that may align with a downstream peer input.
     """
 
     keys: tuple[NamedOrderKey, ...]
+    strict_key_count: int | None = None
     peer_partition_count: int | None = None
 
 
@@ -74,6 +77,7 @@ __all__ = [
     "NamedOrderKey",
     "OrderPartitioningHint",
     "PartitioningHint",
+    "apply_peer_partition_count_hint",
     "collect_partitioning_hints",
 ]
 
@@ -111,6 +115,16 @@ def collect_partitioning_hints(
                 _record_hint(hints, child, child_hint)
 
     return {node: hint for node, hint in hints.items() if hint is not None}
+
+
+def apply_peer_partition_count_hint(
+    partition_count: int,
+    hint: PartitioningHint | None,
+) -> int:
+    """Raise *partition_count* to *hint*'s peer count when present."""
+    if hint is None or hint.peer_partition_count is None:
+        return partition_count
+    return max(partition_count, hint.peer_partition_count)
 
 
 def _direct_child_hints(
@@ -151,8 +165,12 @@ def _propagate_hint(
         return ()
 
     (child,) = ir.children
-    if isinstance(ir, (Filter, Projection, Select, Slice)):
+    if isinstance(ir, (Projection, Select)):
         remapped = _remap_hint(hint, _child_zero_remapping(ir))
+    elif isinstance(ir, (Filter, Slice)):
+        remapped = _clear_peer_partition_count(
+            _remap_hint(hint, _child_zero_remapping(ir))
+        )
     elif isinstance(ir, GroupBy):
         # Only group-key outputs remap to the child; aggregate outputs stop here.
         remapped = _remap_hint(hint, _child_zero_remapping(ir))
@@ -216,6 +234,14 @@ def _remap_hint(
     return dataclasses.replace(hint, keys=tuple(remapped_keys))
 
 
+def _clear_peer_partition_count(
+    hint: PartitioningHint | None,
+) -> PartitioningHint | None:
+    if hint is None or hint.peer_partition_count is None:
+        return hint
+    return dataclasses.replace(hint, peer_partition_count=None)
+
+
 def _child_zero_remapping(ir: IR) -> dict[str, str]:
     return {
         output_name: binding.name
@@ -259,7 +285,11 @@ def _merge_hints(
             None
             if order_keys is None
             else OrderPartitioningHint(
-                order_keys, peer_partition_count=peer_partition_count
+                order_keys,
+                strict_key_count=_merge_strict_key_count(
+                    left.strict_key_count, right.strict_key_count
+                ),
+                peer_partition_count=peer_partition_count,
             )
         )
 
@@ -275,8 +305,13 @@ def _merge_hints(
     if _is_prefix(hash_hint.keys, order_names) or _is_prefix(
         order_names, hash_hint.keys
     ):
+        strict_key_count = min(len(hash_hint.keys), len(order_names))
         return dataclasses.replace(
-            order_hint, peer_partition_count=peer_partition_count
+            order_hint,
+            strict_key_count=_merge_strict_key_count(
+                order_hint.strict_key_count, strict_key_count
+            ),
+            peer_partition_count=peer_partition_count,
         )
     return None
 
@@ -290,6 +325,11 @@ def _merge_peer_partition_count(
         if count is not None
     ]
     return max(counts) if counts else None
+
+
+def _merge_strict_key_count(*counts: int | None) -> int | None:
+    count = max((count for count in counts if count is not None), default=0)
+    return count or None
 
 
 def _shortest_common_prefix(

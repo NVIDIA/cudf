@@ -9,7 +9,7 @@ import polars as pl
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.ir import DataFrameScan, GroupBy, Join, Select, Sort, Union
+from cudf_polars.dsl.ir import DataFrameScan, Filter, GroupBy, Join, Select, Sort, Union
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.partitioning_hints import (
     HashPartitioningHint,
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
 
 I64 = DataType(pl.Int64())
+BOOL = DataType(pl.Boolean())
 
 
 def make_scan(*names: str) -> DataFrameScan:
@@ -106,6 +107,70 @@ def test_join_creates_hash_partitioning_hints() -> None:
     assert hints[right] == HashPartitioningHint(("k",), peer_partition_count=7)
 
 
+def test_filter_clears_peer_partition_count() -> None:
+    scan = make_scan("k", "value")
+    mask = expr.NamedExpr("mask", expr.Literal(BOOL, True))  # noqa: FBT003
+    filtered = Filter(scan.schema, mask, scan)
+    right = make_scan("k", "right_value")
+    join = Join(
+        {"k": I64, "value": I64, "right_value": I64},
+        (named_col("k"),),
+        (named_col("k"),),
+        ("Inner", False, None, "_right", True, "none"),
+        filtered,
+        right,
+    )
+
+    hints = collect_partitioning_hints(
+        join,
+        {
+            join: PartitionInfo(7),
+            filtered: PartitionInfo(3),
+            scan: PartitionInfo(3),
+            right: PartitionInfo(7),
+        },
+    )
+
+    assert hints[filtered] == HashPartitioningHint(("k",), peer_partition_count=7)
+    assert hints[scan] == HashPartitioningHint(("k",))
+    assert hints[right] == HashPartitioningHint(("k",), peer_partition_count=7)
+
+
+def test_groupby_preserves_peer_partition_count() -> None:
+    scan = make_scan("k", "value")
+    groupby = GroupBy(
+        {"k": I64},
+        (named_col("k"),),
+        (),
+        maintain_order=False,
+        zlice=None,
+        df=scan,
+    )
+    right = make_scan("k", "right_value")
+    join = Join(
+        {"k": I64, "right_value": I64},
+        (named_col("k"),),
+        (named_col("k"),),
+        ("Inner", False, None, "_right", True, "none"),
+        groupby,
+        right,
+    )
+
+    hints = collect_partitioning_hints(
+        join,
+        {
+            join: PartitionInfo(7),
+            groupby: PartitionInfo(3),
+            scan: PartitionInfo(3),
+            right: PartitionInfo(7),
+        },
+    )
+
+    assert hints[groupby] == HashPartitioningHint(("k",), peer_partition_count=7)
+    assert hints[scan] == HashPartitioningHint(("k",), peer_partition_count=7)
+    assert hints[right] == HashPartitioningHint(("k",), peer_partition_count=7)
+
+
 def test_groupby_creates_hash_partition_hint() -> None:
     scan = make_scan("a", "b")
     groupby = GroupBy(
@@ -171,7 +236,8 @@ def test_groupby_remaps_order_partition_hint() -> None:
     )
 
     assert hints[scan] == OrderPartitioningHint(
-        (NamedOrderKey("a", descending=False, nulls_last=False),)
+        (NamedOrderKey("a", descending=False, nulls_last=False),),
+        strict_key_count=1,
     )
 
 
@@ -232,6 +298,7 @@ def test_fanout_merges_compatible_hash_hint_into_order_hint() -> None:
             NamedOrderKey("a", descending=False, nulls_last=False),
             NamedOrderKey("b", descending=False, nulls_last=False),
         ),
+        strict_key_count=1,
         peer_partition_count=5,
     )
     assert hints[right] == HashPartitioningHint(("a",), peer_partition_count=5)

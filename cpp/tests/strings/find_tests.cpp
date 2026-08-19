@@ -282,6 +282,16 @@ TEST_F(StringsFindTest, ContainsHeterogeneousMixedWidth)
   EXPECT_GT(sliced_avg_bytes, 64);
   EXPECT_LT(sliced_avg_bytes, 96);
 
+  // Contrast against the (incorrect) average that `chars_size()` would produce for this slice:
+  // the full underlying buffer's char count divided by the sliced row count. It lands on the
+  // opposite side of `parent_vs_sliced_threshold` from `sliced_avg_bytes`, confirming that a
+  // chars_size()-based average is not an interchangeable stand-in for the sliced-row average.
+  auto const parent_avg_bytes =
+    strings_view.chars_size(cudf::get_default_stream()) / sliced_view.size();
+  auto constexpr parent_vs_sliced_threshold = 92;
+  EXPECT_LT(sliced_avg_bytes, parent_vs_sliced_threshold);
+  EXPECT_GE(parent_avg_bytes, parent_vs_sliced_threshold);
+
   auto sliced_results = cudf::strings::contains(sliced_view, target);
   cudf::test::fixed_width_column_wrapper<bool> sliced_expected(
     {1, 0, 1, 0, 0, 1}, {true, true, true, false, true, true});

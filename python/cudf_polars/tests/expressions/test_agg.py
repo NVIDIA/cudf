@@ -16,6 +16,7 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
+    POLARS_VERSION_LT_138,
 )
 
 
@@ -58,9 +59,9 @@ def is_sorted(request):
 @pytest.fixture
 def xfail_if_sorted(is_sorted, request):
     # See https://github.com/NVIDIA/cudf/pull/20791#issuecomment-3750528419
-    if is_sorted and POLARS_VERSION_LT_136:
+    if is_sorted and POLARS_VERSION_LT_138:
         request.applymarker(
-            pytest.mark.xfail(reason="See https://github.com/pola-rs/polars/pull/24981")
+            pytest.mark.xfail(reason="set_sorted lowers to unsupported hint ir")
         )
 
 

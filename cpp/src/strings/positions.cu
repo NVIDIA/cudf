@@ -61,8 +61,7 @@ std::unique_ptr<column> create_offsets_from_positions(strings_column_view const&
     });
 
   // finally, convert the counts into offsets
-  return std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr));
+  return std::get<0>(cudf::strings::detail::make_offsets_child_column(counts, stream, mr));
 }
 
 }  // namespace cudf::strings::detail

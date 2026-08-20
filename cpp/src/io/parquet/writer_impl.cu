@@ -46,6 +46,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <format>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -1340,6 +1341,23 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
     return std::pair(std::move(dict_data), std::move(dict_index));
   }
 
+  // The static map only needs slots for as many entries as maximum parquet dictionary size.
+  auto const max_dict_entries = [&]() -> size_type {
+    // Dictionary elements are at least 4 bytes, so cap the entry count at max_dict_data_size / 4.
+    if (dict_policy == dictionary_policy::ADAPTIVE) {
+      auto const max_dict_data_size = max_page_bytes(compression, max_dict_size);
+      return static_cast<size_type>(std::clamp<size_t>(
+        max_dict_data_size / sizeof(int32_t), 1, static_cast<size_t>(MAX_DICT_SIZE)));
+    }
+    return MAX_DICT_SIZE;
+  }();
+
+  // Storage slots needed to hold `entries` keys at the target occupancy
+  auto const map_extent = [](size_t entries) {
+    return static_cast<size_type>(cuco::make_valid_extent<map_cg_size, bucket_size>(
+      static_cast<size_type>(occupancy_factor * entries)));
+  };
+
   // Variable to keep track of the current total map storage size
   size_t total_map_storage_size = 0;
   // Populate dict offsets and sizes for each chunk that need to build a dictionary.
@@ -1354,10 +1372,18 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
     if (is_type_non_dict || is_requested_non_dict) {
       chunk.use_dictionary = false;
     } else {
-      chunk.use_dictionary = true;
-      chunk.dict_map_size =
-        static_cast<cudf::size_type>(cuco::make_valid_extent<map_cg_size, bucket_size>(
-          static_cast<cudf::size_type>(occupancy_factor * chunk.num_values)));
+      chunk.use_dictionary   = true;
+      chunk.dict_entry_limit = std::min(chunk.num_values, max_dict_entries);
+      // Fragment blocks can insert one extra iteration before observing the limit so overshoot by
+      // that amount. In case a thread block inserts two extra iterations, a full cuco static map
+      // still safely rejects.
+      auto const overshoot = static_cast<size_t>(chunk.num_fragments) * dict_encode_block_size;
+      auto const slack =
+        static_cast<size_t>(map_extent(chunk.dict_entry_limit) - chunk.dict_entry_limit);
+      auto const map_entries = std::min<size_t>(
+        chunk.num_values,
+        static_cast<size_t>(chunk.dict_entry_limit) + (overshoot > slack ? overshoot - slack : 0));
+      chunk.dict_map_size   = map_extent(map_entries);
       chunk.dict_map_offset = total_map_storage_size;
       total_map_storage_size += chunk.dict_map_size;
     }
@@ -1386,6 +1412,12 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
   for (auto& ck : h_chunks) {
     if (not ck.use_dictionary) { continue; }
     std::tie(ck.use_dictionary, ck.dict_rle_bits) = [&]() -> std::pair<bool, uint8_t> {
+      // `populate_chunk_hash_maps` stops inserting once the entry limit is crossed, so a chunk that
+      // ended up above the limit has an incomplete dictionary and cannot use one. Such a chunk
+      // would have been rejected by the size checks below anyway, but its `uniq_data_size` is
+      // truncated and can no longer be trusted to make that call.
+      if (ck.num_dict_entries > ck.dict_entry_limit) { return {false, 0}; }
+
       // calculate size of chunk if dictionary is used
 
       // If we have N unique values then the idx for the last value is N - 1 and nbits is the number

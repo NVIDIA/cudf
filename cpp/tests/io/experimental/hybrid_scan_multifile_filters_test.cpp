@@ -587,6 +587,28 @@ TEST_F(HybridScanMultifileFiltersTest, BuildAllTrueRowMask)
   test_all_true_row_mask(row_group_indices);
 }
 
+TEST_F(HybridScanMultifileFiltersTest, SparsePayloadPagesWithoutOffsetIndexes)
+{
+  using T = uint32_t;
+
+  auto file_buffers = std::vector<std::vector<char>>{};
+  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+  auto inputs = multifile_inputs(build_source_info(file_buffers));
+
+  auto const options = cudf::io::parquet_reader_options::builder().column_names({"col1"}).build();
+  auto reader =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+
+  auto const stream     = cudf::get_default_stream();
+  auto const mr         = cudf::get_current_device_resource_ref();
+  auto const row_groups = reader.all_row_groups(options);
+  auto const row_mask   = reader.build_all_true_row_mask(row_groups, stream, mr);
+
+  EXPECT_THROW(
+    std::ignore = reader.payload_pages_byte_ranges(row_groups, row_mask->view(), options, stream),
+    cudf::logic_error);
+}
+
 template <typename T>
 struct HybridScanMultifilePageIndexRowMaskTest : public HybridScanMultifileFiltersTest {};
 

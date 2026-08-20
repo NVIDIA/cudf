@@ -428,13 +428,13 @@ enum class page_data_source_type : uint8_t {
  *
  * @param pass Struct containing pass information
  * @param unsorted_pages Device span of page information to decode
- * @param page_data Host span of page data spans (only used for PAGE_SPANS source)
+ * @param page_data Span of page data spans (only used for PAGE_SPANS source)
  * @param stream Stream to use
  */
 template <page_data_source_type data_source_type>
 void decode_page_headers_impl(pass_intermediate_data& pass,
                               device_span<PageInfo> unsorted_pages,
-                              host_span<cudf::device_span<uint8_t const> const> page_data,
+                              std::span<cudf::device_span<uint8_t const> const> page_data,
                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
@@ -640,7 +640,7 @@ void decode_page_headers(pass_intermediate_data& pass,
 
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
-                         host_span<cudf::device_span<uint8_t const> const> page_data,
+                         std::span<cudf::device_span<uint8_t const> const> page_data,
                          cuda::stream_ref stream)
 {
   decode_page_headers_impl<page_data_source_type::PAGE_SPANS>(

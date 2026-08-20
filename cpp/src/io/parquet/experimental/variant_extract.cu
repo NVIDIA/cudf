@@ -1155,7 +1155,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   auto [offsets_column, total_bytes] =
-    cudf::strings::detail::make_offsets_child_column(d_sizes.begin(), d_sizes.end(), stream, mr);
+    cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr);
   CUDF_EXPECTS(total_bytes <= std::numeric_limits<size_type>::max(),
                "VARIANT extracted bytes exceed cudf size_type limit",
                std::overflow_error);

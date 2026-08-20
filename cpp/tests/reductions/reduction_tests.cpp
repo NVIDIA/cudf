@@ -13,6 +13,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/reduction.hpp>
@@ -3151,6 +3152,61 @@ TYPED_TEST(DictionaryReductionTest, Quantile)
         col_nulls, *cudf::make_quantile_aggregation<reduce_aggregation>({1}, interp), output_type)
       .first,
     45.0);
+}
+
+template <typename T>
+struct FixedPointDictionaryReductionTest : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(FixedPointDictionaryReductionTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(FixedPointDictionaryReductionTest, FixedPointDictionaryMinMax)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  for (auto const i : {0, -1, -2, -3}) {
+    auto const scale        = scale_type{i};
+    auto const col          = fp_wrapper{{1, 2, 3, 4}, scale};
+    auto const dict         = cudf::dictionary::encode(col);
+    auto const expected_min = decimalXX{scaled_integer<RepType>{1, scale}};
+    auto const expected_max = decimalXX{scaled_integer<RepType>{4, scale}};
+
+    auto const result     = cudf::minmax(dict->view());
+    auto const min_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.first.get());
+    auto const max_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.second.get());
+
+    EXPECT_EQ(min_scalar->type().scale(), i);
+    EXPECT_EQ(max_scalar->type().scale(), i);
+    EXPECT_EQ(min_scalar->fixed_point_value(), expected_min);
+    EXPECT_EQ(max_scalar->fixed_point_value(), expected_max);
+  }
+}
+
+TYPED_TEST(FixedPointDictionaryReductionTest, FixedPointDictionaryMinMaxWithNulls)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  for (auto const i : {0, -1, -2, -3}) {
+    auto const scale        = scale_type{i};
+    auto const col          = fp_wrapper{{1, 2, 3, 4, 5}, {true, false, true, false, true}, scale};
+    auto const dict         = cudf::dictionary::encode(col);
+    auto const expected_min = decimalXX{scaled_integer<RepType>{1, scale}};
+    auto const expected_max = decimalXX{scaled_integer<RepType>{5, scale}};
+
+    auto const result     = cudf::minmax(dict->view());
+    auto const min_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.first.get());
+    auto const max_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.second.get());
+
+    EXPECT_EQ(min_scalar->type().scale(), i);
+    EXPECT_EQ(max_scalar->type().scale(), i);
+    EXPECT_EQ(min_scalar->fixed_point_value(), expected_min);
+    EXPECT_EQ(max_scalar->fixed_point_value(), expected_max);
+  }
 }
 
 struct ListReductionTest : public cudf::test::BaseFixture {

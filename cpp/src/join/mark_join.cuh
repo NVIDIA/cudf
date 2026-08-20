@@ -78,7 +78,7 @@ template <typename T, typename Hasher>
 struct masked_key_fn {
   CUDF_HOST_DEVICE constexpr masked_key_fn(Hasher const& hasher) : _hasher{hasher} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
   {
     return cuco::pair{unset_mark(_hasher(i)), T{i}};
   }
@@ -104,7 +104,8 @@ template <typename IndexType>
 struct hash_pair_fn {
   CUDF_HOST_DEVICE constexpr hash_pair_fn(hash_value_type const* hashes) : _hashes{hashes} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, IndexType> operator()(
+    size_type i) const noexcept
   {
     return cuco::pair{_hashes[i], IndexType{i}};
   }

@@ -25,7 +25,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 
 #include <optional>
@@ -86,12 +85,12 @@ std::unique_ptr<column> simple_segmented_reduction(
 
   if (col.has_nulls()) {
     auto f  = simple_op.template get_null_replacing_element_transformer<ResultType>();
-    auto it = thrust::make_transform_iterator(dcol->pair_begin<InputType, true>(), f);
+    auto it = cuda::transform_iterator(dcol->pair_begin<InputType, true>(), f);
     cudf::reduction::detail::segmented_reduce(
       it, offsets.begin(), offsets.end(), outit, binary_op, initial_value, stream);
   } else {
     auto f  = simple_op.template get_element_transformer<ResultType>();
-    auto it = thrust::make_transform_iterator(dcol->begin<InputType>(), f);
+    auto it = cuda::transform_iterator(dcol->begin<InputType>(), f);
     cudf::reduction::detail::segmented_reduce(
       it, offsets.begin(), offsets.end(), outit, binary_op, initial_value, stream);
   }

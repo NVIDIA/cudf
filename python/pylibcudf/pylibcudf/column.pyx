@@ -188,10 +188,12 @@ cdef gpumemoryview _copy_array_to_device(object buf, object stream: CudaStreamLi
     cdef size_t nbytes = len(mv) * mv.itemsize
     cdef Stream _stream = _get_stream(stream)
 
-    return gpumemoryview(DeviceBuffer.to_device(
+    cdef DeviceBuffer dbuf = DeviceBuffer.to_device(
         <const unsigned char[:nbytes:1]><const unsigned char*>ptr,
         _stream
-    ))
+    )
+    _stream.synchronize()
+    return gpumemoryview(dbuf)
 
 
 def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
@@ -615,7 +617,7 @@ cdef class Column:
         DataType dtype,
         size_type size,
         children: Iterable[Column],
-    ):
+    ) -> Column:
         """
         Create a Column from an RMM DeviceBuffer.
 
@@ -825,7 +827,7 @@ cdef class Column:
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """Create a Column from a Scalar.
 
         Parameters
@@ -894,7 +896,7 @@ cdef class Column:
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """Create an all null column from a template.
 
         Parameters
@@ -988,7 +990,7 @@ cdef class Column:
         cls,
         obj: SupportsArrayInterface,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> Column:
         """
         Create a Column from an object implementing the NumPy Array Interface.
 
@@ -1034,6 +1036,7 @@ cdef class Column:
             ptr = <const unsigned char*><uintptr_t>data_ptr
             view = (<const unsigned char[:nbytes]> ptr)[:nbytes]
             dbuf = DeviceBuffer.to_device(view, _stream)
+            _stream.synchronize()
         else:
             dbuf = DeviceBuffer(size=0, stream=_stream)
 
@@ -1046,7 +1049,7 @@ cdef class Column:
         cls,
         obj: SupportsCudaArrayInterface,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> Column:
         """
         Create a Column from an object implementing the CUDA Array Interface.
 
@@ -1089,7 +1092,7 @@ cdef class Column:
         cls,
         obj: SupportsCudaArrayInterface | SupportsArrayInterface,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> Column:
         """
         Create a Column from any object which supports the NumPy
         or CUDA array interface.
@@ -1308,7 +1311,7 @@ cdef class Column:
                     release_arrow_array_raw(raw_host_array_ptr)
 
     @classmethod
-    def struct_from_children(cls, children: Iterable[Column]):
+    def struct_from_children(cls, children: Iterable[Column]) -> Column:
         """
         Create a struct Column from a list of child columns.
 
@@ -1338,7 +1341,7 @@ cdef class Column:
             and reference_child.size() == child.size()
             and reference_child.null_count() == child.null_count()
             # We assume the null masks are equivalent but may be expensive to
-            # check: https://github.com/rapidsai/cudf/pull/19357#issuecomment-3071033448
+            # check: https://github.com/NVIDIA/cudf/pull/19357#issuecomment-3071033448
             for child in children
         ):
             raise ValueError(

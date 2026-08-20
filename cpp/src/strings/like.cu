@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,12 +17,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/transform.h>
@@ -305,7 +305,7 @@ template <typename PatternIterator>
 std::unique_ptr<column> like(strings_column_view const& input,
                              PatternIterator const patterns_itr,
                              string_view const& d_escape,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   auto results = make_numeric_column(data_type{type_id::BOOL8},
@@ -333,7 +333,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
     constexpr thread_index_type block_size = 512;
     constexpr thread_index_type warp_size  = cudf::detail::warp_size;
     auto const grid = cudf::detail::grid_1d(input.size() * warp_size, block_size);
-    like_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream>>>(
+    like_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       *d_strings, patterns_itr, d_escape, results->mutable_view().data<bool>());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -347,7 +347,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
 std::unique_ptr<column> like(strings_column_view const& input,
                              string_scalar const& pattern,
                              string_scalar const& escape_character,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(pattern.is_valid(stream), "Parameter pattern must be valid", std::invalid_argument);
@@ -368,7 +368,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
 std::unique_ptr<column> like(strings_column_view const& input,
                              std::string_view const& pattern,
                              std::string_view const& escape_character,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   auto const ptn = string_scalar(pattern, true, stream, cudf::get_current_device_resource_ref());
@@ -380,7 +380,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
 std::unique_ptr<column> like(strings_column_view const& input,
                              strings_column_view const& patterns,
                              string_scalar const& escape_character,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(patterns.size() == input.size(),
@@ -410,7 +410,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
 std::unique_ptr<column> like(strings_column_view const& input,
                              std::string_view const& pattern,
                              std::string_view const& escape_character,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -420,7 +420,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
 std::unique_ptr<column> like(strings_column_view const& input,
                              strings_column_view const& patterns,
                              string_scalar const& escape_character,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

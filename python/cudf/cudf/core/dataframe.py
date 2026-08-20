@@ -330,7 +330,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
         else:
             raise RuntimeError(
                 "Should have been handled by now. Please raise Github issue "
-                "at https://github.com/rapidsai/cudf/issues"
+                "at https://github.com/NVIDIA/cudf/issues"
             )
 
     @_performance_tracking
@@ -6903,7 +6903,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         dog        False      False
         """
         # TODO: propagate nulls through isin
-        # https://github.com/rapidsai/cudf/issues/7556
+        # https://github.com/NVIDIA/cudf/issues/7556
 
         def make_false_column_like_self():
             return as_column(False, length=len(self), dtype=np.dtype("bool"))

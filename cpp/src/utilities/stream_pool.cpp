@@ -99,24 +99,6 @@ std::size_t configured_max_pool_size()
   return std::max<std::size_t>(1, getenv_or("LIBCUDF_STREAM_POOL_SIZE", STREAM_POOL_SIZE));
 }
 
-/**
- * @brief Returns a cudaEvent_t for the current thread.
- *
- * The returned event is valid for the current device.
- *
- * @return A cudaEvent_t unique to the current thread and valid on the current device.
- */
-cudaEvent_t event_for_thread()
-{
-  // The program may crash if this function is called from the main thread and user application
-  // subsequently calls cudaDeviceReset().
-  // As a workaround, here we intentionally disable RAII and leak cudaEvent_t.
-  thread_local static std::vector<cuda_event*> thread_events(get_num_cuda_devices());
-  auto const device_id = get_current_cuda_device();
-  if (not thread_events[device_id.value()]) { thread_events[device_id.value()] = new cuda_event(); }
-  return *thread_events[device_id.value()];
-}
-
 }  // namespace
 
 /**
@@ -183,26 +165,31 @@ cuda_stream_pool* create_cuda_stream_pool()
 namespace {
 
 /**
- * @brief Free lists of pools that are not currently owned by any thread, one list per device.
+ * @brief Free lists of pools and events that are not currently owned by any thread, one list of
+ * each per device.
  *
- * Pools are recycled instead of destroyed so that applications which create and destroy many
- * threads do not accumulate streams. The registry is intentionally leaked so that its lifetime
- * covers the `thread_local` destructors that push pools back into it.
+ * They are recycled instead of destroyed so that applications which create and destroy many
+ * threads do not accumulate streams and events. The registry is intentionally leaked so that its
+ * lifetime covers the `thread_local` destructors that push into it.
  *
- * Pools cannot move between devices; a stream is bound to the device that was current when the
- * stream was created, so each device has its own list.
+ * Neither pools nor events can move between devices; both are bound to the device that was current
+ * when they were created, so each device has its own lists.
  */
 class stream_pool_registry {
   std::mutex _mutex;
   std::vector<std::vector<cuda_stream_pool*>> _free_pools;
+  std::vector<std::vector<cuda_event*>> _free_events;
 
  public:
-  stream_pool_registry() : _free_pools(get_num_cuda_devices()) {}
+  stream_pool_registry()
+    : _free_pools(get_num_cuda_devices()), _free_events(get_num_cuda_devices())
+  {
+  }
 
   /**
    * @brief Takes a pool for `device_id`, reusing a retired one if there is one available.
    */
-  cuda_stream_pool* acquire(rmm::cuda_device_id device_id)
+  cuda_stream_pool* acquire_pool(rmm::cuda_device_id device_id)
   {
     {
       std::lock_guard<std::mutex> const lock(_mutex);
@@ -217,15 +204,47 @@ class stream_pool_registry {
   }
 
   /**
+   * @brief Takes an event for `device_id`, reusing a retired one if there is one available.
+   *
+   * Events are never destroyed: the program may crash if one is destroyed after the application
+   * calls `cudaDeviceReset()`.
+   */
+  cuda_event* acquire_event(rmm::cuda_device_id device_id)
+  {
+    {
+      std::lock_guard<std::mutex> const lock(_mutex);
+      auto& free_events = _free_events[device_id.value()];
+      if (not free_events.empty()) {
+        auto* event = free_events.back();
+        free_events.pop_back();
+        return event;
+      }
+    }
+    return new cuda_event();
+  }
+
+  /**
    * @brief Returns a pool so that another thread can reuse it.
    *
    * Called from a `thread_local` destructor, so it must not call into CUDA; destroying streams
    * here would race with driver teardown when the main thread exits.
    */
-  void release(rmm::cuda_device_id device_id, cuda_stream_pool* pool) noexcept
+  void release_pool(rmm::cuda_device_id device_id, cuda_stream_pool* pool) noexcept
   {
     std::lock_guard<std::mutex> const lock(_mutex);
     _free_pools[device_id.value()].push_back(pool);
+  }
+
+  /**
+   * @brief Returns an event so that another thread can reuse it.
+   *
+   * Called from a `thread_local` destructor, so it must not call into CUDA, for the same reason as
+   * `release_pool`.
+   */
+  void release_event(rmm::cuda_device_id device_id, cuda_event* event) noexcept
+  {
+    std::lock_guard<std::mutex> const lock(_mutex);
+    _free_events[device_id.value()].push_back(event);
   }
 };
 
@@ -236,36 +255,65 @@ stream_pool_registry& pool_registry()
 }
 
 /**
- * @brief Owns the calling thread's pool for each device, and retires them when the thread exits.
+ * @brief Owns the calling thread's pool and event for each device, and retires them when the
+ * thread exits.
  */
-class thread_stream_pools {
+class thread_stream_resources {
   std::vector<cuda_stream_pool*> _pools;
+  std::vector<cuda_event*> _events;
 
  public:
-  thread_stream_pools() : _pools(get_num_cuda_devices(), nullptr) {}
+  thread_stream_resources()
+    : _pools(get_num_cuda_devices(), nullptr), _events(get_num_cuda_devices(), nullptr)
+  {
+  }
 
-  ~thread_stream_pools()
+  ~thread_stream_resources()
   {
     for (rmm::cuda_device_id::value_type device = 0; std::cmp_less(device, _pools.size());
          device++) {
-      if (_pools[device] != nullptr) {
-        pool_registry().release(rmm::cuda_device_id{device}, _pools[device]);
-      }
+      auto const device_id = rmm::cuda_device_id{device};
+      if (_pools[device] != nullptr) { pool_registry().release_pool(device_id, _pools[device]); }
+      if (_events[device] != nullptr) { pool_registry().release_event(device_id, _events[device]); }
     }
   }
 
-  thread_stream_pools(thread_stream_pools const&)            = delete;
-  thread_stream_pools& operator=(thread_stream_pools const&) = delete;
-  thread_stream_pools(thread_stream_pools&&)                 = delete;
-  thread_stream_pools& operator=(thread_stream_pools&&)      = delete;
+  thread_stream_resources(thread_stream_resources const&)            = delete;
+  thread_stream_resources& operator=(thread_stream_resources const&) = delete;
+  thread_stream_resources(thread_stream_resources&&)                 = delete;
+  thread_stream_resources& operator=(thread_stream_resources&&)      = delete;
 
   cuda_stream_pool& pool_for(rmm::cuda_device_id device_id)
   {
     auto*& pool = _pools[device_id.value()];
-    if (pool == nullptr) { pool = pool_registry().acquire(device_id); }
+    if (pool == nullptr) { pool = pool_registry().acquire_pool(device_id); }
     return *pool;
   }
+
+  cuda_event& event_for(rmm::cuda_device_id device_id)
+  {
+    auto*& event = _events[device_id.value()];
+    if (event == nullptr) { event = pool_registry().acquire_event(device_id); }
+    return *event;
+  }
 };
+
+thread_stream_resources& current_thread_resources()
+{
+  thread_local thread_stream_resources resources;
+  return resources;
+}
+
+/**
+ * @brief Returns a cudaEvent_t the calling thread can use on the current device.
+ *
+ * The event is reused by every fork and join the thread performs on that device, and is recycled
+ * for another thread when this one exits.
+ */
+cudaEvent_t event_for_thread()
+{
+  return current_thread_resources().event_for(get_current_cuda_device());
+}
 
 }  // namespace
 
@@ -275,8 +323,7 @@ class thread_stream_pools {
  */
 cuda_stream_pool& current_cuda_stream_pool()
 {
-  thread_local thread_stream_pools pools;
-  return pools.pool_for(get_current_cuda_device());
+  return current_thread_resources().pool_for(get_current_cuda_device());
 }
 
 std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream, std::size_t count)

@@ -383,7 +383,7 @@ size_type inplace_bitmask_binop(Binop op,
  * segment writes `identity` to its destination mask. Behavior is undefined unless the offsets are
  * non-decreasing and each lies in `[0, masks.size()]`.
  * @param[in] identity Identity element of `op`; the all-set mask for bitwise AND, zero for bitwise
- * OR. Passing a value that is not the identity of `op` silently changes every segment's result
+ * OR. Passing a value that is not the identity of `op` silently changes every segment's result.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  * @param[in] mr Device memory resource used to allocate output device vector of null counts
  * @return A device vector containing the counts of unset bits in the destination mask corresponding

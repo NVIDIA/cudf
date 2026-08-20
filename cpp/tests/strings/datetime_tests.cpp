@@ -633,3 +633,14 @@ TEST_F(StringsDatetimeTest, Errors)
   EXPECT_THROW(cudf::strings::is_timestamp(view, "%p %"), std::invalid_argument);
   EXPECT_THROW(cudf::strings::from_timestamps(timestamps, "%Y:%H", view), std::invalid_argument);
 }
+
+TEST_F(StringsDatetimeTest, IsTimestampLiteralOverrun)
+{
+  auto input = cudf::test::strings_column_wrapper{"2021-01-01 02:00:00"};
+  cudf::strings_column_view sv(input);
+
+  auto format   = "%Y-%m-%d %H:%M:%S_";  // extra literal at the end
+  auto result   = cudf::strings::is_timestamp(sv, format);
+  auto expected = cudf::test::fixed_width_column_wrapper<bool>({0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}

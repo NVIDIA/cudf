@@ -132,7 +132,7 @@ cdef class Table:
 
     @staticmethod
     def from_arrow(
-        arrow_like: ArrowLike,
+        obj: ArrowLike,
         dtype: DataType | None = None,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -152,7 +152,7 @@ cdef class Table:
 
         Parameters
         ----------
-        arrow_like : Arrow-like type
+        obj : Arrow-like type
             An object implementing one of the Arrow C data interface methods.
         dtype: DataType
             The pylibcudf data type.
@@ -187,8 +187,8 @@ cdef class Table:
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
 
-        if hasattr(arrow_like, "__arrow_c_device_array__"):
-            schema, array = arrow_like.__arrow_c_device_array__()
+        if hasattr(obj, "__arrow_c_device_array__"):
+            schema, array = obj.__arrow_c_device_array__()
             c_schema = <ArrowSchema*>PyCapsule_GetPointer(schema, "arrow_schema")
             c_array = (
                 <ArrowDeviceArray*>PyCapsule_GetPointer(array, "arrow_device_array")
@@ -210,8 +210,8 @@ cdef class Table:
                 result,
                 stream,
             )
-        elif hasattr(arrow_like, "__arrow_c_stream__"):
-            arrow_stream = arrow_like.__arrow_c_stream__()
+        elif hasattr(obj, "__arrow_c_stream__"):
+            arrow_stream = obj.__arrow_c_stream__()
             c_stream = (
                 <ArrowArrayStream*>PyCapsule_GetPointer(
                     arrow_stream, "arrow_array_stream"
@@ -233,12 +233,12 @@ cdef class Table:
                 result,
                 stream,
             )
-        elif hasattr(arrow_like, "__arrow_c_device_stream__"):
+        elif hasattr(obj, "__arrow_c_device_stream__"):
             # TODO: When we add support for this case, it should be moved above
             # the __arrow_c_stream__ case since we should prioritize device
             # data if possible.
             raise NotImplementedError("Device streams not yet supported")
-        elif hasattr(arrow_like, "__arrow_c_array__"):
+        elif hasattr(obj, "__arrow_c_array__"):
             raise NotImplementedError("Arrow host arrays not yet supported")
         else:
             raise ValueError("Invalid Arrow-like object")

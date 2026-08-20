@@ -31,7 +31,7 @@ from typing import Any, TYPE_CHECKING, TypeAlias
 if TYPE_CHECKING:
     import pyarrow as pa
 
-PyarrowDataType: TypeAlias = type[Any]
+PyarrowDataType: TypeAlias = Any
 
 try:
     import pyarrow as pa
@@ -275,13 +275,13 @@ cdef class DataType:
         return _from_arrow(pa_typ)
 
     @staticmethod
-    def from_py(type: type) -> DataType:
+    def from_py(typ: type) -> DataType:
         """
         Construct a DataType from a Python type.
 
         Parameters
         ----------
-        type : type
+        typ : type
             A Python type (eg. int, str, list)
 
         Returns
@@ -294,20 +294,20 @@ cdef class DataType:
         TypeError
             If the Python type is not supported.
         """
-        if type is bool:
+        if typ is bool:
             return DataType(type_id.BOOL8)
-        elif type is int:
+        elif typ is int:
             return DataType(type_id.INT64)
-        elif type is float:
+        elif typ is float:
             return DataType(type_id.FLOAT64)
-        elif type is str:
+        elif typ is str:
             return DataType(type_id.STRING)
-        elif type is list:
+        elif typ is list:
             return DataType(type_id.LIST)
-        elif type is dict:
+        elif typ is dict:
             return DataType(type_id.STRUCT)
         else:
-            raise TypeError(f"Cannot infer DataType from Python type {type}")
+            raise TypeError(f"Cannot infer DataType from Python type {typ}")
 
 cpdef size_t size_of(DataType t):
     """Returns the size in bytes of elements of the specified data_type.

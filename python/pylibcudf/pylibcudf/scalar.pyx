@@ -72,7 +72,7 @@ from ._interop_helpers import ArrowLike, ColumnMetadata
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 
-NpGeneric: TypeAlias = type[Any]
+NpGeneric: TypeAlias = Any
 
 try:
     import pyarrow as pa

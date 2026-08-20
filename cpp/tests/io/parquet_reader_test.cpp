@@ -2859,7 +2859,7 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
   auto struct_col = cudf::test::structs_column_wrapper{{child0, child1}};
 
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 1, 2, 5}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 1, 2, 5}.release();
   auto num_list_rows = list_offsets_column->size() - 1;
 
   auto mask = cudf::create_null_mask(6, cudf::mask_state::ALL_VALID);
@@ -2973,10 +2973,9 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotationsSingleFieldNested)
   EXPECT_EQ(inner_child.child(0).type().id(), cudf::type_id::INT32);
 
   column_wrapper<int32_t> inner_someid{3, 6, 9};
-  auto inner_struct = cudf::test::structs_column_wrapper{{inner_someid}};
-  auto inner_list_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 3}.release();
-  auto inner_list = cudf::make_lists_column(
+  auto inner_struct       = cudf::test::structs_column_wrapper{{inner_someid}};
+  auto inner_list_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
+  auto inner_list         = cudf::make_lists_column(
     3, std::move(inner_list_offsets), inner_struct.release(), 0, rmm::device_buffer{});
 
   column_wrapper<int32_t> outer_id{1, 4, 7};
@@ -2985,9 +2984,8 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotationsSingleFieldNested)
   outer_struct_children.push_back(std::move(inner_list));
   auto outer_struct_col = cudf::test::structs_column_wrapper{{std::move(outer_struct_children)}};
 
-  auto outer_list_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 3}.release();
-  auto outer_list_col = cudf::make_lists_column(
+  auto outer_list_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
+  auto outer_list_col     = cudf::make_lists_column(
     3, std::move(outer_list_offsets), outer_struct_col.release(), 0, rmm::device_buffer{});
 
   // Testing for equivalence here because we only care about the outermost validity buffers.
@@ -3225,7 +3223,7 @@ TEST_F(ParquetReaderTest, DeltaByteArrayMapSkipRows)
   auto vals_col   = cudf::test::strings_column_wrapper(vals.begin(), vals.end());
   auto struct_col = cudf::test::structs_column_wrapper({keys_col, vals_col}).release();
   auto offsets_col =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end());
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
   auto const map_col = cudf::make_lists_column(
     num_rows, offsets_col.release(), std::move(struct_col), 0, rmm::device_buffer{});
   auto const expected = cudf::table_view({map_col->view()});

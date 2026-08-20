@@ -687,6 +687,8 @@ struct EncColumnChunk {
   uint32_t dict_map_offset;    //!< Offset of the hash map storage for calculating dict encoding for
                                //!< this chunk
   size_type dict_map_size;     //!< Size of dict_map_slots
+  size_type dict_entry_limit;  //!< Max number of dictionary entries to insert before giving up on
+                               //!< dictionary encoding for this chunk
   size_type num_dict_entries;  //!< Total number of entries in dictionary
   size_type
     uniq_data_size;  //!< Size of dictionary page (set of all unique values) if dict enc is used

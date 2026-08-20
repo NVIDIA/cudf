@@ -910,12 +910,12 @@ TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
   auto stream            = cudf::test::get_default_stream();
   auto const int32_dtype = cudf::data_type{cudf::type_id::INT32};
 
-  auto hit =
-    cudf::io::parquet::experimental::extract_variant_field(col, "k37", int32_dtype, stream);
+  auto hit = cudf::io::parquet::experimental::extract_variant_field(
+    col, "k37", int32_dtype, std::nullopt, stream);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hit, cudf::test::fixed_width_column_wrapper<int32_t>{37});
 
-  auto miss =
-    cudf::io::parquet::experimental::extract_variant_field(col, "k99", int32_dtype, stream);
+  auto miss = cudf::io::parquet::experimental::extract_variant_field(
+    col, "k99", int32_dtype, std::nullopt, stream);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*miss,
                                  cudf::test::fixed_width_column_wrapper<int32_t>({0}, {false}));
 }
@@ -998,8 +998,8 @@ TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeEntryCountBoundary)
     auto const val =
       build_single_field_object(static_cast<uint8_t>(entry_count - 1), enc_int32(kExpected));
     auto col = wrap_single_variant(build_metadata(keys), val);
-    auto got =
-      cudf::io::parquet::experimental::extract_variant_field(col, "target", int32_dtype, stream);
+    auto got = cudf::io::parquet::experimental::extract_variant_field(
+      col, "target", int32_dtype, std::nullopt, stream);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got,
                                    cudf::test::fixed_width_column_wrapper<int32_t>{kExpected});
   };

@@ -95,7 +95,7 @@ namespace {
 {
   auto data = cudf::detail::make_device_uvector_async(
     host_span<size_type const>{values.data(), values.size()}, stream, mr);
-  stream.synchronize();
+  stream.sync();
   return std::make_unique<column>(data_type{type_id::INT32},
                                   static_cast<size_type>(values.size()),
                                   data.release(),
@@ -1425,7 +1425,7 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
   return column_chunk_metadata;
 }
 
-column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
+std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   std::span<std::string const> column_names,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
@@ -1454,10 +1454,10 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
               std::back_inserter(row_group_indices));
   }
 
-  auto result = column_chunk_bounds_result{make_size_type_column(file_indices, stream, mr),
-                                           make_size_type_column(row_group_indices, stream, mr),
-                                           {}};
-  result.bounds.reserve(column_names.size());
+  std::vector<std::unique_ptr<column>> columns;
+  columns.reserve(2 + 2 * column_names.size());
+  columns.push_back(make_size_type_column(file_indices, stream, mr));
+  columns.push_back(make_size_type_column(row_group_indices, stream, mr));
 
   row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
                                          .per_file_metadata    = per_file_metadata,
@@ -1487,14 +1487,11 @@ column_chunk_bounds_result aggregate_reader_metadata::column_chunk_bounds(
 
     auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
       dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
-    std::vector<std::unique_ptr<column>> columns;
-    columns.reserve(2);
     columns.push_back(std::move(min_col));
     columns.push_back(std::move(max_col));
-    result.bounds.push_back(std::make_unique<table>(std::move(columns)));
   }
 
-  return result;
+  return std::make_unique<table>(std::move(columns));
 }
 
 bool aggregate_reader_metadata::is_schema_index_mapped(int schema_idx, int src_idx) const

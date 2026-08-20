@@ -7,7 +7,6 @@ from libcpp.string cimport string
 from libcpp.unordered_map cimport unordered_map
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
-from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.io.datasource cimport datasource
 from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData
 from pylibcudf.libcudf.table.table cimport table
@@ -46,11 +45,6 @@ cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
         unordered_map[string, vector[int64_t]] \
             columnchunk_metadata() except +libcudf_exception_handler
 
-    cdef cppclass column_chunk_bounds_result:
-        unique_ptr[column] file_indices
-        unique_ptr[column] row_group_indices
-        vector[unique_ptr[table]] bounds
-
     cdef parquet_metadata read_parquet_metadata(
         source_info src_info
     ) except +libcudf_exception_handler
@@ -59,8 +53,8 @@ cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
         host_span[const_unique_ptr_datasource] sources
     ) except +libcudf_exception_handler
 
-    cdef column_chunk_bounds_result column_chunk_bounds(
-        vector[FileMetaData] parquet_metadatas,
+    cdef unique_ptr[table] read_parquet_column_chunk_bounds(
+        std_span[const FileMetaData] parquet_metadatas,
         std_span[const_string] column_names,
         cudaStream_t stream,
         device_async_resource_ref mr,

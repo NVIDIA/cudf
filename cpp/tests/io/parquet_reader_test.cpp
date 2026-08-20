@@ -3683,7 +3683,7 @@ TEST_F(ParquetMetadataReaderTest, PreMaterializedMetadata)
   test_parquet_metadata(3);
 }
 
-TEST_F(ParquetMetadataReaderTest, ColumnChunkBounds)
+TEST_F(ParquetMetadataReaderTest, ReadParquetColumnChunkBounds)
 {
   auto values = column_wrapper<int64_t>{1, 2, 3, 4};
   auto input  = table_view{{values}};
@@ -3691,7 +3691,7 @@ TEST_F(ParquetMetadataReaderTest, ColumnChunkBounds)
   cudf::io::table_input_metadata metadata(input);
   metadata.column_metadata[0].set_name("value");
 
-  auto filepath = temp_env->get_temp_filepath("ColumnChunkBounds.parquet");
+  auto filepath = temp_env->get_temp_filepath("ReadParquetColumnChunkBounds.parquet");
   cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
       .metadata(std::move(metadata))
@@ -3704,33 +3704,28 @@ TEST_F(ParquetMetadataReaderTest, ColumnChunkBounds)
   auto datasources  = cudf::io::make_datasources(cudf::io::source_info{filepath});
   auto metadatas    = cudf::io::read_parquet_footers(datasources);
   auto column_names = std::vector<std::string>{"value"};
-  auto bounds       = cudf::io::column_chunk_bounds(
-    std::move(metadatas),
-    cudf::host_span<std::string const>{column_names.data(), column_names.size()},
-    cudf::get_default_stream(),
-    cudf::get_current_device_resource_ref());
+  auto bounds       = cudf::io::read_parquet_column_chunk_bounds(
+    metadatas, column_names, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
-  ASSERT_EQ(bounds.bounds.size(), 1);
+  ASSERT_EQ(bounds->num_columns(), 4);
 
   auto expected_file_indices = column_wrapper<cudf::size_type>{0, 0};
   auto expected_rg_indices   = column_wrapper<cudf::size_type>{0, 1};
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_file_indices, bounds.file_indices->view());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_rg_indices, bounds.row_group_indices->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_file_indices, bounds->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_rg_indices, bounds->view().column(1));
 
   auto const all_valid = cudf::test::iterators::no_nulls();
   auto expected_min    = column_wrapper<int64_t>({1, 3}, all_valid);
   auto expected_max    = column_wrapper<int64_t>({2, 4}, all_valid);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds.bounds.front()->view().column(0));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, bounds.bounds.front()->view().column(1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds->view().column(2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, bounds->view().column(3));
 }
 
-TEST_F(ParquetMetadataReaderTest, ColumnChunkBoundsEmptyMetadata)
+TEST_F(ParquetMetadataReaderTest, ReadParquetColumnChunkBoundsEmptyMetadata)
 {
   auto column_names = std::vector<std::string>{"value"};
   auto metadatas    = std::vector<cudf::io::parquet::FileMetaData>{};
-  EXPECT_THROW(cudf::io::column_chunk_bounds(
-                 std::move(metadatas),
-                 cudf::host_span<std::string const>{column_names.data(), column_names.size()}),
+  EXPECT_THROW(cudf::io::read_parquet_column_chunk_bounds(metadatas, column_names),
                std::invalid_argument);
 }
 

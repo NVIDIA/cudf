@@ -12,7 +12,6 @@ from libcpp.string cimport string
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
-from pylibcudf.column cimport Column
 from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
 from pylibcudf.libcudf.io.hybrid_scan cimport (
@@ -56,7 +55,7 @@ __all__ = [
     "ParquetSchema",
     "RowGroup",
     "SortingColumn",
-    "column_chunk_bounds",
+    "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
 ]
@@ -789,7 +788,7 @@ cpdef list read_parquet_footers(SourceInfo src_info):
     return [FileMetaData.from_libcudf(move(owned[i])) for i in range(n)]
 
 
-cpdef tuple column_chunk_bounds(
+cpdef Table read_parquet_column_chunk_bounds(
     object file_metadatas,
     object columns,
     object stream=None,
@@ -814,19 +813,19 @@ cpdef tuple column_chunk_bounds(
 
     Returns
     -------
-    tuple[Column, Column, tuple[Table, ...]]
-        File indices, file-local row-group indices, and one two-column
-        ``(min, max)`` table per requested column.
+    Table
+        Table containing file indices in column 0, file-local row-group
+        indices in column 1, and one ``(min, max)`` column pair per requested
+        column after that. For ``columns[i]``, the minimum column is at
+        ``2 + 2 * i`` and the maximum column is at ``3 + 2 * i``.
     """
     cdef vector[cpp_FileMetaData] c_metadatas
     cdef vector[string] c_columns
-    cdef cpp_parquet_metadata.column_chunk_bounds_result c_result
+    cdef unique_ptr[cpp_table] c_result
     cdef object metadata_obj
     cdef object column_name
-    cdef vector[unique_ptr[cpp_table]].size_type i
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
-    cdef list bounds = []
     mr = _get_memory_resource(mr)
 
     for metadata_obj in file_metadatas:
@@ -843,18 +842,13 @@ cpdef tuple column_chunk_bounds(
         c_columns.push_back(column_name.encode())
 
     with nogil:
-        c_result = cpp_parquet_metadata.column_chunk_bounds(
-            move(c_metadatas),
+        c_result = cpp_parquet_metadata.read_parquet_column_chunk_bounds(
+            std_span[const cpp_FileMetaData](
+                c_metadatas.data(), c_metadatas.size()
+            ),
             std_span[const_string](c_columns.data(), c_columns.size()),
             _cs,
             mr.get_mr(),
         )
 
-    for i in range(c_result.bounds.size()):
-        bounds.append(Table.from_libcudf(move(c_result.bounds[i]), _stream, mr))
-
-    return (
-        Column.from_libcudf(move(c_result.file_indices), _stream, mr),
-        Column.from_libcudf(move(c_result.row_group_indices), _stream, mr),
-        tuple(bounds),
-    )
+    return Table.from_libcudf(move(c_result), _stream, mr)

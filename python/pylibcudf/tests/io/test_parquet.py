@@ -561,7 +561,7 @@ def test_file_metadata_columnchunk_statistics_without_minmax() -> None:
     assert statistics.is_max_value_exact is None
 
 
-def test_column_chunk_bounds(tmp_path) -> None:
+def test_read_parquet_column_chunk_bounds(tmp_path) -> None:
     table_0 = pa.table(
         {
             "a": pa.array([1, 2, 3, 4], type=pa.int64()),
@@ -587,26 +587,25 @@ def test_column_chunk_bounds(tmp_path) -> None:
         plc.io.SourceInfo([path_0, path_1])
     )
 
-    file_indices, row_group_indices, bounds = (
-        plc.io.parquet_metadata.column_chunk_bounds(
-            file_metadatas,
-            columns=["a", "s", "ts", "n"],
-        )
+    bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+        file_metadatas,
+        columns=["a", "s", "ts", "n"],
     )
+    columns = bounds.columns()
 
-    assert file_indices.to_pylist() == [0, 0, 1, 1]
-    assert row_group_indices.to_pylist() == [0, 1, 0, 1]
-    assert len(bounds) == 4
+    assert len(columns) == 10
+    assert columns[0].to_pylist() == [0, 0, 1, 1]
+    assert columns[1].to_pylist() == [0, 1, 0, 1]
 
-    a_min, a_max = bounds[0].columns()
+    a_min, a_max = columns[2], columns[3]
     assert a_min.to_pylist() == [1, 3, 10, 30]
     assert a_max.to_pylist() == [2, 4, 20, 40]
 
-    s_min, s_max = bounds[1].columns()
+    s_min, s_max = columns[4], columns[5]
     assert s_min.to_pylist() == ["a", "c", "y", "w"]
     assert s_max.to_pylist() == ["b", "d", "z", "x"]
 
-    ts_min, ts_max = bounds[2].columns()
+    ts_min, ts_max = columns[6], columns[7]
     assert ts_min.to_arrow().equals(
         pa.array([0, 2, 10, 30], type=pa.timestamp("us"))
     )
@@ -614,12 +613,12 @@ def test_column_chunk_bounds(tmp_path) -> None:
         pa.array([1, 3, 20, 40], type=pa.timestamp("us"))
     )
 
-    n_min, n_max = bounds[3].columns()
+    n_min, n_max = columns[8], columns[9]
     assert n_min.to_pylist() == [2, None, 5, 8]
     assert n_max.to_pylist() == [2, None, 5, 8]
 
 
-def test_column_chunk_bounds_without_minmax(tmp_path) -> None:
+def test_read_parquet_column_chunk_bounds_without_minmax(tmp_path) -> None:
     table = pa.table({"a": pa.array([1, 2], type=pa.int64())})
     path = tmp_path / "no-stats.parquet"
     write_table(table, path, write_statistics=False)
@@ -628,21 +627,21 @@ def test_column_chunk_bounds_without_minmax(tmp_path) -> None:
         plc.io.SourceInfo([path])
     )
 
-    file_indices, row_group_indices, (bounds,) = (
-        plc.io.parquet_metadata.column_chunk_bounds(
-            file_metadatas,
-            columns=["a"],
-        )
+    bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+        file_metadatas,
+        columns=["a"],
     )
+    columns = bounds.columns()
 
-    assert file_indices.to_pylist() == [0]
-    assert row_group_indices.to_pylist() == [0]
-    min_col, max_col = bounds.columns()
+    assert len(columns) == 4
+    assert columns[0].to_pylist() == [0]
+    assert columns[1].to_pylist() == [0]
+    min_col, max_col = columns[2], columns[3]
     assert min_col.to_pylist() == [None]
     assert max_col.to_pylist() == [None]
 
 
-def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
+def test_read_parquet_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
     table = pa.table({"a": pa.array([1, 2], type=pa.int64())})
     path = tmp_path / "input.parquet"
     write_table(table, path)
@@ -654,13 +653,13 @@ def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
     with pytest.raises(
         ValueError, match="Parquet leaf column path not found: missing"
     ):
-        plc.io.parquet_metadata.column_chunk_bounds(
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
             file_metadatas,
             columns=["missing"],
         )
 
     with pytest.raises(TypeError, match="columns must contain only strings"):
-        plc.io.parquet_metadata.column_chunk_bounds(
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
             file_metadatas,
             columns=[1],
         )
@@ -668,7 +667,7 @@ def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
     with pytest.raises(
         TypeError, match="columns must be a sequence of strings"
     ):
-        plc.io.parquet_metadata.column_chunk_bounds(
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
             file_metadatas,
             columns="a",
         )
@@ -677,7 +676,7 @@ def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
         TypeError,
         match="file_metadatas must contain only FileMetaData objects",
     ):
-        plc.io.parquet_metadata.column_chunk_bounds(
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
             [object()],
             columns=["a"],
         )
@@ -686,7 +685,7 @@ def test_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
         ValueError,
         match="without source metadata",
     ):
-        plc.io.parquet_metadata.column_chunk_bounds(
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
             [],
             columns=["a"],
         )

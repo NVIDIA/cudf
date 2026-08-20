@@ -17,6 +17,7 @@ from pylibcudf.libcudf.io.parquet_metadata cimport(
     parquet_schema,
     parquet_column_schema,
 )
+from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -106,7 +107,7 @@ cdef class RowGroup:
 
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info)
 cpdef list read_parquet_footers(SourceInfo src_info)
-cpdef tuple column_chunk_bounds(
+cpdef Table read_parquet_column_chunk_bounds(
     object file_metadatas,
     object columns,
     object stream=*,

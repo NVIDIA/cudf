@@ -10,7 +10,6 @@
 
 #pragma once
 
-#include <cudf/column/column.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
@@ -301,28 +300,13 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<cudf::io::datasource> const> sources);
 
 /**
- * @brief Min/max bounds decoded from parquet column-chunk statistics.
- *
- * ``file_indices`` and ``row_group_indices`` identify the column chunks represented by each row of
- * every table in ``bounds``. Each table in ``bounds`` corresponds positionally to a requested
- * column and contains exactly two columns: decoded minimum values followed by decoded maximum
- * values.
- */
-struct column_chunk_bounds_result {
-  /// File index for each row in every bounds table
-  std::unique_ptr<column> file_indices;
-  /// File-local row-group index for each row in every bounds table
-  std::unique_ptr<column> row_group_indices;
-  /// One two-column table per requested column, where column 0 is min and column 1 is max
-  std::vector<std::unique_ptr<table>> bounds;
-};
-
-/**
  * @brief Decode parquet column-chunk min/max statistics for selected leaf columns.
  *
  * Missing min/max statistics are represented as nulls in the corresponding output column. Parquet
  * min/max exactness flags are not interpreted by this function. The requested column names are
- * resolved against each file's schema.
+ * resolved against each file's schema. The returned table contains one row per source row group.
+ * Column 0 is the source file index, column 1 is the file-local row-group index, and subsequent
+ * columns are min/max pairs in the order of ``column_names``.
  *
  * @ingroup io_readers
  *
@@ -330,15 +314,17 @@ struct column_chunk_bounds_result {
  * @param column_names Dotted leaf-column paths to decode statistics for
  * @param stream CUDA stream used for device memory operations
  * @param mr Device memory resource to use for device memory allocation
- * @return Decoded min/max bounds and row-group identifiers
+ * @return Table of row-group identifiers and decoded min/max bounds. For requested column
+ * ``column_names[i]``, the min column is at ``2 + 2 * i`` and the max column is at
+ * ``3 + 2 * i``.
  *
  * @throw std::invalid_argument If a requested leaf-column path is missing or ambiguous.
  * @throw std::invalid_argument If a requested column has unsupported or compound statistics dtype.
  * @throw std::invalid_argument If a requested column has mismatching statistics dtype across
  * sources.
  */
-column_chunk_bounds_result column_chunk_bounds(
-  std::vector<parquet::FileMetaData> parquet_metadatas,
+std::unique_ptr<table> read_parquet_column_chunk_bounds(
+  std::span<parquet::FileMetaData const> parquet_metadatas,
   std::span<std::string const> column_names,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

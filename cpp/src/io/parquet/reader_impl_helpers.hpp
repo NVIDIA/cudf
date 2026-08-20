@@ -522,9 +522,9 @@ class aggregate_reader_metadata {
    * @param column_names Dotted leaf-column paths to decode statistics for
    * @param stream CUDA stream used for device memory operations
    * @param mr Device memory resource to use for device memory allocation
-   * @return Decoded min/max bounds and row-group identifiers
+   * @return Table of row-group identifiers and decoded min/max bounds
    */
-  [[nodiscard]] column_chunk_bounds_result column_chunk_bounds(
+  [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
     std::span<std::string const> column_names,
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;

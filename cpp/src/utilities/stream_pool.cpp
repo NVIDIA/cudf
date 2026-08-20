@@ -9,20 +9,24 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <rmm/cuda_device.hpp>
+
 #include <cuda/devices>
 #include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>
 #include <mutex>
+#include <span>
 #include <utility>
 #include <vector>
 
 namespace cudf::detail {
 
 // Maximum number of streams a single thread's pool will create, for a single device. Sized to cover
-// the largest number of streams requested by a single `fork_streams` call in libcudf, which is the
-// number of distinct parquet decode kernels (see `decode_kernel_mask`).
+// the number of distinct parquet decode kernels (see `decode_kernel_mask`), the largest fixed
+// number of streams a single `fork_streams` call in libcudf asks for. Host (de)compression asks for
+// one stream per chunk it dispatches, which can exceed this; those requests get repeated streams.
 //
 // This is a per-thread bound, not a process-wide one, so the streams an application holds scale
 // with the number of threads that call into libcudf. Pools only grow on demand and are recycled
@@ -285,7 +289,7 @@ std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream, std::size_t 
   return streams;
 }
 
-void join_streams(host_span<cuda::stream_ref const> streams, cuda::stream_ref stream)
+void join_streams(std::span<cuda::stream_ref const> streams, cuda::stream_ref stream)
 {
   auto const event = event_for_thread();
   std::for_each(streams.begin(), streams.end(), [&](auto& strm) {

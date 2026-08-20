@@ -6,11 +6,11 @@
 #pragma once
 
 #include <cudf/utilities/export.hpp>
-#include <cudf/utilities/span.hpp>
 
 #include <cuda/stream_ref>
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 namespace CUDF_EXPORT cudf {
@@ -42,7 +42,7 @@ class cuda_stream_pool {
   virtual cuda::stream_ref get_stream() = 0;
 
   /**
-   * @brief Get a set of `cuda::stream_ref` objects from the pool.
+   * @brief Get a vector of `cuda::stream_ref` objects from the pool.
    *
    * The returned streams are distinct unless `count` is greater than the maximum number of streams
    * the pool provides, in which case streams are repeated.
@@ -96,8 +96,8 @@ global_cuda_stream_pool()
 }
 
 /**
- * @brief Acquire a set of `cuda::stream_ref` objects and synchronize them to an event on another
- * stream.
+ * @brief Acquire a vector of `cuda::stream_ref` objects and synchronize them to an event on
+ * another stream.
  *
  * By default the calling thread's stream pool is used to obtain the streams, so streams are not
  * shared with concurrently forking threads. The only other implementation at present is a debugging
@@ -127,12 +127,12 @@ global_cuda_stream_pool()
                                                          std::size_t count);
 
 /**
- * @brief Synchronize a stream to an event on a set of streams.
+ * @brief Synchronize a stream to an event on each of a group of streams.
  *
  * @param streams Streams to wait on.
  * @param stream Joined stream that synchronizes with the waited-on streams.
  */
-void join_streams(host_span<cuda::stream_ref const> streams, cuda::stream_ref stream);
+void join_streams(std::span<cuda::stream_ref const> streams, cuda::stream_ref stream);
 
 }  // namespace detail
 }  // namespace CUDF_EXPORT cudf

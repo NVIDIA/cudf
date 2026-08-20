@@ -92,7 +92,7 @@ std::unique_ptr<cudf::column> clamp_string_column(strings_column_view const& inp
                     indices.begin(),
                     fn);
 
-  return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 template <typename T, typename OptionalIterator, typename ReplaceIterator>

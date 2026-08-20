@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -113,7 +113,8 @@ std::unique_ptr<column> from_arrow_stringview(ArrowSchemaView const* schema,
       return {data, size};
     });
 
-  return cudf::strings::detail::make_strings_column(d_indices.begin(), d_indices.end(), stream, mr);
+  stream.synchronize();
+  return cudf::make_strings_column(d_indices, stream, mr);
 }
 
 }  // namespace

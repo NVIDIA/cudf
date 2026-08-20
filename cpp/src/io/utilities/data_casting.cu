@@ -857,9 +857,8 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 
-  auto [offsets, bytes] =
-    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
-  auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
+  auto [offsets, bytes] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+  auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
   rmm::device_uvector<char> chars(bytes, stream, mr);

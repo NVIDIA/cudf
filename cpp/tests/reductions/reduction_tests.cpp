@@ -2179,6 +2179,61 @@ TYPED_TEST(FixedPointTestAllReps, FixedPointReductionMaxLarge)
   }
 }
 
+TYPED_TEST(FixedPointTestAllReps, FixedPointMinMax)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  for (auto const i : {0, -1, -2, -3}) {
+    auto const scale  = scale_type{i};
+    auto const column = fp_wrapper{{2, 3, 1, 4}, scale};
+
+    auto const expected_min = decimalXX{scaled_integer<RepType>{1, scale}};
+    auto const expected_max = decimalXX{scaled_integer<RepType>{4, scale}};
+
+    auto const result     = cudf::minmax(column);
+    auto const min_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.first.get());
+    auto const max_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.second.get());
+
+    // Scale must be preserved in the output scalars.
+    EXPECT_EQ(min_scalar->type().scale(), i);
+    EXPECT_EQ(max_scalar->type().scale(), i);
+
+    EXPECT_EQ(min_scalar->fixed_point_value(), expected_min);
+    EXPECT_EQ(max_scalar->fixed_point_value(), expected_max);
+  }
+}
+
+TYPED_TEST(FixedPointTestAllReps, FixedPointMinMaxWithNulls)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  for (auto const i : {0, -1, -2, -3}) {
+    auto const scale = scale_type{i};
+    // valid: {2, null, 1, null, 4} — min=1, max=4
+    auto const column = fp_wrapper{{2, 3, 1, 5, 4}, {true, false, true, false, true}, scale};
+
+    auto const expected_min = decimalXX{scaled_integer<RepType>{1, scale}};
+    auto const expected_max = decimalXX{scaled_integer<RepType>{4, scale}};
+
+    auto const result     = cudf::minmax(column);
+    auto const min_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.first.get());
+    auto const max_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.second.get());
+
+    // Scale must be preserved in the output scalars.
+    EXPECT_EQ(min_scalar->type().scale(), i);
+    EXPECT_EQ(max_scalar->type().scale(), i);
+
+    EXPECT_EQ(min_scalar->fixed_point_value(), expected_min);
+    EXPECT_EQ(max_scalar->fixed_point_value(), expected_max);
+  }
+}
+
 TYPED_TEST(FixedPointTestAllReps, FixedPointReductionNUnique)
 {
   using namespace numeric;

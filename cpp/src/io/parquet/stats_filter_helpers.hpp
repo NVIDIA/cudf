@@ -358,7 +358,7 @@ class stats_columns_collector : public ast::detail::expression_transformer {
 class stats_expression_converter : public stats_columns_collector {
  public:
   stats_expression_converter(ast::expression const& expr,
-                             cudf::host_span<cudf::data_type const> output_dtypes,
+                             std::span<cudf::data_type const> output_dtypes,
                              bool has_is_null_operator,
                              cuda::stream_ref stream);
 
@@ -383,28 +383,7 @@ class stats_expression_converter : public stats_columns_collector {
   thrust::host_vector<bool> get_stats_columns_mask() && = delete;
 
  private:
-  /**
-   * @brief Whether this column's statistics may hide a `NaN`
-   *
-   * Arrow and parquet-mr both skip `NaN` when updating min/max, so a floating point chunk that
-   * contains one still reports usable statistics computed from the remaining values. Any stats
-   * transform whose predicate is *satisfied* by `NaN` is therefore unsound for such a column.
-   * cudf's own writer drops min/max entirely instead (PARQUET-1246), but the reader cannot assume
-   * it produced the file.
-   */
-  [[nodiscard]] bool is_floating_point_column(size_type col_index) const;
-
-  /**
-   * @brief Whether complementing an *ordering* comparison on this column is exact
-   *
-   * IEEE-754 makes every ordered comparison against a `NaN` false, so `NOT(col < v)` is true
-   * exactly where `col >= v` is false. Rewriting one into the other would prune a row group whose
-   * `NaN` rows satisfy the predicate, whenever the writer emitted min/max that merely exclude
-   * `NaN` - which Arrow does. Equality is unaffected and stays exact.
-   */
-  [[nodiscard]] bool can_negate_ordering(ast::column_reference const& col_ref) const;
-
-  cudf::host_span<cudf::data_type const> _output_dtypes;
+  std::span<cudf::data_type const> _output_dtypes;
   ast::tree _stats_expr;
   cudf::size_type _stats_cols_per_column;
   std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;

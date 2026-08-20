@@ -91,7 +91,7 @@ std::pair<thrust::host_vector<bool>, bool> stats_columns_collector::get_stats_co
 
 stats_expression_converter::stats_expression_converter(
   ast::expression const& expr,
-  cudf::host_span<cudf::data_type const> output_dtypes,
+  std::span<cudf::data_type const> output_dtypes,
   bool has_is_null_operator,
   cuda::stream_ref stream)
   : _output_dtypes{output_dtypes},
@@ -102,18 +102,6 @@ stats_expression_converter::stats_expression_converter(
   _num_columns           = static_cast<size_type>(output_dtypes.size());
   expr.accept(*this);
 }
-
-bool stats_expression_converter::is_floating_point_column(size_type col_index) const
-{
-  return std::cmp_less(col_index, _output_dtypes.size()) and
-         cudf::is_floating_point(_output_dtypes[col_index]);
-}
-
-bool stats_expression_converter::can_negate_ordering(ast::column_reference const& col_ref) const
-{
-  return not is_floating_point_column(col_ref.get_column_index());
-}
-
 
 std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
   ast::operation const& expr)
@@ -167,17 +155,23 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             }
           }  // Binary operation wrapped
           else if (cudf::ast::detail::ast_operator_arity(child_op) == 2) {
+            // For NOT(col op lit) negate the operator if negatable and visit the negated operation
+            // directly.
             auto const binary_operands = extract_binary_operands(*child_operation);
             auto const lhs_kind        = binary_operands.lhs_type;
             auto const rhs_kind        = binary_operands.rhs_type;
 
-            // For NOT(col op lit) negate the operator if negatable and visit the negated operation
-            // directly. Equality is always exact, but an ordering comparison is only exact when the
-            // column cannot hold a `NaN` - see `can_negate_ordering()`
+            // Equality is always exact
             auto const is_equality =
               child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
+
+            // An ordering comparison is only exact when the column cannot hold a `NaN` (aka not a
+            // floating point column)
+            auto const can_negate_ordering = not cudf::is_floating_point(
+              _output_dtypes[binary_operands.col_ref->get_column_index()]);
+
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL and
-                (is_equality or can_negate_ordering(*binary_operands.col_ref))) {
+                (is_equality or can_negate_ordering)) {
               auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
               if (negated_op.has_value()) {
                 auto const& child_operands = child_operation->get_operands();
@@ -230,7 +224,7 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
       case ast_operator::NOT_EQUAL: {
         // NaNs satisfy `col != val` but Arrow and parquet-mr exclude them from min/max, so
         // `{NaN, val}` appears constant and must not be pruned.
-        if (is_floating_point_column(col_index)) {
+        if (cudf::is_floating_point(_output_dtypes[col_index])) {
           _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
           return *_always_true;
         }

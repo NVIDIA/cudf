@@ -67,7 +67,7 @@ cdef class ParseOptions:
         Only rows starting inside this byte range will be
         part of the output column.
 
-    strip_delimiters : bool, default True
+    strip_delimiters : bool, default False
         Whether delimiters at the end of rows should
         be stripped from the output column.
     """

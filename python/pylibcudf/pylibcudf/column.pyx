@@ -175,7 +175,7 @@ cdef gpumemoryview _copy_array_to_device(object buf, object stream: CudaStreamLi
     ----------
     buf : array.array
         Array of bytes.
-    stream : Stream | None
+    stream : CudaStreamLike | None
         CUDA stream on which to perform the operation.
 
     Returns
@@ -342,9 +342,9 @@ cdef class Column:
         The type of data in the column.
     size : size_type
         The number of rows in the column.
-    data : gpumemoryview
+    data : Span | None
         The data the column will refer to.
-    mask : gpumemoryview
+    mask : Span | None
         The null mask for the column.
     null_count : int
         The number of null rows in the column.
@@ -399,7 +399,7 @@ cdef class Column:
         ----------
         metadata : ColumnMetadata | str | None
             The metadata to attach to the column.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -441,7 +441,7 @@ cdef class Column:
             - `__arrow_c_device_stream__` (device Arrow stream)
         dtype : DataType | None
             The pylibcudf data type.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Device memory resource for allocations.
@@ -831,7 +831,7 @@ cdef class Column:
 
     @staticmethod
     def from_scalar(
-        Scalar scalar,
+        Scalar slr,
         size_type size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
@@ -840,11 +840,11 @@ cdef class Column:
 
         Parameters
         ----------
-        scalar : Scalar
+        slr : Scalar
             The scalar to create a column from.
         size : size_type
             The number of elements in the column.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -852,7 +852,7 @@ cdef class Column:
         Column
             A Column containing the scalar repeated `size` times.
         """
-        cdef const cpp_scalar* c_scalar = scalar.get()
+        cdef const cpp_scalar* c_scalar = slr.get()
         cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
@@ -874,7 +874,7 @@ cdef class Column:
         ------
         ValueError
             If the column has more than one row.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Device memory resource used to allocate the returned scalar's device memory.
@@ -913,7 +913,7 @@ cdef class Column:
             Column whose type we should mimic
         size : int
             Number of rows in the resulting column.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1010,7 +1010,7 @@ cdef class Column:
         ----------
         obj : Any
             Must implement the ``__array_interface__`` protocol.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1065,7 +1065,7 @@ cdef class Column:
         ----------
         obj : Any
             Must implement the ``__cuda_array_interface__`` protocol.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1109,7 +1109,7 @@ cdef class Column:
         ----------
         obj : object
             The input array to be converted into a `pylibcudf.Column`.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1157,7 +1157,7 @@ cdef class Column:
             An iterable of Python scalar values (int, float, bool, str) or nested lists.
         dtype : DataType | None
             The type of the leaf elements. If not specified, the type is inferred.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1541,10 +1541,10 @@ cdef class Column:
 
 cdef class ListsColumnView:
     """Accessor for methods of a Column that are specific to lists."""
-    def __init__(self, Column column):
-        if column.type().id() != type_id.LIST:
+    def __init__(self, Column col):
+        if col.type().id() != type_id.LIST:
             raise TypeError("Column is not a list type")
-        self._column = column
+        self._column = col
 
     __hash__ = None
 
@@ -1571,7 +1571,7 @@ cdef class ListsColumnView:
 
         Parameters
         ----------
-        stream : Stream, optional
+        stream : CudaStreamLike, optional
             CUDA stream to use
 
         Returns
@@ -1587,10 +1587,10 @@ cdef class ListsColumnView:
 
 cdef class StructsColumnView:
     """Accessor for methods of a Column that are specific to structs."""
-    def __init__(self, Column column):
-        if column.type().id() != type_id.STRUCT:
+    def __init__(self, Column col):
+        if col.type().id() != type_id.STRUCT:
             raise TypeError("Column is not a struct type")
-        self._column = column
+        self._column = col
 
     __hash__ = None
 
@@ -1611,7 +1611,7 @@ cdef class StructsColumnView:
         ----------
         index : int
             The index of the child to get.
-        stream : Stream, optional
+        stream : CudaStreamLike, optional
             CUDA stream to use
 
         Returns

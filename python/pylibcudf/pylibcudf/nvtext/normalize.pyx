@@ -32,11 +32,11 @@ cdef class CharacterNormalizer:
     def __cinit__(
         self,
         bool do_lower_case,
-        Column special_tokens,
+        Column tokens,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
-        cdef column_view c_tokens = special_tokens.view()
+        cdef column_view c_tokens = tokens.view()
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)

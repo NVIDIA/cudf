@@ -31,12 +31,16 @@ export PIP_NO_BUILD_ISOLATION=0
 export SKBUILD_CMAKE_ARGS="-DUSE_NVCOMP_RUNTIME_WHEEL=ON"
 ./ci/build_wheel.sh "${package_name}" "${package_dir}"
 
+RAPIDS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+
 # repair wheels and write to the location that artifact-uploading code expects to find them
 python -m auditwheel repair \
     --exclude libkvikio.so \
     --exclude libnvcomp.so.5 \
     --exclude librapids_logger.so \
     --exclude librmm.so \
+    --exclude libnvrtc.so.${RAPIDS_CUDA_MAJOR} \
+    --exclude libnvJitLink.so.${RAPIDS_CUDA_MAJOR} \
     -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
     ${package_dir}/dist/*
 

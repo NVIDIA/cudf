@@ -4721,6 +4721,49 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     )
 
 
+def test_parquet_not_equal_with_nan_stats(tmp_path):
+    """`col != v` must not prune a row group whose NaN rows satisfy it.
+
+    Arrow and parquet-mr both skip NaN when updating min/max, so a chunk of {NaN, v}
+    reports min == max == v and is indistinguishable from a constant-v chunk. The
+    `col != val` stats transform prunes exactly that shape, dropping the NaN rows -
+    which do satisfy `col != val`, since NaN != v is true.
+    """
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    path = tmp_path / "nan_not_equal.parquet"
+    pq.write_table(
+        pa.table({"x": [float("nan"), 5.0, 7.0, 8.0]}), path, row_group_size=2
+    )
+
+    # Sanity check the fixture: NaN is excluded, so row group 0 looks constant
+    stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
+    assert stats.min == 5.0 and stats.max == 5.0
+
+    scalar = plc.Scalar.from_arrow(pa.scalar(5.0))
+    filter_expr = Operation(
+        ASTOperator.NOT_EQUAL, ColumnNameReference("x"), Literal(scalar)
+    )
+
+    source = plc.io.SourceInfo([str(path)])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_filter(filter_expr)
+    result = plc.io.parquet.read_parquet(options)
+
+    # Neither row group may be pruned: rg0 holds a NaN, rg1 holds 7.0 and 8.0
+    assert result.num_row_groups_after_stats_filter == 2
+    got = result.tbl.to_arrow().column(0).to_pylist()
+    assert len(got) == 3
+    assert math.isnan(got[0])
+    assert got[1:] == [7.0, 8.0]
+
+
 def test_parquet_negated_ordering_with_nan_stats(tmp_path):
     """`NOT(col < v)` must not be rewritten to `col >= v` for a float column.
 

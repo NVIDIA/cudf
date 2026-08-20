@@ -103,12 +103,17 @@ stats_expression_converter::stats_expression_converter(
   expr.accept(*this);
 }
 
+bool stats_expression_converter::is_floating_point_column(size_type col_index) const
+{
+  return std::cmp_less(col_index, _output_dtypes.size()) and
+         cudf::is_floating_point(_output_dtypes[col_index]);
+}
+
 bool stats_expression_converter::can_negate_ordering(ast::column_reference const& col_ref) const
 {
-  auto const col_idx = col_ref.get_column_index();
-  if (std::cmp_greater_equal(col_idx, _output_dtypes.size())) { return false; }
-  return not cudf::is_floating_point(_output_dtypes[col_idx]);
+  return not is_floating_point_column(col_ref.get_column_index());
 }
+
 
 std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
   ast::operation const& expr)
@@ -223,6 +228,12 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         break;
       }
       case ast_operator::NOT_EQUAL: {
+        // NaNs satisfy `col != val` but Arrow and parquet-mr exclude them from min/max, so
+        // `{NaN, val}` appears constant and must not be pruned.
+        if (is_floating_point_column(col_index)) {
+          _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+          return *_always_true;
+        }
         auto const& vmin =
           _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column});
         auto const& vmax =

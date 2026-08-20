@@ -384,6 +384,17 @@ class stats_expression_converter : public stats_columns_collector {
 
  private:
   /**
+   * @brief Whether this column's statistics may hide a `NaN`
+   *
+   * Arrow and parquet-mr both skip `NaN` when updating min/max, so a floating point chunk that
+   * contains one still reports usable statistics computed from the remaining values. Any stats
+   * transform whose predicate is *satisfied* by `NaN` is therefore unsound for such a column.
+   * cudf's own writer drops min/max entirely instead (PARQUET-1246), but the reader cannot assume
+   * it produced the file.
+   */
+  [[nodiscard]] bool is_floating_point_column(size_type col_index) const;
+
+  /**
    * @brief Whether complementing an *ordering* comparison on this column is exact
    *
    * IEEE-754 makes every ordered comparison against a `NaN` false, so `NOT(col < v)` is true

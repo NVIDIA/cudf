@@ -2344,8 +2344,8 @@ TEST_F(ParquetReaderTest, BooleanList)
     auto bools_col        = cudf::test::fixed_width_column_wrapper<bool>(
       bools_iter, bools_iter + num_rows, valids.begin());
     auto offsets_iter = cuda::counting_iterator<cudf::size_type>{0};
-    auto offsets_col  = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
-      offsets_iter, offsets_iter + num_rows + 1);
+    auto offsets_col =
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsets_iter, offsets_iter + num_rows + 1);
     auto [null_mask, null_count] =
       cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
     auto _col1 = cudf::make_lists_column(

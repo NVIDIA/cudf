@@ -69,12 +69,12 @@ jobs:
       node_type: cpu16
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       # TEMP: 26.08 release rehearsal - rewrite pom version and force
-      # release-tag path via GITHUB_REF so packaged artifacts are 26.08.0.
+      # release-tag path via GITHUB_REF so packaged artifacts are 26.08.01.
       # `custom-job.yaml` expands `$INPUTS_SCRIPT` unquoted, so quotes /
       # operators inside the value are literal on first pass. Prepending
       # `eval` re-parses the joined args as a fresh shell command, which
       # restores quote and `&&` handling.
-      script: "eval sed -i 's|<version>26.10.0-SNAPSHOT</version>|<version>26.08.0-SNAPSHOT</version>|' java/pom.xml && GITHUB_REF=refs/tags/v26.08.00 ci/build_java.sh"
+      script: "eval sed -i 's|<version>26.10.0-SNAPSHOT</version>|<version>26.08.01-SNAPSHOT</version>|' java/pom.xml && GITHUB_REF=refs/tags/v26.08.01 ci/build_java.sh"
       file_to_upload: output_jars
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.

@@ -208,6 +208,9 @@ def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
     if not current and depth == 0:
         raise ValueError("Cannot infer dtype from empty input")
 
+    if isinstance(current, list):
+        raise ValueError("Inconsistent inner list shapes")
+
     if not isinstance(current, (int, float, bool, str)):
         raise TypeError(f"Unsupported scalar type: {type(current).__name__}")
 
@@ -225,7 +228,7 @@ def _flatten_nested_list(obj: list, depth: int) -> tuple[list, tuple[int, ...]]:
 
 def _infer_shape(obj: list, depth: int) -> tuple[int, ...]:
     if not obj:
-        raise ValueError("Cannot infer shape from empty list")
+        raise ValueError("Inconsistent inner list shapes")
 
     shape = (len(obj),)
     if depth == 1:

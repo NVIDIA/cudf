@@ -174,7 +174,7 @@ cpdef Table apply_boolean_mask(
     """Deprecated alias for :func:`apply_retention_mask`."""
     warnings.warn(
         "apply_boolean_mask is deprecated; use apply_retention_mask instead",
-        DeprecationWarning,
+        FutureWarning,
         stacklevel=2,
     )
     return apply_retention_mask(source_table, boolean_mask, stream, mr)

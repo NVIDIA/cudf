@@ -24,9 +24,10 @@
 namespace cudf::detail {
 
 // Maximum number of streams a single thread's pool will create, for a single device. Sized to cover
-// the number of distinct parquet decode kernels (see `decode_kernel_mask`), the largest fixed
-// number of streams a single `fork_streams` call in libcudf asks for. Host (de)compression asks for
-// one stream per chunk it dispatches, which can exceed this; those requests get repeated streams.
+// the largest request libcudf makes with a fixed bound, which is one stream per distinct parquet
+// decode kernel (see `decode_kernel_mask`). Host (de)compression, the JSON reader and others
+// instead scale their request with the host worker count, so raising `LIBCUDF_NUM_HOST_WORKERS`
+// past this leaves those requests sharing streams.
 //
 // This is a per-thread bound, not a process-wide one, so the streams an application holds scale
 // with the number of threads that call into libcudf. Pools only grow on demand and are recycled

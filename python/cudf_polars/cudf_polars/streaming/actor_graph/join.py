@@ -482,7 +482,7 @@ def _ordering_with_column_indices(
     column_indices: tuple[int, ...],
 ) -> Ordering:
     """Return an ordering with the same semantics on different column indices."""
-    return ordering.remap(
+    return ordering.with_keys(
         tuple(
             OrderKey(index, key.order, key.null_order)
             for index, key in zip(

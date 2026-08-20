@@ -23,6 +23,7 @@
 #include <cstring>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -422,8 +423,8 @@ static void bench_variant_cast(nvbench::state& state)
   mr                    = cudf::get_current_device_resource_ref();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    std::ignore =
-      cudf::io::parquet::experimental::cast_variant(col->view().child(1), target_type, stream, mr);
+    std::ignore = cudf::io::parquet::experimental::cast_variant(
+      col->view().child(1), target_type, std::nullopt, stream, mr);
   });
 
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
@@ -469,7 +470,8 @@ static void bench_variant_extract_nesting(nvbench::state& state)
   mr                    = cudf::get_current_device_resource_ref();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    std::ignore = cudf::io::parquet::experimental::get_variant_field(col->view(), path, stream, mr);
+    std::ignore = cudf::io::parquet::experimental::get_variant_field(
+      col->view(), path, std::nullopt, stream, mr);
   });
 
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
@@ -578,7 +580,8 @@ static void bench_variant_extract_fields(nvbench::state& state)
   mr                    = cudf::get_current_device_resource_ref();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    std::ignore = cudf::io::parquet::experimental::get_variant_field(col->view(), path, stream, mr);
+    std::ignore = cudf::io::parquet::experimental::get_variant_field(
+      col->view(), path, std::nullopt, stream, mr);
   });
 
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");

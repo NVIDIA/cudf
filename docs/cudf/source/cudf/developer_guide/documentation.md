@@ -130,7 +130,7 @@ While the documentation pages for the major user-facing classes like `DataFrame`
 For example, {py:class}`cudf.CategoricalIndex` only includes `codes` and `categories` on its page, not the entire set of `Index` functionality.
 
 To accommodate these requirements, we take the following approach:
-1. The default `autosummary` template for classes is overridden with a [simpler template that does not generate method or attribute documentation](https://github.com/rapidsai/cudf/blob/main/docs/cudf/source/_templates/autosummary/class.rst). In other words, we disable `autosummary`'s generation of Methods and Attributes lists.
+1. The default `autosummary` template for classes is overridden with a [simpler template that does not generate method or attribute documentation](https://github.com/NVIDIA/cudf/blob/main/docs/cudf/source/_templates/autosummary/class.rst). In other words, we disable `autosummary`'s generation of Methods and Attributes lists.
 2. We rely on `numpydoc` entirely for the classes that need their entire APIs listed (`DataFrame`/`Series`/etc). `numpydoc` will automatically populate Methods and Attributes section if (and only if) they are not already defined in the class's docstring.
 3. For classes that should only include a subset of APIs, we include those explicitly in the class's documentation. When those lists exist, `numpydoc` will not override them. If either the Methods or Attributes section should be empty, that section must still be included but should simply contain "None". For example, the class documentation for `CategoricalIndex` could include something like the following:
 
@@ -187,8 +187,8 @@ The following are required to build the documentation:
 - A RAPIDS-compatible GPU. This is necessary because the documentation execute code.
 - A working copy of cudf in the same build environment.
   If you are only making changes to documentation we recommend following the
-  [Documentation contributions guide](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the
-  [build instructions](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
+  [Documentation contributions guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the
+  [build instructions](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
 - Sphinx, numpydoc, and MyST-NB.
   Assuming you follow the instructions in the previous step, these should automatically be installed into your environment.
 

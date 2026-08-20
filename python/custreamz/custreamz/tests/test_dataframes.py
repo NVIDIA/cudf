@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -29,7 +29,7 @@ def client():
     client = Client(processes=False, asynchronous=False)
 
     # Fix flaky tests seen in workflows like
-    # https://github.com/rapidsai/cudf/actions/runs/15119048978/job/42498435703?pr=18870#step:9:1722
+    # https://github.com/NVIDIA/cudf/actions/runs/15119048978/job/42498435703?pr=18870#step:9:1722
     # These manifest as a RecursionError in https://github.com/dask/distributed/blob/a890b85c8f107f7c8664ef96270ef8c25a2b31e4/distributed/gc.py#L201
     # There isn't a public API for whether it's enabled or disabled. We'll just
     # assume that it's enabled and disable it for the duration of the tests.

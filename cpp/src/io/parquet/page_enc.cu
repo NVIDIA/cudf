@@ -32,7 +32,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/merge.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -58,9 +57,6 @@ __device__ constexpr int rolling_idx(int pos) { return rolling_index<rle_buffer_
 // also valid for dict page header (V1 or V2)
 constexpr int MAX_V1_HDR_SIZE = util::round_up_unsafe(27, 8);
 
-// max V2 header size
-constexpr int MAX_V2_HDR_SIZE = util::round_up_unsafe(49, 8);
-
 // do not truncate statistics
 constexpr int32_t NO_TRUNC_STATS = 0;
 
@@ -72,9 +68,6 @@ constexpr uint32_t WARP_MASK = cudf::detail::warp_size - 1;
 
 // currently 64k - 1
 constexpr uint32_t MAX_GRID_Y_SIZE = (1 << 16) - 1;
-
-// space needed for RLE length field
-constexpr int RLE_LENGTH_FIELD_LEN = 4;
 
 struct frag_init_state_s {
   parquet_column_device_view col;
@@ -120,23 +113,6 @@ __device__ constexpr uint32_t physical_type_len(Type physical_type, type_id id, 
   }
 }
 
-__device__ constexpr uint32_t max_RLE_page_size(uint8_t value_bit_width, uint32_t num_values)
-{
-  if (value_bit_width == 0) return 0;
-
-  // Run length = 4, max(rle/bitpack header) = 5. bitpacking worst case is one byte every 8 values
-  // (because bitpacked runs are a multiple of 8). Don't need to round up the last term since that
-  // overhead is accounted for in the '5'.
-  // TODO: this formula does not take into account the data for RLE runs. The worst realistic case
-  // is repeated runs of 8 bitpacked, 2 RLE values. In this case, the formula would be
-  //   0.8 * (num_values * bw / 8 + num_values / 8) + 0.2 * (num_values / 2 * (1 + (bw+7)/8))
-  // for bw < 8 the above value will be larger than below, but in testing it seems like for low
-  // bitwidths it's hard to get the pathological 8:2 split.
-  // If the encoder starts printing the data corruption warning, then this will need to be
-  // revisited.
-  return 4 + 5 + util::div_rounding_up_unsafe(num_values * value_bit_width, 8) + (num_values / 8);
-}
-
 // subtract b from a, but return 0 if this would underflow
 __device__ constexpr size_t underflow_safe_subtract(size_t a, size_t b)
 {
@@ -175,7 +151,7 @@ void __device__ init_frag_state(frag_init_state_s* const s,
 template <int block_size>
 void __device__ calculate_frag_size(frag_init_state_s* const s, int t)
 {
-  using block_reduce = cub::BlockReduce<uint32_t, block_size>;
+  using block_reduce = cub::BlockReduce<size_t, block_size>;
   __shared__ typename block_reduce::TempStorage reduce_storage;
 
   auto const physical_type   = s->col.physical_type;
@@ -184,8 +160,8 @@ void __device__ calculate_frag_size(frag_init_state_s* const s, int t)
   auto const nvals           = s->frag.num_leaf_values;
   auto const start_value_idx = s->frag.start_value_idx;
 
-  uint32_t num_valid = 0;
-  uint32_t len       = 0;
+  size_t num_valid = 0;
+  size_t len       = 0;
   for (uint32_t i = 0; i < nvals; i += block_size) {
     auto const val_idx  = start_value_idx + i + t;
     auto const is_valid = i + t < nvals && val_idx < s->col.leaf_column->size() &&
@@ -216,15 +192,7 @@ void __device__ calculate_frag_size(frag_init_state_s* const s, int t)
 
   if (t == 0) {
     s->frag.fragment_data_size = total_len;
-    s->frag.num_valid          = total_valid;
-  }
-
-  __syncthreads();
-  // page fragment size must fit in a 32-bit signed integer
-  if (s->frag.fragment_data_size >
-      static_cast<uint32_t>(cuda::std::numeric_limits<int32_t>::max())) {
-    // TODO need to propagate this error back to the host
-    CUDF_UNREACHABLE("page fragment size exceeds maximum for i32");
+    s->frag.num_valid          = static_cast<uint32_t>(total_valid);
   }
 }
 
@@ -597,7 +565,8 @@ CUDF_KERNEL void __launch_bounds__(128)
                size_type max_page_size_rows,
                uint32_t page_align,
                bool write_v2_headers,
-               bool write_page_stats)
+               bool write_page_stats,
+               kernel_error::pointer error_code)
 {
   // TODO: All writing seems to be done by thread 0. Could be replaced by thrust foreach
   __shared__ __align__(8) parquet_column_device_view col_g;
@@ -641,8 +610,8 @@ CUDF_KERNEL void __launch_bounds__(128)
     uint32_t num_pages           = 0;
     uint32_t num_rows            = 0;
     uint32_t page_start          = 0;
-    uint32_t page_offset         = ck_g.ck_stat_size;
-    uint32_t comp_page_offset    = ck_g.ck_stat_size;
+    size_t page_offset           = ck_g.ck_stat_size;
+    size_t comp_page_offset      = ck_g.ck_stat_size;
     uint32_t page_headers_size   = 0;
     uint32_t max_page_data_size  = 0;
     uint32_t cur_row             = ck_g.start_row;
@@ -728,15 +697,10 @@ CUDF_KERNEL void __launch_bounds__(128)
         frag_g.num_rows           = 0;
       }
       __syncwarp();
-      uint32_t fragment_data_size =
-        (ck_g.use_dictionary)
-          ? frag_g.num_leaf_values * util::div_rounding_up_unsafe(ck_g.dict_rle_bits, 8)
-          : frag_g.fragment_data_size;
-
-      // page fragment size must fit in a 32-bit signed integer
-      if (fragment_data_size > cuda::std::numeric_limits<int32_t>::max()) {
-        CUDF_UNREACHABLE("page fragment size exceeds maximum for i32");
-      }
+      auto const fragment_data_size =
+        (ck_g.use_dictionary) ? static_cast<size_t>(frag_g.num_leaf_values) *
+                                  util::div_rounding_up_unsafe<size_t>(ck_g.dict_rle_bits, 8)
+                              : frag_g.fragment_data_size;
 
       // TODO (dm): this convoluted logic to limit page size needs refactoring
       size_t this_max_page_size = (values_in_page * 2 >= ck_g.num_values)   ? 256 * 1024
@@ -804,23 +768,24 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.num_valid          = num_valid;
           auto const def_level_size = max_RLE_page_size(col_g.num_def_level_bits(), values_in_page);
           auto const rep_level_size = max_RLE_page_size(col_g.num_rep_level_bits(), values_in_page);
-          if (write_v2_headers) {
-            page_g.max_lvl_size =
-              util::round_up_unsafe(def_level_size + rep_level_size, page_align);
-          }
+          // V2 headers keep the level data outside the page payload, so it is padded out to
+          // `page_align`. Store in a local size_t until page size has been validated below.
+          size_t const lvl_size = write_v2_headers ? util::round_up_unsafe<size_t>(
+                                                       def_level_size + rep_level_size, page_align)
+                                                   : def_level_size + rep_level_size;
           // get a different bound if using delta encoding
           if (is_use_delta) {
             auto const delta_len = delta_data_len(
               physical_type, type_id, page_g.num_leaf_values, page_size, column_data_encoding);
             page_size = max(page_size, delta_len);
           }
-          auto const max_data_size =
-            page_size + rle_pad +
-            (write_v2_headers ? page_g.max_lvl_size : def_level_size + rep_level_size);
-          // page size must fit in 32-bit signed integer
-          if (max_data_size > cuda::std::numeric_limits<int32_t>::max()) {
-            CUDF_UNREACHABLE("page size exceeds maximum for i32");
+          auto const max_data_size = page_size + rle_pad + lvl_size;
+          // Page sizes must fit in parquet page size limit.
+          if (max_data_size > MAX_PARQUET_PAGE_SIZE) {
+            set_error(static_cast<kernel_error::value_type>(encode_error::PAGE_SIZE_OVERFLOW),
+                      error_code);
           }
+          if (write_v2_headers) { page_g.max_lvl_size = static_cast<uint32_t>(lvl_size); }
           // if byte_array then save the variable bytes size
           if (ck_g.col_desc->physical_type == Type::BYTE_ARRAY) {
             // Page size is the sum of frag sizes, and frag sizes for strings includes the
@@ -911,11 +876,18 @@ CUDF_KERNEL void __launch_bounds__(128)
         comp_page_offset += ck_stat_size;
         ck_g.ck_stat_size = ck_stat_size;
       }
+      // EncColumnChunk buffer size must fit in 32-bit unsigned integer.
+      if (cuda::std::max<size_t>(page_offset, comp_page_offset) > EncColumnChunk::max_buffer_size) {
+        set_error(static_cast<kernel_error::value_type>(encode_error::COLUMN_CHUNK_SIZE_OVERFLOW),
+                  error_code);
+      }
       ck_g.num_pages          = num_pages;
-      ck_g.bfr_size           = page_offset;
+      ck_g.bfr_size           = static_cast<uint32_t>(page_offset);
       ck_g.page_headers_size  = page_headers_size;
       ck_g.max_page_data_size = max_page_data_size;
-      if (not comp_page_sizes.empty()) { ck_g.compressed_size = comp_page_offset; }
+      if (not comp_page_sizes.empty()) {
+        ck_g.compressed_size = static_cast<uint32_t>(comp_page_offset);
+      }
       pagestats_g.start_chunk = ck_g.first_page + ck_g.use_dictionary;  // Exclude dictionary
       pagestats_g.num_chunks  = num_pages - ck_g.use_dictionary;
     }
@@ -3471,6 +3443,7 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
                       bool write_page_stats,
                       statistics_merge_group* page_grstats,
                       statistics_merge_group* chunk_grstats,
+                      kernel_error::pointer error_code,
                       cuda::stream_ref stream)
 {
   auto num_rowgroups = chunks.size().first;
@@ -3487,7 +3460,8 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
                                                                  max_page_size_rows,
                                                                  page_align,
                                                                  write_v2_headers,
-                                                                 write_page_stats);
+                                                                 write_page_stats,
+                                                                 error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

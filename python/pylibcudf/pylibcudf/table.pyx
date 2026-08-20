@@ -360,7 +360,7 @@ cdef class Table:
         self._num_rows = 0
         return columns
 
-    cpdef tuple shape(self):
+    cpdef tuple[int, int] shape(self):
         """The shape of this table"""
         return (self.num_rows(), self.num_columns())
 

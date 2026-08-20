@@ -356,16 +356,14 @@ std::
                          inbuf_offsets.begin(),
                          0);
 
-  auto input_it = thrust::make_transform_iterator(
-    cuda::counting_iterator<std::size_t>{0},
+  auto input_it = cuda::transform_iterator(
+    col_offsets.begin(),
     cuda::proclaim_return_type<char const*>(
-      [d_input = d_input.begin(), col_offsets = col_offsets.begin()] __device__(
-        std::size_t i) -> char const* { return &d_input[col_offsets[i]]; }));
-  auto output_it = thrust::make_transform_iterator(
-    cuda::counting_iterator<std::size_t>{0},
+      [d_input = d_input.begin()] __device__(auto offset) { return &d_input[offset]; }));
+  auto output_it = cuda::transform_iterator(
+    inbuf_offsets.cbegin(),
     cuda::proclaim_return_type<char*>(
-      [inbuf = inbuf.begin(), inbuf_offsets = inbuf_offsets.cbegin()] __device__(
-        std::size_t i) -> char* { return &inbuf[inbuf_offsets[i]]; }));
+      [inbuf = inbuf.begin()] __device__(auto offset) { return &inbuf[offset]; }));
 
   {
     // cub device batched copy

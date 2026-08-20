@@ -46,7 +46,6 @@
 #include <thrust/extrema.h>
 #include <thrust/for_each.h>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
@@ -963,7 +962,7 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
                    [](auto valid_count) { return valid_count % 8; }),
       "There's currently a bug in encoding boolean columns. Suggested workaround is to convert "
       "to int8 type."
-      " Please see https://github.com/rapidsai/cudf/issues/6763 for more information.");
+      " Please see https://github.com/NVIDIA/cudf/issues/6763 for more information.");
   }
 
   hostdevice_2dvector<encoder_chunk_streams> chunk_streams(
@@ -1473,8 +1472,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
                                                  persisted_statistics& per_chunk_stats,
                                                  cuda::stream_ref stream)
 {
-  auto stripe_size_iter = thrust::make_transform_iterator(per_chunk_stats.stripe_stat_merge.begin(),
-                                                          [](auto const& s) { return s.size(); });
+  auto stripe_size_iter = cuda::transform_iterator(per_chunk_stats.stripe_stat_merge.begin(),
+                                                   [](auto const& s) { return s.size(); });
 
   auto const num_columns = footer.types.size() - 1;
   auto const num_stripes = footer.stripes.size();
@@ -1514,6 +1513,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
       file_blobs[i].assign(stat_begin, stat_end);
     }
 
+    stream.sync();
     return {{}, std::move(file_blobs)};
   }
 
@@ -1596,6 +1596,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
     file_blobs[i].assign(stat_begin, stat_end);
   }
 
+  stream.sync();
   return {std::move(stripe_blobs), std::move(file_blobs)};
 }
 
@@ -2041,6 +2042,7 @@ orc_table_view make_orc_table_view(table_view const& table,
     },
     stream);
 
+  stream.sync();
   return {std::move(orc_columns),
           std::move(d_orc_columns),
           str_col_indexes,

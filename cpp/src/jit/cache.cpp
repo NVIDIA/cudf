@@ -10,7 +10,7 @@
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
-#include <rtcx.hpp>
+#include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
 #define XXH_INLINE_ALL

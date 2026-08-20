@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 import math
@@ -423,7 +423,7 @@ def test_arith_masked_vs_constant_reflected(
                 constant == 1
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_test(func, gdf, check_dtype=False)
@@ -444,7 +444,7 @@ def test_arith_masked_vs_null(request, arithmetic_op, data):
                 (gdf["data"] == 1).any()
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_test(func, gdf, check_dtype=False)

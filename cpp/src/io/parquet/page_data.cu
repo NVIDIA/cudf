@@ -14,7 +14,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf::io::parquet::detail {
 
@@ -576,7 +575,7 @@ void write_final_offsets(host_span<size_type const> offsets,
   auto d_src_data = cudf::detail::make_device_uvector_async(
     offsets, stream, cudf::get_current_device_resource_ref());
   // Iterator for the source (scalar) data
-  auto src_iter = thrust::make_transform_iterator(
+  auto src_iter = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<cudf::size_type*>(
       [src = d_src_data.begin()] __device__(std::size_t i) { return src + i; }));

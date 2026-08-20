@@ -882,6 +882,13 @@ temporary host staging buffers to avoid the sync:
 
 The same stream-safety requirements apply to `memcpy_async` and `memcpy_batch_async`.
 
+If CUDA memory copy APIs must be called directly, always use `cudaMemcpyDefault` instead of an
+explicit host/device copy policy. Copy correctness depends on whether the source and destination
+pointers are accessible from the host or device, not where the memory is resident. For example,
+pinned host memory may be device-accessible despite residing on the host. `cudaMemcpyDefault` allows
+CUDA to infer the valid copy direction from the pointers rather than rejecting such copies based on
+an explicit policy.
+
 ## Default Parameters
 
 While public libcudf APIs are free to include default function parameters, detail functions should

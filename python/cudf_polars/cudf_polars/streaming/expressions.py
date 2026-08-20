@@ -524,7 +524,7 @@ def _decompose(
         # All child IRs were Empty. Use an Empty({}) with
         # count=1 to ensure that scalar expressions still
         # produce one output partition with a single row
-        # See: https://github.com/rapidsai/cudf/pull/20409
+        # See: https://github.com/NVIDIA/cudf/pull/20409
         input_ir = Empty({})
         partition_info[input_ir] = PartitionInfo(count=1)
 

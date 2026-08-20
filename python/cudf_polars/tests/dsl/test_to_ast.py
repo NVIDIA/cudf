@@ -144,7 +144,7 @@ def test_to_parquet_filter_null_checks_on_column(name):
     ],
 )
 def test_to_parquet_filter_null_checks_on_nested_column_not_pushed(name):
-    # See https://github.com/rapidsai/cudf/issues/23397
+    # See https://github.com/NVIDIA/cudf/issues/23397
     struct_dtype = DataType(pl.Struct({"a": pl.Int64}))
     col = expr_nodes.Col(struct_dtype, "s")
     fn = expr_nodes.BooleanFunction(DataType(pl.datatypes.Boolean()), name, (), col)

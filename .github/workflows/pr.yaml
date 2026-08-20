@@ -444,7 +444,7 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_cpp.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-build:
     needs: [build-details, conda-cpp-build]
@@ -491,7 +491,7 @@ jobs:
     with:
       build_type: pull-request
       script: "ci/test_python_cudf.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-other-tests:
     # Tests for dask_cudf, cudf_polars, custreamz, cudf_kafka are separated for CI parallelism
@@ -507,10 +507,10 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda
     with:
       build_type: pull-request
-      # https://github.com/rapidsai/cudf/pull/22381/changes#r3196736965
+      # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_python_other.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-java-tests:
     needs: [conda-cpp-build, changed-files]
@@ -723,7 +723,7 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf_streaming.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-build-pylibcudf:
     needs: [build-details, checks, wheel-build-libcudf]
@@ -777,7 +777,7 @@ jobs:
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-build-cudf-polars:
     needs: [build-details, wheel-build-pylibcudf]
@@ -905,7 +905,7 @@ jobs:
     if: (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
     with:
       # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
-      # Filter out GB300 due to https://github.com/rapidsai/cudf/issues/23498
+      # Filter out GB300 due to https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: group_by([(.ARCH), (.CUDA_VER|split(".")|map(tonumber)|.[0])]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))])) | map(select(.GPU != "gb300" and .GPU != "gh200"))
       build_type: pull-request
       script: ci/cudf_pandas_scripts/run_tests.sh

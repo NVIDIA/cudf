@@ -476,7 +476,7 @@ the null mask bits.
 libcudf employs a custom-built [preload
 library](https://man7.org/linux/man-pages/man8/ld.so.8.html) to validate its internal stream usage
 (the code may be found
-[`here`](https://github.com/rapidsai/cudf/blob/main/cpp/tests/utilities/identify_stream_usage.cpp)).
+[`here`](https://github.com/NVIDIA/cudf/blob/main/cpp/tests/utilities/identify_stream_usage.cpp)).
 This library wraps every asynchronous CUDA runtime API call that accepts a stream with a check to
 ensure that the passed CUDA stream is a valid one, immediately throwing an exception if an invalid
 stream is detected. Running tests with this library loaded immediately triggers errors if any test
@@ -512,7 +512,7 @@ mode, however, can only be used to validate tests that are correctly passing
 `cudf::test::get_default_stream` to public libcudf APIs.
 
 In addition to the preload library, the test suite also implements a [custom memory
-resource](https://github.com/rapidsai/cudf/blob/main/cpp/include/cudf_test/stream_checking_resource_adaptor.hpp)
+resource](https://github.com/NVIDIA/cudf/blob/main/cpp/include/cudf_test/stream_checking_resource_adaptor.hpp)
 that performs analogous stream verification when its `do_allocate` method is called. During testing
 this rmm's default memory resource is set to use this adaptor for additional stream validation.
 

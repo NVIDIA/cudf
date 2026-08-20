@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cudf
@@ -19,7 +19,7 @@ def test_empty_nested_list_uninitialized_offsets_memory_usage():
         [[[1, 2], [3]], []], dtype=cudf.ListDtype(cudf.ListDtype("int64"))
     )
     # Unlike in Arrow a 0-size list column produced by libcudf could have no offsets
-    # allocated and thus be truly empty (https://github.com/rapidsai/cudf/issues/16164)
+    # allocated and thus be truly empty (https://github.com/NVIDIA/cudf/issues/16164)
     assert ser.iloc[:0].memory_usage() == 0
 
 

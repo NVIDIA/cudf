@@ -39,6 +39,7 @@ from sphinx.addnodes import pending_xref
 from sphinx.ext import intersphinx
 from sphinx.ext.autodoc import ClassDocumenter
 from sphinx.highlighting import lexers
+from sphinx.util.nodes import make_refnode
 
 
 class PseudoLexer(RegexLexer):
@@ -227,7 +228,7 @@ pygments_style = "sphinx"
 html_theme_options = {
     "external_links": [],
     "icon_links": [],
-    "github_url": "https://github.com/rapidsai/cudf",
+    "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "content",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
@@ -500,6 +501,27 @@ def _cached_intersphinx_lookup(env, node, contnode):
     return ref
 
 
+def _resolve_cpp_xref(app, env, node, contnode, name):
+    docname, objtype, anchor = _domain_objects[name]
+    fromdocname = node.get("refdoc", env.docname)
+    for reftype in (node["reftype"], objtype):
+        if (
+            ref := env.domains["cpp"].resolve_xref(
+                env,
+                fromdocname,
+                app.builder,
+                reftype,
+                name,
+                node,
+                contnode,
+            )
+        ) is not None:
+            return ref
+    return make_refnode(
+        app.builder, fromdocname, docname, anchor, contnode, name
+    )
+
+
 def on_missing_reference(app, env, node, contnode):
     # These variables are defined outside the function to speed up the build.
     global \
@@ -515,8 +537,10 @@ def on_missing_reference(app, env, node, contnode):
     if _domain_objects is None:
         _domain_objects = {}
         _prefixed_domain_objects = {}
-        for name, _, _, docname, _, _ in env.domains["cpp"].get_objects():
-            _domain_objects[name] = docname
+        for name, _, objtype, docname, anchor, _ in env.domains[
+            "cpp"
+        ].get_objects():
+            _domain_objects[name] = (docname, objtype, anchor)
             for prefix in _all_namespaces:
                 _prefixed_domain_objects[f"{prefix}{name}"] = name
 
@@ -565,6 +589,15 @@ def on_missing_reference(app, env, node, contnode):
         if match := re.search("(.*)<.*>", reftarget):
             reftarget = match.group(1)
 
+        # Breathe sometimes emits bare C++ targets that are already registered
+        # in the C++ domain, for example enum types in parameter lists.
+        if (
+            reftarget in _domain_objects
+            and (ref := _resolve_cpp_xref(app, env, node, contnode, reftarget))
+            is not None
+        ):
+            return ref
+
         # Try to find the target prefixed with e.g. namespaces in case that's
         # all that's missing.
         # We need to do this search because the call sites may not have used
@@ -579,15 +612,7 @@ def on_missing_reference(app, env, node, contnode):
                     name = f"{prefix}{reftarget}"
                     break
         if name is not None:
-            return env.domains["cpp"].resolve_xref(
-                env,
-                _domain_objects[name],
-                app.builder,
-                node["reftype"],
-                name,
-                node,
-                contnode,
-            )
+            return _resolve_cpp_xref(app, env, node, contnode, name)
 
         # Final possibility is an intersphinx lookup to see if the symbol
         # exists in one of the other inventories. First we check the symbol
@@ -749,7 +774,7 @@ def linkcode_resolve(domain, info) -> str | None:
 
     fn = os.path.relpath(fn, start=os.path.dirname(pkg_file))
     return (
-        f"https://github.com/rapidsai/cudf/blob/"
+        f"https://github.com/NVIDIA/cudf/blob/"
         f"{RAPIDS_BRANCH}/{source_path}/{fn}{linespec}"
     )
 

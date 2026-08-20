@@ -70,7 +70,7 @@ def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetI
     metadata
         The list of ``FileMetaData`` objects for the ``paths``.
     """
-    # TODO: https://github.com/rapidsai/cudf/issues/22734, use object metadata from polars
+    # TODO: https://github.com/NVIDIA/cudf/issues/22734, use object metadata from polars
     # For now, we'll just use kvikio to explicitly get the size.
     sizes: list[int | None] = []
 

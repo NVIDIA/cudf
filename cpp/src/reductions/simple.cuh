@@ -22,7 +22,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 
 namespace cudf {
@@ -67,11 +66,11 @@ std::unique_ptr<scalar> simple_reduction(column_view const& col,
   auto result = [&] {
     if (col.has_nulls()) {
       auto f  = simple_op.template get_null_replacing_element_transformer<ResultType>();
-      auto it = thrust::make_transform_iterator(dcol->pair_begin<ElementType, true>(), f);
+      auto it = cuda::transform_iterator(dcol->pair_begin<ElementType, true>(), f);
       return cudf::reduction::detail::reduce(it, col.size(), simple_op, initial_value, stream, mr);
     } else {
       auto f  = simple_op.template get_element_transformer<ResultType>();
-      auto it = thrust::make_transform_iterator(dcol->begin<ElementType>(), f);
+      auto it = cuda::transform_iterator(dcol->begin<ElementType>(), f);
       return cudf::reduction::detail::reduce(it, col.size(), simple_op, initial_value, stream, mr);
     }
   }();
@@ -154,7 +153,7 @@ std::unique_ptr<scalar> dictionary_reduction(
     auto f = simple_op.template get_null_replacing_element_transformer<ResultType>();
     auto p =
       cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*dcol, col.has_nulls());
-    auto it = thrust::make_transform_iterator(p, f);
+    auto it = cuda::transform_iterator(p, f);
     return cudf::reduction::detail::reduce(it, col.size(), simple_op, {}, stream, mr);
   }();
 

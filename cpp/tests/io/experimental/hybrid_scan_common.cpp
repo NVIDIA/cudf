@@ -41,8 +41,8 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
 {
   CUDF_EXPECTS(value >= 0 && value <= 9999, "String value must be between 0000 and 9999");
 
-  auto elements = thrust::make_transform_iterator(cuda::make_constant_iterator(value),
-                                                  [](auto i) { return std::format("{:04d}", i); });
+  auto elements = cuda::transform_iterator(cuda::make_constant_iterator(value),
+                                           [](auto i) { return std::format("{:04d}", i); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 
@@ -347,6 +347,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask_vector(begin, end);
       auto d_mask                  = rmm::device_buffer{
         null_mask.data(), cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)), stream};
+      stream.sync();
       return std::pair{std::move(d_mask), null_count};
     };
 

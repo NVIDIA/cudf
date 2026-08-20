@@ -181,8 +181,7 @@ class stream_pool_registry {
   std::vector<std::vector<cuda_event*>> _free_events;
 
  public:
-  stream_pool_registry()
-    : _free_pools(get_num_cuda_devices()), _free_events(get_num_cuda_devices())
+  stream_pool_registry() : _free_pools(get_num_cuda_devices()), _free_events(get_num_cuda_devices())
   {
   }
 

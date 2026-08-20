@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -121,6 +121,7 @@ auto make_index_column(cudf::size_type num_rows, rmm::cuda_stream_view stream)
   std::vector<cudf::size_type> data(num_rows);
   std::iota(data.begin(), data.end(), 0);
   auto buffer = rmm::device_buffer(data.data(), num_rows * sizeof(int64_t), stream);
+  stream.synchronize();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                         num_rows,
                                         std::move(buffer),
@@ -141,6 +142,7 @@ template <typename T>
 auto make_column(cudf::host_span<T const> host_data, rmm::cuda_stream_view stream)
 {
   auto device_buffer = rmm::device_buffer(host_data.data(), host_data.size() * sizeof(T), stream);
+  stream.synchronize();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<T>()},
                                         host_data.size(),
                                         std::move(device_buffer),
@@ -174,6 +176,7 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
 
   auto page_data_buffer =
     rmm::device_buffer(data.data(), num_pages_this_column * sizeof(int64_t), stream);
+  stream.synchronize();
 
   auto page_data_column =
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
@@ -285,6 +288,7 @@ void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
   auto byte_offsets_buffer =
     rmm::device_buffer(row_group_byte_offsets.data(), num_row_groups * sizeof(int64_t), stream);
 
+  stream.synchronize();
   columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
                                                       num_row_groups,
                                                       std::move(row_offsets_buffer),

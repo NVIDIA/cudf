@@ -6,9 +6,6 @@ from __future__ import annotations
 import cupy as cp
 import numpy as np
 import pytest
-
-pytest.importorskip("numba_cuda_mlir")
-
 from numba_cuda_mlir import (
     cuda,
     types,

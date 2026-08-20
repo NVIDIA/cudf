@@ -39,6 +39,7 @@
 #include <iterator>
 #include <limits>
 #include <random>
+#include <ranges>
 #include <stdexcept>
 
 using cudf::test::iterators::no_nulls;
@@ -1398,6 +1399,100 @@ TEST_F(ParquetWriterTest, DictionaryNeverTest)
   EXPECT_FALSE(used_dict());
 }
 
+TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
+{
+  // Create list column smaller and larger than the max dictionary size under the ADAPTIVE policy. A
+  // column chunk larger than the max dictionary size must fall back to plain encoding.
+  constexpr size_t max_dict_size = 1024 * 1024;
+
+  // Each distinct value repeats 10 times, so plain encoding stays larger than dictionary encoding
+  auto const make_list_col = [](cudf::size_type vals_per_row, cudf::size_type cardinality) {
+    constexpr cudf::size_type num_rows = 100'000;
+
+    auto const num_leaves = num_rows * vals_per_row;
+    auto leaf_values      = cudf::detail::make_counting_transform_iterator(
+      0, [cardinality](auto i) { return static_cast<int32_t>(i % cardinality); });
+    cudf::test::fixed_width_column_wrapper<int32_t> leaves(leaf_values, leaf_values + num_leaves);
+    auto offset_values = cudf::detail::make_counting_transform_iterator(
+      0, [vals_per_row](auto i) { return static_cast<cudf::size_type>(i * vals_per_row); });
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(offset_values,
+                                                                    offset_values + num_rows + 1);
+    return cudf::make_lists_column(
+      num_rows, offsets.release(), leaves.release(), 0, rmm::device_buffer{});
+  };
+
+  constexpr cudf::size_type max_dict_entries = max_dict_size / sizeof(int32_t);
+
+  constexpr cudf::size_type vals_per_row_under = 20;
+  auto const col0                             = make_list_col(vals_per_row_under, max_dict_entries);
+  constexpr cudf::size_type vals_per_row_over = 40;
+  auto const col1 = make_list_col(vals_per_row_over, max_dict_entries + 1);
+
+  auto const expected = table_view{{*col0, *col1}};
+
+  // Helper to test dictionary selection with different fragment sizes under ADAPTIVE policy.
+  auto const test_dictionary_selection = [&](table_view const& input,
+                                             std::vector<bool> const& expected_dictionary,
+                                             std::string tag,
+                                             std::optional<cudf::size_type> frag_size =
+                                               std::nullopt) {
+    SCOPED_TRACE(tag);
+
+    if (input.num_rows() == 0) { return; }
+
+    auto const filepath =
+      temp_env->get_temp_filepath("DictionaryEntryLimitListTest-" + tag + ".parquet");
+    {
+      auto out_opts =
+        cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+          .compression(cudf::io::compression_type::NONE)
+          .dictionary_policy(cudf::io::dictionary_policy::ADAPTIVE)
+          .max_dictionary_size(max_dict_size)
+          .build();
+      if (frag_size.has_value()) { out_opts.set_max_page_fragment_size(frag_size.value()); }
+      cudf::io::write_parquet(out_opts);
+    }
+
+    auto const source = cudf::io::datasource::create(filepath);
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
+
+    // Both columns must land in a single chunk for the cardinalities above to be the per-chunk
+    // dictionary entry counts.
+    ASSERT_EQ(fmd.row_groups.size(), 1);
+
+    ASSERT_EQ(fmd.row_groups[0].columns.size(), expected_dictionary.size());
+    auto used_dict = [&fmd](size_t col_idx) {
+      auto const& encodings = fmd.row_groups[0].columns[col_idx].meta_data.encodings;
+      return std::any_of(encodings.cbegin(), encodings.cend(), [](auto enc) {
+        return enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+               enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+      });
+    };
+
+    std::ranges::for_each(std::views::iota(size_t{0}, expected_dictionary.size()),
+                          [&](size_t i) { EXPECT_EQ(used_dict(i), expected_dictionary[i]); });
+  };
+
+  test_dictionary_selection(expected, {true, false}, "DefaultFragments");
+  test_dictionary_selection(expected, {true, false}, "SmallFragments", 50);
+
+  std::vector<bool> const valid{true, true, false, true, true};
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valid.begin(), valid.end());
+  constexpr auto num_repeated_leaves = cudf::size_type{1'000};
+  auto const repeated_leaves         = cuda::make_constant_iterator<int32_t>(1);
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 2, 2, 2, num_repeated_leaves + 2}
+      .release();
+  auto values_col = cudf::test::fixed_width_column_wrapper<int32_t>(
+                      repeated_leaves, repeated_leaves + num_repeated_leaves + 2)
+                      .release();
+  auto null_and_empty_lists = cudf::make_lists_column(
+    5, std::move(offsets_col), std::move(values_col), null_count, std::move(null_mask));
+  auto const sliced_input = cudf::slice(null_and_empty_lists->view(), {1, 5}).front();
+  test_dictionary_selection(table_view{{sliced_input}}, {true}, "SlicedInput");
+}
+
 TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)
 {
   constexpr unsigned int nrows = 65'536U;
@@ -1405,9 +1500,8 @@ TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)
   constexpr unsigned int cardinality = 32'768U;
 
   // single value will have a small dictionary
-  auto elements0 = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return "a unique string value suffixed with 1"; });
-  auto const col0 = cudf::test::strings_column_wrapper(elements0, elements0 + nrows);
+  auto const elements0 = cuda::make_constant_iterator("a unique string value suffixed with 1");
+  auto const col0      = cudf::test::strings_column_wrapper(elements0, elements0 + nrows);
 
   // high cardinality will have a large dictionary
   auto elements1  = cudf::detail::make_counting_transform_iterator(0, [cardinality](auto i) {

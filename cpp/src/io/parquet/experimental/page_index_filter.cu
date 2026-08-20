@@ -417,6 +417,7 @@ struct page_stats_caster : public stats_caster_base {
       // Construct a row indices mapping based on page row offsets.
       auto const page_indices = compute_page_indices_async(
         page_row_offsets, total_rows, stream, cudf::get_current_device_resource_ref());
+      stream.sync();
 
       // For non-strings columns, directly gather the page-level column data and bitmask to the
       // row-level.
@@ -583,6 +584,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
               stream)
           : cudf::detail::make_empty_host_vector<bitmask_type>(0, stream);
 
+      stream.sync();
       auto [row_mask_data, row_mask_bitmask] =
         build_data_and_nullmask<bool>(page_mask->mutable_view(),
                                       page_mask_nullmask.data(),

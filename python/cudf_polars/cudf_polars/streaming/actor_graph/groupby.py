@@ -13,6 +13,7 @@ from cudf_streaming.channel_metadata import (
     HashScheme,
     OrderKey,
     OrderScheme,
+    Ordering,
     Partitioning,
 )
 from cudf_streaming.table_chunk import TableChunk
@@ -28,6 +29,7 @@ from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
     _partition_range,
     adjust_ordering,
+    get_strict_ordering,
 )
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.dispatch import (
@@ -57,7 +59,6 @@ from cudf_polars.streaming.groupby import _has_stable_sorted_agg, combine, decom
 from cudf_polars.streaming.repartition import Repartition
 
 if TYPE_CHECKING:
-    from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -459,13 +460,16 @@ async def _shuffle_reduce(
 def _remap_ordering_keys(
     ordering: Ordering,
     column_indices: tuple[int, ...],
+    br: BufferResource,
 ) -> Ordering:
     """Return ``ordering`` with keys remapped to another schema."""
-    return ordering.remap(
-        tuple(
+    return Ordering(
+        [
             OrderKey(index, key.order, key.null_order)
             for key, index in zip(ordering.keys, column_indices, strict=True)
-        )
+        ],
+        ordering.get_boundaries(br),
+        strict_boundaries=ordering.strict_boundaries,
     )
 
 
@@ -561,8 +565,9 @@ async def _ordered_adjust_reduce(
     partial_input_ordering = _remap_ordering_keys(
         input_ordering,
         decomposed.shuffle_indices[: len(input_ordering.keys)],
+        context.br(),
     )
-    partial_output_ordering = partial_input_ordering.as_strict()
+    partial_output_ordering = get_strict_ordering(partial_input_ordering, context.br())
     ch_local = context.create_channel()
     ch_adjusted = context.create_channel()
     adjusted_metadata = _adjusted_ordering_metadata(

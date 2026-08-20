@@ -83,6 +83,25 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
     assert tracer.decision == "shuffle"
 
 
+@pytest.mark.parametrize(
+    "nranks,npartitions,expected",
+    [
+        (2, 5, [3, 2]),
+        (3, 5, [2, 2, 1]),
+        (4, 10, [3, 2, 3, 2]),
+    ],
+)
+def test_partition_count_for_rank_uses_contiguous_ownership(
+    nranks, npartitions, expected
+):
+    """GroupBy metadata uses the same uneven partition ownership as adjust_ordering."""
+    counts = [
+        groupby_actor_graph._partition_count_for_rank(rank, nranks, npartitions)
+        for rank in range(nranks)
+    ]
+    assert counts == expected
+
+
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])
 @pytest.mark.parametrize("agg", ["sum", "mean", "len", "min", "max"])
 def test_dynamic_groupby_basic(df, streaming_engine, keys, agg):

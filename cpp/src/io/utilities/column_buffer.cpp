@@ -12,6 +12,7 @@
 
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
@@ -227,12 +228,21 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
             }
           }
 
-          return make_lists_column(
-            num_rows,
-            std::move(col_content.children[strings_column_view::offsets_column_index]),
-            std::move(uint8_col),
-            null_count,
-            std::move(*col_content.null_mask));
+          // A strings column may carry 64-bit offsets, but a LIST column's offsets child is
+          // always 32-bit. The `char_size` check above bounds the chars by `size_type`, so
+          // every offset value is representable as an int32_t and this cannot lose data.
+          auto offsets_col =
+            std::move(col_content.children[strings_column_view::offsets_column_index]);
+          if (offsets_col->type().id() != type_id::INT32) {
+            offsets_col = cudf::detail::cast(
+              offsets_col->view(), data_type{type_id::INT32}, stream, buffer._mr);
+          }
+
+          return make_lists_column(num_rows,
+                                   std::move(offsets_col),
+                                   std::move(uint8_col),
+                                   null_count,
+                                   std::move(*col_content.null_mask));
         }
       }
 

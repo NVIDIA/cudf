@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 ctypedef const string const_string
+ctypedef const cpp_FileMetaData const_cpp_FileMetaData
 
 
 __all__ = [
@@ -843,7 +844,7 @@ cpdef Table read_parquet_column_chunk_bounds(
 
     with nogil:
         c_result = cpp_parquet_metadata.read_parquet_column_chunk_bounds(
-            std_span[const cpp_FileMetaData](
+            std_span[const_cpp_FileMetaData](
                 c_metadatas.data(), c_metadatas.size()
             ),
             std_span[const_string](c_columns.data(), c_columns.size()),

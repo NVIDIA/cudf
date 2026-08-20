@@ -18,6 +18,7 @@ from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 ctypedef const string const_string
+ctypedef const FileMetaData const_FileMetaData
 
 
 cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
@@ -54,7 +55,7 @@ cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] read_parquet_column_chunk_bounds(
-        std_span[const FileMetaData] parquet_metadatas,
+        std_span[const_FileMetaData] parquet_metadatas,
         std_span[const_string] column_names,
         cudaStream_t stream,
         device_async_resource_ref mr,

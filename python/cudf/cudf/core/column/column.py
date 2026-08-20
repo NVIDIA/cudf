@@ -2406,7 +2406,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
     def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
         warnings.warn(
             "apply_boolean_mask is deprecated; use apply_retention_mask instead",
-            DeprecationWarning,
+            FutureWarning,
             stacklevel=2,
         )
         return self.apply_retention_mask(mask)

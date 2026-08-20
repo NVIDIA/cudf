@@ -151,8 +151,8 @@ TYPED_TEST(ApplyBooleanMaskTypedTest, StructInput)
     // Unsliced.
     // The input should now look as follows: (String child dropped for brevity.)
     // Input:                     {[0, 1], [2], [3, 4, 5], [], [6, 7], [], [8, 9]}
-    auto const filter   = filter_t{{1, 1}, {0}, {0, 1, 0}, {}, {1, 0}, {}, {0, 1}};
-    auto const result   = apply_retention_mask(lists_column_view{*input}, lists_column_view{filter});
+    auto const filter = filter_t{{1, 1}, {0}, {0, 1, 0}, {}, {1, 0}, {}, {0, 1}};
+    auto const result = apply_retention_mask(lists_column_view{*input}, lists_column_view{filter});
     auto const expected = [] {
       auto child_num               = fwcw{0, 1, 4, 6, 9};
       auto child_str               = strings{"0", "1", "4", "6", "9"};

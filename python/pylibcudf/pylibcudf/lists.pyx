@@ -898,7 +898,7 @@ cpdef Column apply_boolean_mask(
     """Deprecated alias for :func:`apply_retention_mask`."""
     warnings.warn(
         "apply_boolean_mask is deprecated; use apply_retention_mask instead",
-        DeprecationWarning,
+        FutureWarning,
         stacklevel=2,
     )
     return apply_retention_mask(input, boolean_mask, stream, mr)

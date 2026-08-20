@@ -329,7 +329,9 @@ class StringColumn(ColumnBase, Scannable):
                     "cuDF does not yet support timezone-aware datetimes"
                 )
             is_nat = self == "NaT"
-            without_nat = self.apply_retention_mask(is_nat.unary_operator("not"))
+            without_nat = self.apply_retention_mask(
+                is_nat.unary_operator("not")
+            )
             char_counts = without_nat.count_characters()  # type: ignore[attr-defined]
             if char_counts.distinct_count(dropna=True) != 1:
                 # Unfortunately disables OK cases like:

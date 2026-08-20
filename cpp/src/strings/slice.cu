@@ -261,7 +261,7 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
       <<<num_blocks, block_size, 0, stream.get()>>>(*d_column, starts, stops, results.data());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
-  return make_strings_column(results.begin(), results.end(), stream, mr);
+  return cudf::make_strings_column(results, stream, mr);
 }
 
 }  // namespace

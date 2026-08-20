@@ -943,18 +943,16 @@ add_library(
   src/reductions/segmented/nunique.cu
   src/reductions/segmented/product.cu
   src/reductions/segmented/reductions.cpp
-  src/reductions/segmented/std.cu
+  src/reductions/segmented/std_var.cu
   src/reductions/segmented/sum.cu
   src/reductions/segmented/sum_of_squares.cu
   src/reductions/segmented/update_validity.cu
-  src/reductions/segmented/var.cu
-  src/reductions/std.cu
+  src/reductions/std_var.cu
   src/reductions/sum.cu
   src/reductions/sum_of_squares.cu
   src/reductions/sum_overflow.cu
   src/reductions/unique_count.cu
   src/reductions/unique_count_column.cu
-  src/reductions/var.cu
   src/replace/clamp.cu
   src/replace/nans.cu
   src/replace/nulls.cu

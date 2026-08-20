@@ -60,7 +60,8 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
                                                  cuda::stream_ref stream)
 {
   auto const t_input    = table_view{{input_col}};
-  auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream};
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream, temp_mr};
 
   auto const sorted_index_order = cuda::make_permutation_iterator(
     sorted_order_view.begin<size_type>(), cuda::counting_iterator<size_type>{0});

@@ -90,7 +90,7 @@ class jni_writer_data_sink final : public cudf::io::data_sink {
       char* copy_to = current_buffer_data + current_buffer_written;
 
       CUDF_CUDA_TRY(
-        cudaMemcpyAsync(copy_to, copy_from, amount_to_copy, cudaMemcpyDeviceToHost, stream.get()));
+        cudaMemcpyAsync(copy_to, copy_from, amount_to_copy, cudaMemcpyDefault, stream.get()));
 
       copy_from = copy_from + amount_to_copy;
       current_buffer_written += amount_to_copy;

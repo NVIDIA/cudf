@@ -91,7 +91,7 @@ std::unique_ptr<column> split_part_fn(strings_column_view const& input,
                                                    : string_index_pair{nullptr, 0};
                     });
 
-  return make_strings_column(d_indices.begin(), d_indices.end(), stream, mr);
+  return cudf::make_strings_column(d_indices, stream, mr);
 }
 
 }  // namespace

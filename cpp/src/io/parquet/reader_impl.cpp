@@ -1182,6 +1182,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
     std::fill(pinned_valids.begin(), pinned_valids.end(), false);
     cudf::set_null_masks_safe(
       pinned_null_masks, pinned_begin_bits, pinned_end_bits, pinned_valids, _stream);
+    _stream.sync();
   }
   // Otherwise, update the nullmasks in a loop
   else {

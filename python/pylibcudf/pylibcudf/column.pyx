@@ -188,10 +188,12 @@ cdef gpumemoryview _copy_array_to_device(object buf, object stream: CudaStreamLi
     cdef size_t nbytes = len(mv) * mv.itemsize
     cdef Stream _stream = _get_stream(stream)
 
-    return gpumemoryview(DeviceBuffer.to_device(
+    cdef DeviceBuffer dbuf = DeviceBuffer.to_device(
         <const unsigned char[:nbytes:1]><const unsigned char*>ptr,
         _stream
-    ))
+    )
+    _stream.synchronize()
+    return gpumemoryview(dbuf)
 
 
 def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
@@ -1034,6 +1036,7 @@ cdef class Column:
             ptr = <const unsigned char*><uintptr_t>data_ptr
             view = (<const unsigned char[:nbytes]> ptr)[:nbytes]
             dbuf = DeviceBuffer.to_device(view, _stream)
+            _stream.synchronize()
         else:
             dbuf = DeviceBuffer(size=0, stream=_stream)
 

@@ -445,6 +445,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   offsets_array.offset                         = 0;  // already accounted for by the above transform
   auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int32_t>(
     schema, &offsets_array, data_type(type_id::INT32), true);
+  stream.synchronize();
   return std::tuple{std::move(result), offset, length};
 }
 
@@ -489,6 +490,7 @@ std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
       std::overflow_error);
     return std::make_unique<table>(std::move(columns), static_cast<size_type>(input->array.length));
   }
+  stream.synchronize();
   return std::make_unique<table>(std::move(columns));
 }
 
@@ -507,8 +509,10 @@ std::unique_ptr<column> from_arrow_host_column(ArrowSchema const* schema,
   ArrowSchemaView view;
   NANOARROW_THROW_NOT_OK(ArrowSchemaViewInit(&view, schema, nullptr));
 
-  auto type = arrow_to_cudf_type(&view);
-  return get_column_copy(&view, &input->array, type, false, stream, mr);
+  auto type   = arrow_to_cudf_type(&view);
+  auto result = get_column_copy(&view, &input->array, type, false, stream, mr);
+  stream.synchronize();
+  return result;
 }
 
 std::unique_ptr<column> get_column_from_host_copy(ArrowSchemaView const* schema,

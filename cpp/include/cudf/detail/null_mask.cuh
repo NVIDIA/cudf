@@ -138,8 +138,8 @@ CUDF_KERNEL void offset_bitmask_binop(Binop op,
  * @param source_begin_bits Array of bit offsets from which each source mask is to be processed
  * @param source_size_bits The number of bits to process in each mask
  * @param segment_offsets  Array of `num_segments + 1` indices defining the segments in the sources
- * array; behavior is undefined unless the indices are non-decreasing and each lies within the
- * bounds of `sources`, the last one being one past the last mask
+ * array, segment `i` covering `[segment_offsets[i], segment_offsets[i + 1])`; behavior is undefined
+ * unless the indices are non-decreasing and none exceeds the number of masks in `sources`
  * @param null_counts      Array where the count of unset bits for each segment will be written
  *
  */

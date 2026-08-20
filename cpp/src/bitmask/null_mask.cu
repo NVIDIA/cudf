@@ -667,7 +667,7 @@ segmented_bitmask_and(host_span<column_view const> colviews,
                            [&](auto const& view) { return view.size() == colviews[0].size(); }),
                "All column views must have the same number of elements");
 
-  if (colviews[0].size() == 0 or colviews.size() == 0) { return {}; }
+  if (colviews.empty() or colviews[0].size() == 0) { return {}; }
 
   std::vector<bitmask_type const*> masks;
   std::vector<size_type> masks_begin_bits(colviews.size(), 0);

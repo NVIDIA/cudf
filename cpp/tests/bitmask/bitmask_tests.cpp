@@ -731,6 +731,16 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
   }
 }
 
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndNoColumns)
+{
+  std::vector<cudf::column_view> const colviews{};
+  std::vector<cudf::size_type> const segment_offsets{0};
+  auto const [result_masks, result_null_count] =
+    cudf::segmented_bitmask_and(colviews, segment_offsets);
+  EXPECT_TRUE(result_masks.empty());
+  EXPECT_TRUE(result_null_count.empty());
+}
+
 TEST_F(MergeBitmaskTest, TestBitmaskOr)
 {
   cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1}, {1, 1, 0, 0, 1});

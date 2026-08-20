@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -74,6 +75,16 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.typing import Schema
     from cudf_polars.utils.config import StreamingExecutor
+
+
+@dataclass(frozen=True)
+class OrderSchemePartitioningResult:
+    """OrderScheme partitioning and buffered chunks consumed to derive it."""
+
+    partitioning: Partitioning | None
+    """The extracted partitioning, or ``None`` if extraction was not possible."""
+    chunks: ChunkStore
+    """The consumed non-empty chunks, stored in replay order."""
 
 
 def _extract_boundaries(
@@ -148,7 +159,7 @@ async def extract_orderscheme_partitioning(
     ch_in: Channel[TableChunk],
     order_keys: Sequence[OrderKey],
     collective_id: int,
-) -> Partitioning | None:
+) -> OrderSchemePartitioningResult:
     """
     Extract the partitioning metadata for a sorted channel.
 
@@ -171,16 +182,17 @@ async def extract_orderscheme_partitioning(
 
     Returns
     -------
-    A ``Partitioning`` whose ``inter_rank`` is an ``OrderScheme`` built
-    from the observed boundaries and ``local`` is ``"inherit"``, or
-    ``None`` if the channel contains insufficient data or the data is
-    not globally sorted.
+    A result containing a ``Partitioning`` whose ``inter_rank`` is an
+    ``OrderScheme`` built from the observed boundaries and ``local`` is
+    ``"inherit"``, or ``None`` if the channel contains insufficient data
+    or the data is not globally sorted. The result also contains the
+    consumed non-empty chunks in replay order.
 
     Notes
     -----
     This utility does not collect channel metadata, nor does
     it push any messages into an output channel. All data
-    messages from the input channel are consumed and discarded.
+    messages from the input channel are consumed.
 
     Boundaries are NOT collected for empty chunks. Empty chunks
     should be dropped from the channel that the returned
@@ -188,6 +200,7 @@ async def extract_orderscheme_partitioning(
     """
     # Collect local min/max values table for each rank
     min_max_rows: list[plc.Table] = []
+    chunks = ChunkStore(context)
     stream = ir_context.get_cuda_stream()
     while (msg := await ch_in.recv(context)) is not None:
         chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
@@ -199,6 +212,7 @@ async def extract_orderscheme_partitioning(
             # The corresponding empty chunk must be dropped
             # from the data channel.
             continue
+        chunks.insert(Message(msg.sequence_number, chunk))
         min_max_rows.extend(
             plc.copying.slice(
                 tbl,
@@ -231,7 +245,7 @@ async def extract_orderscheme_partitioning(
 
     # Return None if there are insufficient min/max values to process
     if min_max_table is None or (num_partitions := min_max_table.num_rows() // 2) < 2:
-        return None
+        return OrderSchemePartitioningResult(None, chunks)
 
     key_indices = [key.column_index for key in order_keys]
     min_max_key_table = plc.Table(
@@ -245,7 +259,7 @@ async def extract_orderscheme_partitioning(
     if not plc.sorting.is_sorted(
         min_max_key_table, column_order, null_order, stream=stream
     ):
-        return None
+        return OrderSchemePartitioningResult(None, chunks)
 
     # Extract boundaries and construct the Partitioning
     boundaries, strict = _extract_boundaries(min_max_key_table, num_partitions, stream)
@@ -253,11 +267,14 @@ async def extract_orderscheme_partitioning(
     boundaries_chunk = TableChunk.from_pylibcudf_table(
         boundaries, stream, exclusive_view=True, br=context.br()
     )
-    return Partitioning(
-        inter_rank=OrderScheme(
-            [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict)]
+    return OrderSchemePartitioningResult(
+        Partitioning(
+            inter_rank=OrderScheme(
+                [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict)]
+            ),
+            local="inherit",
         ),
-        local="inherit",
+        chunks,
     )
 
 

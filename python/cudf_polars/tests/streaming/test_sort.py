@@ -178,6 +178,24 @@ async def _send_sorted_chunks(
     await ch.drain(context)
 
 
+def _chunk_rows(context, result) -> list[list[int]]:
+    """Return key values from buffered chunks in replay order."""
+    rows = []
+    for msg in result.chunks:
+        chunk = TableChunk.from_message(msg, br=context.br())
+        rows.append(
+            DataFrame.from_table(
+                chunk.table_view(),
+                ["key"],
+                [DataType(pl.Int32())],
+                stream=chunk.stream,
+            )
+            .to_polars()["key"]
+            .to_list()
+        )
+    return rows
+
+
 @pytest.mark.spmd
 @pytest.mark.parametrize("n_chunks", [2, 4])
 def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
@@ -198,7 +216,7 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
             ir_context = IRExecutionContext(
                 executor, get_cuda_stream=context.br().stream_pool.get_stream
             )
-            _, scheme = await gather_in_task_group(
+            _, result = await gather_in_task_group(
                 _send_sorted_chunks(
                     context, ch, key_start=key_start, n_chunks=n_chunks, n_rows=n_rows
                 ),
@@ -206,11 +224,13 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
                     context, comm, schema_ir, ir_context, ch, order_keys, op_id
                 ),
             )
-        return scheme
+        return result
 
-    partitioning = asyncio.run(_run())
+    result = asyncio.run(_run())
+    partitioning = result.partitioning
 
     assert partitioning is not None
+    assert len(result.chunks) == n_chunks
     assert partitioning.local == "inherit"
     inter_rank = partitioning.inter_rank
     assert isinstance(inter_rank, OrderScheme)
@@ -230,6 +250,10 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
         .to_list()
     )
     assert actual_keys == expected_keys
+    assert _chunk_rows(context, result) == [
+        list(range(key_start + i * n_rows, key_start + (i + 1) * n_rows))
+        for i in range(n_chunks)
+    ]
 
 
 @pytest.mark.spmd
@@ -284,17 +308,19 @@ def test_extract_orderscheme_partitioning_projects_order_keys(spmd_engine) -> No
             ir_context = IRExecutionContext(
                 executor, get_cuda_stream=context.br().stream_pool.get_stream
             )
-            _, scheme = await gather_in_task_group(
+            _, result = await gather_in_task_group(
                 _send(),
                 extract_orderscheme_partitioning(
                     context, comm, schema_ir, ir_context, ch, order_keys, op_id
                 ),
             )
-        return scheme
+        return result
 
-    partitioning = asyncio.run(_run())
+    result = asyncio.run(_run())
+    partitioning = result.partitioning
 
     assert partitioning is not None
+    assert len(result.chunks) == n_chunks
     inter_rank = partitioning.inter_rank
     assert isinstance(inter_rank, OrderScheme)
     (ordering,) = inter_rank.orderings
@@ -351,15 +377,17 @@ def test_extract_orderscheme_partitioning_unsorted(spmd_engine) -> None:
             ir_context = IRExecutionContext(
                 executor, get_cuda_stream=context.br().stream_pool.get_stream
             )
-            _, scheme = await gather_in_task_group(
+            _, result = await gather_in_task_group(
                 _send(),
                 extract_orderscheme_partitioning(
                     context, comm, schema_ir, ir_context, ch, order_keys, op_id
                 ),
             )
-        return scheme
+        return result
 
-    assert asyncio.run(_run()) is None
+    result = asyncio.run(_run())
+    assert result.partitioning is None
+    assert len(result.chunks) == 2
 
 
 @pytest.mark.spmd
@@ -383,15 +411,17 @@ def test_extract_orderscheme_partitioning_single_chunk(spmd_engine) -> None:
             ir_context = IRExecutionContext(
                 executor, get_cuda_stream=context.br().stream_pool.get_stream
             )
-            _, scheme = await gather_in_task_group(
+            _, result = await gather_in_task_group(
                 _send_sorted_chunks(context, ch, key_start=0, n_chunks=1, n_rows=4),
                 extract_orderscheme_partitioning(
                     context, comm, schema_ir, ir_context, ch, order_keys, op_id
                 ),
             )
-        return scheme
+        return result
 
-    assert asyncio.run(_run()) is None
+    result = asyncio.run(_run())
+    assert result.partitioning is None
+    assert len(result.chunks) == 1
 
 
 @pytest.mark.spmd
@@ -435,17 +465,19 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
             ir_context = IRExecutionContext(
                 executor, get_cuda_stream=context.br().stream_pool.get_stream
             )
-            _, scheme = await gather_in_task_group(
+            _, result = await gather_in_task_group(
                 _send(),
                 extract_orderscheme_partitioning(
                     context, comm, schema_ir, ir_context, ch, order_keys, op_id
                 ),
             )
-        return scheme
+        return result
 
-    partitioning = asyncio.run(_run())
+    result = asyncio.run(_run())
+    partitioning = result.partitioning
 
     assert partitioning is not None
+    assert len(result.chunks) == 2
     assert partitioning.local == "inherit"
     inter_rank = partitioning.inter_rank
     assert isinstance(inter_rank, OrderScheme)

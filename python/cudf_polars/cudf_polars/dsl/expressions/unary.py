@@ -126,6 +126,8 @@ class UnaryFunction(Expr):
             "hash",
             "index_of",
             "mask_nans",
+            "max_by",
+            "min_by",
             "mode",
             "null_count",
             "pct_change",
@@ -560,6 +562,36 @@ class UnaryFunction(Expr):
                     1,
                     stream=df.stream,
                 ),
+                dtype=self.dtype,
+            )
+        if self.name in ("max_by", "min_by"):
+            val, by = (child.evaluate(df, context=context) for child in self.children)
+            if by.nan_count(stream=df.stream) > 0:
+                by = by.mask_nans(stream=df.stream)
+            agg = (
+                plc.aggregation.argmax()
+                if self.name == "max_by"
+                else plc.aggregation.argmin()
+            )
+            index = plc.reduce.reduce(
+                by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+            )
+            if not index.is_valid(stream=df.stream):
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            return Column(
+                plc.copying.gather(
+                    plc.Table([val.obj]),
+                    plc.Column.from_scalar(index, 1, stream=df.stream),
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
+                    stream=df.stream,
+                ).columns()[0],
                 dtype=self.dtype,
             )
         if self.name == "mode":

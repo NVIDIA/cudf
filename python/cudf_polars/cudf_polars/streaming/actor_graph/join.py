@@ -36,6 +36,7 @@ from cudf_polars.streaming.actor_graph.collectives.allgather import (
     AllGatherManager,
 )
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
+    _partition_range,
     adjust_ordering,
 )
 from cudf_polars.streaming.actor_graph.collectives.shuffle import (
@@ -481,7 +482,7 @@ def _ordering_with_column_indices(
     column_indices: tuple[int, ...],
 ) -> Ordering:
     """Return an ordering with the same semantics on different column indices."""
-    return ordering.with_keys(
+    return ordering.remap(
         tuple(
             OrderKey(index, key.order, key.null_order)
             for index, key in zip(
@@ -1194,8 +1195,7 @@ async def _shuffle_join(
 def _local_count_for_ordering(comm: Communicator, ordering: Ordering) -> int:
     """Return this rank's local partition count for a contiguous Ordering."""
     npartitions = ordering.num_boundaries + 1
-    start = (comm.rank * npartitions + comm.nranks - 1) // comm.nranks
-    stop = ((comm.rank + 1) * npartitions + comm.nranks - 1) // comm.nranks
+    start, stop = _partition_range(comm.rank, comm.nranks, npartitions)
     return stop - start
 
 

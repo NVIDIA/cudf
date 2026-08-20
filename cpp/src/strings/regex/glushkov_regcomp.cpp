@@ -278,9 +278,9 @@ bool positions_chars_overlap(gkprog const& gp, uint32_t const p, uint32_t const 
  *        Glushkov's bit-order cannot represent.
  *
  * Two rules:
- *   Rule 1 – END before char: an ACCEPT item appears before the first CHAR_POS
- *             item in Thompson priority order → the pattern can empty-match in a way
- *             that priority_kill cannot handle correctly.
+ *   Rule 1 – ACCEPT before later char: an ACCEPT item appears before a CHAR_POS
+ *             item in Thompson priority order → the accepted path has higher
+ *             priority than a continuation that Glushkov cannot kill correctly.
  *   Rule 2 – non-monotone gpos + char overlap: two CHAR_POS items appear with
  *             the higher-priority one at a larger gpos (inverted bit order), AND
  *             they can match a common character → priority_kill picks the wrong
@@ -288,19 +288,13 @@ bool positions_chars_overlap(gkprog const& gp, uint32_t const p, uint32_t const 
  */
 bool frontier_has_priority_conflict(std::vector<frontier_item> const& items, gkprog const& gp)
 {
-  // Rule 1: ACCEPT before any CHAR_POS, but only when the frontier also
-  // contains at least one CHAR_POS.  An ACCEPT-only frontier (the normal
-  // "end of pattern" case) is not a priority conflict.
-  bool seen_char          = false;
-  bool accept_before_char = false;
+  // Rule 1: ACCEPT before a later CHAR_POS. A frontier ending in ACCEPT (the
+  // normal "end of pattern" case) is not a priority conflict.
+  bool seen_accept = false;
   for (auto const& item : items) {
-    if (item.kind == frontier_item::CHAR_POS) {
-      seen_char = true;
-    } else if (item.kind == frontier_item::ACCEPT && !seen_char) {
-      accept_before_char = true;
-    }
+    if (item.kind == frontier_item::ACCEPT) { seen_accept = true; }
+    if (item.kind == frontier_item::CHAR_POS && seen_accept) { return true; }
   }
-  if (accept_before_char && seen_char) { return true; }
 
   // Rule 2: non-monotone gpos pair with character overlap
   for (size_t i = 0; i < items.size(); ++i) {

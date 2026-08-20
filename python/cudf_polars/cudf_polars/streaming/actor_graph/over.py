@@ -86,6 +86,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     shutdown_on_error,
 )
 from cudf_polars.streaming.over import Over, _build_over_groupby_irs
+from cudf_polars.streaming.utils import _contains_input_order_window_without_order_by
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
@@ -287,12 +288,30 @@ def _evaluate_window_with_stamps(
     ir: Over,
     ir_context: IRExecutionContext,
     stamps: OriginStamps,
+    *,
+    sort_by_input_order: bool,
 ) -> DataFrame:
     """Evaluate *ir* on the un-stamped portion of *chunk*; reattach stamps after."""
     child_schema = ir.children[0].schema
     stream = ir_context.get_cuda_stream()
-    columns = chunk.table_view().columns()
     n_child = len(child_schema)
+    table = chunk.table_view()
+    if sort_by_input_order:
+        columns = table.columns()
+        table = plc.sorting.stable_sort_by_key(
+            table,
+            plc.Table(
+                [
+                    columns[n_child + 2],  # origin rank
+                    columns[n_child],  # origin chunk index (local)
+                    columns[n_child + 1],  # origin row index (in chunk)
+                ]
+            ),
+            [plc.types.Order.ASCENDING] * 3,
+            [plc.types.NullOrder.AFTER] * 3,
+            stream=stream,
+        )
+    columns = table.columns()
 
     input_df = DataFrame.from_table(
         plc.Table(columns[:n_child]),
@@ -511,6 +530,8 @@ async def _evaluate_and_route_to_origin(
     return_shuffle: ShuffleManager,
     num_ranks: int,
     stamps: OriginStamps,
+    *,
+    sort_by_input_order: bool,
 ) -> None:
     """Window-evaluate each local forward partition, then ship rows back to their origin."""
     async with return_shuffle.inserting() as inserter:
@@ -523,7 +544,12 @@ async def _evaluate_and_route_to_origin(
                 extracted, stream, exclusive_view=True, br=context.br()
             )
             evaluated = await ir_context.to_thread(
-                _evaluate_window_with_stamps, partition, ir, ir_context, stamps
+                _evaluate_window_with_stamps,
+                partition,
+                ir,
+                ir_context,
+                stamps,
+                sort_by_input_order=sort_by_input_order,
             )
             routed, splits = await ir_context.to_thread(
                 _partition_by_origin_rank, evaluated, num_ranks, context.br()
@@ -633,6 +659,9 @@ async def _shuffle_and_reassemble(
     )
 
     ch_replay = context.create_channel()
+    sort_by_input_order = _contains_input_order_window_without_order_by(
+        [ne.value for ne in ir.exprs]
+    )
     sequence_numbers, _ = await gather_in_task_group(
         _distribute_by_group(
             context,
@@ -656,6 +685,7 @@ async def _shuffle_and_reassemble(
         return_shuffle,
         comm.nranks,
         stamps,
+        sort_by_input_order=sort_by_input_order,
     )
     await _reassemble_input_chunks(
         context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer

@@ -422,7 +422,7 @@ def to_csv(
     # TODO: Need to typecast categorical columns to the underlying
     # categories dtype to write the actual data to csv. Remove this
     # workaround once following issue is fixed:
-    # https://github.com/rapidsai/cudf/issues/6661
+    # https://github.com/NVIDIA/cudf/issues/6661
     if any(
         isinstance(dtype, CategoricalDtype) for _, dtype in df._dtypes
     ) or isinstance(df.index, CategoricalIndex):
@@ -570,7 +570,7 @@ def _validate_args(
 def _get_plc_data_type_from_dtype(dtype: DtypeObj) -> plc.DataType:
     # TODO: Remove this work-around Dictionary types
     # in libcudf are fully mapped to categorical columns:
-    # https://github.com/rapidsai/cudf/issues/3960
+    # https://github.com/NVIDIA/cudf/issues/3960
     if isinstance(dtype, CategoricalDtype):
         # TODO: should we do this generally in dtype_to_pylibcudf_type?
         dtype = dtype.categories.dtype

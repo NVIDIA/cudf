@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/copying.hpp>
@@ -18,7 +18,6 @@
 #include <rmm/cuda_stream_view.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {
@@ -40,7 +39,7 @@ std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input
 
   auto output_column = cudf::detail::interleave_columns(input, stream, mr);
   auto one_iter      = cuda::counting_iterator<size_type>{1};
-  auto splits_iter   = thrust::make_transform_iterator(
+  auto splits_iter   = cuda::transform_iterator(
     one_iter, [width = input.num_columns()](size_type idx) { return idx * width; });
   auto splits = std::vector<size_type>(splits_iter, splits_iter + input.num_rows() - 1);
   auto output_column_views = detail::split(output_column->view(), splits, stream);

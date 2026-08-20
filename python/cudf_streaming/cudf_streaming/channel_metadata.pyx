@@ -192,12 +192,22 @@ cdef class Ordering:
             tbl, stream, exclusive_view=False, br=br
         )
 
-    def with_keys(self, object new_keys) -> Ordering:
-        """Return a new ``Ordering`` with updated key column indices."""
+    def as_strict(self) -> Ordering:
+        """Return an equivalent ``Ordering`` with strict boundaries."""
+        return Ordering.from_cpp(
+            cpp_Ordering(self._handle.keys, self._handle.boundaries, True)
+        )
+
+    def remap(self, object new_keys) -> Ordering:
+        """Return a new ``Ordering`` with updated keys."""
         cdef vector[cpp_OrderKey] cpp_keys
         for key in new_keys:
             cpp_keys.push_back((<OrderKey?>key)._handle)
         return Ordering.from_cpp(self._handle.with_keys(move(cpp_keys)))
+
+    def with_keys(self, object new_keys) -> Ordering:
+        """Return a new ``Ordering`` with updated keys."""
+        return self.remap(new_keys)
 
     def boundaries_aligned_with(
         self, Ordering other not None, BufferResource br not None

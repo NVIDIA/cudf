@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,7 +21,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
 #include <stdexcept>
@@ -46,7 +45,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
   auto const q_device =
     cudf::detail::make_device_uvector_async(q, stream, cudf::get_current_device_resource_ref());
 
-  auto quantile_idx_iter = thrust::make_transform_iterator(q_device.begin(), quantile_idx_lookup);
+  auto quantile_idx_iter = cuda::transform_iterator(q_device.begin(), quantile_idx_lookup);
 
   return detail::gather(input,
                         quantile_idx_iter,
@@ -68,7 +67,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
   if (q.empty()) { return empty_like(input); }
 
   CUDF_EXPECTS(interp == interpolation::HIGHER || interp == interpolation::LOWER ||
-                 interp == interpolation::NEAREST,
+                 interp == interpolation::NEAREST || interp == interpolation::NEAREST_HALF_UP,
                "multi-column quantiles require a non-arithmetic interpolation strategy.",
                std::invalid_argument);
 

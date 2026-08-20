@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import Ordering
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
@@ -30,6 +29,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
+    from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.memory.packed_data import PackedData
@@ -42,15 +42,6 @@ if TYPE_CHECKING:
 
 _PID_DTYPE = DataType(pl.Int32())
 _PartitionRange = tuple[int, int]
-
-
-def get_strict_ordering(ordering: Ordering, br: BufferResource) -> Ordering:
-    """Return an equivalent Ordering with strict boundaries."""
-    return Ordering(
-        ordering.keys,
-        ordering.get_boundaries(br),
-        strict_boundaries=True,
-    )
 
 
 @dataclass(frozen=True)

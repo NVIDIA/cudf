@@ -13,7 +13,6 @@ from cudf_streaming.channel_metadata import (
     HashScheme,
     OrderKey,
     OrderScheme,
-    Ordering,
     Partitioning,
 )
 from cudf_streaming.table_chunk import TableChunk
@@ -27,8 +26,8 @@ from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import IR, Distinct, GroupBy, Select
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
+    _partition_range,
     adjust_ordering,
-    get_strict_ordering,
 )
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.dispatch import (
@@ -54,10 +53,11 @@ from cudf_polars.streaming.actor_graph.utils import (
     shutdown_channels_on_error,
     shutdown_on_error,
 )
-from cudf_polars.streaming.groupby import combine, decompose
+from cudf_polars.streaming.groupby import _has_stable_sorted_agg, combine, decompose
 from cudf_polars.streaming.repartition import Repartition
 
 if TYPE_CHECKING:
+    from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -459,16 +459,13 @@ async def _shuffle_reduce(
 def _remap_ordering_keys(
     ordering: Ordering,
     column_indices: tuple[int, ...],
-    br: BufferResource,
 ) -> Ordering:
     """Return ``ordering`` with keys remapped to another schema."""
-    return Ordering(
-        [
+    return ordering.remap(
+        tuple(
             OrderKey(index, key.order, key.null_order)
             for key, index in zip(ordering.keys, column_indices, strict=True)
-        ],
-        ordering.get_boundaries(br),
-        strict_boundaries=ordering.strict_boundaries,
+        )
     )
 
 
@@ -564,9 +561,8 @@ async def _ordered_adjust_reduce(
     partial_input_ordering = _remap_ordering_keys(
         input_ordering,
         decomposed.shuffle_indices[: len(input_ordering.keys)],
-        context.br(),
     )
-    partial_output_ordering = get_strict_ordering(partial_input_ordering, context.br())
+    partial_output_ordering = partial_input_ordering.as_strict()
     ch_local = context.create_channel()
     ch_adjusted = context.create_channel()
     adjusted_metadata = _adjusted_ordering_metadata(
@@ -591,7 +587,6 @@ async def _ordered_adjust_reduce(
         extract_irs = [decomposed.reduction_ir] + (
             [decomposed.select_ir] if decomposed.select_ir else []
         )
-        partition_id = 0
         while (msg := await ch_adjusted.recv(context)) is not None:
             chunk = await evaluate_chunk(
                 context,
@@ -599,8 +594,7 @@ async def _ordered_adjust_reduce(
                 *extract_irs,
                 ir_context=ir_context,
             )
-            await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
-            partition_id += 1
+            await send_chunk(context, ch_out, chunk, msg.sequence_number, tracer=tracer)
         await ch_out.drain(context)
 
     async with shutdown_channels_on_error(context, ch_local, ch_adjusted):
@@ -683,7 +677,7 @@ def _key_indices(
 
 def _maintain_order(ir: GroupBy | Distinct) -> bool:
     if isinstance(ir, GroupBy):
-        return ir.maintain_order
+        return ir.maintain_order or _has_stable_sorted_agg(ir.agg_requests)
     else:
         return ir.stable or ir.keep in (
             plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
@@ -693,9 +687,8 @@ def _maintain_order(ir: GroupBy | Distinct) -> bool:
 
 def _partition_count_for_rank(rank: int, nranks: int, npartitions: int) -> int:
     """Return the contiguous output-partition count owned by one rank."""
-    return ((rank + 1) * npartitions + nranks - 1) // nranks - (
-        rank * npartitions + nranks - 1
-    ) // nranks
+    start, stop = _partition_range(rank, nranks, npartitions)
+    return stop - start
 
 
 def _adjusted_ordering_metadata(

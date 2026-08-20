@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 
 #include <cudf/io/types.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -131,13 +132,7 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
 
 NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
   cudf::type_id,
-  [](auto value) {
-    switch (value) {
-      case cudf::type_id::EMPTY: return "EMPTY";
-      case cudf::type_id::TIMESTAMP_NANOSECONDS: return "TIMESTAMP_NANOSECONDS";
-      default: return "Unknown";
-    }
-  },
+  [](auto value) { return cudf::type_to_name(cudf::data_type{value}); },
   [](auto) { return std::string{}; })
 
 enum class converts_strings : bool { YES, NO };

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 #include <cudf_test/nanoarrow_utils.hpp>
 
 #include <cudf/interop.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 
@@ -193,42 +194,10 @@ using data_types = nvbench::enum_type_list<cudf::type_id::INT8,
                                            cudf::type_id::DECIMAL128,
                                            cudf::type_id::STRUCT>;
 
-static char const* stringify_type(cudf::type_id value)
-{
-  switch (value) {
-    case cudf::type_id::INT8: return "INT8";
-    case cudf::type_id::INT16: return "INT16";
-    case cudf::type_id::INT32: return "INT32";
-    case cudf::type_id::INT64: return "INT64";
-    case cudf::type_id::UINT8: return "UINT8";
-    case cudf::type_id::UINT16: return "UINT16";
-    case cudf::type_id::UINT32: return "UINT32";
-    case cudf::type_id::UINT64: return "UINT64";
-    case cudf::type_id::FLOAT32: return "FLOAT32";
-    case cudf::type_id::FLOAT64: return "FLOAT64";
-    case cudf::type_id::BOOL8: return "BOOL8";
-    case cudf::type_id::TIMESTAMP_DAYS: return "TIMESTAMP_DAYS";
-    case cudf::type_id::TIMESTAMP_SECONDS: return "TIMESTAMP_SECONDS";
-    case cudf::type_id::TIMESTAMP_MILLISECONDS: return "TIMESTAMP_MILLISECONDS";
-    case cudf::type_id::TIMESTAMP_MICROSECONDS: return "TIMESTAMP_MICROSECONDS";
-    case cudf::type_id::TIMESTAMP_NANOSECONDS: return "TIMESTAMP_NANOSECONDS";
-    case cudf::type_id::DURATION_DAYS: return "DURATION_DAYS";
-    case cudf::type_id::DURATION_SECONDS: return "DURATION_SECONDS";
-    case cudf::type_id::DURATION_MILLISECONDS: return "DURATION_MILLISECONDS";
-    case cudf::type_id::DURATION_MICROSECONDS: return "DURATION_MICROSECONDS";
-    case cudf::type_id::DURATION_NANOSECONDS: return "DURATION_NANOSECONDS";
-    case cudf::type_id::DICTIONARY32: return "DICTIONARY32";
-    case cudf::type_id::STRING: return "STRING";
-    case cudf::type_id::LIST: return "LIST";
-    case cudf::type_id::DECIMAL32: return "DECIMAL32";
-    case cudf::type_id::DECIMAL64: return "DECIMAL64";
-    case cudf::type_id::DECIMAL128: return "DECIMAL128";
-    case cudf::type_id::STRUCT: return "STRUCT";
-    default: return "unknown";
-  }
-}
-
-NVBENCH_DECLARE_ENUM_TYPE_STRINGS(cudf::type_id, stringify_type, stringify_type)
+NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
+  cudf::type_id,
+  [](auto value) { return cudf::type_to_name(cudf::data_type{value}); },
+  [](auto value) { return cudf::type_to_name(cudf::data_type{value}); })
 
 NVBENCH_BENCH_TYPES(BM_to_arrow_host, NVBENCH_TYPE_AXES(data_types))
   .set_type_axes_names({"data_type"})

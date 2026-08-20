@@ -73,7 +73,6 @@ def df():
         ("parquet", pl.scan_parquet),
     ],
 )
-@pytest.mark.timeout(90)
 def test_parallel_scan(
     tmp_path: Path,
     df: pl.DataFrame,
@@ -91,17 +90,6 @@ def test_parallel_scan(
     make_partitioned_source(df, tmp_path, fmt, n_files=3)
     q = scan_fn(tmp_path)
     assert_gpu_result_equal(q, engine=streaming_engine)
-
-
-def test_scan_parquet_use_rapidsmpf_native(tmp_path, df, streaming_engine_factory):
-    streaming_engine = streaming_engine_factory(
-        StreamingOptions(
-            target_partition_size=1_000,
-            parquet_options={"use_rapidsmpf_native": True},
-        ),
-    )
-    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
-    assert_gpu_result_equal(pl.scan_parquet(tmp_path), engine=streaming_engine)
 
 
 @pytest.mark.parametrize(
@@ -136,6 +124,27 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
         Empty({}), py_executor=None, stats=None
     )
     assert result == {}
+
+
+def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    scan = _make_parquet_scan([local_path])
+    fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, [])
+    streaming_scan = StreamingScan([fused], scan, "fused")
+
+    # Local paths are skipped entirely when remote_only=True.
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None, remote_only=True
+    )
+    assert result == {}
+
+    # The same local path is prefetched when remote_only=False (the default).
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None
+    )
+    assert set(result) == {local_path}
 
 
 def test_prefetch_file_metadata_select_fast_count(
@@ -205,7 +214,7 @@ def test_target_partition_size(
     )
     qir = Translator(q._ldf.visit(), _engine).translate_ir()
     config_options = ConfigOptions.from_polars_engine(_engine)
-    ir, info = lower_ir_graph(
+    lowering = lower_ir_graph(
         qir,
         config_options,
         collect_statistics(
@@ -214,6 +223,8 @@ def test_target_partition_size(
             parquet_stats_executor,
         ),
     )
+    ir = lowering.lowered
+    info = lowering.partition_info
     count = info[ir].count
     if blocksize <= 12_000:
         assert count > n_files
@@ -359,32 +370,12 @@ def test_streaming_scan_raises() -> None:
         StreamingScan.do_evaluate([fused], scan, context=ctx)
 
 
-def test_scan_missing_prefetch_metadata_raises() -> None:
+def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
         ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
     )
     ctx = IRExecutionContext()
-
-    with pytest.raises(
-        AssertionError,
-        match=r"Cached parquet info is required",
-    ):
-        Scan.do_evaluate(
-            scan.schema,
-            scan.typ,
-            scan.reader_options,
-            scan.paths,
-            scan.with_columns,
-            scan.skip_rows,
-            scan.n_rows,
-            scan.row_index,
-            scan.include_file_paths,
-            scan.predicate,
-            scan.parquet_options,
-            None,
-            context=ctx,
-        )
 
     with pytest.raises(
         AssertionError,

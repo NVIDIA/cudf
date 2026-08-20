@@ -108,6 +108,7 @@ Environment variables follow these patterns:
 | `broadcast_limit`        | Maximum number of bytes for broadcast joins.                                                                                                        | auto        |
 | `target_partition_size`  | Target partition size in bytes. Used for IO and dynamic planning. `0` means auto.                                                                   | auto        |
 | `dynamic_planning`       | Dynamic planning configuration, dict or {class}`~cudf_polars.utils.config.DynamicPlanningOptions`. `None` disables.                                 | enabled     |
+| `join_filter_pushdown`   | Configuration for join filter pushdown plan rewrites, dict or {class}`~cudf_polars.utils.config.JoinFilterPushdownOptions`. `None` disables.        | enabled     |
 | `sink_to_directory`      | Whether `.sink_*()` writes its output as a directory. The `spmd`, `ray`, and `dask` engines always use `True`; passing `False` raises `ValueError`. | `True`      |
 
 ### Category: `engine`

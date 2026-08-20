@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -25,7 +24,7 @@ namespace {
 std::size_t compute_left_join_complement_size(cudf::device_span<size_type const> right_indices,
                                               size_type left_table_row_count,
                                               size_type right_table_row_count,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   if (left_table_row_count == 0) { return right_table_row_count; }
 
@@ -60,7 +59,7 @@ std::size_t get_full_join_size(
   cudf::detail::hash_table_t const& hash_table,
   bool has_nulls,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   std::size_t join_size = compute_join_output_size<join_kind::LEFT_JOIN>(right_table,
@@ -77,7 +76,7 @@ std::size_t get_full_join_size(
   auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, mr);
 
   auto const out_build_begin =
-    thrust::make_transform_output_iterator(right_indices->begin(), output_fn{});
+    cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
   retrieve_left_join_build_indices(right_table,
                                    left_table,

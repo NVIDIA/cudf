@@ -339,7 +339,7 @@ def test_dataframe_reductions(request, data, axis, func, skipna):
     }:
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/20628"
+                reason="https://github.com/NVIDIA/cudf/issues/20628"
             )
         )
 

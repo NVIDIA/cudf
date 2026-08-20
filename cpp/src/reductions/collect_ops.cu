@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -34,7 +34,7 @@ bool need_handle_nulls(column_view const& input, null_policy null_handling)
 
 std::unique_ptr<scalar> collect_list(column_view const& col,
                                      null_policy null_handling,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   if (need_handle_nulls(col, null_handling)) {
@@ -50,7 +50,7 @@ std::unique_ptr<scalar> collect_list(column_view const& col,
 }
 
 std::unique_ptr<scalar> merge_lists(lists_column_view const& col,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   auto flatten_col = col.get_sliced_child(stream);
@@ -61,7 +61,7 @@ std::unique_ptr<scalar> collect_set(column_view const& col,
                                     null_policy null_handling,
                                     null_equality nulls_equal,
                                     nan_equality nans_equal,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   // `input_as_collect_list` is the result of the input column that has been processed to obey
@@ -90,7 +90,7 @@ std::unique_ptr<scalar> collect_set(column_view const& col,
 std::unique_ptr<scalar> merge_sets(lists_column_view const& col,
                                    null_equality nulls_equal,
                                    nan_equality nans_equal,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   auto flatten_col    = col.get_sliced_child(stream);

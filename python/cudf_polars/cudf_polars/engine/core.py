@@ -42,7 +42,7 @@ from cudf_polars.streaming.base import StatsCollector
 from cudf_polars.streaming.parallel import lower_ir_graph_with_node_map
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.streaming.utils import _concat
-from cudf_polars.utils.config import get_total_device_memory
+from cudf_polars.utils.config import Unspecified, get_total_device_memory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -184,6 +184,13 @@ class StreamingEngine(pl.GPUEngine):
     The engine must be created and shut down on the same thread. In particular,
     destruction and context manager exit must occur on the thread that created
     the instance.
+
+    Creating an engine configures the process-wide kvikio thread pool (default
+    256 threads). Because kvikio's pool is a global singleton, this blocks
+    any concurrent kvikio IO in the process until in-flight IO completes and overrides any prior
+    ``kvikio.defaults.set("num_threads", ...)`` call. Use the
+    ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS`` environment
+    variable to control the thread count.
 
     Parameters
     ----------
@@ -734,11 +741,17 @@ def evaluate_on_rank(
     """
     stats = allgather_stats(comm, ctx.br(), ir, config_options, py_executor)
 
+    lowering, node_map = lower_ir_graph_with_node_map(
+        ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
+    )
+    optimized = lowering.optimized
+    ir = lowering.lowered
+    partition_info = lowering.partition_info
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
-        logical_plan_id = ir.get_stable_plan_id()
+        logical_plan_id = optimized.get_stable_plan_id()
         plan, ops, ports, logical_op_by_id = build_plan(
-            ir,
+            optimized,
             config_options,
             query=local_quent_context.context.query,
             plan_id=logical_plan_id,
@@ -751,10 +764,6 @@ def evaluate_on_rank(
             local_quent_context.context._emit_plan_declarations(
                 local_quent_context.logger, plan, ops, ports
             )
-
-    ir, partition_info, node_map = lower_ir_graph_with_node_map(
-        ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
-    )
 
     if comm.rank == 0:
         log_query_plan(ir, config_options)
@@ -776,11 +785,13 @@ def evaluate_on_rank(
         py_executor, get_cuda_stream=ctx.br().stream_pool.get_stream, query_id=query_id
     )
 
-    if config_options.parquet_options.prefetch_file_metadata:
+    prefetch_file_metadata = config_options.parquet_options.prefetch_file_metadata
+    if prefetch_file_metadata is not False:
         cached_parquet_info_map = prefetch_parquet_file_metadata_for_ir(
             ir,
             ir_context.py_executor,
             stats=stats,
+            remote_only=isinstance(prefetch_file_metadata, Unspecified),
         )
         attach_cached_parquet_metadata(ir, cached_parquet_info_map)
 

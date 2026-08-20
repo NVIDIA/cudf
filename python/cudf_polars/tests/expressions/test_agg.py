@@ -16,6 +16,7 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
+    POLARS_VERSION_LT_138,
 )
 
 
@@ -57,10 +58,10 @@ def is_sorted(request):
 
 @pytest.fixture
 def xfail_if_sorted(is_sorted, request):
-    # See https://github.com/rapidsai/cudf/pull/20791#issuecomment-3750528419
-    if is_sorted:
+    # See https://github.com/NVIDIA/cudf/pull/20791#issuecomment-3750528419
+    if is_sorted and POLARS_VERSION_LT_138:
         request.applymarker(
-            pytest.mark.xfail(reason="See https://github.com/pola-rs/polars/pull/24981")
+            pytest.mark.xfail(reason="set_sorted lowers to unsupported hint ir")
         )
 
 
@@ -195,12 +196,21 @@ def test_cum_count(engine: pl.GPUEngine, data):
 
 
 @pytest.mark.parametrize("cum_agg", sorted(expr.UnaryFunction._supported_cum_aggs))
-def test_cum_agg_reverse_unsupported(engine: pl.GPUEngine, cum_agg):
-    df = pl.LazyFrame({"a": [1, 2, 3]})
-    expr = getattr(pl.col("a"), cum_agg)(reverse=True)
-    q = df.select(expr)
-
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+@pytest.mark.parametrize(
+    "data,dtype",
+    [
+        ([1, 2, 3, 4, 5], pl.Int32),
+        ([1, None, 3, None, 5], pl.Int32),
+        ([None, None, None], pl.Int32),
+        ([2, 3, 4], pl.Int8),
+        ([1.5, 2.0, 0.5, 4.0], pl.Float64),
+        ([], pl.Int32),
+    ],
+)
+def test_cum_agg_reverse(engine: pl.GPUEngine, cum_agg, data, dtype):
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = df.select(getattr(pl.col("a"), cum_agg)(reverse=True))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
 @pytest.mark.parametrize("q", [0.5, pl.lit(0.5)])

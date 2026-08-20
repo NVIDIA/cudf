@@ -215,20 +215,32 @@ def test_order_scheme_get_boundaries(context: Context) -> None:
 
 
 def test_ordering_with_keys(context: Context) -> None:
-    """with_keys shares boundaries and updates column indices."""
+    """remap/with_keys share boundaries and update column indices."""
     o1 = _two_key_order_scheme(context)
     ordering = o1.orderings[0]
     new_keys = [
         OrderKey(5, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE),
         OrderKey(3, plc.types.Order.DESCENDING, plc.types.NullOrder.AFTER),
     ]
-    ordering2 = ordering.with_keys(new_keys)
+    ordering2 = ordering.remap(new_keys)
     assert ordering2.keys[0].column_index == 5
     assert ordering2.keys[1].column_index == 3
     assert ordering2.num_boundaries == ordering.num_boundaries
     assert ordering2.strict_boundaries == ordering.strict_boundaries
     # Schemes with different key indices but shared boundaries are boundary-aligned
     assert ordering.boundaries_aligned_with(ordering2, context.br())
+    assert ordering.with_keys(new_keys).keys == ordering2.keys
+
+
+def test_ordering_as_strict(context: Context) -> None:
+    """as_strict shares boundaries and updates strictness."""
+    ordering = _two_key_order_scheme(context).orderings[0]
+    strict_ordering = ordering.as_strict()
+
+    assert strict_ordering.keys == ordering.keys
+    assert strict_ordering.num_boundaries == ordering.num_boundaries
+    assert strict_ordering.strict_boundaries is True
+    assert not ordering.boundaries_aligned_with(strict_ordering, context.br())
 
 
 def test_ordering_boundaries_aligned_with(context: Context) -> None:

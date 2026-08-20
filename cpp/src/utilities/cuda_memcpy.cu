@@ -63,6 +63,8 @@ cudaError_t memcpy_batch_async(void* const* dsts,
 // cudaMemcpyBatchAsync does not support the default stream.
 #if CUDART_VERSION >= 13000
   if (!stream.is_default()) {
+    constexpr std::size_t prefer_overlap_threshold = 128 * 1024;
+
     // Filter out invalid copies (nullptr dst/src or size==0);
     // cudaMemcpyBatchAsync does not support these inputs
     auto is_invalid = [&](auto i) {
@@ -90,10 +92,13 @@ cudaError_t memcpy_batch_async(void* const* dsts,
       count = valid_dsts.size();
     }
 
-    cudaMemcpyAttributes attrs = {.srcAccessOrder = cudaMemcpySrcAccessOrderStream,
-                                  .flags          = cudaMemcpyFlagPreferOverlapWithCompute};
-    std::size_t attrs_idxs     = 0;
-    return cudaMemcpyBatchAsync(dsts, srcs, sizes, count, &attrs, &attrs_idxs, 1, stream.value());
+    unsigned int const flags =
+      std::any_of(sizes, sizes + count, [&](auto size) { return size > prefer_overlap_threshold; })
+        ? cudaMemcpyFlagDefault
+        : cudaMemcpyFlagPreferOverlapWithCompute;
+    cudaMemcpyAttributes attrs = {.srcAccessOrder = cudaMemcpySrcAccessOrderStream, .flags = flags};
+    std::size_t attrs_idx      = 0;
+    return cudaMemcpyBatchAsync(dsts, srcs, sizes, count, &attrs, &attrs_idx, 1, stream.value());
   }
 #endif  // CUDART_VERSION >= 13000
   for (std::size_t i = 0; i < count; ++i) {

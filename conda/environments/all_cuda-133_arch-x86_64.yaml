@@ -23,6 +23,7 @@ dependencies:
 - cuda-nvcc
 - cuda-nvrtc-dev
 - cuda-nvtx-dev
+- cuda-profiler-api
 - cuda-sanitizer-api
 - cuda-version=13.3
 - cupy>=14.0.1,!=14.1.0
@@ -35,6 +36,7 @@ dependencies:
 - flatbuffers==24.3.25
 - fsspec>=0.6.0
 - gcc_linux-64=14.*
+- gdb
 - hypothesis>=6.131.7
 - identify>=2.5.20
 - include-what-you-use==0.24.0
@@ -44,7 +46,7 @@ dependencies:
 - libcufile-dev
 - libcurand-dev
 - libkvikio==26.10.*,>=0.0.0a0
-- libnvcomp-dev==5.2.0.10
+- libnvcomp-dev==5.3.0.16
 - libnvjitlink-dev
 - librapidsmpf==26.10.*,>=0.0.0a0
 - librdkafka<2.15.0a0
@@ -62,6 +64,7 @@ dependencies:
 - nbsphinx
 - ninja
 - notebook
+- numba-cuda-mlir>=0.3.0
 - numba-cuda>=0.22.2
 - numba>=0.60.0,<0.65.0
 - numexpr
@@ -76,6 +79,7 @@ dependencies:
 - pandoc
 - polars>=1.35,<1.43
 - pre-commit
+- psutil
 - pyarrow>=19.0.0,<24
 - pytables
 - pytest-benchmark
@@ -83,7 +87,6 @@ dependencies:
 - pytest-cov
 - pytest-httpserver
 - pytest-rerunfailures!=16.0.0
-- pytest-timeout
 - pytest-xdist
 - pytest<9.1.0
 - python-calamine
@@ -94,7 +97,7 @@ dependencies:
 - pyxlsb
 - rapids-build-backend>=0.4.0,<0.5.0
 - rapids-dask-dependency==26.10.*,>=0.0.0a0
-- rapids-logger==0.2.*,>=0.0.0a0
+- rapids-logger==0.3.*
 - rapidsmpf==26.10.*,>=0.0.0a0
 - ray-default>=2.55.1
 - rich

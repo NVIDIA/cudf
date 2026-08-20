@@ -61,10 +61,9 @@ template <typename T>
   requires(cuda::std::is_trivially_copyable_v<T>)
 inline __device__ T unaligned_load(uint8_t const* p)
 {
-#ifdef NDEBUG
   T value;
+#ifdef NDEBUG
   cuda::std::memcpy(&value, p, sizeof(T));
-  return value;
 #else
   // In debug builds, cuda::std::memcpy wraps the copy with CCCL's
   // __is_valid_address_range assertion.  When `p` is a shared-memory
@@ -73,15 +72,10 @@ inline __device__ T unaligned_load(uint8_t const* p)
   // reinterpret_cast chain inside __is_smem_valid_address_range, causing
   // a spurious "source range is invalid" assert.  Use a union byte-copy
   // that is semantically identical but avoids the CCCL wrapper.
-  union {
-    uint8_t bytes[sizeof(T)];
-    T value;
-  } u;
-  for (int i = 0; i < static_cast<int>(sizeof(T)); i++) {
-    u.bytes[i] = p[i];
-  }
-  return u.value;
+  // CCCL issue: https://github.com/NVIDIA/cccl/issues/10901
+  ::memcpy(&value, p, sizeof(T));
 #endif
+  return value;
 }
 
 template <uint32_t nthreads, bool sync_before_store>

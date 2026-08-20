@@ -48,7 +48,7 @@ the classifier JAR (e.g. `cudf-26.10.0-SNAPSHOT-cuda12.jar`), a
 classifier-independent sources jar and javadoc jar, and the POM into a
 classifier-named subdirectory under `--output-dir`:
 
-```
+```text
 /tmp/jars/cuda12/
     cudf-26.10.0-SNAPSHOT-cuda12.jar
     cudf-26.10.0-SNAPSHOT.pom
@@ -78,7 +78,7 @@ as a copy of the `cuda12` classifier. Derives the artifact version from
 the JAR filenames (requiring a single unique version across subdirs) and
 lays them out as:
 
-```
+```text
 /tmp/maven-repo/ai/rapids/cudf/<CUDF_VERSION>-SNAPSHOT/
     cudf-<CUDF_VERSION>-SNAPSHOT.jar
     cudf-<CUDF_VERSION>-SNAPSHOT-cuda12.jar

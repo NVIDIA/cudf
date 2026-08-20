@@ -42,10 +42,14 @@ fi
 
 POM_WAS_REWRITTEN=0
 _cleanup_on_exit() {
+  local prior_status=$?
   if [[ ${POM_WAS_REWRITTEN} -eq 1 ]]; then
-    git -C "${REPO_ROOT}" checkout -- java/pom.xml 2>/dev/null || true
+    mv -f "${REPO_ROOT}/java/pom.xml.backup" "${REPO_ROOT}/java/pom.xml"
   fi
-  chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" "${REPO_ROOT}/java/target" 2>/dev/null || true
+  if ! chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" "${REPO_ROOT}/java/target"; then
+    echo "Warning: chown -R ${HOST_UID}:${HOST_GID} on ${OUTPUT_DIR} + ${REPO_ROOT}/java/target failed. Outputs may remain owned by root." >&2
+  fi
+  return "${prior_status}"
 }
 trap _cleanup_on_exit EXIT
 
@@ -97,8 +101,9 @@ CUDF_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 
 # restores java/pom.xml after packaging (the rewritten POM is copied to OUTPUT_DIR).
 if rapids-is-release-build; then
   CUDF_VERSION="${CUDF_VERSION%-SNAPSHOT}"
-  mvn versions:set -DnewVersion="${CUDF_VERSION}" -DgenerateBackupPoms=false "${BUILD_ARG[@]}"
+  cp -p "${REPO_ROOT}/java/pom.xml" "${REPO_ROOT}/java/pom.xml.backup"
   POM_WAS_REWRITTEN=1
+  mvn versions:set -DnewVersion="${CUDF_VERSION}" -DgenerateBackupPoms=false "${BUILD_ARG[@]}"
 fi
 
 rapids-logger "Packaging cuDF Java JAR ${CUDF_VERSION}"

@@ -40,7 +40,11 @@ if [[ -z ${HOST_UID} || -z ${HOST_GID} ]]; then
 fi
 
 _cleanup_on_exit() {
-  chown -R "${HOST_UID}:${HOST_GID}" "${INSTALL_PREFIX}" 2>/dev/null || true
+  local prior_status=$?
+  if ! chown -R "${HOST_UID}:${HOST_GID}" "${INSTALL_PREFIX}"; then
+    echo "Warning: chown -R ${HOST_UID}:${HOST_GID} on ${INSTALL_PREFIX} failed. Outputs may remain owned by root." >&2
+  fi
+  return "${prior_status}"
 }
 trap _cleanup_on_exit EXIT
 

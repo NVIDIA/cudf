@@ -154,6 +154,37 @@ def test_dynamic_join_sorts_smaller_side_when_larger_side_ordered(
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+def test_dynamic_join_sorts_sparse_smaller_side_when_larger_side_ordered(
+    tmp_path, streaming_engine_factory
+):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=3,
+            target_partition_size=32,
+            broadcast_limit=1,
+            raise_on_fail=True,
+        ),
+    )
+    left = pl.DataFrame(
+        {
+            "k": list(range(12)),
+            "x": list(range(12)),
+        }
+    )
+    right = pl.DataFrame(
+        {
+            "k": [1],
+            "y": [100],
+        }
+    )
+    left.write_parquet(tmp_path / "left.parquet")
+    right.write_parquet(tmp_path / "right.parquet")
+    left = pl.scan_parquet(tmp_path / "left.parquet")
+    right = pl.scan_parquet(tmp_path / "right.parquet")
+    q = left.sort("k").join(right, on="k", how="inner")
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
 @pytest.mark.parametrize("reverse", [True, False])
 @pytest.mark.parametrize("max_rows_per_partition", [3, 9])
 def test_join_conditional(reverse, max_rows_per_partition, streaming_engine_factory):

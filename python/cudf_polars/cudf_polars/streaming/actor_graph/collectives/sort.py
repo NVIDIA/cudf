@@ -60,6 +60,7 @@ from cudf_polars.streaming.sort import (
     find_sort_splits,
 )
 from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
@@ -436,10 +437,14 @@ async def _extract_partitions_and_send(
             ).table
             if table.num_columns() > ncols_out:
                 table = plc.Table(table.columns()[:ncols_out])
-            chunk = TableChunk.from_pylibcudf_table(
-                table, stream, exclusive_view=True, br=context.br()
+        else:
+            table = plc.Table(
+                [make_empty_column(dtype, stream) for dtype in output_schema.values()]
             )
-            await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
+        chunk = TableChunk.from_pylibcudf_table(
+            table, stream, exclusive_view=True, br=context.br()
+        )
+        await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)
 

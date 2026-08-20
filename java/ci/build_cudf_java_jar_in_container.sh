@@ -44,7 +44,9 @@ POM_WAS_REWRITTEN=0
 _cleanup_on_exit() {
   local prior_status=$?
   if [[ ${POM_WAS_REWRITTEN} -eq 1 ]]; then
-    mv -f "${REPO_ROOT}/java/pom.xml.backup" "${REPO_ROOT}/java/pom.xml"
+    if ! mv -f "${REPO_ROOT}/java/pom.xml.backup" "${REPO_ROOT}/java/pom.xml"; then
+      echo "Warning: failed to restore ${REPO_ROOT}/java/pom.xml from pom.xml.backup" >&2
+    fi
   fi
   if ! chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" "${REPO_ROOT}/java/target"; then
     echo "Warning: chown -R ${HOST_UID}:${HOST_GID} on ${OUTPUT_DIR} + ${REPO_ROOT}/java/target failed. Outputs may remain owned by root." >&2

@@ -59,9 +59,10 @@ The classifier is derived from `--cuda-version` (major) + host arch (`uname
 `aarch64`. Producing the ARM classifiers requires a real `aarch64` host.
 Repeat Step 2 for each classifier, pointing `--libcudf-dir` at the matching
 static libcudf tree and using the same `--output-dir` (each classifier lands
-in its own subdirectory). Concurrent invocations for different classifiers
-are safe because each nests its own bind-mount over `/repo/java/target`
-inside the container.
+in its own subdirectory). Concurrent SNAPSHOT invocations for different
+classifiers are safe because each nests its own bind-mount over
+`/repo/java/target` inside the container. Release builds rewrite the shared
+`java/pom.xml` and must not overlap.
 
 ### Step 3 - Assemble the Maven repository layout
 

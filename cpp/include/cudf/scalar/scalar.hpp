@@ -190,7 +190,7 @@ class fixed_width_scalar : public scalar {
   [[nodiscard]] T const* data() const;
 
  protected:
-  rmm::device_scalar<T> _data;  ///< device memory containing the value
+  cudf::detail::device_scalar<T> _data;  ///< device memory containing the value
 
   /**
    * @brief Construct a new fixed width scalar object.
@@ -402,7 +402,7 @@ class fixed_point_scalar : public scalar {
   [[nodiscard]] rep_type const* data() const;
 
  protected:
-  rmm::device_scalar<rep_type> _data;  ///< device memory containing the value
+  cudf::detail::device_scalar<rep_type> _data;  ///< device memory containing the value
 };
 
 /**

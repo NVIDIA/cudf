@@ -8,9 +8,11 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
@@ -107,6 +109,55 @@ namespace io::parquet::experimental {
   column_view const& variant_column,
   std::string_view path,
   data_type desired_type,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Extract the raw VARIANT-encoded bytes of several nested fields in one pass.
+ *
+ * Equivalent to calling `get_variant_field` once per path, but paths that share a prefix resolve
+ * that prefix once per row instead of once per path, and all paths are located by a single kernel
+ * and copied by a single pass.
+ *
+ * @param variant_column Struct column (VARIANT materialization) with `list<uint8>` children
+ *                       (`metadata`, `value`), plus optional shredded siblings
+ * @param paths JSONPath-like path strings (see `get_variant_field` for syntax). Duplicate and
+ *              overlapping paths are allowed
+ * @param stream CUDA stream
+ * @param mr Device memory resource
+ * @return Table of one `list<uint8>` column per path, in the order the paths were given. Row
+ *         nullability matches `get_variant_field`
+ *
+ * @throws std::invalid_argument if any path is empty or malformed
+ */
+[[nodiscard]] std::unique_ptr<table> get_variant_fields(
+  column_view const& variant_column,
+  host_span<std::string_view const> paths,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Convenience wrapper: extract several nested fields by path and decode each into a typed
+ * column.
+ *
+ * Semantically equivalent to `extract_variant_field` per path, sharing the work of resolving common
+ * path prefixes.
+ *
+ * @param variant_column Struct column (VARIANT materialization)
+ * @param paths JSONPath-like path strings (see `get_variant_field` for syntax)
+ * @param desired_types Target type of each path's output column; parallels `paths`. Supported types
+ *        are those of `cast_variant`
+ * @param stream CUDA stream
+ * @param mr Device memory resource
+ * @return Table of one column per path, in the order the paths were given
+ *
+ * @throws std::invalid_argument if any path is empty or malformed, if `paths` and `desired_types`
+ *         differ in size, or if a desired type is unsupported
+ */
+[[nodiscard]] std::unique_ptr<table> extract_variant_fields(
+  column_view const& variant_column,
+  host_span<std::string_view const> paths,
+  host_span<data_type const> desired_types,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

@@ -878,10 +878,9 @@ async def _choose_strategy(
     hash_chunkwise = isinstance(
         left_partitioning.inter_rank_scheme, HashScheme
     ) and isinstance(right_partitioning.inter_rank_scheme, HashScheme)
-    aligned = hash_chunkwise and left_partitioning.is_aligned_with(
+    if hash_chunkwise and left_partitioning.is_aligned_with(
         right_partitioning, context.br()
-    )
-    if aligned:
+    ):
         # We can use a chunkwise join
         chunkwise = True
         left_sample = TableSizeStats(

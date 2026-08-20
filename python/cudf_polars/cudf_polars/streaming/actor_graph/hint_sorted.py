@@ -43,6 +43,7 @@ def _hint_sorted_options(
     ir: MapFunction,
 ) -> tuple[tuple[str, ...], tuple[bool, ...], tuple[bool, ...]]:
     """Return normalized ``hint_sorted`` options."""
+    assert ir.name == "hint_sorted"
     return cast(
         "tuple[tuple[str, ...], tuple[bool, ...], tuple[bool, ...]]", ir.options
     )
@@ -136,6 +137,8 @@ async def extract_hint_sorted_metadata(
     # to extract real boundaries. The extraction path will consume ``ch_in``,
     # replay consumed data through ``ch_replay``, and return ``ch_replay`` as
     # the forwarding channel.
+    # TODO: Integrate replay-capable ``extract_orderscheme_partitioning``.
+    # See https://github.com/NVIDIA/cudf/pull/22526.
 
     # For now, only the trivial single-partition case can synthesize correct
     # strict boundaries without a collective.

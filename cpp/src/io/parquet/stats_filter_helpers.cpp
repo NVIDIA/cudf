@@ -161,22 +161,25 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             auto const lhs_kind        = binary_operands.lhs_type;
             auto const rhs_kind        = binary_operands.rhs_type;
 
-            // Equality is always exact
-            auto const is_equality =
-              child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
+            // `col_ref` is only non-null for the `col op lit` form, so both checks below must
+            // stay inside this branch
+            if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
+              // Equality is always exact
+              auto const is_equality =
+                child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
 
-            // An ordering comparison is only exact when the column cannot hold a `NaN` (aka not a
-            // floating point column)
-            auto const can_negate_ordering = not cudf::is_floating_point(
-              _output_dtypes[binary_operands.col_ref->get_column_index()]);
+              // An ordering comparison is only exact when the column cannot hold a `NaN` (aka not
+              // a floating point column)
+              auto const can_negate_ordering = not cudf::is_floating_point(
+                _output_dtypes[binary_operands.col_ref->get_column_index()]);
 
-            if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL and
-                (is_equality or can_negate_ordering)) {
-              auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
-              if (negated_op.has_value()) {
-                auto const& child_operands = child_operation->get_operands();
-                return visit(
-                  ast::operation{*negated_op, child_operands.front(), child_operands.back()});
+              if (is_equality or can_negate_ordering) {
+                auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
+                if (negated_op.has_value()) {
+                  auto const& child_operands = child_operation->get_operands();
+                  return visit(
+                    ast::operation{*negated_op, child_operands.front(), child_operands.back()});
+                }
               }
             }
           }

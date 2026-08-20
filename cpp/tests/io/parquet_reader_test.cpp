@@ -2422,6 +2422,19 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_lt), 1);
   }
 
+  // NOT over a comparison whose operands are neither `col op lit` nor `lit op col`. The stats
+  // converter inspects the wrapped comparison to decide whether it can complement the operator,
+  // and `extract_binary_operands()` reports a null column reference for this shape, so that
+  // decision has to stay behind the `col op lit` check. The `col_a < 150` conjunct makes a column
+  // stats-usable, so the stats converter is actually built for this filter.
+  {
+    auto sum       = cudf::ast::operation(cudf::ast::ast_operator::ADD, col_ref_a, lit_10);
+    auto sum_gt_50 = cudf::ast::operation(cudf::ast::ast_operator::GREATER, sum, lit_50);
+    auto not_sum   = cudf::ast::operation(cudf::ast::ast_operator::NOT, sum_gt_50);
+    expect_matches_unrewritten(
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, a_lt_150, not_sum));
+  }
+
   // Double negation over a non-boolean operand must NOT be eliminated.
   {
     auto not_a     = cudf::ast::operation(cudf::ast::ast_operator::NOT, col_ref_a);

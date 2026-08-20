@@ -3181,6 +3181,8 @@ TYPED_TEST(FixedPointDictionaryReductionTest, FixedPointDictionaryMinMax)
     EXPECT_EQ(max_scalar->type().scale(), i);
     EXPECT_EQ(min_scalar->fixed_point_value(), expected_min);
     EXPECT_EQ(max_scalar->fixed_point_value(), expected_max);
+    EXPECT_TRUE(min_scalar->is_valid());
+    EXPECT_TRUE(max_scalar->is_valid());
   }
 }
 
@@ -3206,6 +3208,8 @@ TYPED_TEST(FixedPointDictionaryReductionTest, FixedPointDictionaryMinMaxWithNull
     EXPECT_EQ(max_scalar->type().scale(), i);
     EXPECT_EQ(min_scalar->fixed_point_value(), expected_min);
     EXPECT_EQ(max_scalar->fixed_point_value(), expected_max);
+    EXPECT_TRUE(min_scalar->is_valid());
+    EXPECT_TRUE(max_scalar->is_valid());
   }
 }
 

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 import distributed
 import distributed.system
-import kvikio.defaults
 import pynvml
 import ucxx._lib.libucxx as ucx_api
 
@@ -55,6 +54,7 @@ from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
+    configure_kvikio,
     resolve_kvikio_nthreads,
 )
 
@@ -374,7 +374,6 @@ def _setup_worker(
 
     """
     assert dask_worker is not None
-    kvikio.defaults.set("num_threads", kvikio_nthreads)
     options = Options.deserialize(rapidsmpf_options_as_bytes)
     attr = f"_cudf_polars_mp_context_{uid}"
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
@@ -382,6 +381,7 @@ def _setup_worker(
     if mp_ctx is None:
         # Non-root worker: create communicator now.
         bind_to_gpu(hardware_binding)
+        configure_kvikio(kvikio_nthreads)
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -402,6 +402,7 @@ def _setup_worker(
         base_mr = mp_ctx.base_mr
         comm = mp_ctx.comm
         statistics = mp_ctx.statistics
+        configure_kvikio(kvikio_nthreads)
 
     barrier(comm)
     worker_id = worker_ids[comm.rank]
@@ -512,7 +513,7 @@ def _reset_worker(
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     """
     assert dask_worker is not None
-    kvikio.defaults.set("num_threads", kvikio_nthreads)
+    configure_kvikio(kvikio_nthreads)
     attr = f"_cudf_polars_mp_context_{uid}"
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
     if mp_ctx is None:

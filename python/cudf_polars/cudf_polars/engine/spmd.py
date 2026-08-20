@@ -11,8 +11,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
-import kvikio.defaults
-
 import pylibcudf as plc
 import rmm.mr
 from cudf_streaming.partition_utils import (
@@ -60,6 +58,7 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
     StreamingExecutor,
+    configure_kvikio,
     resolve_kvikio_nthreads,
 )
 
@@ -430,7 +429,7 @@ class SPMDEngine(StreamingEngine):
         )
         bind_to_gpu(hw_binding)
 
-        kvikio.defaults.set("num_threads", executor_options["kvikio_nthreads"])
+        configure_kvikio(executor_options["kvikio_nthreads"])
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -611,7 +610,7 @@ class SPMDEngine(StreamingEngine):
             existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        kvikio.defaults.set("num_threads", executor_options["kvikio_nthreads"])
+        configure_kvikio(executor_options["kvikio_nthreads"])
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"

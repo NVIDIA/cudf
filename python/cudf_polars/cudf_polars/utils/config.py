@@ -29,6 +29,11 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
+import kvikio
+import kvikio.defaults
+
+import pylibcudf.io.kvikio
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -208,6 +213,23 @@ def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
                 os.environ.get("KVIKIO_NTHREADS", "256"),
             ),
         )
+    )
+
+
+def configure_kvikio(nthreads: int) -> None:
+    """Set the remote I/O backend to ``EASY_THREADPOOL`` with ``nthreads`` threads."""
+    # HACK: libcudf calls set_up_kvikio() on the first IO op and that resets the thread
+    # pool by reading KVIKIO_NTHREADS (default is 4 if unset), undoing anything we set
+    # via kvikio.defaults. We set KVIKIO_NTHREADS first so it picks up the right size,
+    # then call it here so later when it's called in libcudf it's a no-op. The explicit
+    # kvikio.defaults.set below handles subsequent calls (call_once only fires once).
+    os.environ["KVIKIO_NTHREADS"] = str(nthreads)
+    pylibcudf.io.kvikio.set_up_kvikio()
+    kvikio.defaults.set(
+        {
+            "num_threads": nthreads,
+            "remote_io_backend": kvikio.RemoteIOBackend.EASY_THREADPOOL,
+        }
     )
 
 
@@ -739,8 +761,9 @@ class StreamingExecutor:
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
     kvikio_nthreads
-        Number of threads in the kvikio thread pool. Defaults to 256, which is
-        tuned for cloud object-store IO. This can be set via
+        Number of threads in the kvikio ``EASY_THREADPOOL`` thread pool.
+        Defaults to 256, which is tuned for cloud object-store IO. This can be
+        set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable

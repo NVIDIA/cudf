@@ -10,7 +10,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
-import kvikio.defaults
 import ray
 import ray.exceptions
 import ucxx._lib.libucxx as ucx_api
@@ -52,6 +51,7 @@ from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     RayContext,
+    configure_kvikio,
     resolve_kvikio_nthreads,
 )
 
@@ -252,7 +252,7 @@ class RankActor:
         quent_enabled: bool,
     ) -> None:
         bind_to_gpu(hardware_binding)
-        kvikio.defaults.set("num_threads", kvikio_nthreads)
+        configure_kvikio(kvikio_nthreads)
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -365,7 +365,7 @@ class RankActor:
         """
         if self._ctx is None:
             raise RuntimeError("reset() requires setup_worker() to have run")
-        kvikio.defaults.set("num_threads", kvikio_nthreads)
+        configure_kvikio(kvikio_nthreads)
         assert self._comm is not None
         # Collective: all ranks idle before any rank tears down its Context.
         if self._comm.nranks > 1:

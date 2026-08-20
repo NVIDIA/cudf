@@ -18,6 +18,7 @@ I/O Functions
     avro
     csv
     json
+    kvikio
     orc
     parquet
     parquet_metadata

@@ -211,6 +211,42 @@ void hybrid_scan_reader_impl::setup_compressed_data(
                "Encountered page_offsets / num_columns mismatch");
 }
 
+void hybrid_scan_reader_impl::setup_sparse_compressed_data(
+  std::span<cudf::device_span<uint8_t const> const> page_data)
+{
+  auto& pass = *_pass_itm_data;
+
+  // This function should never be called if `num_rows == 0`.
+  CUDF_EXPECTS(_pass_itm_data->num_rows > 0, "Number of reading rows must not be zero.");
+  CUDF_EXPECTS(_has_offset_index, "Sparse page I/O requires complete offset indexes");
+
+  auto& chunks           = pass.chunks;
+  auto const total_pages = count_page_headers_with_pgidx(chunks, _stream);
+  CUDF_EXPECTS(total_pages == page_data.size(),
+               "Sparse page span count does not match page-index metadata");
+  if (total_pages == 0) { return; }
+
+  pass.has_compressed_data = false;
+  std::size_t page_idx     = 0;
+
+  for (auto const& chunk : chunks) {
+    auto const num_pages         = chunk.num_data_pages + chunk.num_dict_pages;
+    auto const has_resident_page = std::any_of(page_data.begin() + page_idx,
+                                               page_data.begin() + page_idx + num_pages,
+                                               [](auto const& page) { return not page.empty(); });
+    pass.has_compressed_data |= chunk.codec != Compression::UNCOMPRESSED and has_resident_page;
+    page_idx += num_pages;
+  }
+
+  // `decode_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
+  // PageInfo as whole objects.
+  auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
+    total_pages, _stream, cudf::get_current_device_resource_ref());
+  parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
+  CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
+               "Encountered page_offsets / num_columns mismatch");
+}
+
 std::tuple<bool,
            cudf::detail::hostdevice_vector<ColumnChunkDesc>,
            cudf::detail::hostdevice_vector<PageInfo>>

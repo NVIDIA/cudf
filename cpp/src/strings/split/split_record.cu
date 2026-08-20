@@ -55,7 +55,7 @@ std::unique_ptr<column> split_record_fn(strings_column_view const& input,
                "Size of output exceeds the column size limit",
                std::overflow_error);
 
-  auto strings_child = make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  auto strings_child = cudf::make_strings_column(tokens, stream, mr);
   return make_lists_column(input.size(),
                            std::move(offsets),
                            std::move(strings_child),
@@ -91,7 +91,7 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
                "Size of output exceeds the column size limit",
                std::overflow_error);
 
-  auto strings_child = make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  auto strings_child = cudf::make_strings_column(tokens, stream, mr);
   return make_lists_column(input.size(),
                            std::move(offsets),
                            std::move(strings_child),

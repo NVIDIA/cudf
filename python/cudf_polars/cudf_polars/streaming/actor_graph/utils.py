@@ -725,6 +725,8 @@ def _evaluate_chunk_sync(
     ir: IR,
     ir_context: IRExecutionContext,
     br: BufferResource,
+    *,
+    metadata: ChannelMetadata | None = None,
 ) -> TableChunk:
     """
     Apply an IR node's do_evaluate to a table chunk (synchronous).
@@ -742,17 +744,17 @@ def _evaluate_chunk_sync(
         The IR execution context.
     br
         The buffer resource for lifetime tracking.
+    metadata
+        Optional channel metadata to synthesize local DataFrame metadata from.
 
     Returns
     -------
     The resulting table chunk after evaluation.
     """
-    input_schema = ir.children[0].schema
-    names = list(input_schema.keys())
-    dtypes = list(input_schema.values())
+    df_in = chunk_to_frame(chunk, ir.children[0], metadata=metadata)
     df = ir.do_evaluate(
         *ir._non_child_args,
-        DataFrame.from_table(chunk.table_view(), names, dtypes, chunk.stream),
+        df_in,
         context=ir_context,
     )
     return TableChunk.from_pylibcudf_table(
@@ -765,6 +767,7 @@ async def evaluate_chunk(
     chunk: TableChunk,
     *irs: IR,
     ir_context: IRExecutionContext,
+    metadata: ChannelMetadata | None = None,
 ) -> TableChunk:
     """
     Make chunk available, reserve memory, and evaluate.
@@ -780,6 +783,9 @@ async def evaluate_chunk(
         in order within a single memory reservation.
     ir_context
         The IR execution context.
+    metadata
+        Optional channel metadata to synthesize local DataFrame metadata from
+        during the first evaluation.
 
     Returns
     -------
@@ -795,8 +801,14 @@ async def evaluate_chunk(
     with opaque_memory_usage(extra):
         for single_ir in irs:
             chunk = await ir_context.to_thread(
-                _evaluate_chunk_sync, chunk, single_ir, ir_context, context.br()
+                _evaluate_chunk_sync,
+                chunk,
+                single_ir,
+                ir_context,
+                context.br(),
+                metadata=metadata,
             )
+            metadata = None
         return chunk
 
 
@@ -935,11 +947,12 @@ async def chunkwise_evaluate(
     ch_in: Channel[TableChunk],
     metadata: ChannelMetadata,
     *,
+    input_metadata: ChannelMetadata | None = None,
     handle_empty_input: bool = False,
     tracer: ActorTracer | None = None,
 ) -> None:
     """
-    Apply IR evaluation chunk-by-chunk, preserving partitioning.
+    Apply IR evaluation chunk-by-chunk.
 
     Use when data is already partitioned on the relevant keys and each
     chunk can be processed independently.
@@ -957,7 +970,10 @@ async def chunkwise_evaluate(
     ch_in
         The input channel.
     metadata
-        The channel metadata to forward (partitioning preserved).
+        The channel metadata to forward.
+    input_metadata
+        The input metadata to synthesize local DataFrame metadata from.
+        Defaults to ``metadata`` for partition-preserving callers.
     handle_empty_input
         If True and no chunks are received, create an empty chunk and evaluate
         it. Use for operations like aggregations that always produce output.
@@ -983,13 +999,20 @@ async def chunkwise_evaluate(
                 TableChunk.from_message(msg, br=context.br()),
                 ir,
                 ir_context=ir_context,
+                metadata=metadata if input_metadata is None else input_metadata,
             )
         del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
         chunk = empty_table_chunk(ir.children[0], context, ir_context.get_cuda_stream())
-        result = await evaluate_chunk(context, chunk, ir, ir_context=ir_context)
+        result = await evaluate_chunk(
+            context,
+            chunk,
+            ir,
+            ir_context=ir_context,
+            metadata=metadata if input_metadata is None else input_metadata,
+        )
         del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
@@ -1550,7 +1573,42 @@ def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> TableChunk:
     )
 
 
-def chunk_to_frame(chunk: TableChunk, ir: IR) -> DataFrame:
+def _leading_order_keys(metadata: ChannelMetadata | None) -> dict[int, OrderKey]:
+    """Return unambiguous leading order keys implied by channel metadata."""
+    if metadata is None or metadata.partitioning is None:
+        return {}
+
+    candidates: dict[int, OrderKey | None] = {}
+    for scheme in (metadata.partitioning.inter_rank, metadata.partitioning.local):
+        if not isinstance(scheme, OrderScheme):
+            continue
+        for ordering in scheme.orderings:
+            if not ordering.keys:
+                continue
+            key = ordering.keys[0]
+            current = candidates.get(key.column_index, key)
+            candidates[key.column_index] = key if current == key else None
+    return {index: key for index, key in candidates.items() if key is not None}
+
+
+def _apply_ordering_metadata(
+    df: DataFrame, metadata: ChannelMetadata | None
+) -> DataFrame:
+    """Apply safe column-level sortedness metadata implied by ``metadata``."""
+    for index, key in _leading_order_keys(metadata).items():
+        if index >= df.num_columns:
+            continue
+        df.columns[index].set_sorted(
+            is_sorted=plc.types.Sorted.YES,
+            order=key.order,
+            null_order=key.null_order,
+        )
+    return df
+
+
+def chunk_to_frame(
+    chunk: TableChunk, ir: IR, *, metadata: ChannelMetadata | None = None
+) -> DataFrame:
     """
     Convert a TableChunk to a DataFrame.
 
@@ -1560,17 +1618,20 @@ def chunk_to_frame(chunk: TableChunk, ir: IR) -> DataFrame:
         The TableChunk to convert.
     ir
         The IR node to use for the schema.
+    metadata
+        Optional channel metadata to synthesize local DataFrame metadata from.
 
     Returns
     -------
     A DataFrame.
     """
-    return DataFrame.from_table(
+    df = DataFrame.from_table(
         chunk.table_view(),
         list(ir.schema.keys()),
         list(ir.schema.values()),
         chunk.stream,
     )
+    return _apply_ordering_metadata(df, metadata)
 
 
 def _is_already_partitioned(

@@ -18,7 +18,6 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
-from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, Empty
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -26,6 +25,7 @@ from cudf_polars.streaming.actor_graph.dispatch import (
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
+    chunk_to_frame,
     chunkwise_evaluate,
     empty_table_chunk,
     gather_in_task_group,
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
+    from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
@@ -95,6 +96,7 @@ async def default_node_single(
             ch_out,
             ch_in,
             metadata_out,
+            input_metadata=metadata_in,
             handle_empty_input=True,
             tracer=tracer,
         )
@@ -136,9 +138,10 @@ async def default_node_multi(
         local_count = 1
         duplicated = True
         partitioning = None
-        for idx, md_child in enumerate(
-            await gather_in_task_group(*(recv_metadata(ch, context) for ch in chs_in))
-        ):
+        child_metadatas = await gather_in_task_group(
+            *(recv_metadata(ch, context) for ch in chs_in)
+        )
+        for idx, md_child in enumerate(child_metadatas):
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
             # Set "duplicated" to False as soon as we
@@ -209,13 +212,14 @@ async def default_node_multi(
                 net_memory_delta=0,
             )
             dfs = [
-                DataFrame.from_table(
-                    chunk.table_view(),  # type: ignore[union-attr]
-                    list(child.schema.keys()),
-                    list(child.schema.values()),
-                    chunk.stream,  # type: ignore[union-attr]
+                chunk_to_frame(
+                    cast("TableChunk", chunk),
+                    child,
+                    metadata=child_metadata,
                 )
-                for chunk, child in zip(ready_chunks, ir.children, strict=True)
+                for chunk, child, child_metadata in zip(
+                    ready_chunks, ir.children, child_metadatas, strict=True
+                )
             ]
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(

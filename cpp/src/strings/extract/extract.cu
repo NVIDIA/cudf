@@ -165,7 +165,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
   launch_transform_kernel(
     extract_single_fn{*d_strings, group}, *d_prog, indices.data(), input.size(), stream);
 
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

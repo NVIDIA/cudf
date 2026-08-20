@@ -202,7 +202,7 @@ struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::
                        cuda::counting_iterator<size_type>{0},
                        num_output_lists,
                        comp_fn);
-    return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+    return cudf::make_strings_column(indices, stream, mr);
   }
 };
 

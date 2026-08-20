@@ -14,8 +14,10 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/utilities.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -30,6 +32,21 @@
 namespace cudf {
 namespace strings {
 namespace detail {
+
+/**
+ * @brief Create an offsets column from already-materialized string sizes.
+ *
+ * This overload centralizes the common size_type input case so callers do not each
+ * instantiate the same CUB scan kernels.
+ *
+ * @param sizes The per-string byte sizes
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return Offsets column and total bytes
+ * @throw std::overflow_error if the output exceeds the column size limit
+ */
+CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
+  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 template <typename Iter>
 struct string_offsets_fn {
@@ -242,8 +259,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   for_each_fn(size_and_exec_fn);
 
   // Convert the sizes to offsets
-  auto [offsets_column, bytes] = cudf::strings::detail::make_offsets_child_column(
-    output_sizes.begin(), output_sizes.end(), stream, mr);
+  auto [offsets_column, bytes] =
+    cudf::strings::detail::make_offsets_child_column(output_sizes, stream, mr);
   size_and_exec_fn.d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 

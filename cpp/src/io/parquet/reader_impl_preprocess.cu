@@ -105,7 +105,8 @@ void reader_impl::build_string_dict_indices()
     rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
     iter,
     iter + pass.chunks.size(),
-    set_str_dict_index_ptr{pass.str_dict_index.data(), str_dict_index_offsets, pass.chunks});
+    set_str_dict_index_ptr{
+      pass.str_dict_index.data(), str_dict_index_offsets, pass.chunks, _sparse_page_io});
 
   // compute the indices
   kernel_error error_code(_stream);

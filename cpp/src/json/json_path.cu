@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1018,8 +1018,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // convert sizes to offsets
-  auto [offsets, output_size] =
-    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
+  auto [offsets, output_size] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
   d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // allocate output string column

@@ -136,7 +136,7 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
   launch_for_each_kernel(
     extract_fn{*d_strings, d_offsets, indices.data()}, *d_prog, strings_count, stream);
 
-  auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto strings_output = cudf::make_strings_column(indices, stream, mr);
 
   // Build the lists column from the offsets and the strings.
   return make_lists_column(

@@ -283,7 +283,7 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                std::overflow_error);
 
   // convert the tokens into one big strings column
-  auto strings_output = make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  auto strings_output = cudf::make_strings_column(tokens, stream, mr);
 
   // create a lists column using the offsets and the strings columns
   return make_lists_column(strings_count,

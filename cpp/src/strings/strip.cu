@@ -68,7 +68,7 @@ std::unique_ptr<column> strip(strings_column_view const& input,
                     result.begin(),
                     strip_transform_fn{*d_column, side, d_to_strip});
 
-  return make_strings_column(result.begin(), result.end(), stream, mr);
+  return cudf::make_strings_column(result, stream, mr);
 }
 
 }  // namespace detail

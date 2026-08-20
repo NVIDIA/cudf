@@ -312,6 +312,7 @@ __device__ device_span<uint8_t const> locate_object_field(device_span<uint8_t co
   size_type pos         = 1;
   auto const num_fields = narrow_cast(read_uint64(val, pos, num_elements_size));
   if (!num_fields.has_value()) { return {}; }
+  if (num_fields.value() == 0) { return {}; }
   pos += num_elements_size;
 
   auto const ids_start = pos;

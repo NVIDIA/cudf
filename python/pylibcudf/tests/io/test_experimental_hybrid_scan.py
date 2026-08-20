@@ -348,7 +348,7 @@ def test_hybrid_scan_materialize_columns(
     filter_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -383,7 +383,7 @@ def test_hybrid_scan_materialize_columns(
     payload_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -541,7 +541,7 @@ def test_hybrid_scan_single_step_materialize(
     all_columns_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -623,7 +623,7 @@ def test_hybrid_scan_has_next_table_chunk(
     filter_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(),
             )
         )
@@ -693,7 +693,7 @@ def test_hybrid_scan_chunked_reading(
     filter_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )

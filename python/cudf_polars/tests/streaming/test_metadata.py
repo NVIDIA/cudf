@@ -591,6 +591,25 @@ def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:
     assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
 
 
+def test_apply_ordering_metadata_ignores_inter_rank_ordering_if_local_hash(
+    spmd_engine,
+) -> None:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"a": [2, 1, 3]}), stream)
+    scheme = _make_order_scheme(spmd_engine.context, key_indices=(0,))
+    metadata = ChannelMetadata(
+        local_count=1,
+        partitioning=Partitioning(
+            inter_rank=scheme,
+            local=HashScheme((0,), 1),
+        ),
+    )
+
+    result = _apply_ordering_metadata(df, metadata)
+
+    assert result.column_map["a"].is_sorted == plc.types.Sorted.NO
+
+
 def test_apply_ordering_metadata_skips_conflicting_keys(spmd_engine) -> None:
     stream = spmd_engine.context.br().stream_pool.get_stream()
     df = DataFrame.from_polars(pl.DataFrame({"a": [1, 2, 3]}), stream)

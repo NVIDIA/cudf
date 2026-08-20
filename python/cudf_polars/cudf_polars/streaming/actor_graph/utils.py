@@ -1578,16 +1578,19 @@ def _leading_order_keys(metadata: ChannelMetadata | None) -> dict[int, OrderKey]
     if metadata is None or metadata.partitioning is None:
         return {}
 
+    scheme = metadata.partitioning.local
+    if scheme == "inherit":
+        scheme = metadata.partitioning.inter_rank
+    if not isinstance(scheme, OrderScheme):
+        return {}
+
     candidates: dict[int, OrderKey | None] = {}
-    for scheme in (metadata.partitioning.inter_rank, metadata.partitioning.local):
-        if not isinstance(scheme, OrderScheme):
+    for ordering in scheme.orderings:
+        if not ordering.keys:
             continue
-        for ordering in scheme.orderings:
-            if not ordering.keys:
-                continue
-            key = ordering.keys[0]
-            current = candidates.get(key.column_index, key)
-            candidates[key.column_index] = key if current == key else None
+        key = ordering.keys[0]
+        current = candidates.get(key.column_index, key)
+        candidates[key.column_index] = key if current == key else None
     return {index: key for index, key in candidates.items() if key is not None}
 
 

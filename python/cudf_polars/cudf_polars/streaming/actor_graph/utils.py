@@ -1313,15 +1313,13 @@ class NormalizedPartitioning:  # noqa: PLW1641 (frozen=True generates __hash__ e
             order_keys = order_keys[: len(ordering.keys)]
         else:
             ordering_keys = ordering.keys[: len(order_keys)]
-        if all(isinstance(key, OrderKey) for key in order_keys):
-            return all(
-                current == target
-                for current, target in zip(ordering_keys, order_keys, strict=True)
-            )
-        key_indices = tuple(
-            key.column_index if isinstance(key, OrderKey) else key for key in order_keys
-        )
-        return tuple(key.column_index for key in ordering_keys) == key_indices
+        for current, target in zip(ordering_keys, order_keys, strict=True):
+            if isinstance(target, OrderKey):
+                if current != target:
+                    return False
+            elif current.column_index != target:
+                return False
+        return True
 
     def is_strictly_partitioned(
         self,

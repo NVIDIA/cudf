@@ -15,6 +15,8 @@ from rmm.pylibrmm.device_buffer cimport DeviceBuffer
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
+from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint
+
 from .span import Span, is_span as py_is_span
 
 from .column cimport Column

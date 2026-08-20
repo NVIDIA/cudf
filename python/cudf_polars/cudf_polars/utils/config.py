@@ -878,13 +878,6 @@ class StreamingExecutor:
                 "dynamic_planning",
                 DynamicPlanningOptions(**self.dynamic_planning),
             )
-        if self.dynamic_planning is not None and not isinstance(
-            self.dynamic_planning, DynamicPlanningOptions
-        ):
-            raise TypeError(
-                "dynamic_planning must be a DynamicPlanningOptions "
-                "instance, dict, or None"
-            )
 
         if isinstance(self.join_filter_pushdown, dict):
             object.__setattr__(

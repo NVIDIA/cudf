@@ -605,6 +605,9 @@ class reader_impl {
   // are offset indexes available for selected row groups
   bool _has_offset_index = false;
 
+  // whether sparse page I/O is enabled
+  bool _sparse_page_io = false;
+
   std::optional<std::vector<reader_column_schema>> _reader_column_schema;
 
   // chunked reading happens in 2 parts:

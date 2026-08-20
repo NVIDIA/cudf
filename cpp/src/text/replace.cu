@@ -347,8 +347,8 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
 
   auto chars = std::get<1>(
     cudf::strings::detail::make_strings_children(replacer, tmp_strings.size(), stream, mr));
-  auto offsets_column = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(d_sizes.begin(), d_sizes.end(), stream, mr));
+  auto offsets_column =
+    std::get<0>(cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr));
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets_column),
                                    chars.release(),

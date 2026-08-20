@@ -10,6 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
+import kvikio
 import kvikio.defaults
 import ray
 import ray.exceptions
@@ -35,8 +36,11 @@ from cudf_polars.engine.core import (
     check_reserved_keys,
     drop_if_replicated,
     evaluate_on_rank,
+    make_kvikio_monitor,
+    reset_kvikio_monitor_from_options,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
+    take_io_summary,
 )
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
@@ -269,6 +273,7 @@ class RankActor:
             rapidsmpf_options_as_bytes
         )
         self._rapidsmpf_statistics = Statistics.from_options(self._rapidsmpf_options)
+        self._kvikio_monitor = make_kvikio_monitor(self._rapidsmpf_options)
         self._nranks: int = nranks
         self._py_executor = ThreadPoolExecutor(
             max_workers=num_py_executors,
@@ -382,6 +387,9 @@ class RankActor:
             self._rapidsmpf_statistics, self._rapidsmpf_options
         )
         self._rapidsmpf_statistics.clear()
+        self._kvikio_monitor = reset_kvikio_monitor_from_options(
+            self._kvikio_monitor, self._rapidsmpf_options
+        )
         assert self._base_mr is not None
         self._ctx = Context.from_options(
             self._comm.logger,
@@ -420,6 +428,9 @@ class RankActor:
             if self._ctx is not None:
                 self._ctx.shutdown()
         finally:
+            if self._kvikio_monitor is not None:
+                self._kvikio_monitor.stop()
+                self._kvikio_monitor = None
             self._ctx = None
             self._comm = None
             self._mr = None
@@ -464,6 +475,24 @@ class RankActor:
             stats.clear()
             return self._comm.rank, detached
         return self._comm.rank, stats
+
+    def get_io_summary(
+        self, *, clear: bool = False
+    ) -> tuple[int, kvikio.Summary | None]:
+        """
+        Return this rank's index and its kvikio I/O totals.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart this rank's measured span after reading.
+
+        Returns
+        -------
+        This rank's index, and its totals or ``None`` if it is not counting.
+        """
+        assert self._comm is not None
+        return self._comm.rank, take_io_summary(self._kvikio_monitor, clear=clear)
 
     def evaluate_polars_ir(
         self,
@@ -1029,6 +1058,27 @@ class RayEngine(StreamingEngine):
                 [rank.get_statistics.remote(clear=clear) for rank in self.rank_actors]
             ).values()
         )
+
+    def gather_io_summary(self, *, clear: bool = False) -> dict[int, kvikio.Summary]:
+        """
+        Collect kvikio I/O statistics from every rank via Ray.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart each rank's measured span after reading.
+
+        Returns
+        -------
+        A :class:`kvikio.Summary` per rank, keyed by rank index, omitting
+        ranks that are not counting.
+        """
+        summaries = self._gather_by_rank(
+            [rank.get_io_summary.remote(clear=clear) for rank in self.rank_actors]
+        )
+        return {
+            rank: summary for rank, summary in summaries.items() if summary is not None
+        }
 
     def shutdown(self) -> None:
         """

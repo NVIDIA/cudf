@@ -67,6 +67,8 @@ except ImportError:
     pynvml = None
 
 try:
+    from rapidsmpf.statistics import Statistics
+
     import cudf_polars.dsl.tracing
     import cudf_polars.quent
     from cudf_polars.dsl.ir import IRExecutionContext
@@ -252,6 +254,7 @@ class SuccessRecord:
     iteration: int
     duration: float
     statistics: dict[str, Any] | None = None
+    io_summaries: dict[str, dict[str, Any]] | None = None
     traces: list[dict[str, Any]] | None = None
     validation_result: ValidationResult | None = None
     status: Literal["success"] = "success"
@@ -263,6 +266,7 @@ class SuccessRecord:
         iteration: int,
         duration: float,
         statistics: dict[str, Any] | None = None,
+        io_summaries: dict[str, dict[str, Any]] | None = None,
         traces: list[dict[str, Any]] | None = None,
     ) -> SuccessRecord:
         """Create a Record from plain data."""
@@ -271,6 +275,7 @@ class SuccessRecord:
             iteration=iteration,
             duration=duration,
             statistics=statistics,
+            io_summaries=io_summaries,
             traces=traces,
         )
 
@@ -935,6 +940,23 @@ def _collect_statistics(engine: pl.GPUEngine | None) -> dict[str, Any] | None:
     return engine.global_statistics(clear=True).to_dict()
 
 
+def _collect_io_summaries(
+    engine: pl.GPUEngine | None,
+) -> dict[str, dict[str, Any]] | None:
+    """Gather + clear kvikio I/O statistics, keyed by rank."""
+    if engine is None:
+        return None
+    if not isinstance(engine, StreamingEngine):
+        return None
+    if not Statistics.from_options(engine.rapidsmpf_options).enabled:
+        return None
+    # String keys, since the record is written as JSON.
+    return {
+        str(rank): dataclasses.asdict(summary)
+        for rank, summary in engine.gather_io_summary(clear=True).items()
+    }
+
+
 def run_polars_query_iteration(
     q_id: int,
     iteration: int,
@@ -960,6 +982,10 @@ def run_polars_query_iteration(
         # Once we support polars 1.40, we should remove this
         result = result.with_columns(*result_casts)
 
+    # I/O first: gathering it is itself a RapidsMPF collective, so doing it after
+    # `_collect_statistics` would leave those events in the freshly cleared
+    # counters and report them against the next iteration.
+    io_summaries = _collect_io_summaries(engine)
     statistics = _collect_statistics(engine)
 
     if expected is not None:
@@ -989,6 +1015,7 @@ def run_polars_query_iteration(
         iteration=iteration,
         duration=duration,
         statistics=statistics,
+        io_summaries=io_summaries,
         validation_result=validation_result,
     )
 

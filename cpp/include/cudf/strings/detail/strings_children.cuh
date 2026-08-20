@@ -14,8 +14,10 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/utilities.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -30,6 +32,21 @@
 namespace cudf {
 namespace strings {
 namespace detail {
+
+/**
+ * @brief Create an offsets column from already-materialized string sizes.
+ *
+ * This overload centralizes the common size_type input case so callers do not each
+ * instantiate the same CUB scan kernels.
+ *
+ * @param sizes The per-string byte sizes
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return Offsets column and total bytes
+ * @throw std::overflow_error if the output exceeds the column size limit
+ */
+CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
+  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 template <typename Iter>
 struct string_offsets_fn {
@@ -70,22 +87,22 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
   auto chars_data      = rmm::device_uvector<char>(chars_size, stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
 
-  auto const src_ptrs = thrust::make_transform_iterator(
-    cuda::counting_iterator<uint32_t>{0},
-    cuda::proclaim_return_type<void*>([begin] __device__(uint32_t idx) {
+  auto const src_ptrs = cuda::transform_iterator(
+    begin, cuda::proclaim_return_type<void*>([] __device__(auto const& index_pair) {
       // Due to a bug in cub (https://github.com/NVIDIA/cccl/issues/586),
-      // we have to use `const_cast` to remove `const` qualifier from the source pointer.
-      // This should be fine as long as we only read but not write anything to the source.
-      return reinterpret_cast<void*>(const_cast<char*>(begin[idx].first));
+      // we have to use `const_cast` to remove `const` qualifier from the
+      // source pointer. This should be fine as long as we only read but
+      // not write anything to the source.
+      return reinterpret_cast<void*>(const_cast<char*>(index_pair.first));
     }));
-  auto const src_sizes = thrust::make_transform_iterator(
-    cuda::counting_iterator<uint32_t>{0},
-    cuda::proclaim_return_type<size_type>(
-      [begin] __device__(uint32_t idx) { return begin[idx].second; }));
-  auto const dst_ptrs = thrust::make_transform_iterator(
-    cuda::counting_iterator<uint32_t>{0},
-    cuda::proclaim_return_type<char*>([offsets = d_offsets, output = chars_data.data()] __device__(
-                                        uint32_t idx) { return output + offsets[idx]; }));
+  auto const src_sizes = cuda::transform_iterator(
+    begin, cuda::proclaim_return_type<size_type>([] __device__(auto const& index_pair) {
+      return index_pair.second;
+    }));
+  auto const dst_ptrs = cuda::transform_iterator(
+    d_offsets,
+    cuda::proclaim_return_type<char*>(
+      [output = chars_data.data()] __device__(auto offset) { return output + offset; }));
 
   size_t temp_storage_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
@@ -242,8 +259,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   for_each_fn(size_and_exec_fn);
 
   // Convert the sizes to offsets
-  auto [offsets_column, bytes] = cudf::strings::detail::make_offsets_child_column(
-    output_sizes.begin(), output_sizes.end(), stream, mr);
+  auto [offsets_column, bytes] =
+    cudf::strings::detail::make_offsets_child_column(output_sizes, stream, mr);
   size_and_exec_fn.d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 

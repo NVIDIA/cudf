@@ -194,9 +194,9 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
                       d_indices.begin(),
                       binary_view_to_string_index_pair{d_items, d_ptrs, d_mask, skip_mask});
     // gather strings into output column
-    auto out_col =
-      cudf::strings::detail::make_strings_column(d_indices.begin(), d_indices.end(), stream, mr);
+    auto out_col = cudf::make_strings_column(d_indices, stream, mr);
     owned.emplace_back(std::move(out_col));
+    stream.synchronize();
     return std::make_tuple<column_view, owned_columns_t>(owned.front()->view(), std::move(owned));
   }
 

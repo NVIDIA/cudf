@@ -26,7 +26,6 @@
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -61,7 +60,8 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
                                                  cuda::stream_ref stream)
 {
   auto const t_input    = table_view{{input_col}};
-  auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream};
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream, temp_mr};
 
   auto const sorted_index_order = cuda::make_permutation_iterator(
     sorted_order_view.begin<size_type>(), cuda::counting_iterator<size_type>{0});
@@ -136,7 +136,7 @@ void tie_break_ranks_transform(cudf::device_span<size_type const> dense_rank_sor
                         tie_breaker);
   using TransformerReturnType =
     cuda::std::decay_t<cuda::std::invoke_result_t<Transformer, TieType>>;
-  auto sorted_tied_rank = thrust::make_transform_iterator(
+  auto sorted_tied_rank = cuda::transform_iterator(
     dense_rank_sorted.begin(),
     cuda::proclaim_return_type<TransformerReturnType>(
       [tied_rank = tie_sorted.begin(), transformer] __device__(auto dense_pos) {

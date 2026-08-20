@@ -7,6 +7,7 @@ import os
 from io import BytesIO, StringIO
 from pathlib import Path
 
+import fsspec
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -326,6 +327,16 @@ def test_cudf_json_writer_sinks(sink, tmp_path):
         assert os.path.exists(target)
         with open(target, "r") as f:
             assert f.read() == '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
+
+
+def test_cudf_json_writer_fsspec(tmp_path):
+    path = f"memory://{tmp_path.name}/test_df.json"
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+
+    df.to_json(path, engine="cudf")
+
+    with fsspec.open(path, mode="rt") as file_obj:
+        assert file_obj.read() == '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
 
 
 @pytest.fixture(params=["filepath", "pathobj", "bytes_io", "string_io", "url"])

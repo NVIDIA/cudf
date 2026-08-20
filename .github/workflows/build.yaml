@@ -29,7 +29,7 @@ on:
         default: nightly
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
   cancel-in-progress: true
 
 permissions: {}
@@ -505,46 +505,40 @@ jobs:
       push: true
       cuda: '["12.9", "13.3"]'
   # Build the cuDF Java JAR for every Maven classifier.
-  java-build:
+  java-build-matrix:
     needs: [telemetry-setup]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { cuda: "12.9", cuda_major: "12", arch: "x86_64", runner: "linux-amd64-cpu16" }
-          - { cuda: "13.3", cuda_major: "13", arch: "x86_64", runner: "linux-amd64-cpu16" }
-          - { cuda: "12.9", cuda_major: "12", arch: "aarch64", runner: "linux-arm64-cpu16" }
-          - { cuda: "13.3", cuda_major: "13", arch: "aarch64", runner: "linux-arm64-cpu16" }
-    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    steps:
-      - name: Checkout code repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Build static libcudf
-        run: |
-          ./java/ci/build_static_libcudf.sh \
-            --output-dir "${RUNNER_TEMP}/libcudf" \
-            --cuda-version "${{ matrix.cuda }}"
-      - name: Build cuDF Java JAR
-        run: |
-          ./java/ci/build_cudf_java_jar.sh \
-            --libcudf-dir "${RUNNER_TEMP}/libcudf" \
-            --output-dir "${RUNNER_TEMP}/jars" \
-            --cuda-version "${{ matrix.cuda }}"
-      - name: Upload per-entry JAR artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: cudf_java_cuda${{ matrix.cuda_major }}_${{ matrix.arch }}
-          # Ship only the JARs and POMs. Exclude the per-classifier Maven build scratch dir.
-          path: |
-            ${{ runner.temp }}/jars
-            !${{ runner.temp }}/jars/.mvn-temp-target
-          if-no-files-found: error
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
+  java-build:
+    needs: [build-details, telemetry-setup, java-build-matrix]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      arch: ${{ matrix.ARCH }}
+      node_type: cpu16
+      container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/build_java.sh"
+      file_to_upload: output_jars
+      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.
   java-gather:
     needs: [java-build]
@@ -560,7 +554,7 @@ jobs:
       - name: Download per-entry JAR artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: cudf_java_cuda*
+          pattern: cudf_java_*
           path: ${{ runner.temp }}/jars
           merge-multiple: true
       - name: Assemble Maven repository layout

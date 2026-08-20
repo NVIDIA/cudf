@@ -131,7 +131,7 @@ TEST_F(ParquetReaderTest, UserBounds)
 TEST_F(ParquetReaderTest, ZeroColumnsPreservesRowCount)
 {
   GTEST_SKIP() << "Zero-column / N-row parquet reads are not yet supported. See "
-                  "https://github.com/rapidsai/cudf/issues/22935).";
+                  "https://github.com/NVIDIA/cudf/issues/22935).";
 
   srand(31337);
   auto const num_rows = 8;
@@ -1684,6 +1684,43 @@ TEST_F(ParquetReaderTest, NestedByteArray)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+// A binary column is read back as a strings column and then converted to `list<uint8>`.
+// A strings column may carry 64-bit offsets, but a LIST column's offsets child is always
+// 32-bit, so that conversion must not hand an INT64 offsets column to `make_lists_column`.
+TEST_F(ParquetReaderTest, BinaryAsListLargeStringsThreshold)
+{
+  // Force the intermediate strings column onto the 64-bit offsets path. The data below is far
+  // under `INT32_MAX` bytes, so every offset value stays representable as an int32_t.
+  tmp_env_var const large_strings_threshold{"LIBCUDF_LARGE_STRINGS_THRESHOLD", "8"};
+
+  cudf::test::lists_column_wrapper<uint8_t> list_int_col{
+    {'M', 'o', 'n', 'd', 'a', 'y'},
+    {'W', 'e', 'd', 'n', 'e', 's', 'd', 'a', 'y'},
+    {'F', 'r', 'i', 'd', 'a', 'y'},
+    {'F', 'u', 'n', 'd', 'a', 'y'}};
+
+  auto const expected = table_view{{list_int_col}};
+  cudf::io::table_input_metadata output_metadata(expected);
+  output_metadata.column_metadata[0].set_name("col_binary").set_output_as_binary(true);
+
+  auto filepath = temp_env->get_temp_filepath("BinaryAsListLargeStringsThreshold.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(std::move(output_metadata));
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .set_column_schema({cudf::io::reader_column_schema().set_convert_binary_to_strings(false)});
+  auto result = cudf::io::read_parquet(in_opts);
+
+  auto const col = result.tbl->view().column(0);
+  ASSERT_EQ(col.type().id(), cudf::type_id::LIST);
+  EXPECT_EQ(col.child(cudf::lists_column_view::offsets_column_index).type().id(),
+            cudf::type_id::INT32);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetReaderTest, StructByteArray)
 {
   constexpr auto num_rows = 100;
@@ -2822,7 +2859,7 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
   auto struct_col = cudf::test::structs_column_wrapper{{child0, child1}};
 
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 1, 2, 5}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 1, 2, 5}.release();
   auto num_list_rows = list_offsets_column->size() - 1;
 
   auto mask = cudf::create_null_mask(6, cudf::mask_state::ALL_VALID);
@@ -2841,7 +2878,7 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
   CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), expected);
 }
 
-// Regression test for https://github.com/rapidsai/cudf/issues/22541.
+// Regression test for https://github.com/NVIDIA/cudf/issues/22541.
 // Schema (single-field inner repeated group must decode as list<struct<someId>>):
 //   required group root {
 //     optional int32 primitive;
@@ -2936,10 +2973,9 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotationsSingleFieldNested)
   EXPECT_EQ(inner_child.child(0).type().id(), cudf::type_id::INT32);
 
   column_wrapper<int32_t> inner_someid{3, 6, 9};
-  auto inner_struct = cudf::test::structs_column_wrapper{{inner_someid}};
-  auto inner_list_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 3}.release();
-  auto inner_list = cudf::make_lists_column(
+  auto inner_struct       = cudf::test::structs_column_wrapper{{inner_someid}};
+  auto inner_list_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
+  auto inner_list         = cudf::make_lists_column(
     3, std::move(inner_list_offsets), inner_struct.release(), 0, rmm::device_buffer{});
 
   column_wrapper<int32_t> outer_id{1, 4, 7};
@@ -2948,9 +2984,8 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotationsSingleFieldNested)
   outer_struct_children.push_back(std::move(inner_list));
   auto outer_struct_col = cudf::test::structs_column_wrapper{{std::move(outer_struct_children)}};
 
-  auto outer_list_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 3}.release();
-  auto outer_list_col = cudf::make_lists_column(
+  auto outer_list_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
+  auto outer_list_col     = cudf::make_lists_column(
     3, std::move(outer_list_offsets), outer_struct_col.release(), 0, rmm::device_buffer{});
 
   // Testing for equivalence here because we only care about the outermost validity buffers.
@@ -3188,7 +3223,7 @@ TEST_F(ParquetReaderTest, DeltaByteArrayMapSkipRows)
   auto vals_col   = cudf::test::strings_column_wrapper(vals.begin(), vals.end());
   auto struct_col = cudf::test::structs_column_wrapper({keys_col, vals_col}).release();
   auto offsets_col =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end());
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
   auto const map_col = cudf::make_lists_column(
     num_rows, offsets_col.release(), std::move(struct_col), 0, rmm::device_buffer{});
   auto const expected = cudf::table_view({map_col->view()});
@@ -4070,7 +4105,7 @@ void filter_unary_operation_typed_test()
     auto const expected = cudf::apply_boolean_mask(written_table, *predicate);
 
     // JIT does not support nullness-dependent operators such as IS_NULL
-    // Ref: https://github.com/rapidsai/cudf/issues/20177
+    // Ref: https://github.com/NVIDIA/cudf/issues/20177
     auto constexpr use_jit = false;
 
     // Reading with Predicate Pushdown
@@ -4391,8 +4426,8 @@ TYPED_TEST(ParquetPredicatePushdownTestJIT, FilterTyped)
   filter_typed_test<TypeParam, true>();
   // JIT does not support decimals and nullness-dependent operators (IS_NULL) so we can't test:
   // `filter_unary_operation_typed_test<TypeParam>()` and `decimal_stats_filter_test<TypeParam>()`.
-  // Refs: https://github.com/rapidsai/cudf/issues/20177 and
-  // https://github.com/rapidsai/cudf/issues/21584
+  // Refs: https://github.com/NVIDIA/cudf/issues/20177 and
+  // https://github.com/NVIDIA/cudf/issues/21584
 }
 
 TEST_P(ParquetDecompressionTest, RoundTripBasic)

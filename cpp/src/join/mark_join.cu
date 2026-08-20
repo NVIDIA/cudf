@@ -595,7 +595,8 @@ mark_join::mark_join(cudf::table_view const& left,
     _left{left},
     _nulls_equal{compare_nulls},
     _prefilter{prefilter},
-    _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(left, stream)},
+    _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(
+      left, stream, cudf::get_current_device_resource_ref())},
     _bucket_storage{
       cuco::extent<std::size_t>{compute_mark_join_capacity(left, checked_load_factor(load_factor))},
       rmm::mr::polymorphic_allocator<char>{mr},
@@ -740,9 +741,10 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 {
   clear_marks(stream);
 
-  auto const preprocessed_right = [&right, stream] {
+  auto const preprocessed_right = [right, stream] {
     cudf::scoped_range range{"mark_join::semi_anti_join::preprocessed_right"};
-    return cudf::detail::row::equality::preprocessed_table::create(right, stream);
+    return cudf::detail::row::equality::preprocessed_table::create(
+      right, stream, cudf::get_current_device_resource_ref());
   }();
 
   if (is_primitive_row_op_compatible(_left)) {

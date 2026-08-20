@@ -93,8 +93,7 @@ std::unique_ptr<cudf::column> make_low_cardinality_lists_of_strings()
 
   auto child = cudf::test::strings_column_wrapper(child_strings.begin(), child_strings.end());
   auto offsets_col =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end())
-      .release();
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
 
   return cudf::make_lists_column(
     num_rows, std::move(offsets_col), child.release(), 0, rmm::device_buffer{});

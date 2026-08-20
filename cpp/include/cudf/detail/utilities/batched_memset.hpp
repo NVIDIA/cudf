@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,6 @@
 #include <cub/device/device_copy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 namespace CUDF_EXPORT cudf {
@@ -43,19 +42,18 @@ void batched_memset(cudf::host_span<cudf::device_span<T> const> host_buffers,
     host_buffers, stream, cudf::get_current_device_resource_ref());
 
   // Vector of sizes of all buffer spans
-  auto sizes = thrust::make_transform_iterator(
-    cuda::counting_iterator<std::size_t>{0},
-    cuda::proclaim_return_type<std::size_t>(
-      [buffers = buffers.data()] __device__(std::size_t i) { return buffers[i].size(); }));
+  auto sizes = cuda::transform_iterator(
+    buffers.begin(), cuda::proclaim_return_type<std::size_t>([] __device__(auto const& buffer) {
+      return buffer.size();
+    }));
 
   // Constant iterator to the value to memset
   auto iter_in = cuda::make_constant_iterator(cuda::make_constant_iterator(value));
 
   // Iterator to each device span pointer
-  auto iter_out = thrust::make_transform_iterator(
-    cuda::counting_iterator<std::size_t>{0},
-    cuda::proclaim_return_type<T*>(
-      [buffers = buffers.data()] __device__(std::size_t i) { return buffers[i].data(); }));
+  auto iter_out = cuda::transform_iterator(
+    buffers.begin(),
+    cuda::proclaim_return_type<T*>([] __device__(auto const& buffer) { return buffer.data(); }));
 
   std::size_t temp_storage_bytes = 0;
   auto const num_buffers         = host_buffers.size();

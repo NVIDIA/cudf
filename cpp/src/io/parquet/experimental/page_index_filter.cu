@@ -250,30 +250,22 @@ struct page_stats_caster : public stats_caster_base {
     auto row_str_chars = rmm::device_buffer(total_bytes, stream, mr);
 
     // Iterator for input (page-level) string chars
-    auto src_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
+    auto const page_offsets =
+      cuda::make_permutation_iterator(page_str_offsets.begin(), page_indices.begin());
+    auto src_iter = cuda::transform_iterator(
+      page_offsets,
       cuda::proclaim_return_type<char*>(
-        [chars        = page_str_chars.begin(),
-         offsets      = page_str_offsets.begin(),
-         page_indices = page_indices.begin()] __device__(std::size_t index) {
-          auto const page_index = page_indices[index];
-          return chars + offsets[page_index];
-        }));
+        [chars = page_str_chars.begin()] __device__(auto offset) { return chars + offset; }));
 
     // Iterator for output (row-level) string chars
-    auto dst_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<char*>(
-        [chars   = reinterpret_cast<char*>(row_str_chars.data()),
-         offsets = row_str_offsets.begin()] __device__(std::size_t index) {
-          return chars + offsets[index];
-        }));
+    auto dst_iter =
+      cuda::transform_iterator(row_str_offsets.begin(),
+                               cuda::proclaim_return_type<char*>(
+                                 [chars = reinterpret_cast<char*>(row_str_chars.data())] __device__(
+                                   auto offset) { return chars + offset; }));
 
     // Iterator for string sizes
-    auto size_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<std::size_t>(
-        [sizes = row_str_sizes.begin()] __device__(std::size_t index) { return sizes[index]; }));
+    auto size_iter = row_str_sizes.begin();
 
     // Gather page-level string chars to row-level string chars
     cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, total_rows, stream);
@@ -425,6 +417,7 @@ struct page_stats_caster : public stats_caster_base {
       // Construct a row indices mapping based on page row offsets.
       auto const page_indices = compute_page_indices_async(
         page_row_offsets, total_rows, stream, cudf::get_current_device_resource_ref());
+      stream.sync();
 
       // For non-strings columns, directly gather the page-level column data and bitmask to the
       // row-level.
@@ -591,6 +584,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
               stream)
           : cudf::detail::make_empty_host_vector<bitmask_type>(0, stream);
 
+      stream.sync();
       auto [row_mask_data, row_mask_bitmask] =
         build_data_and_nullmask<bool>(page_mask->mutable_view(),
                                       page_mask_nullmask.data(),
@@ -1176,7 +1170,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   //  Copy over search results to host
   auto host_results      = cudf::detail::make_pinned_vector_async(device_data_page_mask, stream);
   auto const total_pages = pinned_page_offsets.size() - num_columns;
-  auto data_page_mask    = thrust::host_vector<bool>(total_pages);
+  auto data_page_mask    = thrust::host_vector<bool>{};
+  data_page_mask.reserve(total_pages);
   auto host_results_iter = host_results.begin();
   stream.sync();
 

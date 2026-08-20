@@ -77,13 +77,24 @@ std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_wit
   return _impl->filter_row_groups_with_stats(row_group_indices, options, stream);
 }
 
-std::pair<std::vector<text::byte_range_info>, std::vector<text::byte_range_info>>
-hybrid_scan_multifile::secondary_filters_byte_ranges(
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
+std::pair<std::vector<text::byte_range_info>, std::vector<size_type>>
+hybrid_scan_multifile::bloom_filters_byte_ranges(
+  std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options) const
 {
   CUDF_FUNC_RANGE();
-  return _impl->secondary_filters_byte_ranges(row_group_indices, options);
+  return _impl->bloom_filters_byte_ranges(row_group_indices, options);
+}
+
+std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_with_bloom_filters(
+  std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
+  std::span<std::vector<size_type> const> row_group_indices,
+  parquet_reader_options const& options,
+  cuda::stream_ref stream) const
+{
+  CUDF_FUNC_RANGE();
+  return _impl->filter_row_groups_with_bloom_filters(
+    bloom_filter_data, row_group_indices, options, stream);
 }
 
 std::unique_ptr<cudf::column> hybrid_scan_multifile::build_all_true_row_mask(
@@ -135,6 +146,17 @@ hybrid_scan_multifile::payload_column_chunks_byte_ranges(
 {
   CUDF_FUNC_RANGE();
   return _impl->payload_column_chunks_byte_ranges(row_group_indices, options);
+}
+
+std::pair<std::vector<text::byte_range_info>, std::vector<size_type>>
+hybrid_scan_multifile::payload_pages_byte_ranges(
+  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  cudf::column_view const& row_mask,
+  parquet_reader_options const& options,
+  cuda::stream_ref stream) const
+{
+  CUDF_FUNC_RANGE();
+  return _impl->payload_pages_byte_ranges(row_group_indices, row_mask, options, stream);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_payload_columns(
@@ -222,6 +244,21 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
                                             options,
                                             stream,
                                             mr);
+}
+
+void hybrid_scan_multifile::setup_chunking_for_payload_columns(
+  std::size_t chunk_read_limit,
+  std::size_t pass_read_limit,
+  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  cudf::column_view const& row_mask,
+  cudf::host_span<cudf::device_span<uint8_t const> const> page_data,
+  parquet_reader_options const& options,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr) const
+{
+  CUDF_FUNC_RANGE();
+  _impl->setup_chunking_for_payload_columns(
+    chunk_read_limit, pass_read_limit, row_group_indices, row_mask, page_data, options, stream, mr);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_payload_columns_chunk(

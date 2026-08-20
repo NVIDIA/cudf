@@ -18,9 +18,9 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -67,6 +67,12 @@ make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& in
 }
 
 }  // namespace
+
+CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
+  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+{
+  return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
+}
 
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<column_string_pairs> const& input,
@@ -216,7 +222,7 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
   CUDF_FUNC_RANGE();
 
   auto it_pair =
-    thrust::make_transform_iterator(string_views.begin(), string_view_to_pair{null_placeholder});
+    cuda::transform_iterator(string_views.begin(), string_view_to_pair{null_placeholder});
   return cudf::strings::detail::make_strings_column(
     it_pair, it_pair + string_views.size(), stream, mr);
 }

@@ -473,9 +473,13 @@ def _ordering_prefix_matches(
     """True when ordering has the same leading order semantics as reference."""
     if len(ordering.keys) < len(column_indices):
         return False
+    if len(reference.keys) < len(column_indices):
+        return False
     expected = tuple(
         OrderKey(index, key.order, key.null_order)
-        for index, key in zip(column_indices, reference.keys, strict=True)
+        for index, key in zip(
+            column_indices, reference.keys[: len(column_indices)], strict=True
+        )
     )
     return ordering.keys[: len(expected)] == expected
 
@@ -867,13 +871,13 @@ async def _sort_join_side_to_ordering(
     ir_context: IRExecutionContext,
     ch_out: Channel[TableChunk],
     ch_in: Channel[TableChunk],
-    input_metadata: ChannelMetadata,
     output_ordering: Ordering,
     collective_ids: list[int],
     *,
     tracer: ActorTracer | None,
 ) -> None:
     """Sort one join side directly to an existing strict Ordering layout."""
+    input_metadata = await recv_metadata(ch_in, context)
     sort_ir = _sort_ir_for_ordered_join(schema_ir, sort_keys, output_ordering)
     sort_boundaries_df = _boundaries_dataframe(
         context,
@@ -972,7 +976,6 @@ async def _ordered_join(
             ir_context=ir_context,
         ):
             if strategy.sort_side == "left":
-                assert strategy.left_meta is not None
                 await gather_in_task_group(
                     _sort_join_side_to_ordering(
                         context,
@@ -982,7 +985,6 @@ async def _ordered_join(
                         ir_context,
                         ch_sorted,
                         ch_left,
-                        strategy.left_meta,
                         strategy.left_output_ordering,
                         collective_ids,
                         tracer=tracer,
@@ -998,7 +1000,6 @@ async def _ordered_join(
                     ),
                 )
             else:
-                assert strategy.right_meta is not None
                 await gather_in_task_group(
                     _sort_join_side_to_ordering(
                         context,
@@ -1008,7 +1009,6 @@ async def _ordered_join(
                         ir_context,
                         ch_sorted,
                         ch_right,
-                        strategy.right_meta,
                         strategy.right_output_ordering,
                         collective_ids,
                         tracer=tracer,

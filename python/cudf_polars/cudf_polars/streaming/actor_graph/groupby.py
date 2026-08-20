@@ -465,7 +465,9 @@ def _remap_ordering_keys(
     return ordering.with_keys(
         tuple(
             OrderKey(index, key.order, key.null_order)
-            for key, index in zip(ordering.keys, column_indices, strict=True)
+            for key, index in zip(
+                ordering.keys[: len(column_indices)], column_indices, strict=True
+            )
         )
     )
 

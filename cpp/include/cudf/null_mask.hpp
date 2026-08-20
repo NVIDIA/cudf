@@ -243,7 +243,9 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(
  *
  * @param colviews A span containing column views whose bitmasks will be ANDed within their
  * respective segments
- * @param segment_offsets A span containing the starting positions of each segment
+ * @param segment_offsets A span containing the starting positions of each segment, plus the
+ * one-past-the-end position of the last segment; behavior is undefined unless the offsets are
+ * non-decreasing and each lies in `[0, colviews.size()]`
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of vectors containing resulting bitmask and count of unset bits for each segment
@@ -270,7 +272,9 @@ segmented_bitmask_and(host_span<column_view const> colviews,
  *
  * @param masks A span containing bitmasks that will be ANDed within their
  * respective segments
- * @param segment_offsets A span containing the starting positions of each segment
+ * @param segment_offsets A span containing the starting positions of each segment, plus the
+ * one-past-the-end position of the last segment; behavior is undefined unless the offsets are
+ * non-decreasing and each lies in `[0, masks.size()]`
  * @param mask_size_bits Number of bits in each mask
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned device_buffer

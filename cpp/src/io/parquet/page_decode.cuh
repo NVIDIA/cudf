@@ -1481,14 +1481,9 @@ __device__ void zero_fill_null_positions_shared(
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
   auto const& leaf_ni        = s->nesting.nesting_info[leaf_level_index];
 
-  // A REQUIRED leaf has no validity buffer of its own, but its output positions can still be
-  // gaps (never written by the decode loop) when a nullable ancestor is null for that row, since
-  // the leaf value is then absent from the page's value stream entirely. In that case, fall back
-  // to the nearest ancestor's validity buffer (and matching valid_map_offset) to identify which
-  // leaf output positions are gaps that need zero-filling. This is only valid when there is no
-  // repetition (no lists) between the ancestor and the leaf: lists change cardinality between
-  // nesting levels, so an ancestor's row-indexed validity bitmap does not align with the leaf's
-  // element-indexed output positions.
+  // A required Parquet leaf can be absent because one of its ancestors is optional. Since with RMM,
+  // the reader reader can leave the validity map associated w/the ancestor unwritten, this code
+  // zero-fills the gap rows by borrowing the nearest ancestor's validity bitmap instead.
   auto const& ni = [&]() -> PageNestingDecodeInfo const& {
     if (leaf_ni.valid_map != nullptr) { return leaf_ni; }
     if (s->setup.col.max_level[level_type::REPETITION] != 0) { return leaf_ni; }

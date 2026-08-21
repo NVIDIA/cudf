@@ -18,14 +18,18 @@ from rapidsmpf.utils.string import parse_boolean
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
 )
-from cudf_polars.utils.config import UNSPECIFIED, MemoryResourceConfig, Unspecified
+from cudf_polars.utils.config import (
+    UNSPECIFIED,
+    DynamicPlanningOptions,
+    MemoryResourceConfig,
+    Unspecified,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from cudf_polars.quent import QuentContext
     from cudf_polars.utils.config import (
-        DynamicPlanningOptions,
         JoinFilterPushdownOptions,
         ParquetOptions,
     )
@@ -493,12 +497,19 @@ class StreamingOptions:
             v = getattr(args, attr, None)
             return UNSPECIFIED if v is None else v
 
-        # Special: dynamic_planning bool → None (disabled) or UNSPECIFIED
-        # True (the build_parser default) → UNSPECIFIED (use library default)
-        # False → explicitly disable (None)
-        # absent / None → UNSPECIFIED
+        # dynamic_planning is a BooleanOptionalAction with default=None, so
+        # dyn is True only when --dynamic-planning was passed explicitly,
+        # False only for --no-dynamic-planning, and None when absent.
+        # An explicit True must be preserved (not UNSPECIFIED), otherwise an
+        # env var disabling dynamic planning would silently override it.
         dyn = getattr(args, "dynamic_planning", None)
-        dynamic_planning: Any = None if dyn is False else UNSPECIFIED
+        dynamic_planning: Any = (
+            UNSPECIFIED
+            if dyn is None
+            else None
+            if dyn is False
+            else DynamicPlanningOptions()
+        )
 
         # target_partition_size: canonical dest from _add_cli_args; fall back to
         # "blocksize" for legacy benchmark scripts that predate this module.

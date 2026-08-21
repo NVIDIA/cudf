@@ -17,7 +17,7 @@ from cudf_polars.engine.options import (
     Unspecified,
     _parse_memory_resource_config,
 )
-from cudf_polars.utils.config import MemoryResourceConfig
+from cudf_polars.utils.config import DynamicPlanningOptions, MemoryResourceConfig
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -312,9 +312,15 @@ def test_from_argparse_renames() -> None:
 def test_from_argparse_dynamic_planning() -> None:
     assert isinstance(
         StreamingOptions._from_argparse(
-            argparse.Namespace(dynamic_planning=True)
+            argparse.Namespace(dynamic_planning=None)
         ).dynamic_planning,
         Unspecified,
+    )
+    assert (
+        StreamingOptions._from_argparse(
+            argparse.Namespace(dynamic_planning=True)
+        ).dynamic_planning
+        == DynamicPlanningOptions()
     )
     assert (
         StreamingOptions._from_argparse(

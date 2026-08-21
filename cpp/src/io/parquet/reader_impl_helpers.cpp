@@ -12,13 +12,19 @@
 #include "ipc/Message_generated.h"
 #include "ipc/Schema_generated.h"
 #include "parquet_common.hpp"
+#include "row_group_stats_helpers.hpp"
 
+#include <cudf/column/column.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/host_memory.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 #include <cuda/numeric>
@@ -29,9 +35,11 @@
 #include <format>
 #include <functional>
 #include <future>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <regex>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -78,6 +86,43 @@ size_type find_colchunk_iter_offset(RowGroup const& row_group,
 namespace flatbuf = cudf::io::parquet::flatbuf;
 
 namespace {
+
+[[nodiscard]] int find_leaf_schema_index(std::span<SchemaElement const> schema_tree,
+                                         std::string_view column_name)
+{
+  auto found = std::optional<int>{};
+  for (auto idx = 1; std::cmp_less(idx, schema_tree.size()); ++idx) {
+    if (not schema_tree[idx].children_idx.empty()) { continue; }
+    if (column_path_from_index(schema_tree, idx) != column_name) { continue; }
+    // Parquet stores names per schema node and does not enforce unique dotted leaf paths.
+    // Reject ambiguity here instead of returning the first matching schema element.
+    CUDF_EXPECTS(not found.has_value(),
+                 std::string{"Ambiguous parquet leaf column path: "} + std::string{column_name},
+                 std::invalid_argument);
+    found = idx;
+  }
+  CUDF_EXPECTS(found.has_value(),
+               std::string{"Parquet leaf column path not found: "} + std::string{column_name},
+               std::invalid_argument);
+  return found.value();
+}
+
+[[nodiscard]] data_type statistics_dtype(SchemaElement const& schema)
+{
+  auto const dtype = to_data_type(to_type_id(schema,
+                                             false,           // strings_to_categorical
+                                             type_id::EMPTY,  // timestamp_type_id
+                                             type_id::EMPTY),
+                                  schema);
+  CUDF_EXPECTS(dtype.id() != type_id::EMPTY,
+               std::string{"Unsupported parquet statistics dtype for column: "} + schema.name,
+               std::invalid_argument);
+  CUDF_EXPECTS(
+    not cudf::is_compound(dtype) or dtype.id() == type_id::STRING,
+    std::string{"Compound parquet statistics are not supported for column: "} + schema.name,
+    std::invalid_argument);
+  return dtype;
+}
 
 /**
  * @brief Computes the total number of row groups in input span of row group indices
@@ -1364,6 +1409,73 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
   }
 
   return column_chunk_metadata;
+}
+
+std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr) const
+{
+  CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
+               "Cannot decode parquet column-chunk bounds without source metadata",
+               std::invalid_argument);
+
+  auto const total_row_groups        = get_num_row_groups();
+  auto const num_row_groups_per_file = get_num_row_groups_per_file();
+  auto num_row_groups_per_source     = std::vector<std::size_t>{};
+  num_row_groups_per_source.reserve(num_row_groups_per_file.size());
+  std::transform(num_row_groups_per_file.begin(),
+                 num_row_groups_per_file.end(),
+                 std::back_inserter(num_row_groups_per_source),
+                 [](auto count) { return static_cast<std::size_t>(count); });
+
+  auto input_row_group_indices = std::vector<std::vector<size_type>>(per_file_metadata.size());
+  for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
+    auto& source_row_group_indices = input_row_group_indices[src_idx];
+    source_row_group_indices.resize(num_row_groups_per_file[src_idx]);
+    std::iota(source_row_group_indices.begin(), source_row_group_indices.end(), size_type{0});
+  }
+
+  std::vector<std::unique_ptr<column>> columns;
+  columns.reserve(2 + 2 * column_names.size());
+  auto file_indices      = synthesize_source_index_column(num_row_groups_per_source, stream, mr);
+  auto row_group_indices = synthesize_row_group_index_column(file_indices->view(), stream, mr);
+  columns.push_back(std::move(file_indices));
+  columns.push_back(std::move(row_group_indices));
+
+  row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
+                                         .per_file_metadata    = per_file_metadata,
+                                         .row_group_indices    = input_row_group_indices,
+                                         .has_is_null_operator = false};
+
+  for (auto const& column_name : column_names) {
+    auto per_source_schema_indices = std::vector<int>(per_file_metadata.size());
+    auto dtype                     = data_type{type_id::EMPTY};
+
+    for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
+      auto const& schema_tree = get_schema_tree(src_idx);
+      auto const schema_idx   = find_leaf_schema_index(schema_tree, column_name);
+      auto const source_dtype = statistics_dtype(schema_tree[schema_idx]);
+
+      if (src_idx == 0) {
+        dtype = source_dtype;
+      } else {
+        CUDF_EXPECTS(
+          source_dtype == dtype,
+          std::string{"Mismatching parquet statistics dtype across sources for column: "} +
+            column_name,
+          std::invalid_argument);
+      }
+      per_source_schema_indices[src_idx] = schema_idx;
+    }
+
+    auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
+      dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
+    columns.push_back(std::move(min_col));
+    columns.push_back(std::move(max_col));
+  }
+
+  return std::make_unique<table>(std::move(columns));
 }
 
 bool aggregate_reader_metadata::is_schema_index_mapped(int schema_idx, int src_idx) const

@@ -12,6 +12,7 @@
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -37,6 +38,7 @@ probe_join_hash_table(
   bool has_nulls,
   null_equality compare_nulls,
   std::optional<std::size_t> output_size,
+  cudf::device_span<size_type> right_matches,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
@@ -61,16 +63,34 @@ probe_join_hash_table(
                      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
   }
 
-  auto left_indices  = std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, mr);
-  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, mr);
+  // Without a supplied full-join size, reserve room for the largest possible right complement.
+  // This prevents finalization from reallocating and copying both left-join output vectors.
+  auto const allocation_size = Join == join_kind::FULL_JOIN && !output_size
+                                 ? join_size + static_cast<std::size_t>(right_table.num_rows())
+                                 : join_size;
+  auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(allocation_size, stream, mr);
+  auto right_indices =
+    std::make_unique<rmm::device_uvector<size_type>>(allocation_size, stream, mr);
+  left_indices->resize(join_size, stream);
+  right_indices->resize(join_size, stream);
   cudf::prefetch::detail::prefetch(*left_indices, stream);
   cudf::prefetch::detail::prefetch(*right_indices, stream);
 
   auto const left_table_num_rows = left_table.num_rows();
   auto const out_probe_begin =
     cuda::make_transform_output_iterator(left_indices->begin(), output_fn{});
-  auto const out_build_begin =
-    cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
+  auto const out_build_begin = [&] {
+    if constexpr (Join == join_kind::FULL_JOIN) {
+      CUDF_EXPECTS(right_matches.size() == static_cast<std::size_t>(right_table.num_rows()),
+                   "full join requires one match flag per right row",
+                   std::invalid_argument);
+      return cuda::make_transform_output_iterator(
+        right_indices->begin(),
+        mark_matched_output_fn{right_matches.data(), right_table.num_rows()});
+    } else {
+      return cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
+    }
+  }();
 
   auto retrieve_results = [&](auto equality, auto d_hasher) {
     auto const iter = cudf::detail::make_counting_transform_iterator(0, pair_fn{d_hasher});
@@ -176,6 +196,11 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
     left, stream, cudf::get_current_device_resource_ref());
 
+  auto right_matches = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+    Join == join_kind::FULL_JOIN ? _right.num_rows() : 0,
+    stream,
+    cudf::get_current_device_resource_ref());
+
   auto join_indices = cudf::detail::probe_join_hash_table<Join>(_right,
                                                                 left,
                                                                 _preprocessed_right,
@@ -184,12 +209,13 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                                                 _has_nulls,
                                                                 _nulls_equal,
                                                                 output_size,
+                                                                right_matches,
                                                                 stream,
                                                                 mr);
 
   if constexpr (Join == join_kind::FULL_JOIN) {
     return detail::finalize_full_join(
-      std::move(join_indices), left.num_rows(), _right.num_rows(), stream, mr);
+      std::move(join_indices), left.num_rows(), _right.num_rows(), right_matches, stream, mr);
   } else {
     return join_indices;
   }

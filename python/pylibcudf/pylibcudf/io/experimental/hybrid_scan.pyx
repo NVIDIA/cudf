@@ -66,9 +66,10 @@ cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
 cdef class HybridScanMetadata:
     """Shareable, pre-parsed Parquet file metadata for the hybrid scan reader.
 
-    Parse the metadata of a single Parquet file once, then construct multiple
-    :class:`HybridScanReader` instances that share it (one per row-group range of the
-    file) instead of each re-parsing and copying the metadata.
+    This class enables parsing the metadata of a Parquet file once, then
+    constructing multiple :class:`HybridScanReader` instances that share it
+    (one per row-group range of the file) instead of each re-parsing and copying
+    the metadata.
 
     For details, see :cpp:class:`cudf::io::parquet::experimental::hybrid_scan_metadata`
 
@@ -133,7 +134,7 @@ cdef class HybridScanMetadata:
         cdef HybridScanMetadata result = HybridScanMetadata.__new__(HybridScanMetadata)
         with nogil:
             result.c_obj = make_unique[cpp_hybrid_scan_metadata](
-                metadata.c_obj,
+                dereference(metadata.c_obj),
                 options.c_obj
             )
         return result

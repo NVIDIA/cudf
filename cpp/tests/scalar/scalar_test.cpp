@@ -9,7 +9,10 @@
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column_factories.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
@@ -244,6 +247,37 @@ TEST_F(ListScalarTest, DefaultValidityNested)
 
   EXPECT_TRUE(s.is_valid());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(data, s.view());
+}
+
+TEST_F(ScalarTest, OneRowColumnLayoutBaseline)
+{
+  auto const numeric = cudf::numeric_scalar<int32_t>{42};
+  auto const decimal =
+    cudf::fixed_point_scalar<numeric::decimal64>{1234, numeric::scale_type{-2}};
+  auto const string = cudf::string_scalar{"scalar"};
+  auto const list_elements = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
+  auto const list          = cudf::list_scalar{list_elements};
+
+  auto const numeric_column = cudf::make_column_from_scalar(numeric, 1);
+  auto const decimal_column = cudf::make_column_from_scalar(decimal, 1);
+  auto const string_column  = cudf::make_column_from_scalar(string, 1);
+  auto const list_column    = cudf::make_column_from_scalar(list, 1);
+
+  EXPECT_NO_THROW(cudf::scalar_column_view{numeric_column->view()});
+  EXPECT_NO_THROW(cudf::scalar_column_view{decimal_column->view()});
+  EXPECT_NO_THROW(cudf::scalar_column_view{string_column->view()});
+  EXPECT_NO_THROW(cudf::scalar_column_view{list_column->view()});
+
+  auto const expected_numeric = cudf::test::fixed_width_column_wrapper<int32_t>{42};
+  auto const expected_decimal = cudf::test::fixed_point_column_wrapper<int64_t>(
+    {1234}, numeric::scale_type{-2});
+  auto const expected_string = cudf::test::strings_column_wrapper{"scalar"};
+  auto const expected_list   = cudf::test::lists_column_wrapper<int32_t>{{1, 2, 3}};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_numeric, numeric_column->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_decimal, decimal_column->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_string, string_column->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_list, list_column->view());
 }
 
 TEST_F(ListScalarTest, MoveColumnConstructor)

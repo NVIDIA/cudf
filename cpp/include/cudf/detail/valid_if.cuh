@@ -15,9 +15,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -80,7 +79,7 @@ template <typename InputIterator, typename Predicate>
 std::pair<rmm::device_buffer, size_type> valid_if(InputIterator begin,
                                                   InputIterator end,
                                                   Predicate p,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   cudf::memory_resources resources)
 {
   CUDF_EXPECTS(begin <= end, "Invalid range.");
@@ -97,7 +96,7 @@ std::pair<rmm::device_buffer, size_type> valid_if(InputIterator begin,
     constexpr size_type block_size{256};
     grid_1d grid{size, block_size};
 
-    valid_if_kernel<block_size><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+    valid_if_kernel<block_size><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       static_cast<bitmask_type*>(null_mask.data()), begin, size, p, valid_count.data());
 
     null_count = size - valid_count.value(stream);

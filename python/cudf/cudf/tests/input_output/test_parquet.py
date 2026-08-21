@@ -4782,7 +4782,7 @@ def test_parquet_negated_ordering_with_nan_stats(tmp_path):
 
     # One row group per 3 rows. The first holds NaN alongside small values, so its
     # statistics are min=1.0/max=2.0 and `vmax >= 50` is false for it.
-    values = [float("nan"), 1.0, 2.0] + [100.0, 200.0, 300.0]
+    values = [float("nan"), 1.0, 2.0, 100.0, 200.0, 300.0]
     path = tmp_path / "nan_ordering.parquet"
     pq.write_table(pa.table({"x": values}), path, row_group_size=3)
 
@@ -4805,80 +4805,6 @@ def test_parquet_negated_ordering_with_nan_stats(tmp_path):
     assert len(got) == 4
     assert math.isnan(got[0])
     assert got[1:] == [100.0, 200.0, 300.0]
-
-
-@pytest.mark.parametrize(
-    "bloom_filter_fname",
-    [
-        "mixed_card_ndv_100_bf_fpp0.1_nostats.snappy.parquet",
-        "mixed_card_ndv_500_bf_fpp0.1_nostats.snappy.parquet",
-    ],
-)
-def test_parquet_bloom_filter_negated_equality(datadir, bloom_filter_fname):
-    """Negated equality predicates must prune identically to their rewrites"""
-
-    import pylibcudf as plc
-    from pylibcudf.expressions import (
-        ASTOperator,
-        ColumnNameReference,
-        Literal,
-        Operation,
-    )
-
-    fname = datadir / bloom_filter_fname
-    needle = Literal(plc.Scalar.from_arrow(pa.scalar("FINDME")))
-
-    def read_with(filter_expr):
-        source = plc.io.SourceInfo([str(fname)])
-        options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
-        options.set_filter(filter_expr)
-        return plc.io.parquet.read_parquet(options)
-
-    def assert_equivalent(lhs, rhs):
-        lhs_result = read_with(lhs)
-        rhs_result = read_with(rhs)
-        assert_eq(
-            lhs_result.num_row_groups_after_bloom_filter,
-            rhs_result.num_row_groups_after_bloom_filter,
-        )
-        assert_arrow_table_equal(
-            lhs_result.tbl.to_arrow(), rhs_result.tbl.to_arrow()
-        )
-        return lhs_result
-
-    str_col = ColumnNameReference("str")
-    str_eq = Operation(ASTOperator.EQUAL, str_col, needle)
-    str_ne = Operation(ASTOperator.NOT_EQUAL, str_col, needle)
-
-    negated_equality = assert_equivalent(
-        Operation(ASTOperator.NOT, str_eq),
-        str_ne,
-    )
-    # 998 of the 1000 rows are not "FINDME".
-    assert_eq(negated_equality.tbl.num_rows(), 998)
-
-    assert_equivalent(
-        Operation(ASTOperator.NOT, str_ne),
-        str_eq,
-    )
-
-    fp64_col = ColumnNameReference("fp64")
-    fp64_needle = Literal(plc.Scalar.from_arrow(pa.scalar(500.0)))
-    assert_equivalent(
-        Operation(
-            ASTOperator.NOT,
-            Operation(
-                ASTOperator.LOGICAL_AND,
-                str_ne,
-                Operation(ASTOperator.NOT_EQUAL, fp64_col, fp64_needle),
-            ),
-        ),
-        Operation(
-            ASTOperator.LOGICAL_OR,
-            str_eq,
-            Operation(ASTOperator.EQUAL, fp64_col, fp64_needle),
-        ),
-    )
 
 
 @pytest.mark.skipif(

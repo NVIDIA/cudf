@@ -307,6 +307,8 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
  *
  * @param val The object value bytes
  * @param id The dictionary index of the field to locate
+ * @param is_sorted Whether `field_ids` is known to be sorted in ascending order, allowing a
+ *        binary search instead of a linear scan
  * @return The encoded bytes of the field value, or an empty span if `val` is not an object, the
  *         field is absent, or the blob is malformed
  */

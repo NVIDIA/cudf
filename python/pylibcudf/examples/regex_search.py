@@ -142,9 +142,9 @@ def scan_lines(lines: Any, program: Any, plc: Any, stream: Any) -> Any:
 
 
 def count_matches(lines: Any, mask: Any, plc: Any, stream: Any) -> int:
-    """Count selected rows without converting the strings column to pandas."""
+    """Count selected rows without materializing the matching strings."""
     selected = plc.stream_compaction.apply_boolean_mask(
-        plc.Table([lines]), mask, stream=stream
+        plc.Table([], num_rows=lines.size()), mask, stream=stream
     )
     stream.synchronize()
     return selected.num_rows()

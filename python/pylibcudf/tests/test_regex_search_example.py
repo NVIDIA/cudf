@@ -29,19 +29,51 @@ SPEC.loader.exec_module(regex_search)
 
 
 @pytest.mark.parametrize(
-    "ignore_case,expected_matches",
-    [(False, 2), (True, 3)],
+    "content,pattern,ignore_case,expected_lines,expected_matches",
+    [
+        pytest.param(
+            "ERROR first message\nerror second message\nERROR third message\n",
+            "ERROR",
+            False,
+            3,
+            2,
+            id="case-sensitive",
+        ),
+        pytest.param(
+            "ERROR first message\nerror second message\nERROR third message\n",
+            "error",
+            True,
+            3,
+            3,
+            id="ignore-case",
+        ),
+        pytest.param("", "ERROR", False, 0, 0, id="empty-file"),
+        pytest.param("ERROR only\n", "ERROR", False, 1, 1, id="single-line"),
+        pytest.param(
+            "INFO first\nERROR final",
+            "ERROR",
+            False,
+            2,
+            1,
+            id="no-final-newline",
+        ),
+    ],
 )
-def test_benchmark_file(tmp_path, ignore_case, expected_matches):
+def test_benchmark_file(
+    tmp_path,
+    content,
+    pattern,
+    ignore_case,
+    expected_lines,
+    expected_matches,
+):
+    """Benchmark regular and boundary-case file layouts accurately."""
     path = tmp_path / "log.txt"
-    path.write_text(
-        "ERROR first message\nerror second message\nERROR third message\n",
-        encoding="utf-8",
-    )
+    path.write_text(content, encoding="utf-8")
 
     result = regex_search.benchmark_file(
         str(path),
-        "error" if ignore_case else "ERROR",
+        pattern,
         gds=False,
         ignore_case=ignore_case,
         repeats=2,
@@ -50,13 +82,14 @@ def test_benchmark_file(tmp_path, ignore_case, expected_matches):
     )
 
     assert result.bytes == path.stat().st_size
-    assert result.lines == 3
+    assert result.lines == expected_lines
     assert result.matches == expected_matches
     assert result.end_to_end_seconds > 0
     assert result.scan_seconds > 0
 
 
 def test_configure_gds(monkeypatch):
+    """Configure KvikIO compatibility mode for the requested I/O path."""
     monkeypatch.delenv("KVIKIO_COMPAT_MODE", raising=False)
 
     regex_search.configure_gds(False)
@@ -67,6 +100,7 @@ def test_configure_gds(monkeypatch):
 
 
 def test_native_gds_fallback_is_rejected(monkeypatch):
+    """Reject GDS mode when native GDS is unavailable."""
     cufile_driver = type(
         "CuFileDriver", (), {"get": staticmethod(lambda name: False)}
     )
@@ -78,6 +112,7 @@ def test_native_gds_fallback_is_rejected(monkeypatch):
 
 
 def test_native_gds_requires_fallback_to_be_disabled(monkeypatch):
+    """Reject GDS mode while cuFile compatibility fallback is allowed."""
     settings = {"is_gds_available": True, "allow_compat_mode": True}
     cufile_driver = type(
         "CuFileDriver", (), {"get": staticmethod(settings.__getitem__)}

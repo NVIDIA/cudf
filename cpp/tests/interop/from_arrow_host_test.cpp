@@ -26,16 +26,18 @@
 
 // create a cudf::table and equivalent arrow table with host memory
 std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_host_tables(cudf::size_type length)
+get_nanoarrow_host_tables(cudf::size_type length,
+                          cuda::stream_ref stream,
+                          cudf::memory_resources mr)
 {
-  auto [table, schema, test_data] = get_nanoarrow_cudf_table(length);
+  auto [table, schema, test_data] = get_nanoarrow_cudf_table(length, stream, mr);
 
   auto int64_array = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
   auto string_array =
     get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
   cudf::dictionary_column_view view(table->get_column(2).view());
-  auto keys       = cudf::test::to_host<int64_t>(view.keys()).first;
-  auto indices    = cudf::test::to_host<uint32_t>(view.indices()).first;
+  auto keys       = cudf::test::to_host<int64_t>(view.keys(), stream, mr).first;
+  auto indices    = cudf::test::to_host<uint32_t>(view.indices(), stream, mr).first;
   auto dict_array = get_nanoarrow_dict_array(std::vector<int64_t>(keys.begin(), keys.end()),
                                              std::vector<int32_t>(indices.begin(), indices.end()),
                                              test_data.validity);

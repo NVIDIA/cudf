@@ -16,9 +16,8 @@
 
 #include <cooperative_groups.h>
 #include <cuda/std/algorithm>
+#include <cuda/std/cstdint>
 #include <cuda/stream>
-
-#include <cstdint>
 
 namespace cudf::detail {
 
@@ -30,9 +29,9 @@ constexpr thread_index_type hash_csr_outputs_per_lane = 32;
 template <typename Equal, typename Hasher>
 CUDF_KERNEL void hash_csr_build_count_kernel(size_type num_rows,
                                              bitmask_type const* valid_rows,
-                                             hash_csr_build_position_type* build_positions,
+                                             build_position_type* build_positions,
                                              size_type* slot_counts,
-                                             hash_csr_map_view map,
+                                             hash_table_ref map,
                                              Equal equal,
                                              Hasher hasher)
 {
@@ -40,13 +39,13 @@ CUDF_KERNEL void hash_csr_build_count_kernel(size_type num_rows,
   for (auto row = grid_1d::global_thread_id(); row < num_rows; row += stride) {
     auto const index = static_cast<size_type>(row);
     if (valid_rows != nullptr && !cudf::bit_is_set(valid_rows, index)) {
-      build_positions[index] = {std::uint32_t{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
+      build_positions[index] = {cuda::std::uint32_t{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
       continue;
     }
 
-    auto const slot = map.insert(hash_csr_key_type{hasher(index), index}, equal);
+    auto const slot = map.insert(hash_table_entry_type{hasher(index), index}, equal);
     if (slot == map.capacity) {
-      build_positions[index] = {std::uint32_t{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
+      build_positions[index] = {cuda::std::uint32_t{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
       continue;
     }
     auto slot_count_ref = cuda::atomic_ref<size_type, cuda::thread_scope_device>{slot_counts[slot]};
@@ -56,7 +55,7 @@ CUDF_KERNEL void hash_csr_build_count_kernel(size_type num_rows,
 }
 
 CUDF_KERNEL void hash_csr_build_fill_kernel(size_type num_rows,
-                                            hash_csr_build_position_type const* build_positions,
+                                            build_position_type const* build_positions,
                                             size_type const* cumulative_ends,
                                             size_type* values)
 {
@@ -64,7 +63,7 @@ CUDF_KERNEL void hash_csr_build_fill_kernel(size_type num_rows,
   for (auto row = grid_1d::global_thread_id(); row < num_rows; row += stride) {
     auto const index    = static_cast<size_type>(row);
     auto const position = build_positions[index];
-    if (position.first == std::uint32_t{-1}) { continue; }
+    if (position.first == cuda::std::uint32_t{-1}) { continue; }
     auto const slot      = position.first;
     auto const rank      = position.second;
     auto const begin     = slot == 0 ? size_type{0} : cumulative_ends[slot - 1];
@@ -77,10 +76,10 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
                                              bitmask_type const* valid_rows,
                                              size_type* probe_slots,
                                              size_type* match_counts,
-                                             std::uint32_t* matched_slots,
-                                             unsigned long long* matched_build_rows,
-                                             hash_csr_map_view map,
-                                             hash_csr_view csr,
+                                             cuda::std::uint32_t* matched_slots,
+                                             cuda::std::uint64_t* matched_build_rows,
+                                             hash_table_ref map,
+                                             csr_ref csr,
                                              Equal equal,
                                              Hasher hasher)
 {
@@ -89,7 +88,7 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
     auto const index = static_cast<size_type>(row);
     auto slot        = map.capacity;
     if (valid_rows == nullptr || cudf::bit_is_set(valid_rows, index)) {
-      slot = map.find(hash_csr_key_type{hasher(index), index}, equal);
+      slot = map.find(hash_table_entry_type{hasher(index), index}, equal);
     }
 
     auto const found = slot != map.capacity;
@@ -103,12 +102,12 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
 
     if (found && matched_slots != nullptr) {
       auto matched_slot_ref =
-        cuda::atomic_ref<std::uint32_t, cuda::thread_scope_device>{matched_slots[slot]};
-      auto expected = std::uint32_t{0};
+        cuda::atomic_ref<cuda::std::uint32_t, cuda::thread_scope_device>{matched_slots[slot]};
+      auto expected = cuda::std::uint32_t{0};
       if (matched_slot_ref.compare_exchange_strong(
-            expected, std::uint32_t{1}, cuda::memory_order_relaxed)) {
-        cuda::atomic_ref<unsigned long long, cuda::thread_scope_device>{*matched_build_rows}
-          .fetch_add(static_cast<unsigned long long>(count), cuda::memory_order_relaxed);
+            expected, cuda::std::uint32_t{1}, cuda::memory_order_relaxed)) {
+        cuda::atomic_ref<cuda::std::uint64_t, cuda::thread_scope_device>{*matched_build_rows}
+          .fetch_add(static_cast<cuda::std::uint64_t>(count), cuda::memory_order_relaxed);
       }
     }
   }
@@ -117,9 +116,9 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
 template <typename Equal, typename Hasher>
 void launch_hash_csr_build_count(size_type num_rows,
                                  bitmask_type const* valid_rows,
-                                 hash_csr_build_position_type* build_positions,
+                                 build_position_type* build_positions,
                                  size_type* slot_counts,
-                                 hash_csr_map_view map,
+                                 hash_table_ref map,
                                  Equal equal,
                                  Hasher hasher,
                                  cuda::stream_ref stream)
@@ -131,12 +130,11 @@ void launch_hash_csr_build_count(size_type num_rows,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-[[maybe_unused]] static void launch_hash_csr_build_fill(
-  size_type num_rows,
-  hash_csr_build_position_type const* build_positions,
-  size_type const* cumulative_ends,
-  size_type* values,
-  cuda::stream_ref stream)
+[[maybe_unused]] static void launch_hash_csr_build_fill(size_type num_rows,
+                                                        build_position_type const* build_positions,
+                                                        size_type const* cumulative_ends,
+                                                        size_type* values,
+                                                        cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
@@ -150,10 +148,10 @@ void launch_hash_csr_probe_count(size_type num_rows,
                                  bitmask_type const* valid_rows,
                                  size_type* probe_slots,
                                  size_type* match_counts,
-                                 std::uint32_t* matched_slots,
-                                 unsigned long long* matched_build_rows,
-                                 hash_csr_map_view map,
-                                 hash_csr_view csr,
+                                 cuda::std::uint32_t* matched_slots,
+                                 cuda::std::uint64_t* matched_build_rows,
+                                 hash_table_ref map,
+                                 csr_ref csr,
                                  Equal equal,
                                  Hasher hasher,
                                  cuda::stream_ref stream)
@@ -175,12 +173,12 @@ void launch_hash_csr_probe_count(size_type num_rows,
 }
 
 template <bool IsOuter>
-CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
+CUDF_KERNEL void hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
                                           size_type num_probe_rows,
-                                          std::int64_t outputs_per_warp,
-                                          std::int64_t const* offsets,
+                                          cuda::std::int64_t outputs_per_warp,
+                                          cuda::std::int64_t const* offsets,
                                           size_type const* probe_slots,
-                                          hash_csr_view csr,
+                                          csr_ref csr,
                                           size_type left_index_offset,
                                           size_type* left_indices,
                                           size_type* right_indices)
@@ -190,7 +188,7 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
   auto const lane_id       = static_cast<thread_index_type>(warp.thread_rank());
   auto const warp_in_block = static_cast<thread_index_type>(threadIdx.x) / cudf::detail::warp_size;
   auto const global_warp =
-    static_cast<std::int64_t>(blockIdx.x) * hash_csr_warps_per_block + warp_in_block;
+    static_cast<cuda::std::int64_t>(blockIdx.x) * hash_csr_warps_per_block + warp_in_block;
   auto const range_begin = outputs_per_warp * global_warp;
   if (range_begin >= output_size) { return; }
   auto const range_end = cuda::std::min(range_begin + outputs_per_warp, output_size);
@@ -230,11 +228,11 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(std::int64_t output_size,
 }
 
 template <bool IsOuter>
-void launch_hash_csr_retrieve(std::int64_t output_size,
+void launch_hash_csr_retrieve(cuda::std::int64_t output_size,
                               size_type num_probe_rows,
-                              std::int64_t const* offsets,
+                              cuda::std::int64_t const* offsets,
                               size_type const* probe_slots,
-                              hash_csr_view csr,
+                              csr_ref csr,
                               size_type left_index_offset,
                               size_type* left_indices,
                               size_type* right_indices,
@@ -244,11 +242,11 @@ void launch_hash_csr_retrieve(std::int64_t output_size,
   auto const min_blocks = size_type{2} * cudf::detail::num_multiprocessors();
   constexpr auto outputs_per_block =
     hash_csr_warps_per_block * cudf::detail::warp_size * hash_csr_outputs_per_lane;
-  auto const requested_blocks =
-    cudf::util::div_rounding_up_safe(output_size, static_cast<std::int64_t>(outputs_per_block));
-  auto const num_blocks =
-    static_cast<std::uint32_t>(cuda::std::max<std::int64_t>(requested_blocks, min_blocks));
-  auto const num_warps        = static_cast<std::int64_t>(num_blocks) * hash_csr_warps_per_block;
+  auto const requested_blocks = cudf::util::div_rounding_up_safe(
+    output_size, static_cast<cuda::std::int64_t>(outputs_per_block));
+  auto const num_blocks = static_cast<cuda::std::uint32_t>(
+    cuda::std::max<cuda::std::int64_t>(requested_blocks, min_blocks));
+  auto const num_warps = static_cast<cuda::std::int64_t>(num_blocks) * hash_csr_warps_per_block;
   auto const outputs_per_warp = cudf::util::div_rounding_up_safe(output_size, num_warps);
 
   hash_csr_retrieve_kernel<IsOuter>

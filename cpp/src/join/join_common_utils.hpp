@@ -44,12 +44,14 @@ using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
  * `JoinNoMatch`, i.e. `cuda::std::numeric_limits<size_type>::min()`.
  *
  * @param left Table of left columns to join
+ * @param left_offset Index of the first left row, used when `left` is a partition of a larger table
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the result
  *
  * @return Join output indices vector pair
  */
 VectorPair get_trivial_left_join_indices(table_view const& left,
+                                         size_type left_offset,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr);
 

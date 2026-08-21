@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
+#include <cuda/std/cstdint>
 #include <cuda/std/functional>
 
 namespace cudf::detail {
@@ -54,8 +55,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                                               match_counts.data(),
                                                               nullptr,
                                                               nullptr,
-                                                              _impl->map_view(),
-                                                              _impl->csr_view(),
+                                                              _impl->hash_table(),
+                                                              _impl->csr(),
                                                               equality,
                                                               hasher,
                                                               stream);
@@ -63,7 +64,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
   auto const output_size = cudf::detail::reduce(
-    match_counts.begin(), match_counts.end(), std::int64_t{0}, cuda::std::plus<>{}, stream);
+    match_counts.begin(), match_counts.end(), cuda::std::int64_t{0}, cuda::std::plus<>{}, stream);
   CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
   return static_cast<std::size_t>(output_size);
 }
@@ -87,9 +88,9 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
     left, stream, cudf::get_current_device_resource_ref());
   auto match_counts =
     cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, mr);
-  auto matched_slots =
-    cudf::detail::make_zeroed_device_uvector_async<std::uint32_t>(_impl->capacity, stream, mr);
-  auto matched_build_rows = cudf::detail::device_scalar<unsigned long long>(0, stream, mr);
+  auto matched_slots = cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
+    _impl->capacity, stream, mr);
+  auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr);
   auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, mr).first;
   auto const valid_rows   = _nulls_equal == null_equality::UNEQUAL
                               ? static_cast<bitmask_type const*>(row_bitmask.data())
@@ -102,8 +103,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                       match_counts.data(),
                                       matched_slots.data(),
                                       matched_build_rows.data(),
-                                      _impl->map_view(),
-                                      _impl->csr_view(),
+                                      _impl->hash_table(),
+                                      _impl->csr(),
                                       equality,
                                       hasher,
                                       stream);
@@ -112,11 +113,11 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
   auto const left_output_size = cudf::detail::reduce(
-    match_counts.begin(), match_counts.end(), std::int64_t{0}, cuda::std::plus<>{}, stream);
+    match_counts.begin(), match_counts.end(), cuda::std::int64_t{0}, cuda::std::plus<>{}, stream);
   auto const matched_right_rows = matched_build_rows.value(stream);
   CUDF_EXPECTS(left_output_size >= 0, "Join output size overflowed", std::overflow_error);
-  auto const output_size = static_cast<std::uint64_t>(left_output_size) +
-                           static_cast<std::uint64_t>(_right.num_rows()) - matched_right_rows;
+  auto const output_size = static_cast<cuda::std::uint64_t>(left_output_size) +
+                           static_cast<cuda::std::uint64_t>(_right.num_rows()) - matched_right_rows;
   CUDF_EXPECTS(output_size <= std::numeric_limits<std::size_t>::max(),
                "Join output size overflowed",
                std::overflow_error);

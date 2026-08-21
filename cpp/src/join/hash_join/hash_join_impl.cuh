@@ -11,6 +11,8 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/std/cstdint>
+
 #include <cstdint>
 #include <utility>
 
@@ -18,7 +20,7 @@ namespace cudf::detail {
 
 template <typename Hasher>
 struct hash_join<Hasher>::impl {
-  impl(std::uint32_t capacity,
+  impl(cuda::std::uint32_t capacity,
        size_type rows,
        cuda::stream_ref stream,
        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
@@ -30,18 +32,18 @@ struct hash_join<Hasher>::impl {
   {
   }
 
-  hash_csr_map_view map_view() const
+  hash_table_ref hash_table() const
   {
-    return {const_cast<hash_csr_key_type*>(entries.data()), capacity, capacity - 1};
+    return {const_cast<hash_table_entry_type*>(entries.data()), capacity};
   }
 
-  hash_csr_view csr_view() const { return {cumulative_ends.data(), values.data()}; }
+  csr_ref csr() const { return {cumulative_ends.data(), values.data()}; }
 
   cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
-  rmm::device_uvector<hash_csr_key_type> entries;
+  rmm::device_uvector<hash_table_entry_type> entries;
   rmm::device_uvector<size_type> cumulative_ends;
   rmm::device_uvector<size_type> values;
-  std::uint32_t capacity;
+  cuda::std::uint32_t capacity;
 };
 
 }  // namespace cudf::detail

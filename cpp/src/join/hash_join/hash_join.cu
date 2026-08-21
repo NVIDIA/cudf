@@ -23,6 +23,7 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/std/bit>
+#include <cuda/std/cstdint>
 
 #include <cmath>
 #include <cstdint>
@@ -63,19 +64,19 @@ void validate_hash_join_probe(table_view const& right, table_view const& left, b
 }
 
 namespace {
-std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
+cuda::std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
 {
   auto const checked   = checked_load_factor(load_factor);
   auto const requested = std::max(static_cast<long double>(rows) + 1,
                                   std::ceil(static_cast<long double>(rows) / checked));
-  CUDF_EXPECTS(requested <= std::numeric_limits<std::uint32_t>::max(),
+  CUDF_EXPECTS(requested <= std::numeric_limits<cuda::std::uint32_t>::max(),
                "HashCSR table capacity is not representable",
                std::overflow_error);
-  auto const capacity = cuda::std::bit_ceil(static_cast<std::uint64_t>(requested));
-  CUDF_EXPECTS(capacity <= std::numeric_limits<std::uint32_t>::max(),
+  auto const capacity = cuda::std::bit_ceil(static_cast<cuda::std::uint64_t>(requested));
+  CUDF_EXPECTS(capacity <= std::numeric_limits<cuda::std::uint32_t>::max(),
                "HashCSR table capacity is not representable",
                std::overflow_error);
-  return static_cast<std::uint32_t>(capacity);
+  return static_cast<cuda::std::uint32_t>(capacity);
 }
 }  // namespace
 
@@ -109,8 +110,10 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
   if (_is_empty) { return; }
 
-  CUDF_CUDA_TRY(cudaMemsetAsync(
-    _impl->entries.data(), 0xff, _impl->entries.size() * sizeof(hash_csr_key_type), stream.get()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->entries.data(),
+                                0xff,
+                                _impl->entries.size() * sizeof(hash_table_entry_type),
+                                stream.get()));
   CUDF_CUDA_TRY(cudaMemsetAsync(_impl->cumulative_ends.data(),
                                 0,
                                 _impl->cumulative_ends.size() * sizeof(size_type),
@@ -121,14 +124,13 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
                              ? static_cast<bitmask_type const*>(row_bitmask.data())
                              : nullptr;
-  rmm::device_uvector<hash_csr_build_position_type> build_positions(
-    right.num_rows(), stream, temp_mr);
+  rmm::device_uvector<build_position_type> build_positions(right.num_rows(), stream, temp_mr);
   auto build = [&](auto equality, auto hasher) {
     launch_hash_csr_build_count(right.num_rows(),
                                 valid_rows,
                                 build_positions.data(),
                                 _impl->cumulative_ends.data(),
-                                _impl->map_view(),
+                                _impl->hash_table(),
                                 equality,
                                 hasher,
                                 stream);

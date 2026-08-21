@@ -54,8 +54,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_co
                                          match_counts->data(),
                                          nullptr,
                                          nullptr,
-                                         _impl->map_view(),
-                                         _impl->csr_view(),
+                                         _impl->hash_table(),
+                                         _impl->csr(),
                                          equality,
                                          hasher,
                                          stream);
@@ -66,8 +66,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_co
                                         match_counts->data(),
                                         nullptr,
                                         nullptr,
-                                        _impl->map_view(),
-                                        _impl->csr_view(),
+                                        _impl->hash_table(),
+                                        _impl->csr(),
                                         equality,
                                         hasher,
                                         stream);

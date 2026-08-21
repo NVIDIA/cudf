@@ -20,6 +20,8 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/std/cstdint>
+
 namespace cudf::detail {
 
 template <typename Hasher>
@@ -41,7 +43,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
     }
   } else {
-    if (_is_empty) { return get_trivial_left_join_indices(left, stream, mr); }
+    if (_is_empty) { return get_trivial_left_join_indices(left, 0, stream, mr); }
 
     if (is_trivial_join(left, _right, Join)) {
       return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
@@ -68,8 +70,8 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                                                match_counts.data(),
                                                                nullptr,
                                                                nullptr,
-                                                               _impl->map_view(),
-                                                               _impl->csr_view(),
+                                                               _impl->hash_table(),
+                                                               _impl->csr(),
                                                                equality,
                                                                hasher,
                                                                stream);
@@ -77,7 +79,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
-  auto offsets = cudf::detail::make_zeroed_device_uvector_async<std::int64_t>(
+  auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
     static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
   auto const actual_size = cudf::detail::sizes_to_offsets(
     match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream);
@@ -98,7 +100,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                     left.num_rows(),
                                     offsets.data(),
                                     probe_slots.data(),
-                                    _impl->csr_view(),
+                                    _impl->csr(),
                                     0,
                                     left_indices->data(),
                                     right_indices->data(),
@@ -108,7 +110,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                    left.num_rows(),
                                    offsets.data(),
                                    probe_slots.data(),
-                                   _impl->csr_view(),
+                                   _impl->csr(),
                                    0,
                                    left_indices->data(),
                                    right_indices->data(),

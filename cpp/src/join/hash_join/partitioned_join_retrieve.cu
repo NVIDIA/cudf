@@ -22,8 +22,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/fill.h>
-#include <thrust/sequence.h>
+#include <cuda/std/cstdint>
 
 namespace cudf::detail {
 template <typename Hasher>
@@ -70,14 +69,11 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
       return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
                        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
     }
-    auto left_indices =
-      std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
-    auto right_indices =
-      std::make_unique<rmm::device_uvector<size_type>>(partition_size, stream, mr);
-    auto const exec = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
-    thrust::sequence(exec, left_indices->begin(), left_indices->end(), left_start_idx);
-    thrust::fill(exec, right_indices->begin(), right_indices->end(), JoinNoMatch);
-    return std::pair(std::move(left_indices), std::move(right_indices));
+    return get_trivial_left_join_indices(
+      cudf::slice(match_ctx._left_table, {left_start_idx, left_end_idx})[0],
+      left_start_idx,
+      stream,
+      mr);
   }
 
   // Slice the left table to the partition range
@@ -97,7 +93,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                match_ctx._match_counts->data() + left_start_idx,
                                static_cast<std::size_t>(partition_size) * sizeof(size_type),
                                stream));
-  auto offsets = cudf::detail::make_zeroed_device_uvector_async<std::int64_t>(
+  auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
     static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
   auto const output_size =
     cudf::detail::sizes_to_offsets(counts.begin(), counts.end(), offsets.begin(), 0, stream);
@@ -116,8 +112,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                          nullptr,
                                          nullptr,
                                          nullptr,
-                                         _impl->map_view(),
-                                         _impl->csr_view(),
+                                         _impl->hash_table(),
+                                         _impl->csr(),
                                          equality,
                                          hasher,
                                          stream);
@@ -128,8 +124,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                         nullptr,
                                         nullptr,
                                         nullptr,
-                                        _impl->map_view(),
-                                        _impl->csr_view(),
+                                        _impl->hash_table(),
+                                        _impl->csr(),
                                         equality,
                                         hasher,
                                         stream);
@@ -155,7 +151,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                     partition_size,
                                     offsets.data(),
                                     probe_slots.data(),
-                                    _impl->csr_view(),
+                                    _impl->csr(),
                                     left_start_idx,
                                     left_indices->data(),
                                     right_indices->data(),
@@ -165,7 +161,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                    partition_size,
                                    offsets.data(),
                                    probe_slots.data(),
-                                   _impl->csr_view(),
+                                   _impl->csr(),
                                    left_start_idx,
                                    left_indices->data(),
                                    right_indices->data(),

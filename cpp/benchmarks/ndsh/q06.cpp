@@ -6,6 +6,7 @@
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -54,8 +55,10 @@
   return revenue;
 }
 
-void run_ndsh_q6(nvbench::state& state, ndsh_data_sources& sources)
+void run_ndsh_q6(ndsh_data_sources& sources)
 {
+  auto const query_execution_range = cudf::benchmark::scoped_range{"query_execution"};
+
   // Read out the `lineitem` table from parquet file
   std::vector<std::string> const lineitem_cols = {
     "l_extendedprice", "l_discount", "l_shipdate", "l_quantity"};
@@ -130,8 +133,7 @@ void ndsh_q6(nvbench::state& state)
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { run_ndsh_q6(state, sources); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) { run_ndsh_q6(sources); });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

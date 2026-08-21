@@ -6,6 +6,7 @@
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -79,8 +80,10 @@
   return revenue;
 }
 
-void run_ndsh_q5(nvbench::state& state, ndsh_data_sources& sources)
+void run_ndsh_q5(ndsh_data_sources& sources)
 {
+  auto const query_execution_range = cudf::benchmark::scoped_range{"query_execution"};
+
   // Define the column projection and filter predicate for the `orders` table
   std::vector<std::string> const orders_cols = {"o_custkey", "o_orderkey", "o_orderdate"};
   auto const o_orderdate_ref                 = cudf::ast::column_reference(std::distance(
@@ -162,9 +165,7 @@ void ndsh_q5(nvbench::state& state)
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    run_ndsh_q5(state, sources);
-  });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) { run_ndsh_q5(sources); });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

@@ -11,6 +11,7 @@
 #include "reader_impl_preprocess_utils.cuh"
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/labeling/label_segments.cuh>
@@ -1233,7 +1234,7 @@ std::unique_ptr<column> reader_impl::synthesize_row_index_column(row_range const
   return std::make_unique<cudf::column>(std::move(col_data), rmm::device_buffer{0, stream, mr}, 0);
 }
 
-std::unique_ptr<column> reader_impl::synthesize_source_index_column(
+std::unique_ptr<column> synthesize_source_index_column(
   std::span<std::size_t const> num_rows_per_source,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
@@ -1262,7 +1263,7 @@ std::unique_ptr<column> reader_impl::synthesize_source_index_column(
   {
     // Host per-source row offsets, including the final total row count.
     auto host_row_offsets =
-      cudf::detail::make_empty_pinned_vector<cudf::size_type>(num_sources + 1, _stream);
+      cudf::detail::make_empty_pinned_vector<cudf::size_type>(num_sources + 1, stream);
     host_row_offsets.resize(num_sources + 1);
     host_row_offsets.front() = cudf::size_type{0};
     std::inclusive_scan(
@@ -1275,6 +1276,46 @@ std::unique_ptr<column> reader_impl::synthesize_source_index_column(
   }
 
   return std::make_unique<cudf::column>(std::move(col_data), rmm::device_buffer{0, stream, mr}, 0);
+}
+
+std::unique_ptr<column> synthesize_row_group_index_column(column_view const& source_indices,
+                                                          cuda::stream_ref stream,
+                                                          rmm::device_async_resource_ref mr)
+{
+  using column_type = cudf::size_type;
+
+  CUDF_EXPECTS(source_indices.type().id() == type_id::INT32,
+               "Source index column must have INT32 type",
+               std::invalid_argument);
+  CUDF_EXPECTS(source_indices.null_count() == 0,
+               "Source index column must not contain null values",
+               std::invalid_argument);
+
+  if (source_indices.is_empty()) {
+    return cudf::make_empty_column(cudf::data_type{cudf::type_to_id<column_type>()});
+  }
+
+  auto const output_type = data_type{cudf::type_to_id<column_type>()};
+  auto output            = cudf::make_fixed_width_column(
+    output_type, source_indices.size(), mask_state::UNALLOCATED, stream, mr);
+  auto output_view = output->mutable_view();
+  thrust::exclusive_scan_by_key(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    source_indices.begin<column_type>(),
+    source_indices.end<column_type>(),
+    cuda::make_constant_iterator(column_type{1}),
+    output_view.begin<column_type>(),
+    column_type{0});
+  return output;
+}
+
+std::unique_ptr<column> reader_impl::synthesize_source_index_column(
+  std::span<std::size_t const> num_rows_per_source,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  return ::cudf::io::parquet::detail::synthesize_source_index_column(
+    num_rows_per_source, stream, mr);
 }
 
 }  // namespace cudf::io::parquet::detail

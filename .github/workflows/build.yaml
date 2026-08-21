@@ -547,7 +547,7 @@ jobs:
     # available for the release-flag check below. The artifact assembly
     # itself does not depend on any image-specific tooling.
     container:
-      image: "rapidsai/ci-wheel:26.10-cuda12.9.2-rockylinux8-py3.11"
+      image: "rapidsai/ci-wheel:26.10-latest"
     permissions:
       contents: read
     outputs:

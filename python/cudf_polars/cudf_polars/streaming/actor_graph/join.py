@@ -25,8 +25,7 @@ from rapidsmpf.streaming.core.memory_reserve_or_wait import (
 )
 
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.expr import Col
-from cudf_polars.dsl.ir import IR, Join, Sort
+from cudf_polars.dsl.ir import IR, Join
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import (
     AllGatherManager,
@@ -38,9 +37,6 @@ from cudf_polars.streaming.actor_graph.collectives.ordering import (
 from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     _global_shuffle,
     _key_column_indices,
-)
-from cudf_polars.streaming.actor_graph.collectives.sort import (
-    _global_sort,
 )
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -55,6 +51,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     NormalizedPartitioning,
     TableSizeStats,
     _sample_chunks,
+    _update_ordering_indices,
     allgather_reduce,
     chunk_to_frame,
     empty_table_chunk,
@@ -89,10 +86,6 @@ if TYPE_CHECKING:
 class JoinStrategy:
     """Summary of sampling and strategy selection for a dynamic join."""
 
-    left_meta: ChannelMetadata | None = None
-    """Metadata from left channel"""
-    right_meta: ChannelMetadata | None = None
-    """Metadata from right channel"""
     broadcast_side: Literal["left", "right"] | None = None
     """The side to broadcast. If None, the strategy is a shuffle join."""
     shuffle_modulus: int = 0
@@ -119,8 +112,6 @@ class JoinStrategy:
     """Aligned output ordering for the right side. Only used for ordered joins."""
     output_ordering: Ordering | None = None
     """Join-output ordering metadata. Only used for ordered joins."""
-    sort_side: Literal["left", "right"] | None = None
-    """The side to sort before ordered join, if any."""
 
 
 @define_actor()
@@ -453,16 +444,7 @@ def _ordering_with_column_indices(
     column_indices: tuple[int, ...],
 ) -> Ordering:
     """Return an ordering with the same semantics on different column indices."""
-    return ordering.with_keys(
-        tuple(
-            OrderKey(index, key.order, key.null_order)
-            for index, key in zip(
-                column_indices,
-                ordering.keys[: len(column_indices)],
-                strict=True,
-            )
-        )
-    )
+    return _update_ordering_indices(ordering, column_indices)
 
 
 def _ordering_prefix_matches(
@@ -488,10 +470,11 @@ def _make_ordered_strategy(
     ir: Join,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
-    left_metadata: ChannelMetadata,
-    right_metadata: ChannelMetadata,
 ) -> JoinStrategy | None:
     """Make an ordered strategy when both sides can align to strict boundaries."""
+    if ir.options[0] not in ("Inner", "Left", "Semi", "Anti"):
+        return None
+
     left_scheme = left_partitioning.inter_rank_scheme
     right_scheme = right_partitioning.inter_rank_scheme
     if not isinstance(left_scheme, OrderScheme) or not isinstance(
@@ -501,32 +484,20 @@ def _make_ordered_strategy(
 
     left_ordering = left_scheme.orderings[0]
     right_ordering = right_scheme.orderings[0]
-    n_ordered_keys = min(len(left_ordering.keys), len(right_ordering.keys))
+    # adjust_ordering needs a strict target partitioning. Prefer the left side
+    # for output metadata, then fall back to the right side if only it is strict.
+    reference = left_ordering if left_ordering.strict_boundaries else right_ordering
+    if not reference.strict_boundaries:
+        return None
+
+    reference_key_count = len(reference.keys)
     (
         left_key_indices,
         right_key_indices,
         output_key_indices,
         left_keys,
         right_keys,
-    ) = _get_key_indices(ir, n_ordered_keys)
-    if not output_key_indices:
-        return None
-
-    # adjust_ordering needs a strict target layout. Prefer the output-preserving
-    # side when it is strict, then fall back to the other strict side.
-    if ir.options[0] == "Right":
-        reference = (
-            right_ordering if right_ordering.strict_boundaries else left_ordering
-        )
-    else:
-        reference = left_ordering if left_ordering.strict_boundaries else right_ordering
-    if not reference.strict_boundaries:
-        return None
-
-    reference_key_count = min(len(reference.keys), len(output_key_indices))
-    left_key_indices = left_key_indices[:reference_key_count]
-    right_key_indices = right_key_indices[:reference_key_count]
-    output_key_indices = output_key_indices[:reference_key_count]
+    ) = _get_key_indices(ir, reference_key_count)
     if (
         len(left_key_indices) != reference_key_count
         or len(right_key_indices) != reference_key_count
@@ -539,8 +510,6 @@ def _make_ordered_strategy(
         return None
 
     return JoinStrategy(
-        left_meta=left_metadata,
-        right_meta=right_metadata,
         output_indices=output_key_indices,
         left_indices=left_key_indices,
         right_indices=right_key_indices,
@@ -549,84 +518,6 @@ def _make_ordered_strategy(
         ordered=True,
         left_input_ordering=left_ordering,
         right_input_ordering=right_ordering,
-        left_output_ordering=_ordering_with_column_indices(reference, left_key_indices),
-        right_output_ordering=_ordering_with_column_indices(
-            reference, right_key_indices
-        ),
-        output_ordering=_ordering_with_column_indices(reference, output_key_indices),
-    )
-
-
-def _make_sort_ordered_strategy(
-    ir: Join,
-    left_partitioning: NormalizedPartitioning,
-    right_partitioning: NormalizedPartitioning,
-    left_metadata: ChannelMetadata,
-    right_metadata: ChannelMetadata,
-    *,
-    left_total_size: int,
-    right_total_size: int,
-) -> JoinStrategy | None:
-    """Make an ordered strategy that sorts only the smaller unordered side."""
-    left_scheme = left_partitioning.inter_rank_scheme
-    right_scheme = right_partitioning.inter_rank_scheme
-
-    if isinstance(left_scheme, OrderScheme) and not isinstance(
-        right_scheme, OrderScheme
-    ):
-        sort_side: Literal["left", "right"] = "right"
-        ordered_side = "left"
-        reference = left_scheme.orderings[0]
-    elif isinstance(right_scheme, OrderScheme) and not isinstance(
-        left_scheme, OrderScheme
-    ):
-        sort_side = "left"
-        ordered_side = "right"
-        reference = right_scheme.orderings[0]
-    else:
-        return None
-
-    if not reference.strict_boundaries:
-        return None
-    if ordered_side == "left" and left_total_size < right_total_size:
-        return None
-    if ordered_side == "right" and right_total_size < left_total_size:
-        return None
-
-    (
-        left_key_indices,
-        right_key_indices,
-        output_key_indices,
-        left_keys,
-        right_keys,
-    ) = _get_key_indices(ir, len(reference.keys))
-    reference_key_count = min(len(reference.keys), len(output_key_indices))
-    left_key_indices = left_key_indices[:reference_key_count]
-    right_key_indices = right_key_indices[:reference_key_count]
-    output_key_indices = output_key_indices[:reference_key_count]
-    if (
-        reference_key_count == 0
-        or len(left_key_indices) != reference_key_count
-        or len(right_key_indices) != reference_key_count
-        or len(output_key_indices) != reference_key_count
-    ):
-        return None
-    ordered_indices = left_key_indices if ordered_side == "left" else right_key_indices
-    if not _ordering_prefix_matches(reference, reference, ordered_indices):
-        return None
-
-    return JoinStrategy(
-        left_meta=left_metadata,
-        right_meta=right_metadata,
-        output_indices=output_key_indices,
-        left_indices=left_key_indices,
-        right_indices=right_key_indices,
-        left_keys=left_keys[:reference_key_count],
-        right_keys=right_keys[:reference_key_count],
-        ordered=True,
-        sort_side=sort_side,
-        left_input_ordering=reference if ordered_side == "left" else None,
-        right_input_ordering=reference if ordered_side == "right" else None,
         left_output_ordering=_ordering_with_column_indices(reference, left_key_indices),
         right_output_ordering=_ordering_with_column_indices(
             reference, right_key_indices
@@ -822,85 +713,6 @@ def _local_count_for_ordering(comm: Communicator, ordering: Ordering) -> int:
     return stop - start
 
 
-def _boundaries_dataframe(
-    context: Context,
-    ordering: Ordering,
-    schema_ir: IR,
-    column_indices: tuple[int, ...],
-) -> DataFrame:
-    """Return ordering boundaries as a DataFrame for sort partitioning."""
-    boundary_chunk = ordering.get_boundaries(context.br())
-    return DataFrame.from_table(
-        boundary_chunk.table_view(),
-        [list(schema_ir.schema.keys())[i] for i in column_indices],
-        [list(schema_ir.schema.values())[i] for i in column_indices],
-        boundary_chunk.stream,
-    )
-
-
-def _sort_ir_for_ordered_join(
-    schema_ir: IR,
-    sort_keys: tuple[NamedExpr, ...],
-    output_ordering: Ordering,
-) -> Sort:
-    """Build a Sort IR matching output_ordering semantics."""
-    return Sort(
-        schema_ir.schema,
-        sort_keys,
-        tuple(key.order for key in output_ordering.keys),
-        tuple(key.null_order for key in output_ordering.keys),
-        stable=False,
-        zlice=None,
-        df=schema_ir,
-    )
-
-
-def _sort_key_column_names(sort_keys: tuple[NamedExpr, ...]) -> list[str]:
-    """Return column names for concrete sort keys."""
-    names = [key.value.name for key in sort_keys if isinstance(key.value, Col)]
-    if len(names) != len(sort_keys):
-        raise NotImplementedError("Ordered join side sorting requires column keys.")
-    return names
-
-
-async def _sort_join_side_to_ordering(
-    context: Context,
-    comm: Communicator,
-    schema_ir: IR,
-    sort_keys: tuple[NamedExpr, ...],
-    ir_context: IRExecutionContext,
-    ch_out: Channel[TableChunk],
-    ch_in: Channel[TableChunk],
-    output_ordering: Ordering,
-    collective_ids: list[int],
-    *,
-    tracer: ActorTracer | None,
-) -> None:
-    """Sort one join side directly to an existing strict Ordering layout."""
-    input_metadata = await recv_metadata(ch_in, context)
-    sort_ir = _sort_ir_for_ordered_join(schema_ir, sort_keys, output_ordering)
-    sort_boundaries_df = _boundaries_dataframe(
-        context,
-        output_ordering,
-        schema_ir,
-        output_ordering.column_indices,
-    )
-    await _global_sort(
-        context,
-        comm,
-        sort_ir,
-        ir_context,
-        ch_out,
-        ch_in,
-        input_metadata,
-        _sort_key_column_names(sort_keys),
-        output_ordering.num_boundaries + 1,
-        sort_boundaries_df,
-        collective_ids,
-        tracer=tracer,
-    )
-
-
 async def _adjust_ordered_join_side(
     context: Context,
     comm: Communicator,
@@ -967,64 +779,6 @@ async def _ordered_join(
     )
     await send_metadata(ch_out, context, metadata_out)
 
-    if strategy.sort_side is not None:
-        ch_sorted = context.create_channel()
-        async with shutdown_on_error(
-            context,
-            ch_sorted,
-            trace_ir=ir,
-            ir_context=ir_context,
-        ):
-            if strategy.sort_side == "left":
-                await gather_in_task_group(
-                    _sort_join_side_to_ordering(
-                        context,
-                        comm,
-                        ir.children[0],
-                        strategy.left_keys,
-                        ir_context,
-                        ch_sorted,
-                        ch_left,
-                        strategy.left_output_ordering,
-                        collective_ids,
-                        tracer=tracer,
-                    ),
-                    _join_chunks(
-                        context,
-                        ir,
-                        ir_context,
-                        ch_out,
-                        ch_sorted,
-                        ch_right,
-                        tracer=tracer,
-                    ),
-                )
-            else:
-                await gather_in_task_group(
-                    _sort_join_side_to_ordering(
-                        context,
-                        comm,
-                        ir.children[1],
-                        strategy.right_keys,
-                        ir_context,
-                        ch_sorted,
-                        ch_right,
-                        strategy.right_output_ordering,
-                        collective_ids,
-                        tracer=tracer,
-                    ),
-                    _join_chunks(
-                        context,
-                        ir,
-                        ir_context,
-                        ch_out,
-                        ch_left,
-                        ch_sorted,
-                        tracer=tracer,
-                    ),
-                )
-        return
-
     await gather_in_task_group(
         recv_metadata(ch_left, context),
         recv_metadata(ch_right, context),
@@ -1081,8 +835,6 @@ def _make_shuffle_strategy(
     shuffle_modulus: int,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
-    left_metadata: ChannelMetadata,
-    right_metadata: ChannelMetadata,
 ) -> JoinStrategy:
     """Make a shuffle strategy."""
 
@@ -1112,8 +864,6 @@ def _make_shuffle_strategy(
     ) = _get_key_indices(ir, n_partitioned_keys)
 
     return JoinStrategy(
-        left_meta=left_metadata,
-        right_meta=right_metadata,
         shuffle_modulus=shuffle_modulus,
         output_indices=output_key_indices,
         left_indices=left_key_indices,
@@ -1192,8 +942,6 @@ async def _choose_strategy_from_samples(
             left_partitioning.inter_rank_scheme.modulus,
             left_partitioning,
             right_partitioning,
-            left_metadata,
-            right_metadata,
         )
 
     left_total, right_total = left_sample.total_size, right_sample.total_size
@@ -1244,21 +992,6 @@ async def _choose_strategy_from_samples(
     if broadcast_side is not None:
         return JoinStrategy(broadcast_side=broadcast_side)
 
-    if not left_metadata.duplicated and not right_metadata.duplicated:
-        ordered_strategy = _make_sort_ordered_strategy(
-            ir,
-            left_partitioning,
-            right_partitioning,
-            left_metadata,
-            right_metadata,
-            left_total_size=left_total,
-            right_total_size=right_total,
-        )
-        if ordered_strategy is not None:
-            if tracer is not None:
-                tracer.decision = f"sort_{ordered_strategy.sort_side}_ordered"
-            return ordered_strategy
-
     # Couldn't broadcast - Use a shuffle join instead.
     estimated_output_size = max(left_total, right_total)
     ideal_output_count = max(1, estimated_output_size // executor.target_partition_size)
@@ -1287,8 +1020,6 @@ async def _choose_strategy_from_samples(
         shuffle_modulus,
         left_partitioning,
         right_partitioning,
-        left_metadata,
-        right_metadata,
     )
 
     if tracer is not None:
@@ -1378,8 +1109,6 @@ async def _choose_strategy(
                 ir,
                 left_partitioning,
                 right_partitioning,
-                left_metadata,
-                right_metadata,
             )
         )
         is not None

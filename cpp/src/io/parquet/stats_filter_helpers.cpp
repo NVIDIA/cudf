@@ -17,13 +17,13 @@ namespace cudf::io::parquet::detail {
 stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
   : _num_columns(static_cast<size_type>(output_dtypes.size())), _output_dtypes(output_dtypes)
 {
+  _columns_mask.resize(_num_columns, false);
 }
 
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
                                                  std::span<cudf::data_type const> output_dtypes)
   : stats_columns_collector(output_dtypes)
 {
-  _columns_mask.resize(_num_columns, false);
   expr.accept(*this);
 }
 

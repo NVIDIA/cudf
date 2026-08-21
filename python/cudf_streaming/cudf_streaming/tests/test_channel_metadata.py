@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pyarrow as pa
 import pylibcudf as plc
 import pytest
 
@@ -35,6 +34,19 @@ def _make_boundaries(context: Context, table: plc.Table) -> TableChunk:
     )
 
 
+def _column_from_values(
+    values: list[int | str | None],
+    dtype: plc.DataType,
+    non_null_value: int | str,
+) -> plc.Column:
+    if values and all(value is None for value in values):
+        return plc.Column.all_null_like(
+            plc.Column.from_iterable_of_py([non_null_value], dtype),
+            len(values),
+        )
+    return plc.Column.from_iterable_of_py(values, dtype)
+
+
 def _two_key_ordering_from_boundary_values(
     context: Context,
     int_values: list[int | None],
@@ -60,11 +72,11 @@ def _two_key_ordering_from_boundary_values(
             context,
             plc.Table(
                 [
-                    plc.Column.from_arrow(
-                        pa.array(int_values, type=pa.int64())
+                    _column_from_values(
+                        int_values, plc.DataType(plc.TypeId.INT64), 0
                     ),
-                    plc.Column.from_arrow(
-                        pa.array(string_values, type=pa.string())
+                    _column_from_values(
+                        string_values, plc.DataType(plc.TypeId.STRING), ""
                     ),
                 ]
             ),

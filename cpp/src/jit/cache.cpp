@@ -10,7 +10,7 @@
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
-#include <rtcx.hpp>
+#include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
 #define XXH_INLINE_ALL
@@ -242,6 +242,9 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
 
   if (use_minimal) { options.emplace_back("--minimal"); }
 
+  // suppress warnings if not in verbose mode
+  if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
+
   if (use_pch) {
     options.emplace_back("--pch");
 
@@ -252,9 +255,6 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
       options.emplace_back("--pch-verbose=false");
       options.emplace_back("--pch-messages=false");
     }
-  } else {
-    // suppress warning about nv_hdrstop directive on later CUDA versions
-    options.emplace_back("--diag-suppress=161");
   }
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
@@ -328,6 +328,9 @@ rtcx::blob compile_fragment(char const* name,
 
   if (use_minimal) { options.emplace_back("--minimal"); }
 
+  // suppress warnings if not in verbose mode
+  if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
+
   if (use_pch) {
     options.emplace_back("--pch");
     options.emplace_back(std::format("--pch-dir={}", pch_dir));
@@ -339,9 +342,6 @@ rtcx::blob compile_fragment(char const* name,
       options.emplace_back("--pch-verbose=false");
       options.emplace_back("--pch-messages=false");
     }
-  } else {
-    // suppress warning about nv_hdrstop directive on later CUDA versions
-    options.emplace_back("--diag-suppress=161");
   }
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }

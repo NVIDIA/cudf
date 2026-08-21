@@ -648,6 +648,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
     null_precedence, stream, cudf::get_current_device_resource_ref());
   auto d_depths = detail::make_device_uvector_async(
     verticalized_col_depths, stream, cudf::get_current_device_resource_ref());
+  stream.synchronize();
 
   if (detail::has_nested_columns(preprocessed_input)) {
     auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream);

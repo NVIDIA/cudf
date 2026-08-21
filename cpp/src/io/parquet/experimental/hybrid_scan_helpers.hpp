@@ -48,19 +48,6 @@ struct metadata : public metadata_base {
 class aggregate_reader_metadata : public aggregate_reader_metadata_base {
  private:
   /**
-   * @brief Check whether selected columns have column and offset indexes
-   *
-   * Schema indices are mapped to each source before locating the column chunks.
-   *
-   * @param row_group_indices Row group indices, one vector per source
-   * @param schema_indices Schema indices from the first source
-   * @return A pair indicating column-index and offset-index presence, respectively
-   */
-  [[nodiscard]] std::pair<bool, bool> page_index_presence(
-    std::span<std::vector<size_type> const> row_group_indices,
-    std::span<size_type const> schema_indices) const;
-
-  /**
    * @brief Filters the row groups using dictionary pages
    *
    * @param chunks Host device span of column chunk descriptors, one per column chunk with
@@ -91,6 +78,19 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     cuda::stream_ref stream) const;
 
  public:
+  /**
+   * @brief Check whether selected columns have column and offset indexes
+   *
+   * Schema indices are mapped to each source before locating the column chunks.
+   *
+   * @param row_group_indices Row group indices, one vector per source
+   * @param schema_indices Schema indices from the first source
+   * @return A pair indicating column-index and offset-index presence, respectively
+   */
+  [[nodiscard]] std::pair<bool, bool> page_index_presence(
+    std::span<std::vector<size_type> const> row_group_indices,
+    std::span<size_type const> schema_indices) const;
+
   /**
    * @brief Constructor for aggregate_reader_metadata
    *

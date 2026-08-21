@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,10 +28,8 @@ void cuda_memcpy_async_impl(
  * satisfied, but for host memory the caller must ensure the source is not freed before the stream
  * is synchronized.
  *
- * All copies share a single attribute entry (`cudaMemcpySrcAccessOrderStream` +
- * `cudaMemcpyFlagPreferOverlapWithCompute`). Per-copy attributes are not supported by this
- * wrapper; callers requiring different attributes per copy should call `cudaMemcpyBatchAsync`
- * directly.
+ * A batch uses `cudaMemcpyFlagPreferOverlapWithCompute` when every copy is 128 KiB or less. If
+ * any copy is larger, the batch uses `cudaMemcpyFlagDefault`.
  *
  * @param dsts Host pointer to a list of destination pointers.
  * @param srcs Host pointer to a list of source pointers.

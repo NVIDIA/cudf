@@ -20,6 +20,7 @@ files:
       - depends_on_cupy
       - depends_on_cuda_bindings
       - depends_on_dask_cuda
+      - depends_on_kvikio
       - depends_on_libkvikio
       - depends_on_librmm
       - depends_on_libnvcomp

@@ -165,7 +165,7 @@ void ndsh_q1(nvbench::state& state)
     state.skip("Only scale_factor=1 supported with filename input");
     return;
   }
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   auto source = [&] {
     if (filename.empty()) {
       generate_parquet_data_sources(scale_factor, {"lineitem"}, sources);

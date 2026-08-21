@@ -79,8 +79,7 @@
   return revenue;
 }
 
-void run_ndsh_q5(nvbench::state& state,
-                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+void run_ndsh_q5(nvbench::state& state, ndsh_data_sources& sources)
 {
   // Define the column projection and filter predicate for the `orders` table
   std::vector<std::string> const orders_cols = {"o_custkey", "o_orderkey", "o_orderdate"};
@@ -156,15 +155,16 @@ void ndsh_q5(nvbench::state& state)
 {
   // Generate the required parquet files in device buffers
   double const scale_factor = state.get_float64("scale_factor");
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"customer", "orders", "lineitem", "supplier", "nation", "region"}, sources);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { run_ndsh_q5(state, sources); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    run_ndsh_q5(state, sources);
+  });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

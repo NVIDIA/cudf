@@ -54,8 +54,7 @@
   return revenue;
 }
 
-void run_ndsh_q6(nvbench::state& state,
-                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+void run_ndsh_q6(nvbench::state& state, ndsh_data_sources& sources)
 {
   // Read out the `lineitem` table from parquet file
   std::vector<std::string> const lineitem_cols = {
@@ -125,7 +124,7 @@ void ndsh_q6(nvbench::state& state)
 {
   // Generate the required parquet files in device buffers
   double const scale_factor = state.get_float64("scale_factor");
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(scale_factor, {"lineitem"}, sources);
 
   auto stream = cudf::get_default_stream();

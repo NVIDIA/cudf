@@ -225,7 +225,7 @@ struct q9_data {
   }
 }
 
-q9_data load_data(std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+q9_data load_data(ndsh_data_sources& sources)
 {
   auto lineitem = read_parquet(
     sources.at("lineitem").make_source_info(),
@@ -312,7 +312,7 @@ void ndsh_q9(nvbench::state& state)
   auto const scale_factor = state.get_float64("scale_factor");
   auto const engine       = engine_from_string(state.get_string("engine"));
 
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
@@ -335,7 +335,7 @@ void ndsh_q9_noio(nvbench::state& state)
   auto const scale_factor = state.get_float64("scale_factor");
   auto const engine       = engine_from_string(state.get_string("engine"));
 
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
@@ -363,7 +363,7 @@ void ndsh_q9_amount(nvbench::state& state)
   auto const scale_factor = state.get_float64("scale_factor");
   auto const engine       = engine_from_string(state.get_string("engine"));
 
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 

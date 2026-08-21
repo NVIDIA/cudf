@@ -22,7 +22,7 @@ from pylibcudf.libcudf.types import type_id
 from pylibcudf.libcudf.types import type_id as TypeId
 from pylibcudf.libcudf.utilities.type_dispatcher import type_to_id
 
-PyarrowDataType: TypeAlias = type[Any]
+PyarrowDataType: TypeAlias = Any
 __all__ = ['DataType', 'Interpolation', 'MaskState', 'NanEquality', 'NanPolicy', 'NullEquality', 'NullOrder', 'NullAware', 'OutputNullability', 'NullPolicy', 'Order', 'SIZE_TYPE', 'SIZE_TYPE_ID', 'Sorted', 'TypeId', 'size_of']
 SIZE_TYPE = DataType(type_to_id[size_type]())
 SIZE_TYPE_ID = SIZE_TYPE.id()

@@ -18,7 +18,7 @@ __all__ = ['GroupBy', 'GroupByRequest']
 class GroupByRequest:
     __hash__ = None
 
-    def __init__(self, values: Column, aggregations: list[Aggregation]) -> None: ...
+    def __init__(self, values: Column, aggregations: list[Aggregation]): ...
 
 class GroupBy:
     __hash__ = None

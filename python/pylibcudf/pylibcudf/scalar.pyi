@@ -16,7 +16,7 @@ from rmm.pylibrmm.stream import Stream
 from ._interop_helpers import ArrowLike, ColumnMetadata
 from .types import DataType
 
-NpGeneric: TypeAlias = type[Any]
+NpGeneric: TypeAlias = Any
 __all__ = ['Scalar']
 
 @no_gc_clear

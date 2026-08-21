@@ -4738,7 +4738,8 @@ def test_parquet_not_equal_with_nan_stats(tmp_path):
 
     # Sanity check the fixture: NaN is excluded, so row group 0 looks constant
     stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
-    assert stats.min == 5.0 and stats.max == 5.0
+    assert_eq(stats.min, 5.0)
+    assert_eq(stats.max, 5.0)
 
     scalar = plc.Scalar.from_arrow(pa.scalar(5.0))
     filter_expr = Operation(
@@ -4751,11 +4752,10 @@ def test_parquet_not_equal_with_nan_stats(tmp_path):
     result = plc.io.parquet.read_parquet(options)
 
     # Neither row group may be pruned: rg0 holds a NaN, rg1 holds 7.0 and 8.0
-    assert result.num_row_groups_after_stats_filter == 2
-    got = result.tbl.to_arrow().column(0).to_pylist()
-    assert len(got) == 3
-    assert math.isnan(got[0])
-    assert got[1:] == [7.0, 8.0]
+    assert_eq(result.num_row_groups_after_stats_filter, 2)
+    assert_arrow_table_equal(
+        pa.table({"x": [float("nan"), 7.0, 8.0]}), result.tbl.to_arrow()
+    )
 
 
 def test_parquet_negated_ordering_with_nan_stats(tmp_path):
@@ -4776,7 +4776,9 @@ def test_parquet_negated_ordering_with_nan_stats(tmp_path):
 
     # Sanity check the fixture actually reproduces the Arrow statistics behaviour
     stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
-    assert stats.has_min_max and stats.min == 1.0 and stats.max == 2.0
+    assert_eq(stats.has_min_max, True)
+    assert_eq(stats.min, 1.0)
+    assert_eq(stats.max, 2.0)
 
     col = ColumnNameReference("x")
     lit = Literal(plc.Scalar.from_arrow(pa.scalar(50.0)))
@@ -4787,17 +4789,13 @@ def test_parquet_negated_ordering_with_nan_stats(tmp_path):
     source = plc.io.SourceInfo([str(path)])
     options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
     options.set_filter(filter_expr)
-    got = (
-        plc.io.parquet.read_parquet(options)
-        .tbl.to_arrow()
-        .column(0)
-        .to_pylist()
-    )
+    got = plc.io.parquet.read_parquet(options).tbl.to_arrow()
 
     # NOT(x < 50) is true for NaN and for 100/200/300, and false for 1.0/2.0
-    assert len(got) == 4
-    assert math.isnan(got[0])
-    assert got[1:] == [100.0, 200.0, 300.0]
+    assert_arrow_table_equal(
+        pa.table({"x": [float("nan"), 100.0, 200.0, 300.0]}),
+        got,
+    )
 
 
 @pytest.mark.skipif(

@@ -2349,6 +2349,155 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
   }
 }
 
+TEST_F(ParquetReaderTest, FilterNegationPushdown)
+{
+  // The reader rewrites the filter into an equivalent form with logical negations pushed down to
+  // the leaves, and uses that single rewritten expression both to prune row groups and to filter
+  // the decoded rows. Every rewrite must therefore be exact, including for nulls and NaNs, so each
+  // case below compares the reader's output against the unrewritten filter evaluated over the
+  // whole table.
+  auto constexpr num_rows = 20'000;
+
+  // Nulls every 7th row so that nulls straddle row group boundaries
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+  auto col_a = cudf::test::fixed_width_column_wrapper<int32_t>(
+    cuda::counting_iterator<int>{0}, cuda::counting_iterator{num_rows}, valids);
+  auto col_b = cudf::test::fixed_width_column_wrapper<int32_t>(
+    cuda::counting_iterator{num_rows}, cuda::counting_iterator{2 * num_rows}, valids);
+  // Half the rows are NaN. Ordered comparisons against NaN are all false, so complementing them
+  // would not be an equivalence
+  auto const floats = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i % 2 == 0 ? NAN : static_cast<float>(i); });
+  auto col_c = cudf::test::fixed_width_column_wrapper<float>(floats, floats + num_rows);
+
+  auto const written_table = cudf::table_view{{col_a, col_b, col_c}};
+  auto const filepath      = temp_env->get_temp_filepath("FilterNegationPushdown.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written_table)
+      .row_group_size_rows(5'000)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP);
+  cudf::io::write_parquet(out_opts);
+
+  auto const expect_matches_unrewritten = [&](cudf::ast::expression const& filter,
+                                              std::optional<cudf::size_type> expected_row_groups =
+                                                std::nullopt) {
+    auto predicate = cudf::compute_column(written_table, filter);
+    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+
+    cudf::io::parquet_reader_options const read_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
+    auto result = cudf::io::read_parquet(read_opts);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected);
+    if (expected_row_groups.has_value()) {
+      EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter, expected_row_groups);
+    }
+  };
+
+  auto col_ref_a = cudf::ast::column_reference(0);
+  auto col_ref_b = cudf::ast::column_reference(1);
+  auto col_ref_c = cudf::ast::column_reference(2);
+
+  auto lit_10_value  = cudf::numeric_scalar<int32_t>(10);
+  auto lit_10        = cudf::ast::literal(lit_10_value);
+  auto lit_50_value  = cudf::numeric_scalar<int32_t>(50);
+  auto lit_50        = cudf::ast::literal(lit_50_value);
+  auto lit_150_value = cudf::numeric_scalar<int32_t>(150);
+  auto lit_150       = cudf::ast::literal(lit_150_value);
+  auto lit_nan_value = cudf::numeric_scalar<float>(NAN, true);
+  auto lit_nan       = cudf::ast::literal(lit_nan_value);
+  auto lit_f50_value = cudf::numeric_scalar<float>(50.0f, true);
+  auto lit_f50       = cudf::ast::literal(lit_f50_value);
+
+  auto a_eq_10  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_a, lit_10);
+  auto a_neq_10 = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_a, lit_10);
+  auto a_lt_50  = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_a, lit_50);
+  auto a_gt_50  = cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref_a, lit_50);
+  auto a_lt_150 = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_a, lit_150);
+  auto b_eq_10  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_b, lit_10);
+
+  // NOT(NOT(col_a < 50)) - double negation elimination. Becomes col_a < 50
+  {
+    auto not_lt = cudf::ast::operation(cudf::ast::ast_operator::NOT, a_lt_50);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_lt), 1);
+  }
+
+  // Double negation over a non-boolean operand must NOT be eliminated.
+  {
+    auto not_a     = cudf::ast::operation(cudf::ast::ast_operator::NOT, col_ref_a);
+    auto not_not_a = cudf::ast::operation(cudf::ast::ast_operator::NOT, not_a);
+
+    // Eliminating these would hand the reader an INT32 predicate instead of a BOOL8 one
+    expect_matches_unrewritten(not_not_a);
+
+    // Whereas the triple negation still folds, since NOT(col_a) is boolean
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_not_a));
+  }
+
+  // NOT(col_a == 10) and NOT(col_a != 10) - complemented equality. col_a != 10 prunes nothing and
+  // col_a == 10 keeps only the first row group
+  expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, a_eq_10), 4);
+  expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, a_neq_10), 1);
+
+  // De Morgan over the null-propagating operators
+  {
+    // Becomes col_a <= 50 OR col_a >= 150, all row groups kept
+    auto conjunction =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, a_gt_50, a_lt_150);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, conjunction), 4);
+
+    // Becomes col_a <= 50 AND col_a != 10, only first row group kept
+    auto disjunction = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, a_gt_50, a_eq_10);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, disjunction), 1);
+  }
+
+  // De Morgan over the Kleene operators, where a null operand does not always produce a null result
+  {
+    auto conjunction =
+      cudf::ast::operation(cudf::ast::ast_operator::NULL_LOGICAL_AND, a_eq_10, b_eq_10);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, conjunction));
+
+    auto disjunction =
+      cudf::ast::operation(cudf::ast::ast_operator::NULL_LOGICAL_OR, a_eq_10, b_eq_10);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, disjunction));
+  }
+
+  // NOT(col_c == NaN) - equality stays an exact complement under IEEE-754
+  {
+    auto c_eq_nan = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_c, lit_nan);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, c_eq_nan));
+  }
+
+  // NOT(col_c < 50.0) - ordered comparisons against NaN are all false, so this must NOT become
+  // col_c >= 50.0
+  {
+    auto c_lt_50 = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_c, lit_f50);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, c_lt_50));
+
+    // ... including underneath a De Morgan rewrite
+    auto conjunction = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, c_lt_50, a_eq_10);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, conjunction));
+  }
+
+  // Operators with no complement are left intact
+  {
+    auto a_is_null = cudf::ast::operation(cudf::ast::ast_operator::IS_NULL, col_ref_a);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, a_is_null));
+
+    auto a_null_eq_10 =
+      cudf::ast::operation(cudf::ast::ast_operator::NULL_EQUAL, col_ref_a, lit_10);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, a_null_eq_10));
+  }
+
+  // Nested negations mixing all of the above
+  {
+    auto inner_or  = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, a_eq_10, a_gt_50);
+    auto not_or    = cudf::ast::operation(cudf::ast::ast_operator::NOT, inner_or);
+    auto outer_and = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, not_or, a_lt_150);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, outer_and));
+  }
+}
+
 TEST_F(ParquetReaderTest, FilterNamedExpression)
 {
   auto [src, filepath] = create_parquet_with_stats("NamedExpression.parquet");

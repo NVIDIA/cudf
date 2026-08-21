@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -156,7 +156,7 @@ inline auto parse_cudf_test_opts(int argc, char** argv)
       std::getenv("GTEST_CUDF_STREAM_MODE");  // Overridden by CLI options
     char const* env_stream_error_mode =
       std::getenv("GTEST_CUDF_STREAM_ERROR_MODE");  // Overridden by CLI options
-    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "pool";
+    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "async";
     auto default_stream_mode       = env_stream_mode ? env_stream_mode : "default";
     auto default_stream_error_mode = env_stream_error_mode ? env_stream_error_mode : "error";
     options.allow_unrecognised_options().add_options()(

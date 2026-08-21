@@ -14,6 +14,29 @@ include(rapids-test)
 rapids_test_init()
 rapids_cmake_install_lib_dir(lib_dir)
 
+# ##################################################################################################
+# **Note about test memory usage:**
+#
+# We design the test suite to run in CI with max parallelism on GPUs with 16 GB of memory or more.
+# Tests are assigned GPU memory percentages to enable safe parallel execution. We draw an arbitrary
+# line that tests are allowed to run in parallel if they consume less than 1 GB of peak GPU memory,
+# and are run serially otherwise. This allows up to 14 tests in parallel on a 16 GB GPU with a bit
+# of room for overhead. (14 * 7% is 98%, and we are required to use integer percentages.) Therefore,
+# tests are assigned 7% of the GPU by default, and 100% if they use >=1 GB of memory. ctest won't
+# schedule more than 100% of the GPU, so at most 14 tests in parallel. This means on a 16 GB GPU, we
+# can safely run `ctest -jN` with N>=14.
+#
+# **Guidelines:**
+#
+# * Tests using <=1 GB: Use default (no GPUS/PERCENT parameters, defaults to 7%)
+# * Tests using >1 GB: Mark as "GPUS 1 PERCENT 100" to reserve the entire GPU
+#
+# Marking large tests with PERCENT 100 prevents memory oversubscription and ensures only one large
+# test runs at a time, while smaller tests can still run in parallel.
+#
+# The peak memory usage of all tests can be determined with cpp/scripts/gtest_memory_usage.sh.
+# ##################################################################################################
+
 # This function takes in a test name and test source and handles setting all of the associated
 # properties and linking to build the test
 function(ConfigureTest CMAKE_TEST_NAME)
@@ -24,7 +47,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
 
   if(NOT DEFINED _CUDF_TEST_GPUS AND NOT DEFINED _CUDF_TEST_PERCENT)
     set(_CUDF_TEST_GPUS 1)
-    set(_CUDF_TEST_PERCENT 15)
+    set(_CUDF_TEST_PERCENT 7)
   endif()
 
   if(NOT DEFINED _CUDF_TEST_GPUS)
@@ -163,8 +186,6 @@ ConfigureTest(
   groupby/tdigest_tests.cpp
   groupby/topk_tests.cpp
   groupby/var_tests.cpp
-  GPUS 1
-  PERCENT 100
 )
 
 # ##################################################################################################
@@ -213,17 +234,13 @@ ConfigureTest(
 ConfigureTest(
   PARTITIONING_TEST partitioning/hash_partition_test.cpp partitioning/round_robin_test.cpp
   partitioning/partition_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
 # * quantiles tests -------------------------------------------------------------------------------
 ConfigureTest(
   QUANTILES_TEST quantiles/percentile_approx_test.cpp quantiles/quantile_test.cpp
-  quantiles/quantiles_test.cpp
-  GPUS 1
-  PERCENT 70 EXTRA_LIBS ${ARROW_LIBRARIES}
+  quantiles/quantiles_test.cpp EXTRA_LIBS ${ARROW_LIBRARIES}
 )
 
 # ##################################################################################################
@@ -243,8 +260,6 @@ ConfigureTest(
   reductions/segmented_reduction_tests.cpp
   reductions/tdigest_tests.cpp
   reductions/unique_count_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -280,6 +295,8 @@ ConfigureTest(
   binaryop/binop-compiled-test.cpp
   binaryop/binop-compiled-fixed_point-test.cpp
   binaryop/binop-generic-ptx-test.cpp
+  GPUS 1
+  PERCENT 100
 )
 
 # ##################################################################################################
@@ -323,11 +340,7 @@ ConfigureTest(COMPRESSION_TEST io/comp/comp_test.cpp)
 ConfigureTest(ROW_SELECTION_TEST io/row_selection_test.cpp)
 ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
 
-ConfigureTest(
-  CSV_TEST io/csv_test.cpp
-  GPUS 1
-  PERCENT 30
-)
+ConfigureTest(CSV_TEST io/csv_test.cpp)
 ConfigureTest(
   ORC_TEST io/orc_chunked_reader_test.cu io/orc_test.cpp
   GPUS 1
@@ -377,8 +390,6 @@ ConfigureTest(
 ConfigureTest(
   JSON_TEST io/json/json_chunked_reader.cpp io/json/json_test.cpp io/json/json_type_cast_test.cpp
   io/json/json_utils.cu
-  GPUS 1
-  PERCENT 30
 )
 ConfigureTest(JSON_WRITER_TEST io/json/json_writer.cpp)
 ConfigureTest(NESTED_JSON_TEST io/json/nested_json_test.cpp io/json/json_tree.cpp)
@@ -386,11 +397,7 @@ ConfigureTest(MULTIBYTE_SPLIT_TEST io/text/multibyte_split_test.cpp)
 ConfigureTest(JSON_QUOTE_NORMALIZATION_TEST io/json/json_quote_normalization_test.cpp)
 ConfigureTest(JSON_WHITESPACE_NORMALIZATION_TEST io/json/json_whitespace_normalization_test.cpp)
 ConfigureTest(JSON_TREE_CSR_TEST io/json/json_tree_csr.cu)
-ConfigureTest(
-  DATA_CHUNK_SOURCE_TEST io/text/data_chunk_source_test.cpp
-  GPUS 1
-  PERCENT 100
-)
+ConfigureTest(DATA_CHUNK_SOURCE_TEST io/text/data_chunk_source_test.cpp)
 target_link_libraries(DATA_CHUNK_SOURCE_TEST PRIVATE ZLIB::ZLIB)
 ConfigureTest(LOGICAL_STACK_TEST io/fst/logical_stack_test.cu)
 ConfigureTest(FST_TEST io/fst/fst_test.cu)
@@ -402,8 +409,6 @@ ConfigureTest(TYPE_INFERENCE_TEST io/type_inference_test.cpp)
 ConfigureTest(
   SORT_TEST sort/rank_test.cpp sort/segmented_sort_tests.cpp sort/sort_nested_types_tests.cpp
   sort/sort_test.cpp sort/stable_sort_tests.cpp sort/top_k_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -486,11 +491,7 @@ ConfigureTest(DEVICE_ATOMICS_TEST device_atomics/device_atomics_test.cu)
 
 # ##################################################################################################
 # * transpose tests -------------------------------------------------------------------------------
-ConfigureTest(
-  TRANSPOSE_TEST transpose/transpose_test.cpp
-  GPUS 1
-  PERCENT 70
-)
+ConfigureTest(TRANSPOSE_TEST transpose/transpose_test.cpp)
 
 # ##################################################################################################
 # * table tests -----------------------------------------------------------------------------------
@@ -541,8 +542,6 @@ ConfigureTest(
   rolling/range_window_bounds_test.cpp
   rolling/range_window_type_test.cpp
   rolling/rolling_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -563,6 +562,8 @@ ConfigureTest(
 ConfigureTest(
   RESHAPE_TEST reshape/byte_cast_tests.cpp reshape/interleave_columns_tests.cpp
   reshape/table_to_array_tests.cpp reshape/tile_tests.cpp
+  GPUS 1
+  PERCENT 100
 )
 
 # ##################################################################################################
@@ -744,8 +745,6 @@ ConfigureTest(
   lists/sort_lists_tests.cpp
   lists/stream_compaction/apply_boolean_mask_tests.cpp
   lists/stream_compaction/distinct_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################

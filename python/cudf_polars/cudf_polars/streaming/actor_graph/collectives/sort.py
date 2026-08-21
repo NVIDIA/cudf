@@ -60,7 +60,7 @@ from cudf_polars.streaming.sort import (
     _select_local_split_candidates,
     find_sort_splits,
 )
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream, join_cuda_streams
+from cudf_polars.utils.cuda_stream import get_joined_cuda_stream, stream_ordered_after
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -206,25 +206,27 @@ async def extract_orderscheme_partitioning(
         chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
             context.br(), allow_overbooking=True
         )
-        join_cuda_streams(downstreams=(stream,), upstreams=(chunk.stream,))
         tbl = chunk.table_view()
         if (n := tbl.num_rows()) == 0:
             # The corresponding empty chunk must be dropped
             # from the data channel.
             continue
-        row_indices = plc.Column.from_iterable_of_py(
-            [0, n - 1],
-            plc.DataType(plc.TypeId.INT32),
-            stream=stream,
-        )
-        min_max_rows.append(
-            plc.copying.gather(
-                tbl,
-                row_indices,
-                plc.copying.OutOfBoundsPolicy.DONT_CHECK,
-                stream=stream,
+        with stream_ordered_after(
+            lambda: stream, upstreams=(chunk.stream,)
+        ) as work_stream:
+            row_indices = plc.Column.from_iterable_of_py(
+                [0, n - 1],
+                plc.DataType(plc.TypeId.INT32),
+                stream=work_stream,
             )
-        )
+            min_max_rows.append(
+                plc.copying.gather(
+                    tbl,
+                    row_indices,
+                    plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                    stream=work_stream,
+                )
+            )
         chunks.insert(Message(msg.sequence_number, chunk))
     min_max_table: plc.Table | None = (
         plc.concatenate.concatenate(min_max_rows, stream=stream)

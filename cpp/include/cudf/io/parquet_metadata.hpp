@@ -15,6 +15,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstdint>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -293,6 +294,14 @@ parquet_metadata read_parquet_metadata(source_info const& src_info);
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<cudf::io::datasource> const> sources);
+
+namespace parquet {
+/**
+ * @brief Footer-reader policy on a wire-type/schema-type mismatch: reject (`YES`, the historical
+ * exact-type contract) or skip per Thrift forward-compat (`NO`)
+ */
+enum class throw_if_type_mismatch : bool { YES, NO };
+}  // namespace parquet
 
 /** @} */  // end of group
 }  // namespace io

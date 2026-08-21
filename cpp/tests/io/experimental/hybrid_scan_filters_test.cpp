@@ -1774,6 +1774,45 @@ TEST_F(HybridScanFiltersTest, RowGroupPasses)
   }
 }
 
+TEST_F(HybridScanFiltersTest, FetchByteRangesInvalidRanges)
+{
+  std::vector<std::byte> data(1024);
+  auto const datasource =
+    cudf::io::datasource::create(cudf::host_span<std::byte const>(data.data(), data.size()));
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  EXPECT_THROW(
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource,
+      std::vector<cudf::io::text::byte_range_info>{cudf::io::text::byte_range_info{-1, 16}},
+      stream,
+      mr),
+    cudf::logic_error);
+
+  EXPECT_THROW(
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource,
+      std::vector<cudf::io::text::byte_range_info>{cudf::io::text::byte_range_info{512, 1024}},
+      stream,
+      mr),
+    cudf::logic_error);
+
+  EXPECT_THROW(
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource,
+      std::vector<cudf::io::text::byte_range_info>{cudf::io::text::byte_range_info{0, -1}},
+      stream,
+      mr),
+    cudf::logic_error);
+
+  EXPECT_NO_THROW(cudf::io::parquet::fetch_byte_ranges_to_device_async(
+    *datasource,
+    std::vector<cudf::io::text::byte_range_info>{cudf::io::text::byte_range_info{1023, 1}},
+    stream,
+    mr));
+}
+
 class DictionaryFilterGapTest : public HybridScanFiltersTest,
                                 public ::testing::WithParamInterface<cudf::io::compression_type> {};
 

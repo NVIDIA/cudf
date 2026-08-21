@@ -10,6 +10,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/lists/combine.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -109,11 +110,15 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     stream);
 
   // convert to offsets
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         offsets->view().begin<int32_t>(),
-                         offsets->view().begin<int32_t>() + input.num_rows() + 1,
-                         offsets->mutable_view().begin<int32_t>(),
-                         0);
+  auto total_size =
+    cudf::detail::sizes_to_offsets(offsets->view().begin<size_type>(),
+                                   offsets->view().begin<size_type>() + input.num_rows() + 1,
+                                   offsets->mutable_view().begin<size_type>(),
+                                   0,
+                                   stream);
+  CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
+               "Size of offsets exceeds maximum int32 limit",
+               std::overflow_error);
 
   // generate appropriate null mask
   auto [null_mask, null_count] = [&]() {

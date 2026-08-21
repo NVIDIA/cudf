@@ -230,7 +230,7 @@ cdef class ParquetMetadata:
         """
         return self.meta.num_rowgroups()
 
-    cpdef list num_rowgroups_per_file(self):
+    cpdef list[int] num_rowgroups_per_file(self):
         """
         Returns the number of rowgroups in each file.
         """
@@ -465,7 +465,7 @@ cdef class FileMetaData:
 
     See Also
     --------
-    read_parquet_footers
+    pylibcudf.io.parquet_metadata.read_parquet_footers
         Read one ``FileMetaData`` per source directly from
         :class:`pylibcudf.io.types.SourceInfo`.
     """

@@ -313,7 +313,7 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
  * @param parquet_metadatas Parquet file metadata, one per source
  * @param column_names Dotted leaf-column paths to decode statistics for
  * @param stream CUDA stream used for device memory operations
- * @param mr Device memory resource to use for device memory allocation
+ * @param mr Memory resources to use for device memory allocation
  * @return Table of row-group identifiers and decoded min/max bounds. For requested column
  * ``column_names[i]``, the min column is at ``2 + 2 * i`` and the max column is at
  * ``3 + 2 * i``.
@@ -326,8 +326,8 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
 std::unique_ptr<table> read_parquet_column_chunk_bounds(
   std::span<parquet::FileMetaData const> parquet_metadatas,
   std::span<std::string const> column_names,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace io

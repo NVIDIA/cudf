@@ -687,7 +687,7 @@ std::unique_ptr<table> read_parquet_column_chunk_bounds(
   std::span<parquet::FileMetaData const> parquet_metadatas,
   std::span<std::string const> column_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -697,7 +697,7 @@ std::unique_ptr<table> read_parquet_column_chunk_bounds(
     false   // has_cols_from_mismatched_srcs
   };
 
-  return metadata.read_column_chunk_bounds(column_names, stream, mr);
+  return metadata.read_column_chunk_bounds(column_names, stream, mr.get_output_mr());
 }
 
 /**

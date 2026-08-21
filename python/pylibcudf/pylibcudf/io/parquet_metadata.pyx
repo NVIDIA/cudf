@@ -320,7 +320,7 @@ cdef class SortingColumn:
         return self.c_obj.nulls_first
 
 
-cdef object _optional_bytes(optional[vector[uint8_t]] value):
+cdef object optional_bytes(optional[vector[uint8_t]] value):
     cdef vector[uint8_t]* buffer
     if not value.has_value():
         return None
@@ -356,17 +356,27 @@ cdef class ColumnChunkStatistics:
 
     @property
     def min_encoded(self) -> bytes | None:
-        """Encoded minimum value, preferring ``min_value`` over deprecated ``min``."""
+        """Encoded minimum value, preferring ``min_value`` over deprecated ``min``.
+
+        The bytes are the raw Parquet statistics payload and must be
+        interpreted using the column's Parquet physical and logical type
+        metadata.
+        """
         if self.c_obj.min_value.has_value():
-            return _optional_bytes(self.c_obj.min_value)
-        return _optional_bytes(self.c_obj.min)
+            return optional_bytes(self.c_obj.min_value)
+        return optional_bytes(self.c_obj.min)
 
     @property
     def max_encoded(self) -> bytes | None:
-        """Encoded maximum value, preferring ``max_value`` over deprecated ``max``."""
+        """Encoded maximum value, preferring ``max_value`` over deprecated ``max``.
+
+        The bytes are the raw Parquet statistics payload and must be
+        interpreted using the column's Parquet physical and logical type
+        metadata.
+        """
         if self.c_obj.max_value.has_value():
-            return _optional_bytes(self.c_obj.max_value)
-        return _optional_bytes(self.c_obj.max)
+            return optional_bytes(self.c_obj.max_value)
+        return optional_bytes(self.c_obj.max)
 
     @property
     def null_count(self) -> int | None:

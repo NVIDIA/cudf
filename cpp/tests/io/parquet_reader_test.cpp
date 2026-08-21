@@ -2422,6 +2422,15 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_lt), 1);
   }
 
+  // NOT(50 op col_a) - literal-left ordering comparisons preserve operand order when complemented.
+  for (auto const op : {cudf::ast::ast_operator::LESS,
+                        cudf::ast::ast_operator::LESS_EQUAL,
+                        cudf::ast::ast_operator::GREATER,
+                        cudf::ast::ast_operator::GREATER_EQUAL}) {
+    auto literal_left = cudf::ast::operation(op, lit_50, col_ref_a);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, literal_left));
+  }
+
   // NOT(col_a + 10 > 50) - operand is not `col op lit`, so it must NOT be complemented. The
   // `col_a < 150` conjunct keeps the filter stats-usable.
   {

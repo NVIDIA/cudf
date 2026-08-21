@@ -155,8 +155,8 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             }
           }  // Binary operation wrapped
           else if (cudf::ast::detail::ast_operator_arity(child_op) == 2) {
-            // For NOT(col op lit) negate the operator if negatable and visit the negated operation
-            // directly.
+            // For NOT(col op lit) or NOT(lit op col), negate the operator if negatable and visit
+            // the negated operation directly.
             auto const binary_operands = extract_binary_operands(*child_operation);
             auto const lhs_kind        = binary_operands.lhs_type;
             auto const rhs_kind        = binary_operands.rhs_type;
@@ -174,7 +174,8 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
                 _output_dtypes[binary_operands.col_ref->get_column_index()]);
 
               if (is_equality or can_negate_ordering) {
-                auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
+                auto const negated_op =
+                  transform_operator<operator_transform::NEGATE>(child_operation->get_operator());
                 if (negated_op.has_value()) {
                   auto const& child_operands = child_operation->get_operands();
                   return visit(

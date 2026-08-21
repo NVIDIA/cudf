@@ -985,6 +985,175 @@ TEST_F(HybridScanTest, StructChildFilterColumn)
     std::invalid_argument);
 }
 
+TEST_F(HybridScanTest, SharedMetadataReaderMatchesReadParquet)
+{
+  using T                              = int32_t;
+  auto constexpr num_concat            = 2;
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<T, num_concat>();
+
+  auto const stream  = cudf::get_default_stream();
+  auto const mr      = cudf::get_current_device_resource_ref();
+  auto const options = cudf::io::parquet_reader_options::builder().build();
+
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+
+  // Parse the file metadata once and share it across independent readers.
+  auto const metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{*footer_buffer, options};
+
+  // Read all columns (single step) through a reader that borrows the shared metadata.
+  auto const read_all_columns = [&] {
+    auto const reader =
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+    auto const row_groups   = reader->all_row_groups(options);
+    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, data, tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    tasks.get();
+    return reader->materialize_all_columns(row_groups, data, options, stream, mr).tbl;
+  };
+
+  // Two readers sharing one metadata instance each produce the same table as the main reader.
+  auto const table_a = read_all_columns();
+  auto const table_b = read_all_columns();
+
+  auto const expected =
+    cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info(cudf::host_span<char>(parquet_buffer.data(), parquet_buffer.size())))
+        .build(),
+      stream)
+      .tbl;
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), table_a->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), table_b->view());
+}
+
+TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
+{
+  using T                              = int32_t;
+  auto constexpr num_concat            = 2;
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<T, num_concat>();
+
+  auto const stream  = cudf::get_default_stream();
+  auto const mr      = cudf::get_current_device_resource_ref();
+  auto const options = cudf::io::parquet_reader_options::builder().build();
+
+  auto datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
+
+  // Obtain FileMetaData from an initial reader, then build shared metadata from it.
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const seed_reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const file_metadata = seed_reader->parquet_metadata();
+
+  auto const metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{file_metadata, options};
+
+  // Two readers sharing the FileMetaData-derived metadata each produce the correct table.
+  auto const read_all_columns = [&] {
+    auto const reader =
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+    auto const row_groups   = reader->all_row_groups(options);
+    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, data, tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    tasks.get();
+    return reader->materialize_all_columns(row_groups, data, options, stream, mr).tbl;
+  };
+
+  auto const table_a = read_all_columns();
+  auto const table_b = read_all_columns();
+
+  auto const expected =
+    cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info(cudf::host_span<char>(parquet_buffer.data(), parquet_buffer.size())))
+        .build(),
+      stream)
+      .tbl;
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), table_a->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), table_b->view());
+}
+
+TEST_F(HybridScanTest, SharedMetadataConcurrentReadersMatchReadParquet)
+{
+  using T                              = uint32_t;
+  auto constexpr num_concat            = 4;
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<T, num_concat>();
+
+  auto const stream  = cudf::get_default_stream();
+  auto const mr      = cudf::get_current_device_resource_ref();
+  auto const options = cudf::io::parquet_reader_options::builder().build();
+
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+
+  // Parse the metadata once and share it, by value, across two readers that are alive at the
+  // same time, each responsible for a disjoint range of the file's row groups.
+  auto const metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{*footer_buffer, options};
+  auto const reader_a =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+  auto const reader_b =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+
+  // Only one of the readers sharing this metadata sets up the page index.
+  auto const page_index_byte_range = reader_a->page_index_byte_range();
+  ASSERT_FALSE(page_index_byte_range.is_empty());
+  auto const page_index_buffer =
+    cudf::io::parquet::fetch_page_index_to_host(*datasource, page_index_byte_range);
+  reader_a->setup_page_index(*page_index_buffer);
+
+  // The page index materialized through `reader_a` must be visible through `reader_b` since both
+  // readers share the same underlying metadata.
+  auto const metadata_from_b = reader_b->parquet_metadata();
+  ASSERT_GT(metadata_from_b.row_groups.size(), 1);
+  for (auto const& row_group : metadata_from_b.row_groups) {
+    for (auto const& column_chunk : row_group.columns) {
+      EXPECT_TRUE(column_chunk.column_index.has_value());
+      EXPECT_TRUE(column_chunk.offset_index.has_value());
+    }
+  }
+
+  // Split the row groups into two disjoint ranges and read each range through a different reader
+  // sharing the metadata, with both readers alive and used concurrently.
+  auto const all_row_groups = reader_a->all_row_groups(options);
+  auto const split          = all_row_groups.size() / 2;
+  auto const row_groups_a =
+    std::vector<cudf::size_type>(all_row_groups.begin(), all_row_groups.begin() + split);
+  auto const row_groups_b =
+    std::vector<cudf::size_type>(all_row_groups.begin() + split, all_row_groups.end());
+
+  auto const materialize = [&](auto const& reader, auto const& row_group_indices) {
+    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_group_indices, options);
+    auto [buffers, data, tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    tasks.get();
+    return reader->materialize_all_columns(row_group_indices, data, options, stream, mr).tbl;
+  };
+
+  auto const table_a = materialize(reader_a, row_groups_a);
+  auto const table_b = materialize(reader_b, row_groups_b);
+
+  auto const table =
+    cudf::concatenate(std::vector<cudf::table_view>{table_a->view(), table_b->view()});
+  auto const expected =
+    cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info(cudf::host_span<char>(parquet_buffer.data(), parquet_buffer.size())))
+        .build(),
+      stream)
+      .tbl;
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), table->view());
+}
+
 TEST_F(HybridScanTest, AllRowsPrunedReportsInputRowGroups)
 {
   using cudf::io::parquet::experimental::use_data_page_mask;

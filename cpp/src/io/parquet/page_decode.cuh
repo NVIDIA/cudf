@@ -1479,12 +1479,32 @@ __device__ void zero_fill_null_positions_shared(
 
   // nesting level that is storing actual leaf values
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-  auto const& ni             = s->nesting.nesting_info[leaf_level_index];
+  auto const& leaf_ni        = s->nesting.nesting_info[leaf_level_index];
+
+  // A REQUIRED leaf has no validity buffer of its own, but its output positions can still be
+  // gaps (never written by the decode loop) when a nullable ancestor is null for that row, since
+  // the leaf value is then absent from the page's value stream entirely. In that case, fall back
+  // to the nearest ancestor's validity buffer (and matching valid_map_offset) to identify which
+  // leaf output positions are gaps that need zero-filling. This is only valid when there is no
+  // repetition (no lists) between the ancestor and the leaf: lists change cardinality between
+  // nesting levels, so an ancestor's row-indexed validity bitmap does not align with the leaf's
+  // element-indexed output positions.
+  auto const& ni = [&]() -> PageNestingDecodeInfo const& {
+    if (leaf_ni.valid_map != nullptr) { return leaf_ni; }
+    if (s->setup.col.max_level[level_type::REPETITION] != 0) { return leaf_ni; }
+    for (int idx = leaf_level_index - 1; idx >= 0; --idx) {
+      auto const& ancestor_ni = s->nesting.nesting_info[idx];
+      if (ancestor_ni.valid_map != nullptr) { return ancestor_ni; }
+    }
+    return leaf_ni;
+  }();
 
   // Check if we have nulls to fill
   if ((ni.valid_map == nullptr) || (num_values == 0)) { return; }
 
-  auto const data_out = ni.data_out;
+  if (&ni != &leaf_ni) { valid_map_offset = ni.valid_map_offset; }
+
+  auto const data_out = leaf_ni.data_out;
 
   constexpr int bits_per_mask = cudf::detail::size_in_bits<bitmask_type>();
   using cudf::detail::warp_size;

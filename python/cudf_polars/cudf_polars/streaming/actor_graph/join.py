@@ -90,8 +90,8 @@ class BroadcastJoinStrategy:
 
 
 @dataclass(frozen=True)
-class HashJoinStrategy:
-    """Hash-partition both sides before joining."""
+class ShuffleJoinStrategy:
+    """Hash-shuffle both sides before joining."""
 
     shuffle_modulus: int = 0
     """The shuffle modulus."""
@@ -133,7 +133,9 @@ class OrderedJoinStrategy:
     """Join-output ordering metadata."""
 
 
-JoinStrategy: TypeAlias = BroadcastJoinStrategy | HashJoinStrategy | OrderedJoinStrategy
+JoinStrategy: TypeAlias = (
+    BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
+)
 
 
 @define_actor()
@@ -624,7 +626,7 @@ async def _join_chunks(
 
 def _log_shuffle_strategy_decision(
     tracer: ActorTracer,
-    strategy: HashJoinStrategy,
+    strategy: ShuffleJoinStrategy,
     partitioning_left: NormalizedPartitioning,
     partitioning_right: NormalizedPartitioning,
 ) -> None:
@@ -656,7 +658,7 @@ async def _shuffle_join(
     ch_out: Channel[TableChunk],
     ch_left: Channel[TableChunk],
     ch_right: Channel[TableChunk],
-    strategy: HashJoinStrategy,
+    strategy: ShuffleJoinStrategy,
     collective_ids: list[int],
     *,
     tracer: ActorTracer | None,
@@ -848,7 +850,7 @@ def _make_shuffle_strategy(
     shuffle_modulus: int,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
-) -> HashJoinStrategy:
+) -> ShuffleJoinStrategy:
     """Make a hash-partitioned join strategy."""
 
     # Use the coarsest prefix so we only shuffle on keys one side may already have
@@ -876,7 +878,7 @@ def _make_shuffle_strategy(
         right_keys,
     ) = _get_key_indices(ir, n_partitioned_keys)
 
-    return HashJoinStrategy(
+    return ShuffleJoinStrategy(
         shuffle_modulus=shuffle_modulus,
         output_indices=output_key_indices,
         left_indices=left_key_indices,
@@ -1310,7 +1312,7 @@ async def join_actor(
                         tracer=tracer,
                     )
                 )
-            elif isinstance(strategy, HashJoinStrategy):
+            elif isinstance(strategy, ShuffleJoinStrategy):
                 actor_tasks.append(
                     _shuffle_join(
                         context,

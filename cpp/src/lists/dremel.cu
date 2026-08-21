@@ -268,8 +268,10 @@ dremel_data get_encoding(column_view h_col,
   rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream);
   rmm::device_uvector<uint8_t> def_level(max_vals_size, stream);
 
-  rmm::device_uvector<uint8_t> temp_rep_vals(max_vals_size, stream);
-  rmm::device_uvector<uint8_t> temp_def_vals(max_vals_size, stream);
+  // Use max_vals_size only for nested lists; otherwise no temporary values are needed.
+  auto const temp_vals_size = nesting_levels.size() > 2 ? max_vals_size : size_t{0};
+  rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream);
+  rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream);
   rmm::device_uvector<size_type> new_offsets(0, stream);
   size_type curr_rep_values_size = 0;
   {

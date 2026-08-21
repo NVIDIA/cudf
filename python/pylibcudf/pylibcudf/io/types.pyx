@@ -331,7 +331,9 @@ cdef class TableWithMetadata:
         [("id", []), ("name", [("first", []), ("last", [])])]
 
     """
-    def __init__(self, Table tbl, list column_names: list[ColumnNameSpec]):
+    def __init__(
+        self, Table tbl, list column_names: list[ColumnNameSpec]
+    ):
         self.tbl = tbl
 
         self.metadata.schema_info = self._make_column_info(column_names)
@@ -370,7 +372,7 @@ cdef class TableWithMetadata:
         return names
 
     def column_names(
-        self, include_children=False
+        self, include_children: bool = False
     ) -> list[str] | list[ColumnNameSpec]:
         """
         Return a list containing the column names of the table

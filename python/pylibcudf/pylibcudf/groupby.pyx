@@ -56,7 +56,9 @@ cdef class GroupByRequest:
     aggregations : List[Aggregation]
         The list of aggregations to perform.
     """
-    def __init__(self, Column values, list aggregations: list[Aggregation]):
+    def __init__(
+        self, Column values, list aggregations: list[Aggregation]
+    ):
         self._values = values
         self._aggregations = aggregations
 

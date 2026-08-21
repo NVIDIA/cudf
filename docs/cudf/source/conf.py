@@ -684,6 +684,8 @@ nitpick_ignore = [
     ("py:class", "ColumnNameSpec"),
     ("py:class", "CudaStreamLike"),
     ("py:class", "Datasource"),
+    ("py:class", "Kind"),
+    ("py:class", "PyarrowDataType"),
     ("py:class", "Span"),
     ("py:class", "SupportsArrayInterface"),
     ("py:class", "SupportsCudaArrayInterface"),

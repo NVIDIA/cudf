@@ -915,7 +915,7 @@ cdef class FilteredJoin:
         null_equality compare_nulls=null_equality.EQUAL,
         double load_factor=0.5,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> None:
         """
         Construct a filtered hash join object for subsequent probe calls.
 
@@ -950,7 +950,7 @@ cdef class FilteredJoin:
         Table left,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """
         Returns a column of row indices corresponding to a semi-join
         between the right (filter) table and left table.
@@ -991,7 +991,7 @@ cdef class FilteredJoin:
         Table left,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """
         Returns a column of row indices corresponding to an anti-join
         between the right (filter) table and left table.

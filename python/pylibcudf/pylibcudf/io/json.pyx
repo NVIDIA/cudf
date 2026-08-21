@@ -396,7 +396,9 @@ cdef class JsonReaderOptionsBuilder:
         self.c_obj.byte_range_size(byte_range_size)
         return self
 
-    cpdef JsonReaderOptionsBuilder compression(self, compression_type compression):
+    cpdef JsonReaderOptionsBuilder compression(
+        self, compression_type compression
+    ):
         """
         Sets compression type.
 

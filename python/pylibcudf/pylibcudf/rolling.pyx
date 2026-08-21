@@ -68,7 +68,7 @@ cdef class BoundedClosed:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_closed](dereference(delta.get()))
@@ -85,7 +85,7 @@ cdef class BoundedOpen:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_open](dereference(delta.get()))

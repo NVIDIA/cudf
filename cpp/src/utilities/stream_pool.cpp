@@ -93,10 +93,15 @@ rmm::cuda_device_id get_current_cuda_device()
 
 /**
  * @brief Returns the configured maximum number of streams a single pool will hold.
+ *
+ * The environment is read once, so that pools created on worker threads do not race a concurrent
+ * `setenv`.
  */
 std::size_t configured_max_pool_size()
 {
-  return std::max<std::size_t>(1, getenv_or("LIBCUDF_STREAM_POOL_SIZE", STREAM_POOL_SIZE));
+  static std::size_t const size =
+    std::max<std::size_t>(1, getenv_or("LIBCUDF_STREAM_POOL_SIZE", STREAM_POOL_SIZE));
+  return size;
 }
 
 }  // namespace

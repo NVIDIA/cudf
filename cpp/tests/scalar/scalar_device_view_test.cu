@@ -100,6 +100,7 @@ TYPED_TEST(TypedScalarDeviceViewTest, SetNull)
 
   test_setnull<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view);
   CUDF_CHECK_CUDA(0);
+  s.synchronize_validity();
 
   EXPECT_FALSE(s.is_valid());
 }

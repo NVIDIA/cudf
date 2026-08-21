@@ -7,6 +7,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/bit.hpp>
 
 /**
  * @file scalar_device_view.cuh
@@ -36,19 +37,25 @@ class scalar_device_view_base {
    * @return true The element is valid
    * @return false The element is null
    */
-  [[nodiscard]] __device__ bool is_valid() const noexcept { return *_is_valid; }
+  [[nodiscard]] __device__ bool is_valid() const noexcept { return bit_is_set(_is_valid, 0); }
 
   /**
    * @brief Updates the validity of the value
    *
    * @param is_valid true: set the value to valid. false: set it to null
    */
-  __device__ void set_valid(bool is_valid) noexcept { *_is_valid = is_valid; }
+  __device__ void set_valid(bool is_valid) noexcept
+  {
+    if (is_valid) {
+      _is_valid[0] |= bitmask_type{1};
+    } else {
+      _is_valid[0] &= ~bitmask_type{1};
+    }
+  }
 
  protected:
   data_type _type{type_id::EMPTY};  ///< Value data type
-  bool* _is_valid{};                ///< Pointer to device memory containing
-                                    ///< boolean representing validity of the value.
+  bitmask_type* _is_valid{};        ///< Pointer to the scalar validity bitmask.
 
   /**
    * @brief Construct a new scalar device view base object  from a device pointer
@@ -58,7 +65,9 @@ class scalar_device_view_base {
    * @param is_valid Pointer to device memory containing boolean representing
    * validity of the scalar.
    */
-  scalar_device_view_base(data_type type, bool* is_valid) : _type(type), _is_valid(is_valid) {}
+  scalar_device_view_base(data_type type, bitmask_type* is_valid) : _type(type), _is_valid(is_valid)
+  {
+  }
 
   scalar_device_view_base() = default;
 };
@@ -142,7 +151,7 @@ class fixed_width_scalar_device_view_base : public detail::scalar_device_view_ba
    * @param is_valid The pointer to the bool in device memory that indicates the
    * validity of the stored value
    */
-  fixed_width_scalar_device_view_base(data_type type, void* data, bool* is_valid)
+  fixed_width_scalar_device_view_base(data_type type, void* data, bitmask_type* is_valid)
     : detail::scalar_device_view_base(type, is_valid), _data(data)
   {
   }
@@ -209,7 +218,7 @@ class fixed_width_scalar_device_view : public detail::fixed_width_scalar_device_
    * @param is_valid The pointer to the bool in device memory that indicates the
    * validity of the stored value
    */
-  fixed_width_scalar_device_view(data_type type, T* data, bool* is_valid)
+  fixed_width_scalar_device_view(data_type type, T* data, bitmask_type* is_valid)
     : detail::fixed_width_scalar_device_view_base(type, data, is_valid)
   {
   }
@@ -231,7 +240,7 @@ class numeric_scalar_device_view : public detail::fixed_width_scalar_device_view
    * @param is_valid The pointer to the bool in device memory that indicates the
    * validity of the stored value
    */
-  numeric_scalar_device_view(data_type type, T* data, bool* is_valid)
+  numeric_scalar_device_view(data_type type, T* data, bitmask_type* is_valid)
     : detail::fixed_width_scalar_device_view<T>(type, data, is_valid)
   {
   }
@@ -253,7 +262,7 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
    * @param is_valid The pointer to the bool in device memory that indicates the
    * validity of the stored value
    */
-  fixed_point_scalar_device_view(data_type type, rep_type* data, bool* is_valid)
+  fixed_point_scalar_device_view(data_type type, rep_type* data, bitmask_type* is_valid)
     : detail::scalar_device_view_base(type, is_valid), _data(data)
   {
   }
@@ -293,7 +302,10 @@ class string_scalar_device_view : public detail::scalar_device_view_base {
    * validity of the stored value
    * @param size The pointer to the size of the string in device memory
    */
-  string_scalar_device_view(data_type type, char const* data, bool* is_valid, size_type size)
+  string_scalar_device_view(data_type type,
+                            char const* data,
+                            bitmask_type* is_valid,
+                            size_type size)
     : detail::scalar_device_view_base(type, is_valid), _data(data), _size(size)
   {
   }
@@ -344,7 +356,7 @@ class timestamp_scalar_device_view : public detail::fixed_width_scalar_device_vi
    * @param is_valid The pointer to the bool in device memory that indicates the
    * validity of the stored value
    */
-  timestamp_scalar_device_view(data_type type, T* data, bool* is_valid)
+  timestamp_scalar_device_view(data_type type, T* data, bitmask_type* is_valid)
     : detail::fixed_width_scalar_device_view<T>(type, data, is_valid)
   {
   }
@@ -364,7 +376,7 @@ class duration_scalar_device_view : public detail::fixed_width_scalar_device_vie
    * @param is_valid The pointer to the bool in device memory that indicates the
    * validity of the stored value
    */
-  duration_scalar_device_view(data_type type, T* data, bool* is_valid)
+  duration_scalar_device_view(data_type type, T* data, bitmask_type* is_valid)
     : detail::fixed_width_scalar_device_view<T>(type, data, is_valid)
   {
   }

@@ -5,7 +5,9 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -17,6 +19,7 @@
 
 #include <cuda/stream>
 
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -64,8 +67,7 @@ class scalar {
   /**
    * @brief Indicates whether the scalar contains a valid value.
    *
-   * @note Using the value when `is_valid() == false` is undefined behavior. In addition, this
-   * function does a stream synchronization.
+   * @note Using the value when `is_valid() == false` is undefined behavior.
    *
    * @param stream CUDA stream used for device memory operations.
    * @return true Value is valid
@@ -74,22 +76,35 @@ class scalar {
   [[nodiscard]] bool is_valid(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
-   * @brief Returns a raw pointer to the validity bool in device memory.
+   * @brief Returns a raw pointer to the validity bitmask in device memory.
    *
-   * @return Raw pointer to the validity bool in device memory
+   * @return Raw pointer to the validity bitmask in device memory
    */
-  bool* validity_data();
+  bitmask_type* validity_data();
 
   /**
-   * @brief Return a const raw pointer to the validity bool in device memory.
+   * @brief Return a const raw pointer to the validity bitmask in device memory.
    *
-   * @return Raw pointer to the validity bool in device memory
+   * @return Raw pointer to the validity bitmask in device memory
    */
-  [[nodiscard]] bool const* validity_data() const;
+  [[nodiscard]] bitmask_type const* validity_data() const;
+
+  /**
+   * @brief Reconciles host validity metadata after device code modifies the validity bitmask.
+   *
+   * @param stream CUDA stream used for device memory operations.
+   */
+  void synchronize_validity(cuda::stream_ref stream = cudf::get_default_stream());
+
+  /**
+   * @brief Returns an allocation-free one-row column view of this scalar.
+   *
+   * @return A view directly referencing the scalar's owned column storage
+   */
+  [[nodiscard]] scalar_column_view as_column_view() const;
 
  protected:
-  data_type _type{type_id::EMPTY};              ///< Logical type of value in the scalar
-  cudf::detail::device_scalar<bool> _is_valid;  ///< Device bool signifying validity
+  cudf::column _storage;  ///< Arrow-compatible one-row column storage
 
   /**
    * @brief Move constructor for scalar.
@@ -123,6 +138,13 @@ class scalar {
          bool is_valid                     = false,
          cuda::stream_ref stream           = cudf::get_default_stream(),
          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Construct a scalar by taking ownership of a one-row column.
+   *
+   * @param storage One-row column storage
+   */
+  explicit scalar(cudf::column&& storage);
 };
 
 namespace detail {
@@ -190,7 +212,7 @@ class fixed_width_scalar : public scalar {
   [[nodiscard]] T const* data() const;
 
  protected:
-  cudf::detail::device_scalar<T> _data;  ///< device memory containing the value
+  mutable cudf::detail::host_vector<T> _bounce_buffer;  ///< Host staging for async value updates
 
   /**
    * @brief Construct a new fixed width scalar object.
@@ -400,9 +422,6 @@ class fixed_point_scalar : public scalar {
    * @return a const raw pointer to the value in device memory
    */
   [[nodiscard]] rep_type const* data() const;
-
- protected:
-  cudf::detail::device_scalar<rep_type> _data;  ///< device memory containing the value
 };
 
 /**
@@ -525,8 +544,24 @@ class string_scalar : public scalar {
    */
   [[nodiscard]] char const* data() const;
 
- protected:
-  rmm::device_buffer _data{};  ///< device memory containing the string
+ private:
+  struct string_storage;
+
+  explicit string_scalar(string_storage&& storage);
+
+  static string_storage make_storage(std::string_view string,
+                                     bool is_valid,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr);
+
+  string_scalar(rmm::device_buffer&& data,
+                size_type size,
+                bool is_valid,
+                cuda::stream_ref stream,
+                rmm::device_async_resource_ref mr);
+
+  size_type _size{};  ///< Host metadata for the number of string bytes
+  std::optional<cudf::detail::host_vector<char>> _host_data;  ///< Async host-source staging
 };
 
 /**
@@ -760,9 +795,6 @@ class list_scalar : public scalar {
    * @return A non-owning, immutable view to underlying device data
    */
   [[nodiscard]] column_view view() const;
-
- private:
-  cudf::column _data;
 };
 
 /**
@@ -845,8 +877,6 @@ class struct_scalar : public scalar {
   [[nodiscard]] table_view view() const;
 
  private:
-  table _data;
-
   /**
    * @brief Check if all the input columns constructing this struct scalar have valid size.
    */

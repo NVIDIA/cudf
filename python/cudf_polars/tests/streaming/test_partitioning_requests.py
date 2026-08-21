@@ -80,12 +80,12 @@ def make_hint_sorted(
     )
 
 
-def make_groupby(child: IR, *names: str) -> GroupBy:
+def make_groupby(child: IR, *names: str, maintain_order: bool = False) -> GroupBy:
     return GroupBy(
         dict.fromkeys(names, I64),
         tuple(named_col(name) for name in names),
         (),
-        maintain_order=False,
+        maintain_order=maintain_order,
         zlice=None,
         df=child,
     )
@@ -185,6 +185,32 @@ def test_select_remaps_strict_partition_request() -> None:
 
     assert requests[scan] == (StrictPartitioningRequest(("a",)),)
     assert requests[right] == (StrictPartitioningRequest(("x",)),)
+
+
+def test_cross_join_does_not_create_strict_partition_request() -> None:
+    left = make_scan("a")
+    right = make_scan("x")
+    join = Join(
+        {"a": I64, "x": I64},
+        (),
+        (),
+        ("Cross", False, None, "_right", True, "none"),
+        left,
+        right,
+    )
+
+    requests = collect_partitioning_requests(join)
+
+    assert requests == {}
+
+
+def test_maintain_order_groupby_does_not_create_strict_partition_request() -> None:
+    scan = make_scan("a")
+    groupby = make_groupby(scan, "a", maintain_order=True)
+
+    requests = collect_partitioning_requests(groupby)
+
+    assert requests == {}
 
 
 def test_select_drops_order_request_on_non_column_output() -> None:

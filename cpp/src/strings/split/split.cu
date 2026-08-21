@@ -232,7 +232,7 @@ template <bool Forward>
 std::unique_ptr<table> split_impl(strings_column_view const& input,
                                   string_scalar const& delimiter,
                                   size_type maxsplit,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");

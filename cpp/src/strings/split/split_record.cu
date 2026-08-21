@@ -110,7 +110,7 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
 template <bool Forward>
 std::unique_ptr<column> split_record_ws_per_row_fn(strings_column_view const& input,
                                                    size_type const max_tokens,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) {
@@ -152,7 +152,7 @@ template <bool Forward>
 std::unique_ptr<column> split_record_impl(strings_column_view const& input,
                                           string_scalar const& delimiter,
                                           size_type maxsplit,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");

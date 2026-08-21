@@ -339,8 +339,12 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
   count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     *d_strings, width, offsets.data());
   CUDF_CUDA_TRY(cudaGetLastError());
-  auto const total_hashes =
-    cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream);
+  auto const total_hashes = cudf::detail::sizes_to_offsets(offsets.begin(),
+                                                           offsets.end(),
+                                                           offsets.begin(),
+                                                           0,
+                                                           stream,
+                                                           cudf::get_current_device_resource_ref());
 
   // hash substrings
   rmm::device_uvector<uint32_t> hashes(total_hashes, stream);

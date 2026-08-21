@@ -484,9 +484,6 @@ TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)
 
 TEST_F(RowOperatorTest, TestRowHasherDictionaryColumn)
 {
-  // TODO: dictionary encoding gathers the keys, and gather still allocates temporaries from the
-  // current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
@@ -529,9 +526,6 @@ TEST_F(RowOperatorTest, TestRowHasherDictionaryColumn)
 
 TEST_F(RowOperatorTest, TestRowHasherDictionaryColumnWithNulls)
 {
-  // TODO: dictionary encoding gathers the keys, and gather still allocates temporaries from the
-  // current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 

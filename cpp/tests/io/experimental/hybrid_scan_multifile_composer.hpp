@@ -33,7 +33,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -53,7 +53,7 @@ std::unique_ptr<cudf::table> hybrid_scan_multifile_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -76,8 +76,32 @@ chunked_hybrid_scan_multifile(cudf::io::source_info const& source_info,
                               cudf::ast::operation const& filter_expression,
                               std::optional<std::vector<std::string>> const& payload_column_names,
                               bool case_sensitive_names,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Read parquet sources using chunked materialization and page-level payload I/O
+ *
+ * Filter columns continue to use the full-column-chunk path. Payload ranges are planned after
+ * filter materialization updates the row mask, then only requested pages are fetched.
+ *
+ * @param source_info Input source info containing one or more Parquet sources
+ * @param filter_expression Filter expression
+ * @param payload_column_names List of paths of select payload column names, if any
+ * @param case_sensitive_names Whether column names are case sensitive
+ * @param stream CUDA stream for hybrid scan reader
+ * @param mr Device memory resource
+ *
+ * @return Tuple of filter and payload tables
+ */
+std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>>
+chunked_sparse_hybrid_scan_multifile(
+  cudf::io::source_info const& source_info,
+  cudf::ast::operation const& filter_expression,
+  std::optional<std::vector<std::string>> const& payload_column_names,
+  bool case_sensitive_names,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Read parquet sources with the hybrid scan multifile reader in a single step using chunked
@@ -97,5 +121,5 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_multifile_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);

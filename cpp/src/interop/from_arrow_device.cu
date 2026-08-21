@@ -4,6 +4,7 @@
  */
 
 #include "arrow_utilities.hpp"
+#include "from_arrow_host.hpp"
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
@@ -194,9 +195,9 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
                       d_indices.begin(),
                       binary_view_to_string_index_pair{d_items, d_ptrs, d_mask, skip_mask});
     // gather strings into output column
-    auto out_col =
-      cudf::strings::detail::make_strings_column(d_indices.begin(), d_indices.end(), stream, mr);
+    auto out_col = cudf::make_strings_column(d_indices, stream, mr);
     owned.emplace_back(std::move(out_col));
+    stream.synchronize();
     return std::make_tuple<column_view, owned_columns_t>(owned.front()->view(), std::move(owned));
   }
 
@@ -321,15 +322,26 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
   CUDF_EXPECTS(schema->type != NANOARROW_TYPE_LARGE_LIST,
                "Large list types are not supported",
                cudf::data_type_error);
-  size_type const num_rows   = input->length;
-  size_type const offset     = input->offset;
+  auto const fixed_size = is_fixed_size_list(schema);
+  auto const layout =
+    fixed_size ? get_fixed_size_list_layout(schema, input) : fixed_size_list_layout{};
+
+  if (fixed_size) {
+    constexpr auto max_row_count = static_cast<int64_t>(std::numeric_limits<size_type>::max()) - 1;
+    CUDF_EXPECTS(layout.row_end <= max_row_count,
+                 "fixed-size-list device row bounds exceed cuDF's maximum supported row count "
+                 "(cudf::size_type)",
+                 std::overflow_error);
+    CUDF_EXPECTS(layout.child_end <= std::numeric_limits<int32_t>::max(),
+                 "fixed-size-list device child bounds exceed the INT32 LIST offset range",
+                 std::overflow_error);
+    CUDF_EXPECTS(input->children[0]->length >= layout.child_end,
+                 "fixed-size-list child is shorter than its parent layout requires",
+                 std::invalid_argument);
+  }
+  size_type const num_rows = fixed_size ? layout.num_rows : input->length;
+  size_type const offset   = fixed_size ? static_cast<size_type>(layout.row_offset) : input->offset;
   size_type const null_count = input->null_count;
-  auto offsets_view          = column_view{data_type(type_id::INT32),
-                                  (num_rows == 0) ? 0 : (offset + num_rows + 1),
-                                  input->buffers[fixed_width_data_buffer_idx],
-                                  nullptr,
-                                  0,
-                                  0};
 
   ArrowSchemaView child_schema_view;
   NANOARROW_THROW_NOT_OK(
@@ -341,8 +353,30 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
   // in the scenario where we were sliced and there are more elements in the child_view
   // than can be referenced by the sliced offsets, we need to slice the child_view
   // so that when `get_sliced_child` is called, we still produce the right result
-  auto max_child_offset =
-    num_rows == 0 ? 0 : cudf::detail::get_value<int32_t>(offsets_view, offset + num_rows, stream);
+  column_view offsets_view;
+  size_type max_child_offset = 0;
+  if (fixed_size) {
+    // fixed-size-list arrays carry no offsets buffer, so synthesize {0, w, 2w, ...}.
+    // these are absolute rather than normalized because the outer column_view applies a
+    // single offset to both the null mask and the children.
+    max_child_offset = (num_rows == 0) ? 0 : static_cast<size_type>(layout.child_end);
+    if (num_rows == 0) {
+      offsets_view = column_view{data_type{type_id::INT32}, 0, nullptr, nullptr, 0, 0};
+    } else {
+      owned.emplace_back(make_fixed_size_list_offsets(
+        static_cast<size_type>(layout.row_end) + 1, layout.width, stream, mr));
+      offsets_view = owned.back()->view();
+    }
+  } else {
+    offsets_view = column_view{data_type(type_id::INT32),
+                               (num_rows == 0) ? 0 : (offset + num_rows + 1),
+                               input->buffers[fixed_width_data_buffer_idx],
+                               nullptr,
+                               0,
+                               0};
+    max_child_offset =
+      num_rows == 0 ? 0 : cudf::detail::get_value<int32_t>(offsets_view, offset + num_rows, stream);
+  }
   child_view = cudf::slice(child_view, {0, max_child_offset}, stream).front();
 
   return std::make_tuple<column_view, owned_columns_t>(

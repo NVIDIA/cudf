@@ -452,6 +452,7 @@ ConfigureTest(
   utilities_tests/lists_column_wrapper_tests.cpp
   utilities_tests/memory_resource_tests.cpp
   utilities_tests/pinned_memory_tests.cpp
+  utilities_tests/stream_pool_tests.cpp
   utilities_tests/type_check_tests.cpp
   utilities_tests/type_list_tests.cpp
 )

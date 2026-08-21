@@ -362,7 +362,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnNegativeScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -408,7 +408,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnPositiveScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;

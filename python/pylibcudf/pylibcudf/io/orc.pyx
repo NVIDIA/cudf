@@ -275,7 +275,7 @@ cdef class OrcReaderOptions:
     For details, see :cpp:class:`cudf::io::orc_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> OrcReaderOptionsBuilder:
         """
         Create a OrcReaderOptionsBuilder object
 
@@ -423,6 +423,8 @@ cdef class OrcReaderOptions:
         self.c_obj.set_source(src.c_obj)
 
 cdef class OrcReaderOptionsBuilder:
+    """Builder to build options for ``read_orc``."""
+
     cpdef OrcReaderOptionsBuilder use_index(self, bool use):
         """
         Enable/Disable use of row index to speed-up reading.
@@ -507,6 +509,8 @@ cpdef ParsedOrcStatistics read_parsed_orc_statistics(
 
 
 cdef class OrcWriterOptions:
+    """The settings to use for ``write_orc``."""
+
     cpdef void set_stripe_size_bytes(self, size_t size_bytes):
         """
         Sets the maximum stripe size, in bytes.
@@ -564,7 +568,7 @@ cdef class OrcWriterOptions:
         self.c_obj.set_row_index_stride(stride)
 
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> OrcWriterOptionsBuilder:
         """
         Create builder to create OrcWriterOptions.
 
@@ -591,6 +595,8 @@ cdef class OrcWriterOptions:
 
 
 cdef class OrcWriterOptionsBuilder:
+    """Builder to build options for ``write_orc``."""
+
     cpdef OrcWriterOptionsBuilder compression(self, compression_type comp):
         """
         Sets compression type.
@@ -613,7 +619,7 @@ cdef class OrcWriterOptionsBuilder:
         """
         Choose granularity of column statistics to be written.
 
-        For details, see :cpp:func:`enable_statistics`
+        For details, see :cpp:func:`cudf::io::orc_writer_options_builder::enable_statistics`
 
         Parameters
         ----------
@@ -758,6 +764,8 @@ cdef class OrcChunkedWriter:
 
 
 cdef class ChunkedOrcWriterOptions:
+    """The settings to use for chunked ORC writing."""
+
     cpdef void set_stripe_size_bytes(self, size_t size_bytes):
         """
         Sets the maximum stripe size, in bytes.
@@ -809,7 +817,7 @@ cdef class ChunkedOrcWriterOptions:
         self.c_obj.set_row_index_stride(stride)
 
     @staticmethod
-    def builder(SinkInfo sink):
+    def builder(SinkInfo sink) -> ChunkedOrcWriterOptionsBuilder:
         """
         Create builder to create ChunkedOrcWriterOptions.
 
@@ -834,6 +842,8 @@ cdef class ChunkedOrcWriterOptions:
 
 
 cdef class ChunkedOrcWriterOptionsBuilder:
+    """Builder to build options for chunked ORC writing."""
+
     cpdef ChunkedOrcWriterOptionsBuilder compression(self, compression_type comp):
         """
         Sets compression type.

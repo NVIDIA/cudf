@@ -61,14 +61,16 @@ cudf::size_type unique_count(column_view const& input,
   auto device_view            = *input_device_view;
   auto input_table_view       = table_view{{input}};
 
-  auto const comparator = cudf::detail::row::equality::self_comparator{input_table_view, stream};
-  auto const comp       = comparator.equal_to<false>(
+  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto const comparator =
+    cudf::detail::row::equality::self_comparator{input_table_view, stream, temp_mr};
+  auto const comp = comparator.equal_to<false>(
     nullate::DYNAMIC{cudf::has_nulls(input_table_view)},
     null_equality::EQUAL,
     cudf::detail::row::equality::nan_equal_physical_equality_comparator{});
 
   return thrust::count_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{num_rows},
     [count_nulls, nan_is_null, should_check_nan, device_view, comp] __device__(cudf::size_type i) {

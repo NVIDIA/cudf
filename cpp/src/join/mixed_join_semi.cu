@@ -105,10 +105,11 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   auto left_conditional_view  = table_device_view::create(left_conditional, stream);
   auto right_conditional_view = table_device_view::create(right_conditional, stream);
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_right =
-    cudf::detail::row::equality::preprocessed_table::create(right, stream);
+    cudf::detail::row::equality::preprocessed_table::create(right, stream, temp_mr);
   auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   auto const row_comparator =
     cudf::detail::row::equality::two_table_comparator{preprocessed_left, preprocessed_right};
   auto const equality_left = row_comparator.equal_to<false>(has_nulls, compare_nulls);
@@ -134,7 +135,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   auto const equality_right_equality =
     row_comparator_right.equal_to<false>(right_nulls, compare_nulls);
   auto const preprocessed_right_condtional =
-    cudf::detail::row::equality::preprocessed_table::create(right_conditional, stream);
+    cudf::detail::row::equality::preprocessed_table::create(right_conditional, stream, temp_mr);
   auto const row_comparator_conditional_right = cudf::detail::row::equality::two_table_comparator{
     preprocessed_right_condtional, preprocessed_right_condtional};
   auto const equality_right_conditional =

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -118,10 +118,9 @@ def test_sink_parquet(
 def test_sink_parquet_compression_type(
     engine: pl.GPUEngine, df, tmp_path, compression, compression_level
 ):
-    is_zstd = compression == "zstd"
-    is_zstd_and_none = is_zstd and compression_level is None
     # LZO compression not supported in polars
-    if is_zstd_and_none:
+    # Only zstd and gzip take a compression level, which libcudf cannot set
+    if compression in {"zstd", "gzip"} and compression_level is None:
         assert_sink_result_equal(
             df,
             tmp_path / "compression.parquet",

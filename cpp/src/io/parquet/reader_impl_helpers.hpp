@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -112,6 +113,30 @@ struct row_group_size_info {
  * @return The derived input pass byte limit
  */
 [[nodiscard]] std::size_t derive_pass_read_limit(std::size_t chunk_read_limit);
+
+/**
+ * @brief Synthesizes a source-index column.
+ *
+ * @param num_rows_per_source Number of rows per source
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for device memory allocation
+ * @return Synthesized source-index column
+ */
+[[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
+  std::span<std::size_t const> num_rows_per_source,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Synthesizes row-group indices from a sorted source-index column.
+ *
+ * @param source_indices Source-index column containing one row per row group
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for device memory allocation
+ * @return Synthesized row-group index column
+ */
+[[nodiscard]] std::unique_ptr<column> synthesize_row_group_index_column(
+  column_view const& source_indices, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 /**
  * @brief Find the offset of the column chunk with the given schema index in the specified row group
@@ -296,7 +321,7 @@ class aggregate_reader_metadata {
                      host_span<std::vector<size_type> const> row_group_indices,
                      host_span<int const> column_schemas,
                      size_type num_row_groups,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const;
 
   /**
@@ -357,7 +382,7 @@ class aggregate_reader_metadata {
    * Returns true iff at least one column chunk referenced by `filter_column_schemas` in the first
    * selected row group of any source carries any of `min` / `max` / `min_value` / `max_value` /
    * `null_count`. Inspecting one row group per source is sufficient; see
-   * https://github.com/rapidsai/cudf/pull/22664#issuecomment-4557500237.
+   * https://github.com/NVIDIA/cudf/pull/22664#issuecomment-4557500237.
    *
    * @param input_row_group_indices Selected row group indices, one vector per source
    * @param filter_column_schemas Zeroth-source schema indices of the columns referenced by the
@@ -387,7 +412,7 @@ class aggregate_reader_metadata {
     host_span<data_type const> output_dtypes,
     host_span<int const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Filters the row groups using bloom filters
@@ -411,7 +436,7 @@ class aggregate_reader_metadata {
     host_span<data_type const> output_dtypes,
     host_span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream) const;
+    cuda::stream_ref stream) const;
 
   /**
    * @brief Initialize the internal variables
@@ -515,6 +540,19 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::unordered_map<std::string, std::vector<int64_t>> get_column_chunk_metadata()
     const;
+
+  /**
+   * @brief Decodes min/max statistics for selected column chunks.
+   *
+   * @param column_names Dotted leaf-column paths to decode statistics for
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Device memory resource to use for device memory allocation
+   * @return Table of row-group identifiers and decoded min/max bounds
+   */
+  [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
+    std::span<std::string const> column_names,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr) const;
 
   /**
    * @brief Get total number of rows across all files
@@ -667,7 +705,7 @@ class aggregate_reader_metadata {
                     host_span<data_type const> output_dtypes,
                     host_span<int const> output_column_schemas,
                     std::reference_wrapper<ast::expression const> filter,
-                    rmm::cuda_stream_view stream) const;
+                    cuda::stream_ref stream) const;
 
   /**
    * @brief Filters and reduces down to a selection of row groups
@@ -704,7 +742,7 @@ class aggregate_reader_metadata {
                     host_span<data_type const> output_dtypes,
                     host_span<int const> output_column_schemas,
                     std::optional<std::reference_wrapper<ast::expression const>> filter,
-                    rmm::cuda_stream_view stream) const;
+                    cuda::stream_ref stream) const;
 
   /**
    * @brief Filters and reduces down to a selection of columns

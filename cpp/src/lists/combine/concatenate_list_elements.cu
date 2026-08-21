@@ -19,11 +19,11 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/logical.h>
@@ -41,7 +41,7 @@ namespace {
  */
 std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
                                                       bool build_null_mask,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   auto const num_rows = input.size();
@@ -106,7 +106,7 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
  */
 std::pair<std::unique_ptr<column>, rmm::device_uvector<int8_t>>
 generate_list_offsets_and_validities(column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   auto const num_rows = input.size();
@@ -161,7 +161,7 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
                                             column_view const& output_list_offsets,
                                             size_type num_rows,
                                             size_type num_output_entries,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   auto const child_col      = lists_column_view(input).child();
@@ -200,7 +200,7 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
 }
 
 std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& input,
-                                                          rmm::cuda_stream_view stream,
+                                                          cuda::stream_ref stream,
                                                           rmm::device_async_resource_ref mr)
 {
   // Generate offsets and validities of the output lists column.
@@ -231,7 +231,7 @@ std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& inp
  */
 std::unique_ptr<column> concatenate_list_elements(column_view const& input,
                                                   concatenate_null_policy null_policy,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.type().id() == type_id::LIST,
@@ -280,7 +280,7 @@ std::unique_ptr<column> concatenate_list_elements(column_view const& input,
  */
 std::unique_ptr<column> concatenate_list_elements(column_view const& input,
                                                   concatenate_null_policy null_policy,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

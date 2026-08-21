@@ -72,7 +72,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
     indices.begin(),
     indices.end(),
     row_value);
-  return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 template <>

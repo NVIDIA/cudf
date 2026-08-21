@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def test_cast_to_string_unsupported(engine: pl.GPUEngine):
 
 
 def test_float_to_decimal_rounding(engine: pl.GPUEngine):
-    # See https://github.com/rapidsai/cudf/pull/21450
+    # See https://github.com/NVIDIA/cudf/pull/21450
     df = pl.LazyFrame(
         {
             "foo": [Decimal("16954168.35")],

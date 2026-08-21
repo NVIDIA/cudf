@@ -749,6 +749,28 @@ custom_memory_resource *mr...;
 rmm::device_buffer custom_buff(100, mr, stream);
 ```
 
+#### cudf::detail::device_scalar<T>
+A self-contained device scalar for internal libcudf code that needs a single trivially copyable
+value in device memory, such as a reduction result, temporary counter, or kernel status value.
+
+Use this for internal scalar input/output with device kernels. Public libcudf APIs should use
+`cudf::scalar` and derived public scalar classes instead of this detail type.
+
+It exposes `data()` for kernels and `value()`/`set_value_async()` for stream-ordered host/device
+transfers.
+
+```c++
+// Allocates device memory for a single int using the specified resource and stream
+// and initializes the value to 42
+cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
+
+// scalar.data() returns pointer to value in device memory
+kernel<<<...>>>(int_scalar.data(),...);
+
+// value() copies the device value to the host on the specified stream
+int host_value = int_scalar.value(stream);
+```
+
 #### rmm::device_vector<T>
 
 Allocates a specified number of elements of the specified type. If no initialization value is

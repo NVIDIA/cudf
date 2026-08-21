@@ -231,6 +231,17 @@ def test_ordering_with_keys(context: Context) -> None:
     assert ordering.boundaries_aligned_with(ordering2, context.br())
 
 
+def test_ordering_as_strict(context: Context) -> None:
+    """as_strict shares boundaries and marks them strict."""
+    o1 = _two_key_order_scheme(context)
+    ordering = o1.orderings[0]
+    strict_ordering = ordering.as_strict()
+    assert strict_ordering.keys == ordering.keys
+    assert strict_ordering.num_boundaries == ordering.num_boundaries
+    assert strict_ordering.strict_boundaries
+    assert ordering.boundaries_aligned_with(strict_ordering, context.br())
+
+
 def test_ordering_boundaries_aligned_with(context: Context) -> None:
     """Boundary comparison ignores key indices but checks values and ordering."""
     df = plc.Table(

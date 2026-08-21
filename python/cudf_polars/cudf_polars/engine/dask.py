@@ -541,6 +541,62 @@ def _reset_worker(
     rmm.mr.set_current_device_resource(mp_ctx.mr)
 
 
+def _get_cluster_info(
+    *, uid: str, dask_worker: distributed.Worker | None = None
+) -> tuple[int, ClusterInfo]:
+    """
+    Return this worker's ``(rank, ClusterInfo)`` pair.
+
+    Parameters
+    ----------
+    uid
+        Cluster instance identifier used to look up the per-worker context.
+    dask_worker
+        Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
+
+    Returns
+    -------
+    The worker's rank and its diagnostic information.
+    """
+    assert dask_worker is not None
+    mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
+    assert mp_ctx.comm is not None
+    return mp_ctx.comm.rank, ClusterInfo.local()
+
+
+def _run_with_rank(
+    func: Callable[..., T],
+    *args: Any,
+    uid: str,
+    dask_worker: distributed.Worker | None = None,
+    **kwargs: Any,
+) -> tuple[int, T]:
+    """
+    Call ``func`` on this worker and pair the result with the worker's rank.
+
+    Parameters
+    ----------
+    func
+        Called with ``*args`` and ``**kwargs``.
+    args
+        Positional arguments for ``func``.
+    uid
+        Cluster instance identifier used to look up the per-worker context.
+    dask_worker
+        Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
+    kwargs
+        Keyword arguments for ``func``.
+
+    Returns
+    -------
+    The worker's rank and whatever ``func`` returned.
+    """
+    assert dask_worker is not None
+    mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
+    assert mp_ctx.comm is not None
+    return mp_ctx.comm.rank, func(*args, **kwargs)
+
+
 def _get_statistics(
     *, clear: bool, uid: str, dask_worker: distributed.Worker | None = None
 ) -> tuple[int, Statistics]:
@@ -1096,7 +1152,7 @@ class DaskEngine(StreamingEngine):
         -------
         List of :class:`~cudf_polars.engine.core.ClusterInfo`, one per rank.
         """
-        return list(self._dask_ctx.client.run(ClusterInfo.local).values())
+        return list(self._run_by_rank(_get_cluster_info).values())
 
     def gather_statistics(self, *, clear: bool = False) -> list[Statistics]:
         """
@@ -1112,14 +1168,7 @@ class DaskEngine(StreamingEngine):
         List of :class:`~rapidsmpf.statistics.Statistics`, one per rank,
         ordered by rank index.
         """
-        results = self._dask_ctx.client.run(
-            functools.partial(
-                _get_statistics, clear=clear, uid=self._dask_ctx.rapidsmpf_id
-            )
-        )
-        # `client.run` returns a dict keyed by worker address in non-deterministic
-        # order; sort by the rank the worker reports.
-        return [s for _, s in sorted(results.values(), key=lambda p: p[0])]
+        return list(self._run_by_rank(_get_statistics, clear=clear).values())
 
     def shutdown(self) -> None:
         """
@@ -1177,7 +1226,31 @@ class DaskEngine(StreamingEngine):
             raise ExceptionGroup("Worker teardown failed", exceptions)
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
-        return list(self._dask_ctx.client.run(func, *args, **kwargs).values())
+        return list(self._run_by_rank(_run_with_rank, func, *args, **kwargs).values())
+
+    def _run_by_rank(
+        self, func: Callable[..., tuple[int, T]], *args: Any, **kwargs: Any
+    ) -> dict[int, T]:
+        """
+        Run ``func`` on every worker and return the results keyed by rank.
+
+        Parameters
+        ----------
+        func
+            Runs on each worker, returning ``(rank, result)``.
+        args
+            Positional arguments for ``func``.
+        kwargs
+            Keyword arguments for ``func``.
+
+        Returns
+        -------
+        One result per rank, keyed by rank and in rank order.
+        """
+        results = self._dask_ctx.client.run(
+            functools.partial(func, *args, uid=self._dask_ctx.rapidsmpf_id, **kwargs)
+        )
+        return dict(sorted(results.values(), key=lambda pair: pair[0]))
 
     @unstable()
     def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:

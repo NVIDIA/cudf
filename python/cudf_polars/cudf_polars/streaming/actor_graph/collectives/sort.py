@@ -212,14 +212,20 @@ async def extract_orderscheme_partitioning(
             # The corresponding empty chunk must be dropped
             # from the data channel.
             continue
-        chunks.insert(Message(msg.sequence_number, chunk))
-        min_max_rows.extend(
-            plc.copying.slice(
+        row_indices = plc.Column.from_iterable_of_py(
+            [0, n - 1],
+            plc.DataType(plc.TypeId.INT32),
+            stream=stream,
+        )
+        min_max_rows.append(
+            plc.copying.gather(
                 tbl,
-                [0, 1, 0, 1] if n == 1 else [0, 1, n - 1, n],
+                row_indices,
+                plc.copying.OutOfBoundsPolicy.DONT_CHECK,
                 stream=stream,
             )
         )
+        chunks.insert(Message(msg.sequence_number, chunk))
     min_max_table: plc.Table | None = (
         plc.concatenate.concatenate(min_max_rows, stream=stream)
         if min_max_rows

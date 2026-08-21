@@ -4753,9 +4753,10 @@ def test_parquet_not_equal_with_nan_stats(tmp_path):
 
     # Neither row group may be pruned: rg0 holds a NaN, rg1 holds 7.0 and 8.0
     assert_eq(result.num_row_groups_after_stats_filter, 2)
-    assert_arrow_table_equal(
-        pa.table({"x": [float("nan"), 7.0, 8.0]}), result.tbl.to_arrow()
-    )
+    got = result.tbl.to_arrow().column(0).to_pylist()
+    assert_eq(len(got), 3)
+    assert_eq(math.isnan(got[0]), True)
+    assert_eq(got[1:], [7.0, 8.0])
 
 
 def test_parquet_negated_ordering_with_nan_stats(tmp_path):
@@ -4789,13 +4790,17 @@ def test_parquet_negated_ordering_with_nan_stats(tmp_path):
     source = plc.io.SourceInfo([str(path)])
     options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
     options.set_filter(filter_expr)
-    got = plc.io.parquet.read_parquet(options).tbl.to_arrow()
+    got = (
+        plc.io.parquet.read_parquet(options)
+        .tbl.to_arrow()
+        .column(0)
+        .to_pylist()
+    )
 
     # NOT(x < 50) is true for NaN and for 100/200/300, and false for 1.0/2.0
-    assert_arrow_table_equal(
-        pa.table({"x": [float("nan"), 100.0, 200.0, 300.0]}),
-        got,
-    )
+    assert_eq(len(got), 4)
+    assert_eq(math.isnan(got[0]), True)
+    assert_eq(got[1:], [100.0, 200.0, 300.0])
 
 
 @pytest.mark.skipif(

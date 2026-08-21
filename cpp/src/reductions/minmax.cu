@@ -150,13 +150,11 @@ std::unique_ptr<cudf::scalar_type_t<T>> make_minmax_scalar(cudf::data_type type,
                                                            cuda::stream_ref stream,
                                                            rmm::device_async_resource_ref mr)
 {
-  using ScalarType = cudf::scalar_type_t<T>;
   if constexpr (cudf::is_fixed_point<T>()) {
-    using storage_type = device_storage_type_t<T>;
-    return std::make_unique<ScalarType>(
-      storage_type{}, numeric::scale_type{type.scale()}, true, stream, mr);
+    return std::make_unique<cudf::scalar_type_t<T>>(
+      device_storage_type_t<T>{}, numeric::scale_type{type.scale()}, true, stream, mr);
   }
-  return std::make_unique<ScalarType>(T{}, true, stream, mr);
+  return std::make_unique<cudf::scalar_type_t<T>>(T{}, true, stream, mr);
 }
 
 /**

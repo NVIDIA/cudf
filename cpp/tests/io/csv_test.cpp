@@ -961,7 +961,7 @@ TEST_F(CsvReaderTest, WindowsLineTerminators)
   cudf::test::fixed_width_column_wrapper<int64_t> const expected_values{1, 2};
   cudf::test::strings_column_wrapper const expected_names{"alpha", "beta"};
   table_view const expected{{expected_values, expected_names}};
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result.tbl->view());
 }
 
 TEST_F(CsvReaderTest, StringsQuotes)

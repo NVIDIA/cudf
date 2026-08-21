@@ -177,7 +177,7 @@ cdef class Scalar:
         ----------
         metadata : ColumnMetadata | str | None
             The metadata to attach to the scalar.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -206,7 +206,7 @@ cdef class Scalar:
         dtype: DataType | None
             The datatype to cast the value to. If None,
             the type is inferred from the pyarrow scalar.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -270,7 +270,7 @@ cdef class Scalar:
         dtype: DataType | None
             The datatype to cast the value to. If None,
             the type is inferred from `py_val`.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Memory resource for allocations
@@ -299,7 +299,7 @@ cdef class Scalar:
         ----------
         np_val: numpy.generic
             Value to convert to a pylibcudf.Scalar
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Memory resource for allocations
@@ -322,7 +322,7 @@ cdef class Scalar:
 
         Parameters
         ----------
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns

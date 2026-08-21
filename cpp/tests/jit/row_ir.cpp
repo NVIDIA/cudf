@@ -356,8 +356,7 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
                                          cudf::get_default_stream(),
                                          cudf::get_current_device_resource_ref());
 
-  ASSERT_EQ(transform_args.scalar_columns.size(), 1);
-  ASSERT_EQ(transform_args.scalar_columns[0]->view().size(), 1);
+  ASSERT_EQ(transform_args.scalar_columns.size(), 0);
   EXPECT_EQ(transform_args.source_type, cudf::udf_source_type::CUDA);
   EXPECT_EQ(transform_args.is_null_aware, cudf::null_aware::NO);
   EXPECT_EQ(transform_args.outputs.size(), 1);
@@ -370,6 +369,8 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
   EXPECT_EQ(std::get<cudf::scalar_column_view>(transform_args.inputs[0]).type(),
             cudf::data_type{cudf::type_id::INT32});
   EXPECT_EQ(std::get<cudf::scalar_column_view>(transform_args.inputs[0]).null_count(), 0);
+  EXPECT_EQ(std::get<cudf::scalar_column_view>(transform_args.inputs[0]).data<int32_t>(),
+            forty_two.data());
 
   /// The input column should be the second column in the transform args
   ASSERT_TRUE(std::holds_alternative<cudf::column_view>(transform_args.inputs[1]));

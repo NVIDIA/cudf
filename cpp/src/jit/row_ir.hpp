@@ -159,7 +159,7 @@ struct [[nodiscard]] instance_context {
 
   [[nodiscard]] int32_t add_input(scalar const& scalar)
   {
-    return add_input(scalar_input{make_column_from_scalar(scalar, 1, stream_, mr_)});
+    return add_input(scalar.as_column_view());
   }
 
   [[nodiscard]] int32_t add_input(scalar_column_view const& column)

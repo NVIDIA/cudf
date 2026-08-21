@@ -876,9 +876,9 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
 bool is_nullable(scalar_input const& in)
 {
   if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
-    return (*s)->nullable();
+    return (*s)->has_nulls();
   } else {
-    return std::get<scalar_column_view>(in).nullable();
+    return std::get<scalar_column_view>(in).has_nulls();
   }
 }
 

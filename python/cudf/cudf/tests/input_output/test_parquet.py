@@ -4722,13 +4722,7 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
 
 
 def test_parquet_not_equal_with_nan_stats(tmp_path):
-    """`col != v` must not prune a row group whose NaN rows satisfy it.
-
-    Arrow and parquet-mr both skip NaN when updating min/max, so a chunk of {NaN, v}
-    reports min == max == v and is indistinguishable from a constant-v chunk. The
-    `col != val` stats transform prunes exactly that shape, dropping the NaN rows -
-    which do satisfy `col != val`, since NaN != v is true.
-    """
+    """`col != v` must not prune matching `NaN` rows."""
     import pylibcudf as plc
     from pylibcudf.expressions import (
         ASTOperator,
@@ -4765,13 +4759,7 @@ def test_parquet_not_equal_with_nan_stats(tmp_path):
 
 
 def test_parquet_negated_ordering_with_nan_stats(tmp_path):
-    """`NOT(col < v)` must not be rewritten to `col >= v` for a float column.
-
-    IEEE-754 makes every ordered comparison against NaN false, so a NaN row satisfies
-    `NOT(col < v)` while `col >= v` is false for it. Arrow writes min/max that merely
-    *exclude* NaN (cudf's own writer drops min/max entirely, per PARQUET-1246), so a row
-    group holding NaN still has usable statistics and would be wrongly pruned.
-    """
+    """`NOT(col < v)` must not prune matching `NaN` rows."""
     import pylibcudf as plc
     from pylibcudf.expressions import (
         ASTOperator,
@@ -4799,7 +4787,12 @@ def test_parquet_negated_ordering_with_nan_stats(tmp_path):
     source = plc.io.SourceInfo([str(path)])
     options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
     options.set_filter(filter_expr)
-    got = plc.io.parquet.read_parquet(options).tbl.to_arrow().column(0).to_pylist()
+    got = (
+        plc.io.parquet.read_parquet(options)
+        .tbl.to_arrow()
+        .column(0)
+        .to_pylist()
+    )
 
     # NOT(x < 50) is true for NaN and for 100/200/300, and false for 1.0/2.0
     assert len(got) == 4

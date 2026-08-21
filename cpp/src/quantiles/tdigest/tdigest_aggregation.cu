@@ -1535,43 +1535,42 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
     // if we will be at least partially using the CPU here, move the important values into pinned
     // and reference those instead.
     if (use_cpu_for_cluster_computation(num_groups)) {
-      auto pinned_mr = cudf::get_pinned_memory_resource();
-
-      rmm::device_uvector<size_type> _p_group_offsets(num_groups + 1, stream, pinned_mr);
+      rmm::device_uvector<size_type> d_p_group_offsets(num_groups + 1, stream);
       thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    group_offsets,
-                   group_offsets + _p_group_offsets.size(),
-                   _p_group_offsets.begin());
-      cudf::device_span<size_type const> p_group_offsets(_p_group_offsets);
+                   group_offsets + d_p_group_offsets.size(),
+                   d_p_group_offsets.begin());
+      auto _p_group_offsets = cudf::detail::make_pinned_vector_async(d_p_group_offsets, stream);
+      cudf::device_span<size_type const> p_group_offsets(_p_group_offsets.data(),
+                                                         _p_group_offsets.size());
 
-      rmm::device_uvector<double> p_cumulative_weights(cumulative_weights, stream, pinned_mr);
+      auto _p_tdigest_offsets = cudf::detail::make_pinned_vector_async<size_type>(
+        device_span<size_type const>(tdigest_offsets.data<size_type>(), tdigest_offsets.size()),
+        stream);
+      auto p_tdigest_offsets =
+        cuda::std::span<size_type const>{_p_tdigest_offsets.data(), _p_tdigest_offsets.size()};
 
-      rmm::device_uvector<int32_t> p_tdigest_offsets(tdigest_offsets.size(), stream, pinned_mr);
-      thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   tdigest_offsets.begin<int32_t>(),
-                   tdigest_offsets.begin<int32_t>() + p_tdigest_offsets.size(),
-                   p_tdigest_offsets.begin());
-
-      rmm::device_uvector<size_type> _p_group_labels(num_group_labels, stream, pinned_mr);
+      rmm::device_uvector<size_type> d_p_group_labels(num_group_labels, stream);
       thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    group_labels,
                    group_labels + num_group_labels,
-                   _p_group_labels.begin());
-      cudf::device_span<size_type const> p_group_labels(_p_group_labels);
+                   d_p_group_labels.begin());
+      auto _p_group_labels = cudf::detail::make_pinned_vector_async(d_p_group_labels, stream);
+      cudf::device_span<size_type const> p_group_labels(_p_group_labels.data(),
+                                                        _p_group_labels.size());
 
       stream.synchronize();
+      auto pinned_mr = cudf::get_pinned_memory_resource();
+      rmm::device_uvector<double> p_cumulative_weights(cumulative_weights, stream, pinned_mr);
       return generate_group_cluster_info(
         delta,
         num_groups,
         nearest_value_centroid_weights{
-          p_cumulative_weights.begin(), p_group_offsets, p_tdigest_offsets.begin()},
+          p_cumulative_weights.begin(), p_group_offsets, p_tdigest_offsets.data()},
         centroid_group_info{
-          p_cumulative_weights.begin(), p_group_offsets, p_tdigest_offsets.begin()},
+          p_cumulative_weights.begin(), p_group_offsets, p_tdigest_offsets.data()},
         cumulative_centroid_weight{
-          p_cumulative_weights.begin(),
-          p_group_labels,
-          p_group_offsets,
-          cuda::std::span<int32_t const>{p_tdigest_offsets.begin(), p_tdigest_offsets.size()}},
+          p_cumulative_weights.begin(), p_group_labels, p_group_offsets, p_tdigest_offsets},
         has_nulls,
         stream,
         mr);

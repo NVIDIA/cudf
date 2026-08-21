@@ -36,8 +36,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                "Left table has nulls while right table was not hashed with null check.",
                std::invalid_argument);
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
   auto match_counts =
@@ -83,8 +83,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                "Left table has nulls while right table was not hashed with null check.",
                std::invalid_argument);
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
   auto match_counts =
     cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, mr);
   auto matched_slots =

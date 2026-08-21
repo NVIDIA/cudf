@@ -49,8 +49,8 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     }
   }
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
   auto match_counts  = cudf::detail::make_zeroed_device_uvector_async<size_type>(
@@ -118,8 +118,10 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   auto join_indices = std::pair(std::move(left_indices), std::move(right_indices));
 
   if constexpr (Join == join_kind::FULL_JOIN) {
+    // The HashCSR retrieve kernels do not mark matched right rows, so let `finalize_full_join`
+    // derive the match flags from the emitted right indices.
     return detail::finalize_full_join(
-      std::move(join_indices), left.num_rows(), _right.num_rows(), stream, mr);
+      std::move(join_indices), left.num_rows(), _right.num_rows(), std::nullopt, stream, mr);
   } else {
     return join_indices;
   }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,13 +21,12 @@
 
 #include <nvtext/replace.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/atomic>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
@@ -258,7 +257,7 @@ struct remove_small_tokens_fn : base_token_replacer_fn {
 template <typename ReplacerFn>
 std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                                              cudf::strings_column_view const& input,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   auto const first_offset = (input.offset() == 0) ? 0L
@@ -315,7 +314,7 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                   sub_offsets.begin() + sub_count,
                   tmp_offsets.begin());
     tmp_offsets.resize(sub_count + input.size() + 1, stream);
-    stream.synchronize();  // protect against destruction of sub_offsets
+    stream.sync();  // protect against destruction of sub_offsets
   }
 
   // cobble together a column_view of type STRING using the original data and the tmp offsets
@@ -348,8 +347,8 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
 
   auto chars = std::get<1>(
     cudf::strings::detail::make_strings_children(replacer, tmp_strings.size(), stream, mr));
-  auto offsets_column = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(d_sizes.begin(), d_sizes.end(), stream, mr));
+  auto offsets_column =
+    std::get<0>(cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr));
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets_column),
                                    chars.release(),
@@ -364,7 +363,7 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
                                              cudf::strings_column_view const& targets,
                                              cudf::strings_column_view const& replacements,
                                              cudf::string_scalar const& delimiter,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!targets.has_nulls(), "Parameter targets must not have nulls");
@@ -394,7 +393,7 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
                                             cudf::size_type min_token_length,
                                             cudf::string_scalar const& replacement,
                                             cudf::string_scalar const& delimiter,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(replacement.is_valid(stream), "Parameter replacement must be valid");
@@ -419,7 +418,7 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
                                              cudf::strings_column_view const& targets,
                                              cudf::strings_column_view const& replacements,
                                              cudf::string_scalar const& delimiter,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -430,7 +429,7 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
                                             cudf::size_type min_token_length,
                                             cudf::string_scalar const& replacement,
                                             cudf::string_scalar const& delimiter,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

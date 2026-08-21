@@ -30,6 +30,8 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <thrust/sequence.h>
+
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
@@ -284,24 +286,60 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::struct_v
     input->length, std::move(child_columns), null_count, std::move(*out_mask), stream, mr);
 }
 
+/**
+ * @brief Synthesize the offsets column and child bounds for a fixed-size-list array
+ *
+ * Mirrors the (offsets, child-offset, child-length) contract of `get_offsets_column`.
+ * Fixed-size-list arrays carry no offsets buffer, so `buffers[fixed_width_data_buffer_idx]`
+ * is never read here. The returned offsets are normalized to start at zero, matching
+ * `copy_offsets_column`; the absolute start of the child range is returned separately.
+ */
+std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_fixed_size_list_offsets(
+  ArrowSchemaView const* schema,
+  ArrowArray const* input,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto const layout = get_fixed_size_list_layout(schema, input);
+  CUDF_EXPECTS(input->children[0]->length >= layout.child_end,
+               "fixed-size-list child is shorter than its parent layout requires",
+               std::invalid_argument);
+
+  return std::tuple{make_fixed_size_list_offsets(layout.num_rows + 1, layout.width, stream, mr),
+                    layout.child_offset,
+                    layout.child_length};
+}
+
 template <>
 std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_view>(
   ArrowSchemaView const* schema, ArrowArray const* input, data_type type, bool skip_mask)
 {
-  CUDF_EXPECTS(
-    input->length + 1 <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
-    std::overflow_error);
+  CUDF_EXPECTS(input->length >= 0, "Number of rows must be non-negative.", std::invalid_argument);
+  constexpr auto max_row_count = static_cast<int64_t>(std::numeric_limits<size_type>::max()) - 1;
+  CUDF_EXPECTS(input->length <= max_row_count,
+               "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
+               std::overflow_error);
 
-  auto [offsets_column, offset, length] = get_offsets_column(schema, input, stream, mr);
+  auto const fixed_size                 = is_fixed_size_list(schema);
+  auto [offsets_column, offset, length] = fixed_size
+                                            ? get_fixed_size_list_offsets(schema, input, stream, mr)
+                                            : get_offsets_column(schema, input, stream, mr);
 
   ArrowSchemaView view;
   NANOARROW_THROW_NOT_OK(ArrowSchemaViewInit(&view, schema->schema->children[0], nullptr));
   auto child_type = arrow_to_cudf_type(&view);
 
   ArrowArray child_array(*input->children[0]);
+  if (fixed_size) {
+    CUDF_EXPECTS(child_array.offset >= 0,
+                 "fixed-size-list child offset must be non-negative",
+                 std::invalid_argument);
+    CUDF_EXPECTS(offset <= std::numeric_limits<int64_t>::max() - child_array.offset,
+                 "fixed-size-list child offset overflows Arrow's int64 representation",
+                 std::overflow_error);
+  }
   child_array.offset += offset;
-  child_array.length = std::min(length, child_array.length);
+  child_array.length = fixed_size ? length : std::min(length, child_array.length);
 
   auto child_column = get_column_copy(&view, &child_array, child_type, skip_mask, stream, mr);
 
@@ -394,9 +432,27 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> copy_offsets_column(
 
 }  // namespace
 
+std::unique_ptr<column> make_fixed_size_list_offsets(size_type num_offsets,
+                                                     int32_t width,
+                                                     rmm::cuda_stream_view stream,
+                                                     rmm::device_async_resource_ref mr)
+{
+  auto offsets = make_numeric_column(
+    data_type{type_id::INT32}, num_offsets, mask_state::UNALLOCATED, stream, mr);
+  auto d_offsets = offsets->mutable_view().begin<int32_t>();
+  thrust::sequence(
+    rmm::exec_policy_nosync(stream, mr), d_offsets, d_offsets + num_offsets, int32_t{0}, width);
+  return offsets;
+}
+
 /**
  * @brief Utility to copy the offsets from the given input (strings or list) to a
  * cudf column
+ *
+ * @note This requires `input` to carry an offsets buffer at
+ * `fixed_width_data_buffer_idx`, which it reads before inspecting `schema->type`.
+ * Fixed-size-list arrays have no offsets buffer (`n_buffers == 1`), so they must be
+ * routed to `get_fixed_size_list_offsets` instead.
  */
 std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   ArrowSchemaView const* schema,
@@ -445,6 +501,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   offsets_array.offset                         = 0;  // already accounted for by the above transform
   auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int32_t>(
     schema, &offsets_array, data_type(type_id::INT32), true);
+  stream.synchronize();
   return std::tuple{std::move(result), offset, length};
 }
 
@@ -489,6 +546,7 @@ std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
       std::overflow_error);
     return std::make_unique<table>(std::move(columns), static_cast<size_type>(input->array.length));
   }
+  stream.synchronize();
   return std::make_unique<table>(std::move(columns));
 }
 
@@ -507,8 +565,10 @@ std::unique_ptr<column> from_arrow_host_column(ArrowSchema const* schema,
   ArrowSchemaView view;
   NANOARROW_THROW_NOT_OK(ArrowSchemaViewInit(&view, schema, nullptr));
 
-  auto type = arrow_to_cudf_type(&view);
-  return get_column_copy(&view, &input->array, type, false, stream, mr);
+  auto type   = arrow_to_cudf_type(&view);
+  auto result = get_column_copy(&view, &input->array, type, false, stream, mr);
+  stream.synchronize();
+  return result;
 }
 
 std::unique_ptr<column> get_column_from_host_copy(ArrowSchemaView const* schema,

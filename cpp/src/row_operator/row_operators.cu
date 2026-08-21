@@ -22,7 +22,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <functional>
 #include <stdexcept>
@@ -40,7 +40,7 @@ namespace {
 std::vector<column_view> unslice_children(column_view const& c)
 {
   if (c.type().id() == type_id::STRUCT) {
-    auto child_it = thrust::make_transform_iterator(c.child_begin(), [](auto const& child) {
+    auto child_it = cuda::transform_iterator(c.child_begin(), [](auto const& child) {
       return column_view(
         child.type(),
         child.offset() + child.size(),  // This is hacky, we don't know the actual unsliced size but
@@ -648,6 +648,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
     null_precedence, stream, cudf::get_current_device_resource_ref());
   auto d_depths = detail::make_device_uvector_async(
     verticalized_col_depths, stream, cudf::get_current_device_resource_ref());
+  stream.synchronize();
 
   if (detail::has_nested_columns(preprocessed_input)) {
     auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream);
@@ -842,27 +843,27 @@ two_table_comparator::two_table_comparator(table_view const& left,
 
 namespace equality {
 
-std::shared_ptr<preprocessed_table> preprocessed_table::create(table_view const& t,
-                                                               rmm::cuda_stream_view stream)
+std::shared_ptr<preprocessed_table> preprocessed_table::create(
+  table_view const& t, rmm::cuda_stream_view stream, rmm::device_async_resource_ref temp_mr)
 {
   check_eq_compatibility(t);
 
-  auto [null_pushed_table, nullable_data] =
-    structs::detail::push_down_nulls(t, stream, cudf::get_current_device_resource_ref());
-  auto struct_offset_removed_table = remove_struct_child_offsets(null_pushed_table);
+  auto [null_pushed_table, nullable_data] = structs::detail::push_down_nulls(t, stream, temp_mr);
+  auto struct_offset_removed_table        = remove_struct_child_offsets(null_pushed_table);
   auto verticalized_t =
     std::get<0>(decompose_structs(struct_offset_removed_table, decompose_lists_column::YES));
 
-  auto d_t = table_device_view_owner(table_device_view::create(verticalized_t, stream));
+  auto d_t = table_device_view_owner(table_device_view::create(verticalized_t, stream, temp_mr));
   return std::shared_ptr<preprocessed_table>(new preprocessed_table(
     std::move(d_t), std::move(nullable_data.new_null_masks), std::move(nullable_data.new_columns)));
 }
 
 two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
-                                           rmm::cuda_stream_view stream)
-  : d_left_table{preprocessed_table::create(left, stream)},
-    d_right_table{preprocessed_table::create(right, stream)}
+                                           rmm::cuda_stream_view stream,
+                                           rmm::device_async_resource_ref temp_mr)
+  : d_left_table{preprocessed_table::create(left, stream, temp_mr)},
+    d_right_table{preprocessed_table::create(right, stream, temp_mr)}
 {
   check_shape_compatibility(left, right);
 }

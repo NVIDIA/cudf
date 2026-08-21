@@ -86,11 +86,11 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
   validate_hash_join_probe(_right, left_partition_view, _has_nulls);
 
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream);
-
   auto const temp_mr = cudf::get_current_device_resource_ref();
-  auto counts        = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto const preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream, temp_mr);
+
+  auto counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
     static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
   CUDF_CUDA_TRY(
     cudf::detail::memcpy_async(counts.data(),

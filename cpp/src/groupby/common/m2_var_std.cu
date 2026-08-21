@@ -17,7 +17,7 @@
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 namespace cudf::groupby::detail {

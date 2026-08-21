@@ -24,7 +24,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>
@@ -239,7 +239,7 @@ auto build_cross_comparators(
     h_eqs.push_back(adapter.comparator);
   }
 
-  return cudf::detail::make_device_uvector_async(h_eqs, stream, temp_mr);
+  return cudf::detail::make_device_uvector(h_eqs, stream, temp_mr);
 }
 
 /// The impl struct for streaming_groupby. Defined in impl.cu.

@@ -16,7 +16,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/std/algorithm>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstdint>
 
@@ -40,13 +40,13 @@ CUDF_KERNEL void hash_csr_build_count_kernel(size_type num_rows,
   for (auto row = grid_1d::global_thread_id(); row < num_rows; row += stride) {
     auto const index = static_cast<size_type>(row);
     if (valid_rows != nullptr && !cudf::bit_is_set(valid_rows, index)) {
-      build_positions[index] = {std::uint32_t{-1}, CUDF_SIZE_TYPE_SENTINEL};
+      build_positions[index] = {std::uint32_t{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
       continue;
     }
 
     auto const slot = map.insert(hash_csr_key_type{hasher(index), index}, equal);
     if (slot == map.capacity) {
-      build_positions[index] = {std::uint32_t{-1}, CUDF_SIZE_TYPE_SENTINEL};
+      build_positions[index] = {std::uint32_t{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
       continue;
     }
     auto slot_count_ref = cuda::atomic_ref<size_type, cuda::thread_scope_device>{slot_counts[slot]};

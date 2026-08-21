@@ -18,7 +18,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf {
 namespace binops {

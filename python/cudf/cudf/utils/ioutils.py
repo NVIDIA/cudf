@@ -262,7 +262,7 @@ path : str or list of str
     File path or Root Directory path. Will be used as Root Directory path
     while writing a partitioned dataset. Use list of str with partition_offsets
     to write parts of the dataframe to different files.
-compression : {{'snappy', 'ZSTD', 'LZ4', None}}, default 'snappy'
+compression : {{'snappy', 'ZSTD', 'LZ4', 'GZIP', None}}, default 'snappy'
     Name of the compression to use; case insensitive.
     Use ``None`` for no compression.
 index : bool, default None
@@ -578,6 +578,12 @@ index : bool, default None
     ``RangeIndex`` will be stored as a range in the metadata so it
     doesn't require much space and is faster. Other indexes will
     be included as columns in the file output.
+
+Notes
+-----
+Timestamps in the last 999 milliseconds before the UNIX epoch are not
+representable in ORC; they are read back one second later, as with the Apache
+ORC writer (ORC-763, ORC-771).
 
 See Also
 --------

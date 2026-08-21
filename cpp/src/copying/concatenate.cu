@@ -31,7 +31,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
@@ -89,6 +89,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
   auto d_offsets =
     make_device_uvector_async(offsets, stream, cudf::get_current_device_resource_ref());
   auto const output_size = offsets.back();
+  stream.sync();
 
   return std::make_tuple(
     std::move(device_view_owners), std::move(d_views), std::move(d_offsets), output_size);

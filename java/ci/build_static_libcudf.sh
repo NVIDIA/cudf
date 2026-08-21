@@ -4,7 +4,7 @@
 
 # Self-contained build of a static libcudf install tree.
 #
-# Pulls the RAPIDS ci-conda image, builds libcudf with BUILD_SHARED_LIBS=OFF
+# Pulls the RAPIDS ci-wheel image, builds libcudf with BUILD_SHARED_LIBS=OFF
 # inside a throwaway container, and installs the static libcudf tree (libcudf.a
 # plus its static dependencies) into a directory on the host. No GPU is required
 # to build.
@@ -16,6 +16,8 @@ REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/argparse.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/ci_wheel_image.sh"
 
 OUTPUT_DIR=""
 CUDA_VERSION=""
@@ -27,15 +29,15 @@ print_help() {
 
 Usage: build_static_libcudf.sh --output-dir <path> --cuda-version <ver> [OPTIONS]
 
-Builds a static libcudf install tree inside a RAPIDS ci-conda container and
+Builds a static libcudf install tree inside a RAPIDS ci-wheel container and
 writes it to a directory on the host. Always builds for the host architecture
-(uname -m). The build image is fixed to rapidsai/ci-conda:<rapids_version>-latest
-(version derived from the VERSION file).
+(uname -m). The build image is derived from --cuda-version and the VERSION file
+(see java/ci/ci_wheel_image.sh).
 
 REQUIRED:
     -o, --output-dir     Host directory to receive the static install tree
                          (libcudf.a and its static dependencies).
-    -c, --cuda-version   CUDA version to build for (e.g. "12.9" or "12.9.1").
+    -c, --cuda-version   CUDA version to build for (e.g. "12.9" or "12.9.2").
 
 OPTIONS:
     -A, --cmake-cuda-architectures
@@ -97,15 +99,15 @@ parse_args "$@"
 require_arg --output-dir   "${OUTPUT_DIR}"
 require_arg --cuda-version "${CUDA_VERSION}"
 
-RAPIDS_VERSION="$(head -1 "${REPO_ROOT}/VERSION" | cut -d. -f1,2)"
-IMAGE="rapidsai/ci-conda:${RAPIDS_VERSION}-latest"
+IMAGE="$(cudf_java_ci_wheel_image "${CUDA_VERSION}")"
+CUDA_VERSION_FULL="$(cudf_java_normalize_cuda_version "${CUDA_VERSION}")"
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
 
 echo "Building static libcudf"
 echo "  image:        ${IMAGE}"
-echo "  cuda version: ${CUDA_VERSION}"
+echo "  cuda version: ${CUDA_VERSION_FULL}"
 echo "  parallel:     ${PARALLEL_LEVEL}"
 echo "  output dir:   ${OUTPUT_DIR}"
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then
@@ -117,10 +119,12 @@ DOCKER_ARGS=(
   --volume "${REPO_ROOT}:/repo"
   --volume "${OUTPUT_DIR}:/output"
   --workdir /repo
-  --env RAPIDS_CUDA_VERSION="${CUDA_VERSION}"
+  --env RAPIDS_CUDA_VERSION="${CUDA_VERSION_FULL}"
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"
   --env HOST_GID="$(id -g)"
+  --env INSTALL_PREFIX=/output
+  --env REPO_ROOT=/repo
 )
 
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then

@@ -100,7 +100,8 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _is_empty{right.num_rows() == 0},
     _nulls_equal{compare_nulls},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)},
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
+      _right, stream, cudf::get_current_device_resource_ref())},
     _impl{std::make_unique<impl>(
       hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, std::move(mr))}
 {

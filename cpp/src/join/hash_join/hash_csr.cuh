@@ -31,7 +31,7 @@ struct hash_csr_map_view {
       auto const slot = (static_cast<std::uint32_t>(key.first) + step) & mask;
       auto entry_ref =
         cuda::atomic_ref<hash_csr_key_type, cuda::thread_scope_device>{entries[slot]};
-      auto old = hash_csr_key_type{hash_value_type{-1}, CUDF_SIZE_TYPE_SENTINEL};
+      auto old = hash_csr_key_type{hash_value_type{-1}, size_type{CUDF_SIZE_TYPE_SENTINEL}};
       if (entry_ref.compare_exchange_strong(old, key, cuda::memory_order_relaxed)) { return slot; }
       if (equal(key, old)) { return slot; }
     }

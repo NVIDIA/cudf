@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,7 +20,7 @@ void set_up_kvikio()
 {
   static std::once_flag flag{};
   std::call_once(flag, [] {
-    // Workaround for https://github.com/rapidsai/cudf/issues/14140, where cuFileDriverOpen errors
+    // Workaround for https://github.com/NVIDIA/cudf/issues/14140, where cuFileDriverOpen errors
     // out if no CUDA calls have been made before it. This is a no-op if the CUDA context is already
     // initialized.
     CUDF_CUDA_TRY(cudaFree(nullptr));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,13 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/optional>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -48,7 +48,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                                            StringIterLeft lhs_end,
                                            StringIterRight rhs_begin,
                                            Filter filter_fn,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   auto strings_count = std::distance(lhs_begin, lhs_end);
@@ -78,7 +78,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                     });
 
   // convert vector into strings column
-  auto result = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto result = cudf::make_strings_column(indices, stream, mr);
   result->set_null_mask(std::move(null_mask), null_count);
   return result;
 }

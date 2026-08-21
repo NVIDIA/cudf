@@ -387,7 +387,6 @@ class stats_expression_converter : public stats_columns_collector {
   thrust::host_vector<bool> get_stats_columns_mask() && = delete;
 
  private:
-  std::span<cudf::data_type const> _output_dtypes;
   ast::tree _stats_expr;
   cudf::size_type _stats_cols_per_column;
   std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;

@@ -22,8 +22,13 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view, mutable_column_view
 from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_device_span_const_uint8_t,
+    const_FileMetaData,
+    const_host_span_const_uint8_t,
     const_size_type,
     const_uint8_t,
+    const_vector_device_span_const_uint8_t,
+    const_vector_size_type,
+    hybrid_scan_multifile as cpp_hybrid_scan_multifile,
     hybrid_scan_reader as cpp_hybrid_scan_reader,
     use_data_page_mask as cpp_use_data_page_mask,
 )
@@ -46,7 +51,12 @@ import pylibcudf.libcudf.io.hybrid_scan
 
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
 
-__all__ = ["FileMetaData", "HybridScanReader", "UseDataPageMask"]
+__all__ = [
+    "FileMetaData",
+    "HybridScanMultiFile",
+    "HybridScanReader",
+    "UseDataPageMask",
+]
 
 
 cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
@@ -58,6 +68,18 @@ cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
     return device_span[const_uint8_t](<const_uint8_t*>
                                       <uintptr_t>obj.ptr,
                                       <size_t>obj.size)
+
+
+cdef vector[vector[size_type]] _get_row_groups(object row_groups) except *:
+    """Convert Python per-source row-group indices to C++ vectors."""
+    cdef vector[vector[size_type]] result
+    cdef vector[size_type] source_row_groups
+    for source in row_groups:
+        for row_group in source:
+            source_row_groups.push_back(row_group)
+        result.push_back(source_row_groups)
+        source_row_groups.clear()
+    return result
 
 
 cdef class HybridScanReader:
@@ -854,6 +876,232 @@ cdef class HybridScanReader:
         bool
             True if there is data left to read
         """
+        return self.c_obj.get()[0].has_next_table_chunk()
+
+
+cdef class HybridScanMultiFile:
+    """Experimental Hybrid Scan reader for multiple Parquet sources.
+
+    The per-source inputs and outputs use source order. A row mask spans all
+    selected rows in source order, and then in row-group order within a source.
+    This API is experimental.
+    """
+
+    @staticmethod
+    def from_parquet_metadatas(object parquet_metadatas, ParquetReaderOptions options):
+        """Create a reader from one ``FileMetaData`` per Parquet source."""
+        cdef HybridScanMultiFile reader = HybridScanMultiFile.__new__(
+            HybridScanMultiFile
+        )
+        cdef vector[cpp_FileMetaData] metadatas
+        cdef object metadata
+        for metadata in parquet_metadatas:
+            if not isinstance(metadata, FileMetaData):
+                raise TypeError(
+                    "parquet_metadatas must contain only FileMetaData objects"
+                )
+            metadatas.push_back((<c_FileMetaData>metadata).c_obj)
+        if metadatas.empty():
+            raise ValueError("parquet_metadatas must not be empty")
+        reader.c_obj = make_unique[cpp_hybrid_scan_multifile](
+            host_span[const_FileMetaData](
+                <const_FileMetaData*>metadatas.data(), metadatas.size()
+            ),
+            options.c_obj,
+        )
+        return reader
+
+    def parquet_metadatas(self):
+        """Return one ``FileMetaData`` object per source."""
+        cdef vector[cpp_FileMetaData] metadatas = (
+            self.c_obj.get()[0].parquet_metadatas()
+        )
+        cdef cpp_FileMetaData metadata
+        cdef list result = []
+        for metadata in metadatas:
+            result.append(c_FileMetaData.from_cpp(metadata))
+        return result
+
+    def page_index_byte_ranges(self):
+        """Return the page-index byte range for each source."""
+        cdef vector[byte_range_info] ranges = (
+            self.c_obj.get()[0].page_index_byte_ranges()
+        )
+        return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
+
+    def setup_page_indexes(self, list page_index_bytes):
+        """Install one host page-index buffer for each source."""
+        cdef vector[host_span[const_uint8_t]] spans
+        cdef const uint8_t[::1] page_index
+        for page_index in page_index_bytes:
+            if len(page_index) == 0:
+                spans.push_back(
+                    host_span[const_uint8_t](<const_uint8_t*>0, 0)
+                )
+            else:
+                spans.push_back(
+                    host_span[const_uint8_t](&page_index[0], len(page_index))
+                )
+        self.c_obj.get()[0].setup_page_indexes(
+            host_span[const_host_span_const_uint8_t](
+                <const_host_span_const_uint8_t*>spans.data(), spans.size()
+            )
+        )
+
+    def all_row_groups(self, ParquetReaderOptions options):
+        """Return row-group indices for every source."""
+        cdef vector[vector[size_type]] row_groups = (
+            self.c_obj.get()[0].all_row_groups(options.c_obj)
+        )
+        return [list(row_groups[source]) for source in range(row_groups.size())]
+
+    def total_rows_in_row_groups(self, object row_group_indices):
+        """Return total selected rows across all sources."""
+        cdef vector[vector[size_type]] indices = _get_row_groups(
+            row_group_indices
+        )
+        return self.c_obj.get()[0].total_rows_in_row_groups(
+            host_span[const_vector_size_type](
+                <const_vector_size_type*>indices.data(), indices.size()
+            )
+        )
+
+    def build_all_true_row_mask(
+        self,
+        object row_group_indices,
+        object stream=None,
+        DeviceMemoryResource mr=None,
+    ):
+        """Build an all-true BOOL8 mask spanning selected rows."""
+        cdef vector[vector[size_type]] indices = _get_row_groups(
+            row_group_indices
+        )
+        cdef Stream _stream = _get_stream(stream)
+        mr = _get_memory_resource(mr)
+        cdef unique_ptr[column] c_result = (
+            self.c_obj.get()[0].build_all_true_row_mask(
+                host_span[const_vector_size_type](
+                    <const_vector_size_type*>indices.data(), indices.size()
+                ),
+                _stream.view().value(),
+                mr.get_mr(),
+            )
+        )
+        return Column.from_libcudf(move(c_result), _stream, mr)
+
+    def payload_column_chunks_byte_ranges(
+        self,
+        object row_group_indices,
+        Column row_mask,
+        cpp_use_data_page_mask mask_data_pages,
+        ParquetReaderOptions options,
+        object stream=None,
+    ):
+        """Plan payload page ranges, grouped by source."""
+        cdef vector[vector[size_type]] indices = _get_row_groups(
+            row_group_indices
+        )
+        cdef Stream _stream = _get_stream(stream)
+        cdef column_view mask_view = row_mask.view()
+        cdef vector[vector[byte_range_info]] ranges = (
+            self.c_obj.get()[0].payload_column_chunks_byte_ranges(
+            host_span[const_vector_size_type](
+                <const_vector_size_type*>indices.data(), indices.size()
+            ),
+            mask_view,
+            mask_data_pages,
+            options.c_obj,
+            _stream.view().value(),
+            )
+        )
+        return [
+            [
+                ByteRangeInfo(byte_range.offset(), byte_range.size())
+                for byte_range in ranges[source]
+            ]
+            for source in range(ranges.size())
+        ]
+
+    def setup_chunking_for_payload_columns(
+        self,
+        size_t chunk_read_limit,
+        size_t pass_read_limit,
+        object row_group_indices,
+        Column row_mask,
+        cpp_use_data_page_mask mask_data_pages,
+        list page_data_per_source,
+        ParquetReaderOptions options,
+        object stream=None,
+        DeviceMemoryResource mr=None,
+    ):
+        """Configure payload chunking from source-grouped device page data."""
+        cdef vector[vector[size_type]] indices = _get_row_groups(
+            row_group_indices
+        )
+        cdef vector[vector[device_span[const_uint8_t]]] source_spans
+        cdef vector[device_span[const_uint8_t]] spans
+        cdef object source_data
+        cdef object data
+        for source_data in page_data_per_source:
+            for data in source_data:
+                spans.push_back(_get_device_span(data))
+            source_spans.push_back(spans)
+            spans.clear()
+
+        self._stream = _get_stream(stream)
+        self.mr = _get_memory_resource(mr)
+        self._page_data_keepalive = page_data_per_source
+        cdef column_view mask_view = row_mask.view()
+        self.c_obj.get()[0].setup_chunking_for_payload_columns(
+            chunk_read_limit,
+            pass_read_limit,
+            host_span[const_vector_size_type](
+                <const_vector_size_type*>indices.data(), indices.size()
+            ),
+            mask_view,
+            mask_data_pages,
+            host_span[const_vector_device_span_const_uint8_t](
+                <const_vector_device_span_const_uint8_t*>source_spans.data(),
+                source_spans.size(),
+            ),
+            options.c_obj,
+            self._stream.view().value(),
+            self.mr.get_mr(),
+        )
+
+    def materialize_payload_columns_chunk(self, Column row_mask):
+        """Materialize the next configured payload output chunk."""
+        cdef column_view mask_view = row_mask.view()
+        cdef table_with_metadata c_result = (
+            self.c_obj.get()[0].materialize_payload_columns_chunk(mask_view)
+        )
+        return TableWithMetadata.from_libcudf(c_result, self._stream, self.mr)
+
+    def construct_row_group_passes(
+        self, object row_group_indices, size_t pass_read_limit
+    ):
+        """Partition per-source row groups into bounded-memory passes."""
+        cdef vector[vector[size_type]] indices = _get_row_groups(
+            row_group_indices
+        )
+        cdef vector[vector[vector[size_type]]] passes = (
+            self.c_obj.get()[0].construct_row_group_passes(
+            host_span[const_vector_size_type](
+                <const_vector_size_type*>indices.data(), indices.size()
+            ),
+            pass_read_limit,
+            )
+        )
+        return [
+            [
+                list(row_groups)
+                for row_groups in passes[pass_index]
+            ]
+            for pass_index in range(passes.size())
+        ]
+
+    def has_next_table_chunk(self):
+        """Return whether a configured chunked read has output remaining."""
         return self.c_obj.get()[0].has_next_table_chunk()
 
 

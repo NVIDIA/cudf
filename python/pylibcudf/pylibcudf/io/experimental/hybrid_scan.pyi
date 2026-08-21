@@ -142,3 +142,54 @@ class HybridScanReader:
         pass_read_limit: int,
     ) -> list[list[int]]: ...
     def has_next_table_chunk(self) -> bool: ...
+
+class HybridScanMultiFile:
+    @staticmethod
+    def from_parquet_metadatas(
+        parquet_metadatas: list[FileMetaData],
+        options: ParquetReaderOptions,
+    ) -> HybridScanMultiFile: ...
+    def parquet_metadatas(self) -> list[FileMetaData]: ...
+    def page_index_byte_ranges(self) -> list[ByteRangeInfo]: ...
+    def setup_page_indexes(self, page_index_bytes: list[Buffer]) -> None: ...
+    def all_row_groups(
+        self, options: ParquetReaderOptions
+    ) -> list[list[int]]: ...
+    def total_rows_in_row_groups(
+        self, row_group_indices: list[list[int]]
+    ) -> int: ...
+    def build_all_true_row_mask(
+        self,
+        row_group_indices: list[list[int]],
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> Column: ...
+    def payload_column_chunks_byte_ranges(
+        self,
+        row_group_indices: list[list[int]],
+        row_mask: Column,
+        mask_data_pages: UseDataPageMask,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> list[list[ByteRangeInfo]]: ...
+    def setup_chunking_for_payload_columns(
+        self,
+        chunk_read_limit: int,
+        pass_read_limit: int,
+        row_group_indices: list[list[int]],
+        row_mask: Column,
+        mask_data_pages: UseDataPageMask,
+        page_data_per_source: list[list],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> None: ...
+    def materialize_payload_columns_chunk(
+        self, row_mask: Column
+    ) -> TableWithMetadata: ...
+    def construct_row_group_passes(
+        self,
+        row_group_indices: list[list[int]],
+        pass_read_limit: int,
+    ) -> list[list[list[int]]]: ...
+    def has_next_table_chunk(self) -> bool: ...

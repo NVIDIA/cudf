@@ -781,3 +781,99 @@ def test_hybrid_scan_metadata_with_page_index(
     assert row_mask is not None
     assert row_mask.size() > 0
     assert row_mask.type().id() == plc.types.TypeId.BOOL8
+
+
+@pytest.mark.parametrize("stream", [None, Stream()])
+def test_hybrid_scan_multifile_payload_page_scan(
+    tmp_path,
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+    stream: Stream | None,
+) -> None:
+    """Read payload pages from multiple sources using the multifile reader."""
+    paths = [tmp_path / f"source-{i}.parquet" for i in range(2)]
+    for index, path in enumerate(paths):
+        table = simple_parquet_table.slice(
+            index * 500, 500
+        )
+        pq.write_table(
+            table,
+            path,
+            row_group_size=row_group_size,
+            use_dictionary=True,
+            write_page_index=True,
+        )
+
+    source = plc.io.SourceInfo([str(path) for path in paths])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_column_names(["col1"])
+    metadatas = plc.io.parquet_metadata.read_parquet_footers(source)
+    reader = plc.io.experimental.HybridScanMultiFile.from_parquet_metadatas(
+        metadatas, options
+    )
+
+    assert [metadata.num_rows for metadata in reader.parquet_metadatas()] == [
+        500,
+        500,
+    ]
+    row_groups = reader.all_row_groups(options)
+    assert row_groups == [[0, 1], [0, 1]]
+    assert reader.total_rows_in_row_groups(row_groups) == 1000
+
+    page_ranges = reader.page_index_byte_ranges()
+    page_indexes = []
+    for path, byte_range in zip(paths, page_ranges, strict=True):
+        with path.open("rb") as file:
+            file.seek(byte_range.offset)
+            page_indexes.append(file.read(byte_range.size))
+    reader.setup_page_indexes(page_indexes)
+
+    row_mask = reader.build_all_true_row_mask(row_groups, stream)
+    assert row_mask.size() == 1000
+
+    passes = reader.construct_row_group_passes(row_groups, 0)
+    assert passes == [row_groups]
+    page_ranges_per_source = reader.payload_column_chunks_byte_ranges(
+        passes[0],
+        row_mask,
+        UseDataPageMask.YES,
+        options,
+        stream,
+    )
+    assert len(page_ranges_per_source) == len(paths)
+    assert all(ranges for ranges in page_ranges_per_source)
+
+    page_data_per_source = []
+    for path, byte_ranges in zip(paths, page_ranges_per_source, strict=True):
+        source_data = []
+        with path.open("rb") as file:
+            for byte_range in byte_ranges:
+                file.seek(byte_range.offset)
+                source_data.append(
+                    plc.gpumemoryview(
+                        rmm.DeviceBuffer.to_device(
+                            file.read(byte_range.size),
+                            plc.utils._get_stream(stream),
+                        )
+                    )
+                )
+        page_data_per_source.append(source_data)
+
+    synchronize_stream(stream)
+    reader.setup_chunking_for_payload_columns(
+        0,
+        0,
+        passes[0],
+        row_mask,
+        UseDataPageMask.YES,
+        page_data_per_source,
+        options,
+        stream,
+    )
+    output_rows = 0
+    while reader.has_next_table_chunk():
+        output = reader.materialize_payload_columns_chunk(row_mask)
+        assert output.tbl.num_columns() == 1
+        output_rows += output.tbl.num_rows()
+    synchronize_stream(stream)
+    assert output_rows == 1000

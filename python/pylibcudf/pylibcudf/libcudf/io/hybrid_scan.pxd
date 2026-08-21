@@ -21,7 +21,12 @@ from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 ctypedef const uint8_t const_uint8_t
 ctypedef const size_type const_size_type
+ctypedef const FileMetaData const_FileMetaData
 ctypedef const device_span[const_uint8_t] const_device_span_const_uint8_t
+ctypedef const vector[size_type] const_vector_size_type
+ctypedef const vector[device_span[const_uint8_t]] const_vector_device_span_const_uint8_t
+ctypedef host_span[const_uint8_t] host_span_const_uint8_t
+ctypedef const host_span_const_uint8_t const_host_span_const_uint8_t
 
 cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         namespace "cudf::io::parquet::experimental" nogil:
@@ -171,6 +176,69 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         vector[vector[size_type]] construct_row_group_passes(
             std_span[const_size_type] row_group_indices,
             size_t pass_read_limit,
+        ) except +libcudf_exception_handler
+
+        bool has_next_table_chunk() except +libcudf_exception_handler
+
+
+cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
+        namespace "cudf::io::parquet::experimental" nogil:
+
+    cdef cppclass hybrid_scan_multifile:
+        hybrid_scan_multifile(
+            host_span[const_FileMetaData] parquet_metadata,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        vector[FileMetaData] parquet_metadatas() except +libcudf_exception_handler
+
+        vector[byte_range_info] page_index_byte_ranges() except +libcudf_exception_handler
+
+        void setup_page_indexes(
+            host_span[const_host_span_const_uint8_t] page_index_bytes
+        ) except +libcudf_exception_handler
+
+        vector[vector[size_type]] all_row_groups(
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        size_type total_rows_in_row_groups(
+            host_span[const_vector_size_type] row_group_indices
+        ) except +libcudf_exception_handler
+
+        unique_ptr[column] build_all_true_row_mask(
+            host_span[const_vector_size_type] row_group_indices,
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+
+        vector[vector[byte_range_info]] payload_column_chunks_byte_ranges(
+            host_span[const_vector_size_type] row_group_indices,
+            const column_view& row_mask,
+            use_data_page_mask mask_data_pages,
+            const parquet_reader_options& options,
+            cudaStream_t stream
+        ) except +libcudf_exception_handler
+
+        void setup_chunking_for_payload_columns(
+            size_t chunk_read_limit,
+            size_t pass_read_limit,
+            host_span[const_vector_size_type] row_group_indices,
+            const column_view& row_mask,
+            use_data_page_mask mask_data_pages,
+            host_span[const_vector_device_span_const_uint8_t] page_data_per_source,
+            const parquet_reader_options& options,
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+
+        table_with_metadata materialize_payload_columns_chunk(
+            const column_view& row_mask
+        ) except +libcudf_exception_handler
+
+        vector[vector[vector[size_type]]] construct_row_group_passes(
+            host_span[const_vector_size_type] row_group_indices,
+            size_t pass_read_limit
         ) except +libcudf_exception_handler
 
         bool has_next_table_chunk() except +libcudf_exception_handler

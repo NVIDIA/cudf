@@ -509,7 +509,7 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
     std::unique_ptr<cudf::table> filter_table;
     std::unique_ptr<cudf::table> payload_table;
     ASSERT_NO_THROW(std::tie(filter_table, payload_table) =
-                      hybrid_scan(*datasource, filter, {}, true, stream, mr, aligned_mr));
+                      sparse_chunked_hybrid_scan(*datasource, filter, {}, true, stream, mr, aligned_mr));
 
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({0}), filter_table->view());
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({1, 2, 3, 4}),

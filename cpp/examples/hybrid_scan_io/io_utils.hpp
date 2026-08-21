@@ -57,3 +57,56 @@ fetch_byte_ranges_async(cudf::io::datasource& datasource,
                         cudf::host_span<cudf::io::text::byte_range_info const> byte_ranges,
                         rmm::cuda_stream_view stream,
                         rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Owns the datasources, footer buffers, and byte spans for a multifile read.
+ *
+ * Call `fetch_footers()` after construction. Keeping datasource and footer setup separate allows
+ * examples to time those operations independently.
+ */
+struct multifile_inputs {
+  explicit multifile_inputs(cudf::io::source_info const& source_info);
+
+  void fetch_footers();
+
+  std::vector<std::unique_ptr<cudf::io::datasource>> datasources;
+  std::vector<std::reference_wrapper<cudf::io::datasource>> datasource_refs;
+  std::vector<std::unique_ptr<cudf::io::datasource::buffer>> footer_buffers;
+  std::vector<cudf::host_span<uint8_t const>> footer_byte_spans;
+};
+
+/**
+ * @brief Owns multifile device buffers and the corresponding per-source and flattened spans.
+ */
+struct multisource_device_data {
+  std::vector<rmm::device_buffer> buffers;
+  std::vector<std::vector<cudf::device_span<uint8_t const>>> per_source_spans;
+  std::vector<cudf::device_span<uint8_t const>> flat_spans;
+};
+
+/**
+ * @brief Regroups flattened byte ranges using the source map returned by Hybrid Scan.
+ */
+[[nodiscard]] std::vector<std::vector<cudf::io::text::byte_range_info>> group_byte_ranges_by_source(
+  std::pair<std::vector<cudf::io::text::byte_range_info>, std::vector<cudf::size_type>> const&
+    byte_ranges_and_source_map,
+  std::size_t num_sources);
+
+/**
+ * @brief Fetches source-mapped multifile byte ranges and flattens the resulting device spans.
+ */
+[[nodiscard]] multisource_device_data fetch_multisource_device_data(
+  multifile_inputs const& inputs,
+  std::pair<std::vector<cudf::io::text::byte_range_info>, std::vector<cudf::size_type>> const&
+    byte_ranges_and_source_map,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Fetches source-grouped multifile byte ranges.
+ */
+[[nodiscard]] multisource_device_data fetch_multisource_device_data(
+  multifile_inputs const& inputs,
+  std::vector<std::vector<cudf::io::text::byte_range_info>> const& byte_ranges_per_source,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr);

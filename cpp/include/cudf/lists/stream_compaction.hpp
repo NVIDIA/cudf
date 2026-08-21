@@ -63,7 +63,11 @@ std::unique_ptr<column> apply_retention_mask(
  *
  * @deprecated in release 26.10. Use `apply_retention_mask` instead.
  *
- * @copydoc apply_retention_mask
+ * @param input The input list column view to be filtered.
+ * @param boolean_mask A nullable list of bools column used to filter `input` elements.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @return List column of the same type as `input`, containing filtered list rows.
  */
 [[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<column> apply_boolean_mask(
   lists_column_view const& input,

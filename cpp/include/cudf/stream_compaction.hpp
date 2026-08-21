@@ -222,7 +222,13 @@ std::unique_ptr<table> apply_retention_mask(
  *
  * @deprecated in release 26.10. Use `apply_retention_mask` instead.
  *
- * @copydoc apply_retention_mask
+ * @param[in] input The input table_view to filter.
+ * @param[in] boolean_mask A nullable column_view of type type_id::BOOL8 used
+ * as a mask to filter `input`.
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * @param[in] mr Device memory resource used to allocate the returned table's device memory.
+ * @return Table containing copies of all rows of @p input passing the filter defined by
+ * @p boolean_mask.
  */
 [[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<table> apply_boolean_mask(
   table_view const& input,

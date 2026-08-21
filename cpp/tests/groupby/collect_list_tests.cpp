@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -162,30 +162,18 @@ TYPED_TEST(groupby_collect_list_test, CollectOnEmptyInputListsOfStructs)
   auto struct_child  = LCW{};
   auto struct_column = cudf::test::structs_column_wrapper{{struct_child}};
 
-  auto values =
-    cudf::make_lists_column(0,
-                            cudf::make_empty_column(cudf::type_to_id<cudf::size_type>()),
-                            struct_column.release(),
-                            0,
-                            {});
+  auto values = cudf::make_lists_column(
+    0, cudf::make_empty_column(cudf::type_id::INT32), struct_column.release(), 0, {});
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{};
 
   auto expect_struct_child  = LCW{};
   auto expect_struct_column = cudf::test::structs_column_wrapper{{expect_struct_child}};
 
-  auto expect_child =
-    cudf::make_lists_column(0,
-                            cudf::make_empty_column(cudf::type_to_id<cudf::size_type>()),
-                            expect_struct_column.release(),
-                            0,
-                            {});
-  auto expect_values =
-    cudf::make_lists_column(0,
-                            cudf::make_empty_column(cudf::type_to_id<cudf::size_type>()),
-                            std::move(expect_child),
-                            0,
-                            {});
+  auto expect_child = cudf::make_lists_column(
+    0, cudf::make_empty_column(cudf::type_id::INT32), expect_struct_column.release(), 0, {});
+  auto expect_values = cudf::make_lists_column(
+    0, cudf::make_empty_column(cudf::type_id::INT32), std::move(expect_child), 0, {});
 
   auto agg = cudf::make_collect_list_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, values->view(), expect_keys, expect_values->view(), std::move(agg));

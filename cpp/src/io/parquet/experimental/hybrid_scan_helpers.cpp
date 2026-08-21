@@ -739,9 +739,10 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
 }
 
 /**
- * @brief Converts column named expression to column index reference expression
+ * @brief Converts named columns to index reference columns and pushes logical negations down to
+ * expression leaves
  */
-named_to_reference_converter::named_to_reference_converter(
+parquet_filter_normalizer::parquet_filter_normalizer(
   std::optional<std::reference_wrapper<ast::expression const>> expr,
   table_metadata const& metadata,
   std::vector<SchemaElement> const& schema_tree,
@@ -763,7 +764,7 @@ named_to_reference_converter::named_to_reference_converter(
   expr.value().get().accept(*this);
 }
 
-std::reference_wrapper<ast::expression const> named_to_reference_converter::visit(
+std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   ast::column_reference const& expr)
 {
   // Map the column index to its name

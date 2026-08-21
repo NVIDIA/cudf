@@ -550,11 +550,11 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
   CUDF_EXPECTS(file_metadatas.empty() or file_metadatas.size() == _sources.size(),
                "Encountered a mismatch in the number of provided data sources and metadatas");
 
-  _metadata = file_metadatas.empty() ? std::make_unique<aggregate_reader_metadata>(
+  _metadata = file_metadatas.empty() ? std::make_shared<aggregate_reader_metadata>(
                                          _sources,
                                          options.is_enabled_use_arrow_schema(),
                                          has_cols_from_mismatched_sources(options))
-                                     : std::make_unique<aggregate_reader_metadata>(
+                                     : std::make_shared<aggregate_reader_metadata>(
                                          std::forward<std::vector<FileMetaData>>(file_metadatas),
                                          options.is_enabled_use_arrow_schema(),
                                          has_cols_from_mismatched_sources(options));
@@ -592,12 +592,11 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     std::back_inserter(_output_buffers_template),
     [](auto const& buff) { return cudf::io::detail::inline_column_buffer::empty_like(buff); });
 
-  // Save the name to reference converter to extract output filter AST in
-  // `preprocess_file()` and `finalize_output()`
+  // Save the normalized output filter for `preprocess_file()` and `finalize_output()`.
   table_metadata metadata;
   populate_metadata(metadata);
   _expr_conv =
-    named_to_reference_converter(options.get_filter(), metadata, _options.case_sensitive_names);
+    parquet_filter_normalizer(options.get_filter(), metadata, _options.case_sensitive_names);
 }
 
 void reader_impl::prepare_data(read_mode mode)

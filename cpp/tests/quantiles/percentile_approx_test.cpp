@@ -146,6 +146,14 @@ void percentile_approx_test(cudf::column_view const& _keys,
                    [](std::unique_ptr<cudf::column> const& c) { return c->view(); });
     auto expected = cudf::concatenate(part_views);
 
+    std::vector<cudf::column_view> reduce_part_views;
+    std::transform(reduce_parts.begin(),
+                   reduce_parts.end(),
+                   std::back_inserter(reduce_part_views),
+                   [](std::unique_ptr<cudf::column> const& c) { return c->view(); });
+    auto reduce_expected = cudf::concatenate(reduce_part_views);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *reduce_expected);
+
     cudf::groupby::groupby gb(k);
     std::vector<cudf::groupby::aggregation_request> requests;
     std::vector<std::unique_ptr<cudf::groupby_aggregation>> aggregations;

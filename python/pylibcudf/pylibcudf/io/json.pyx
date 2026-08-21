@@ -715,7 +715,7 @@ cdef class JsonReaderOptionsBuilder:
         return json_options
 
 
-cpdef tuple chunked_read_json(
+cpdef tuple[list[Column], list[str], dict] chunked_read_json(
     JsonReaderOptions options,
     int chunk_size=100_000_000,
     object stream: CudaStreamLike | None = None,

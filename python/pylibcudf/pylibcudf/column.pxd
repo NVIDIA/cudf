@@ -95,7 +95,7 @@ cdef class Column:
     cpdef size_type offset(self)
     cpdef object data(self)
     cpdef object null_mask(self)
-    cpdef list children(self)
+    cpdef list[Column] children(self)
     cpdef Column copy(self, object stream=*, DeviceMemoryResource mr=*)
     cpdef uint64_t device_buffer_size(self)
     cpdef Column with_mask(self, object, size_type, bint validate=*)

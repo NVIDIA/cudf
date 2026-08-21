@@ -347,7 +347,7 @@ cdef class Table:
         """The columns in this table."""
         return self._columns
 
-    cpdef list release(self):
+    cpdef list[Column] release(self):
         """Release ownership of this table's columns and leave it empty.
 
         Returns

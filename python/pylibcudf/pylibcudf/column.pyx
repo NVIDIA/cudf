@@ -1426,7 +1426,7 @@ cdef class Column:
         """
         self._null_count = null_count
 
-    cpdef list children(self):
+    cpdef list[Column] children(self):
         """The children of the column."""
         return self._children
 

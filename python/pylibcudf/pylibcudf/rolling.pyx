@@ -287,7 +287,7 @@ cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
     return cpp_rolling.is_valid_rolling_aggregation(source.c_obj, agg.kind())
 
 
-cpdef tuple make_range_windows(
+cpdef tuple[Column, Column] make_range_windows(
     Table group_keys,
     Column orderby,
     order order,

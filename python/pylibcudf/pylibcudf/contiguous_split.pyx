@@ -121,7 +121,7 @@ cdef class PackedColumns:
         out.mr = mr
         return out
 
-    cpdef tuple release(self):
+    cpdef tuple[memoryview, gpumemoryview] release(self):
         """Releases and returns the underlying serialized metadata and gpu data.
 
         The ownership of the memory are transferred to the returned buffers. After
@@ -263,7 +263,7 @@ cdef class ChunkedPack:
             metadata = move(dereference(self.c_obj).build_metadata())
         return memoryview(HostBuffer.from_unique_ptr(move(metadata)))
 
-    cpdef tuple pack_to_host(self, object buf: Span):
+    cpdef tuple[memoryview, memoryview] pack_to_host(self, object buf: Span):
         """
         Pack the entire table into a host buffer.
 

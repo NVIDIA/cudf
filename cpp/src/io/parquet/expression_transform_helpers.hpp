@@ -158,10 +158,7 @@ class names_from_expression : public ast::detail::expression_transformer {
 
 /**
  * @brief Converts named columns to index reference columns and rewrites the expression into
- * negation normal form, pushing logical negations down to the leaves
- *
- * Negation normal form is the standard term for an expression in which negation appears only on
- * atoms, reached by eliminating double negations and applying De Morgan's laws.
+ * negation normal form, pushing logical negations down to the leaves.
  */
 class parquet_filter_normalizer : public ast::detail::expression_transformer {
  public:

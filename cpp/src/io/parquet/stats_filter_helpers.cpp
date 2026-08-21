@@ -168,8 +168,8 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
               auto const is_equality =
                 child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
 
-              // An ordering comparison is only exact when the column cannot hold a `NaN` (aka not
-              // a floating point column)
+              // An ordering comparison is only exact when the column cannot hold a `NaN`. i.e., not
+              // a floating point type
               auto const can_negate_ordering = not cudf::is_floating_point(
                 _output_dtypes[binary_operands.col_ref->get_column_index()]);
 
@@ -225,8 +225,8 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         break;
       }
       case ast_operator::NOT_EQUAL: {
-        // NaNs satisfy `col != val` but Arrow and parquet-mr exclude them from min/max, so
-        // `{NaN, val}` appears constant and must not be pruned.
+        // Some Parquet writers exclude `NaN`s from stats so we can't reliably prune row groups for
+        // columns that may contain them.
         if (cudf::is_floating_point(_output_dtypes[col_index])) {
           _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
           return *_always_true;

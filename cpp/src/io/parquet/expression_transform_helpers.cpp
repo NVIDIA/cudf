@@ -50,6 +50,9 @@ namespace {
 template <operator_transform mode>
 std::optional<ast::ast_operator> transform_operator(ast::ast_operator op)
 {
+  static_assert(mode == operator_transform::INVERT or mode == operator_transform::NEGATE,
+                "Unhandled operator transform");
+
   if constexpr (mode == operator_transform::INVERT) {
     switch (op) {
       case ast::ast_operator::LESS: return ast::ast_operator::GREATER;
@@ -58,7 +61,8 @@ std::optional<ast::ast_operator> transform_operator(ast::ast_operator op)
       case ast::ast_operator::GREATER_EQUAL: return ast::ast_operator::LESS_EQUAL;
       default: return std::make_optional(op);
     }
-  } else if constexpr (mode == operator_transform::NEGATE) {
+  } else {
+    // mode == NEGATE
     switch (op) {
       case ast::ast_operator::LESS: return ast::ast_operator::GREATER_EQUAL;
       case ast::ast_operator::GREATER: return ast::ast_operator::LESS_EQUAL;
@@ -68,11 +72,6 @@ std::optional<ast::ast_operator> transform_operator(ast::ast_operator op)
       case ast::ast_operator::NOT_EQUAL: return ast::ast_operator::EQUAL;
       default: return std::nullopt;
     }
-  } else {
-    // Condition mentions `mode` so that it is only checked once the branch is instantiated,
-    // which C++20 requires - a bare `static_assert(false)` here would fire unconditionally
-    static_assert(mode == operator_transform::INVERT or mode == operator_transform::NEGATE,
-                  "Unhandled operator transform");
   }
 }
 

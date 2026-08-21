@@ -288,8 +288,8 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
 
  * The vector version of superimpose_nulls applies null masks to multiple columns at once by:
  *  1. First gathering all null masks in a flattened structure
- *  2. Applying the nulls in a segmented batch operation
- *  3. Then updating all the columns with their new null masks
+ *  2. Applying the nulls in a segmented batch operation, in place
+ *  3. Then refreshing the cached null count of all the columns
  *
  * @param null_masks Vector of null masks to be applied to the input column
  * @param inputs Vector of input column to apply the null mask to
@@ -311,36 +311,54 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
   if (inputs.empty()) { return inputs; }
 
   auto const num_rows = inputs[0]->size();
+  if (num_rows == 0) { return inputs; }
+
   std::vector<bitmask_type const*> sources;
   std::vector<size_type> segment_offsets;
+  std::vector<bitmask_type*> destinations;
   std::vector<bitmask_type const*> path;
 
   // This recursive function navigates the column hierarchy and for each path in the tree, it
-  // collects all null masks that need to be combined for each column in the hierarchy
-  std::function<void(column_view input)> populate_segmented_sources =
-    [&populate_segmented_sources, &path, &sources, &segment_offsets](column_view input) -> void {
-    if (input.type().id() != cudf::type_id::EMPTY) {
-      // EMPTY columns should not have a null mask,
-      // so don't superimpose null mask on empty columns.
-      if (input.nullable()) {
-        // Add this column's null mask to the current path
-        path.push_back(input.null_mask());
-      }
+  // collects all null masks that need to be combined for each column in the hierarchy.
+  //
+  // Each column receives its segment's result in the null mask it already owns, so a mask is only
+  // allocated for a column that does not have one yet.
+  std::function<void(column&)> populate_segments =
+    [&populate_segments, &path, &sources, &segment_offsets, &destinations, num_rows, stream, mr](
+      column& input) -> void {
+    // EMPTY columns should not have a null mask,
+    // so don't superimpose null mask on empty columns.
+    if (input.type().id() == cudf::type_id::EMPTY) { return; }
 
-      // Add all null masks in current path to sources
-      sources.insert(sources.end(), path.begin(), path.end());
-      segment_offsets.push_back(path.size());
+    CUDF_EXPECTS(input.size() == num_rows,
+                 "All columns in the hierarchy must have the same number of rows");
 
-      // For struct columns, recursively process all children
-      if (input.type().id() == cudf::type_id::STRUCT) {
-        for (int i = 0; i < input.num_children(); i++) {
-          populate_segmented_sources(input.child(i));
-        }
-      }
-
-      // Backtrack: remove this column's mask from path when done
-      if (input.nullable()) { path.pop_back(); }
+    // A column without a mask of its own contributes nothing to its descendants' paths, but still
+    // needs a mask to receive its own segment's result.
+    auto const contributes_mask = input.nullable();
+    if (not contributes_mask) {
+      input.set_null_mask(
+        cudf::detail::create_null_mask(num_rows, mask_state::UNINITIALIZED, stream, mr), 0);
     }
+    auto* const mask = input.mutable_view().null_mask();
+
+    // Add this column's null mask to the current path
+    if (contributes_mask) { path.push_back(mask); }
+
+    // Add all null masks in current path to sources
+    sources.insert(sources.end(), path.begin(), path.end());
+    segment_offsets.push_back(path.size());
+    destinations.push_back(mask);
+
+    // For struct columns, recursively process all children
+    if (input.type().id() == cudf::type_id::STRUCT) {
+      for (int i = 0; i < input.num_children(); i++) {
+        populate_segments(input.child(i));
+      }
+    }
+
+    // Backtrack: remove this column's mask from path when done
+    if (contributes_mask) { path.pop_back(); }
   };
 
   // Process each top-level column in the inputs vector
@@ -349,9 +367,11 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
     path.push_back(null_masks[c]);
 
     // Collect all null masks for this column and its descendants
-    populate_segmented_sources(inputs[c]->view());
+    populate_segments(*inputs[c]);
     path.pop_back();
   }
+
+  if (destinations.empty()) { return inputs; }
 
   // Convert segment_offsets from segment sizes to cumulative offsets
   {
@@ -360,36 +380,45 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
     segment_offsets.push_back(total_sum);
   }
 
-  auto [result_null_masks, result_null_counts] =
-    cudf::detail::segmented_bitmask_and(sources, segment_offsets, num_rows, stream, mr);
+  auto const masks_begin_bits = std::vector<size_type>(sources.size(), 0);
+  auto d_destinations         = cudf::detail::make_device_uvector_async(destinations, stream, mr);
 
-  // Create new struct column and its descendants with updated null masks
-  // Recursively updates each column and its children with their new null masks
-  std::function<int(int marker, column& input)> create_updated_column =
-    [&create_updated_column, &result_null_masks, &result_null_counts](int marker,
-                                                                      column& input) -> int {
-    if (input.type().id() != cudf::type_id::EMPTY) {
-      // EMPTY columns should not have a null mask,
-      // so don't superimpose null mask on empty columns.
+  // for destination size, pass the number of words in each destination instead of number of bits
+  auto const d_null_counts = cudf::detail::inplace_segmented_bitmask_binop(
+    [] __device__(bitmask_type left, bitmask_type right) { return left & right; },
+    device_span<bitmask_type*>(d_destinations),
+    num_bitmask_words(num_rows),
+    sources,
+    masks_begin_bits,
+    num_rows,
+    segment_offsets,
+    stream,
+    mr);
+  auto const result_null_counts = cudf::detail::make_std_vector<size_type>(d_null_counts, stream);
 
-      // Update this column's null mask with the result from the batch operation
-      input.set_null_mask(std::move(*(result_null_masks[marker])), result_null_counts[marker]);
-      marker++;
+  // The masks were updated in place, so all that is left is to refresh the cached null counts, in
+  // the same order in which the segments were collected
+  std::function<int(int marker, column& input)> update_null_counts =
+    [&update_null_counts, &result_null_counts](int marker, column& input) -> int {
+    // EMPTY columns should not have a null mask,
+    // so don't superimpose null mask on empty columns.
+    if (input.type().id() == cudf::type_id::EMPTY) { return marker; }
 
-      // For struct columns, recursively update all children
-      if (input.type().id() == cudf::type_id::STRUCT) {
-        for (int i = 0; i < input.num_children(); i++) {
-          marker = create_updated_column(marker, input.child(i));
-        }
+    input.set_null_count(result_null_counts[marker]);
+    marker++;
+
+    // For struct columns, recursively update all children
+    if (input.type().id() == cudf::type_id::STRUCT) {
+      for (int i = 0; i < input.num_children(); i++) {
+        marker = update_null_counts(marker, input.child(i));
       }
     }
     return marker;
   };
 
-  // Apply the new null masks to all top-level columns
   auto marker = 0;
-  for (size_t c = 0; c < inputs.size(); c++) {
-    marker = create_updated_column(marker, *(inputs[c]));
+  for (auto& input : inputs) {
+    marker = update_null_counts(marker, *input);
   }
   return inputs;
 }

@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -25,8 +26,11 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <array>
+#include <functional>
 #include <limits>
 #include <random>
+#include <span>
 #include <vector>
 
 // NOTE: each test in this file must be run twice - once with the AST Interpreter executor
@@ -1556,6 +1560,109 @@ TYPED_TEST(TransformTest, Decimal128IdentityOutput)
     auto expected = cudf::test::fixed_point_column_wrapper<__int128>({12345, 12345}, scale);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
   }
+}
+
+struct ComputeTableJitTest : public cudf::test::BaseFixture {};
+
+TEST_F(ComputeTableJitTest, CommonSubexpression)
+{
+  auto c0    = column_wrapper<int32_t>{1, 2, 3, 4};
+  auto c1    = column_wrapper<int32_t>{10, 20, 30, 40};
+  auto c2    = column_wrapper<int32_t>{2, 3, 4, 5};
+  auto table = cudf::table_view{{c0, c1, c2}};
+
+  auto ref0 = cudf::ast::column_reference{0};
+  auto ref1 = cudf::ast::column_reference{1};
+  auto ref2 = cudf::ast::column_reference{2};
+  auto sum  = cudf::ast::operation{cudf::ast::ast_operator::ADD, ref0, ref1};
+  auto mul  = cudf::ast::operation{cudf::ast::ast_operator::MUL, sum, ref2};
+  auto sub  = cudf::ast::operation{cudf::ast::ast_operator::SUB, sum, ref2};
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 3> expressions{mul, sub, sum};
+  auto result = cudf::compute_table_jit(table, expressions);
+
+  auto expected_mul = column_wrapper<int32_t>{22, 66, 132, 220};
+  auto expected_sub = column_wrapper<int32_t>{9, 19, 29, 39};
+  auto expected_sum = column_wrapper<int32_t>{11, 22, 33, 44};
+  auto expected     = cudf::table_view{{expected_mul, expected_sub, expected_sum}};
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
+}
+
+TEST_F(ComputeTableJitTest, PerOutputNullability)
+{
+  auto c0    = column_wrapper<int32_t>{{1, 0, 3, 0}, {1, 0, 1, 0}};
+  auto c1    = column_wrapper<int32_t>{10, 20, 30, 40};
+  auto table = cudf::table_view{{c0, c1}};
+
+  auto ref0    = cudf::ast::column_reference{0};
+  auto ref1    = cudf::ast::column_reference{1};
+  auto is_null = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, ref0};
+  auto sum     = cudf::ast::operation{cudf::ast::ast_operator::ADD, ref0, ref1};
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{is_null, sum};
+  auto result = cudf::compute_table_jit(table, expressions);
+
+  auto expected_is_null = column_wrapper<bool>{false, true, false, true};
+  auto expected_sum     = column_wrapper<int32_t>{{11, 0, 33, 0}, {1, 0, 1, 0}};
+  auto expected         = cudf::table_view{{expected_is_null, expected_sum}};
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
+  EXPECT_FALSE(result->view().column(0).nullable());
+  EXPECT_TRUE(result->view().column(1).nullable());
+}
+
+TEST_F(ComputeTableJitTest, IndependentNullMasks)
+{
+  auto c0    = column_wrapper<int32_t>{{1, 2, 3, 4}, {1, 0, 1, 0}};
+  auto c1    = column_wrapper<int32_t>{{10, 20, 30, 40}, {1, 1, 0, 0}};
+  auto table = cudf::table_view{{c0, c1}};
+
+  auto ref0 = cudf::ast::column_reference{0};
+  auto ref1 = cudf::ast::column_reference{1};
+  auto out0 = cudf::ast::operation{cudf::ast::ast_operator::IDENTITY, ref0};
+  auto out1 = cudf::ast::operation{cudf::ast::ast_operator::IDENTITY, ref1};
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{out0, out1};
+  auto result = cudf::compute_table_jit(table, expressions);
+
+  auto expected0 = column_wrapper<int32_t>{{1, 2, 3, 4}, {1, 0, 1, 0}};
+  auto expected1 = column_wrapper<int32_t>{{10, 20, 30, 40}, {1, 1, 0, 0}};
+  auto expected  = cudf::table_view{{expected0, expected1}};
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
+}
+
+TEST_F(ComputeTableJitTest, UnrelatedInputNulls)
+{
+  auto nullable_input = column_wrapper<int32_t>{{1, 2, 3, 4}, {1, 0, 1, 0}};
+  auto valid_input    = column_wrapper<int32_t>{10, 20, 30, 40};
+  auto table          = cudf::table_view{{nullable_input, valid_input}};
+
+  auto nullable_ref = cudf::ast::column_reference{0};
+  auto valid_ref    = cudf::ast::column_reference{1};
+  auto nullable_out = cudf::ast::operation{cudf::ast::ast_operator::IDENTITY, nullable_ref};
+  auto valid_out    = cudf::ast::operation{cudf::ast::ast_operator::IDENTITY, valid_ref};
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{nullable_out,
+                                                                                 valid_out};
+  auto result = cudf::compute_table_jit(table, expressions);
+
+  auto expected_nullable = column_wrapper<int32_t>{{1, 2, 3, 4}, {1, 0, 1, 0}};
+  auto expected_valid    = column_wrapper<int32_t>{10, 20, 30, 40};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_nullable, result->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_valid, result->view().column(1));
+  EXPECT_EQ(result->view().column(1).null_count(), 0);
+}
+
+TEST_F(ComputeTableJitTest, EmptyExpressions)
+{
+  auto input       = column_wrapper<int32_t>{1, 2, 3};
+  auto table       = cudf::table_view{{input}};
+  auto expressions = std::span<std::reference_wrapper<cudf::ast::expression const> const>{};
+
+  EXPECT_THROW(cudf::compute_table_jit(table, expressions), cudf::logic_error);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

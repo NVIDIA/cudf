@@ -3,7 +3,11 @@
 
 from cython.operator cimport dereference
 from libc.stdint cimport uint8_t
+from cuda.bindings.cyruntime cimport cudaStream_t
+from cpython.bytes cimport PyBytes_FromStringAndSize
 from libcpp.memory cimport make_unique, unique_ptr
+from libcpp.optional cimport optional
+from libcpp.span cimport span as std_span
 from libcpp.string cimport string
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -22,9 +26,15 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     FileMetaData as cpp_FileMetaData,
     RowGroup as cpp_RowGroup,
     SortingColumn as cpp_SortingColumn,
+    Statistics as cpp_Statistics,
 )
+from pylibcudf.libcudf.table.table cimport table as cpp_table
 from pylibcudf.libcudf.utilities.span cimport host_span
+from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
+from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
+from rmm.pylibrmm.stream cimport Stream
 
 from typing import TYPE_CHECKING
 
@@ -32,17 +42,21 @@ if TYPE_CHECKING:
     from typing_extensions import Buffer
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
+ctypedef const string const_string
+ctypedef const cpp_FileMetaData const_cpp_FileMetaData
 
 
 __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
+    "ColumnChunkStatistics",
     "FileMetaData",
     "ParquetColumnSchema",
     "ParquetMetadata",
     "ParquetSchema",
     "RowGroup",
     "SortingColumn",
+    "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
 ]
@@ -306,6 +320,93 @@ cdef class SortingColumn:
         return self.c_obj.nulls_first
 
 
+cdef object optional_bytes(optional[vector[uint8_t]] value):
+    cdef vector[uint8_t]* buffer
+    if not value.has_value():
+        return None
+    buffer = &value.value()
+    if buffer.size() == 0:
+        return b""
+    return PyBytes_FromStringAndSize(
+        <const char*>buffer.data(), buffer.size()
+    )
+
+
+cdef class ColumnChunkStatistics:
+    """Column chunk statistics."""
+
+    def __init__(self):
+        raise ValueError("ColumnChunkStatistics cannot be constructed directly")
+
+    @staticmethod
+    cdef ColumnChunkStatistics from_cpp(cpp_Statistics statistics):
+        cdef ColumnChunkStatistics result = ColumnChunkStatistics.__new__(
+            ColumnChunkStatistics
+        )
+        result.c_obj = statistics
+        return result
+
+    @property
+    def has_min_max(self) -> bool:
+        """Whether this column chunk has encoded minimum and maximum values."""
+        return (
+            (self.c_obj.min_value.has_value() or self.c_obj.min.has_value())
+            and (self.c_obj.max_value.has_value() or self.c_obj.max.has_value())
+        )
+
+    @property
+    def min_encoded(self) -> bytes | None:
+        """Encoded minimum value, preferring ``min_value`` over deprecated ``min``.
+
+        The bytes are the raw Parquet statistics payload and must be
+        interpreted using the column's Parquet physical and logical type
+        metadata.
+        """
+        if self.c_obj.min_value.has_value():
+            return optional_bytes(self.c_obj.min_value)
+        return optional_bytes(self.c_obj.min)
+
+    @property
+    def max_encoded(self) -> bytes | None:
+        """Encoded maximum value, preferring ``max_value`` over deprecated ``max``.
+
+        The bytes are the raw Parquet statistics payload and must be
+        interpreted using the column's Parquet physical and logical type
+        metadata.
+        """
+        if self.c_obj.max_value.has_value():
+            return optional_bytes(self.c_obj.max_value)
+        return optional_bytes(self.c_obj.max)
+
+    @property
+    def null_count(self) -> int | None:
+        """Number of null values in the column chunk."""
+        if not self.c_obj.null_count.has_value():
+            return None
+        return self.c_obj.null_count.value()
+
+    @property
+    def distinct_count(self) -> int | None:
+        """Number of distinct values in the column chunk."""
+        if not self.c_obj.distinct_count.has_value():
+            return None
+        return self.c_obj.distinct_count.value()
+
+    @property
+    def is_min_value_exact(self) -> bool | None:
+        """Whether ``min_value`` is the exact column-chunk minimum."""
+        if not self.c_obj.is_min_value_exact.has_value():
+            return None
+        return self.c_obj.is_min_value_exact.value()
+
+    @property
+    def is_max_value_exact(self) -> bool | None:
+        """Whether ``max_value`` is the exact column-chunk maximum."""
+        if not self.c_obj.is_max_value_exact.has_value():
+            return None
+        return self.c_obj.is_max_value_exact.value()
+
+
 cdef class ColumnChunk:
     """Metadata for a row group's column chunk."""
 
@@ -394,6 +495,11 @@ cdef class ColumnChunkMetaData:
         """Total compressed page bytes for this chunk."""
         return self.c_obj.total_compressed_size
 
+    @property
+    def statistics(self) -> ColumnChunkStatistics:
+        """Column chunk statistics."""
+        return ColumnChunkStatistics.from_cpp(self.c_obj.statistics)
+
 
 cdef class RowGroup:
     """Parquet row group metadata."""
@@ -465,7 +571,7 @@ cdef class FileMetaData:
 
     See Also
     --------
-    read_parquet_footers
+    pylibcudf.io.parquet_metadata.read_parquet_footers
         Read one ``FileMetaData`` per source directly from
         :class:`pylibcudf.io.types.SourceInfo`.
     """
@@ -691,3 +797,69 @@ cpdef list read_parquet_footers(SourceInfo src_info):
 
     # GIL held only for Python object allocation + list build
     return [FileMetaData.from_libcudf(move(owned[i])) for i in range(n)]
+
+
+cpdef Table read_parquet_column_chunk_bounds(
+    object file_metadatas,
+    object columns,
+    object stream=None,
+    DeviceMemoryResource mr=None,
+):
+    """
+    Decode parquet column-chunk min/max statistics for selected columns.
+
+    Missing min/max statistics are returned as nulls. Parquet min/max
+    exactness flags are not interpreted by this function.
+
+    Parameters
+    ----------
+    file_metadatas : Sequence[FileMetaData]
+        Parquet footer metadata objects, one per source.
+    columns : Sequence[str]
+        Dotted leaf-column paths to decode statistics for.
+    stream : CudaStreamLike, optional
+        CUDA stream used for device memory operations.
+    mr : DeviceMemoryResource, optional
+        Device memory resource used for device memory allocation.
+
+    Returns
+    -------
+    Table
+        Table containing file indices in column 0, file-local row-group
+        indices in column 1, and one ``(min, max)`` column pair per requested
+        column after that. For ``columns[i]``, the minimum column is at
+        ``2 + 2 * i`` and the maximum column is at ``3 + 2 * i``.
+    """
+    cdef vector[cpp_FileMetaData] c_metadatas
+    cdef vector[string] c_columns
+    cdef unique_ptr[cpp_table] c_result
+    cdef object metadata_obj
+    cdef object column_name
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().value()
+    mr = _get_memory_resource(mr)
+
+    for metadata_obj in file_metadatas:
+        if not isinstance(metadata_obj, FileMetaData):
+            raise TypeError("file_metadatas must contain only FileMetaData objects")
+        c_metadatas.push_back(dereference((<FileMetaData>metadata_obj).c_obj))
+
+    if isinstance(columns, str):
+        raise TypeError("columns must be a sequence of strings")
+
+    for column_name in columns:
+        if not isinstance(column_name, str):
+            raise TypeError("columns must contain only strings")
+        c_columns.push_back(column_name.encode())
+
+    with nogil:
+        c_result = cpp_parquet_metadata.read_parquet_column_chunk_bounds(
+            std_span[const_cpp_FileMetaData](
+                c_metadatas.data(), c_metadatas.size()
+            ),
+            std_span[const_string](c_columns.data(), c_columns.size()),
+            _cs,
+            mr.get_mr(),
+        )
+
+    return Table.from_libcudf(move(c_result), _stream, mr)

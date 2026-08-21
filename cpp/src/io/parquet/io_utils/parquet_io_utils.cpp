@@ -323,8 +323,12 @@ fetch_byte_ranges_to_device_async_impl(
       auto const& byte_ranges = byte_ranges_per_source[source_idx];
 
       // Total buffer size required for column chunks of this source
+      auto const source_size = datasources[source_idx].get().size();
       auto const buffer_size = std::accumulate(
-        byte_ranges.begin(), byte_ranges.end(), std::size_t{0}, [](auto acc, auto const& range) {
+        byte_ranges.begin(), byte_ranges.end(), std::size_t{0}, [&](auto acc, auto const& range) {
+          CUDF_EXPECTS(
+            static_cast<size_t>(range.offset()) + static_cast<size_t>(range.size()) <= source_size,
+            "Byte range exceeds datasource size");
           return acc + range.size();
         });
 
@@ -341,7 +345,8 @@ fetch_byte_ranges_to_device_async_impl(
       column_chunk_data.reserve(byte_ranges.size());
       std::ignore = std::accumulate(
         byte_ranges.begin(), byte_ranges.end(), std::size_t{0}, [&](auto acc, auto const& range) {
-          column_chunk_data.emplace_back(buffer_data + acc, static_cast<size_t>(range.size()));
+          auto const data = buffer_data == nullptr ? nullptr : buffer_data + acc;
+          column_chunk_data.emplace_back(data, static_cast<size_t>(range.size()));
           return acc + range.size();
         });
 

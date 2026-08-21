@@ -40,8 +40,8 @@ EOF
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../python/pylibcudf/
 
 # If the stream testing library was found, split the tests into two passes.
-echo "CUDA_VERSION: $CUDA_VERSION"
-if [ -n "$TESTING_LIB" ] && [ -f "$TESTING_LIB" ] && [ "$CUDA_VERSION" != "12.2.2" ]; then
+echo "RAPIDS_CUDA_VERSION: $RAPIDS_CUDA_VERSION"
+if [ -n "$TESTING_LIB" ] && [ -f "$TESTING_LIB" ] && [ "$RAPIDS_CUDA_VERSION" != "12.2.2" ]; then
     # run the stream tests without xdist to ease the burden on the compute-sanitizer checks
     LD_PRELOAD="$TESTING_LIB" PYLIBCUDF_STREAM_TESTING=1 pytest --cache-clear -m "not uses_custom_stream" --ignore="benchmarks" -p no:xdist tests
 fi

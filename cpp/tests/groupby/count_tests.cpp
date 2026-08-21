@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,6 +37,26 @@ TYPED_TEST(groupby_count_test, basic)
 
   auto agg2 = cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE);
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2));
+}
+
+TYPED_TEST(groupby_count_test, all_valid_values)
+{
+  using V = TypeParam;
+  using R = cudf::size_type;
+
+  cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 1, 2, 1};
+  cudf::test::fixed_width_column_wrapper<V> vals({0, 1, 2, 3, 4},
+                                                 cudf::test::iterators::no_nulls());
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{1, 2};
+  cudf::test::fixed_width_column_wrapper<R> expect_vals{3, 2};
+
+  auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
+
+  auto sort_agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
+  test_single_agg(
+    keys, vals, expect_keys, expect_vals, std::move(sort_agg), force_use_sort_impl::YES);
 }
 
 TYPED_TEST(groupby_count_test, empty_cols)

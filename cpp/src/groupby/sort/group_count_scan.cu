@@ -41,7 +41,7 @@ std::unique_ptr<column> count_scan(column_view const& values,
       group_labels.end(),
       cuda::make_constant_iterator<size_type>(1),
       resultview.begin<size_type>());
-  } else {  // aggregation::COUNT_VALID
+  } else if (values.has_nulls()) {  // aggregation::COUNT_VALID
     auto d_values = cudf::column_device_view::create(values, stream);
     auto itr      = cudf::detail::make_counting_transform_iterator(
       0, [d_values = *d_values] __device__(auto idx) -> cudf::size_type {
@@ -52,6 +52,13 @@ std::unique_ptr<column> count_scan(column_view const& values,
       group_labels.begin(),
       group_labels.end(),
       itr,
+      resultview.begin<size_type>());
+  } else {
+    thrust::inclusive_scan_by_key(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      group_labels.begin(),
+      group_labels.end(),
+      cuda::make_constant_iterator<size_type>(1),
       resultview.begin<size_type>());
   }
   return result;

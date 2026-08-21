@@ -990,8 +990,9 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   // Prepend the source and row index columns if requested
   {
     if (_options.prepend_row_index_column) {
-      out_columns.emplace(out_columns.begin(),
-                          synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
+      out_columns.emplace(
+        out_columns.begin(),
+        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }

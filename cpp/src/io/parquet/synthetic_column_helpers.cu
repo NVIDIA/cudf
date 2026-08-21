@@ -6,10 +6,10 @@
 #include "error.hpp"
 #include "io/comp/common.hpp"
 #include "page_decode.cuh"
-#include "synthetic_column_helpers.hpp"
-#include "reader_impl_helpers.hpp"
 #include "reader_impl_chunking_utils.cuh"
+#include "reader_impl_helpers.hpp"
 #include "reader_impl_preprocess_utils.cuh"
+#include "synthetic_column_helpers.hpp"
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
@@ -66,9 +66,9 @@ struct map_global_to_local_row_index {
 }  // namespace
 
 std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info const> row_groups,
-                                                                 row_range const& read_info,
-                                                                 cuda::stream_ref stream,
-                                                                 rmm::device_async_resource_ref mr)
+                                                    row_range const& read_info,
+                                                    cuda::stream_ref stream,
+                                                    rmm::device_async_resource_ref mr)
 {
   using column_type = size_t;
 

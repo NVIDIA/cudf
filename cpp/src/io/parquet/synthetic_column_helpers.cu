@@ -52,10 +52,11 @@ struct map_global_to_local_row_index {
 
 }  // namespace
 
-std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info const> row_groups,
-                                                    row_range const& read_info,
-                                                    cuda::stream_ref stream,
-                                                    cudf::memory_resources mr)
+std::unique_ptr<cudf::column> synthesize_row_index_column(
+  std::span<row_group_info const> row_groups,
+  row_range const& read_info,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   using column_type = size_t;
 
@@ -99,7 +100,7 @@ std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info con
     std::move(col_data), rmm::device_buffer{0, stream, mr.get_output_mr()}, 0);
 }
 
-std::unique_ptr<column> synthesize_source_index_column(
+std::unique_ptr<cudf::column> synthesize_source_index_column(
   std::span<std::size_t const> num_rows_per_source,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
@@ -143,9 +144,8 @@ std::unique_ptr<column> synthesize_source_index_column(
     std::move(col_data), rmm::device_buffer{0, stream, mr.get_output_mr()}, 0);
 }
 
-std::unique_ptr<column> synthesize_row_group_index_column(column_view const& source_indices,
-                                                          cuda::stream_ref stream,
-                                                          cudf::memory_resources mr)
+std::unique_ptr<cudf::column> synthesize_row_group_index_column(
+  cudf::column_view const& source_indices, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   using column_type = cudf::size_type;
 

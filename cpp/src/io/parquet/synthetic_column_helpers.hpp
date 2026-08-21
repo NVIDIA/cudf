@@ -6,6 +6,7 @@
 #pragma once
 
 #include "reader_impl_chunking.hpp"
+#include "reader_impl_helpers.hpp"
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
@@ -19,8 +20,6 @@
 
 namespace cudf::io::parquet::detail {
 
-struct row_group_info;
-
 /**
  * @brief Synthesizes a source-index column.
  *
@@ -29,7 +28,7 @@ struct row_group_info;
  * @param mr Memory resources used for output and temporary device allocations
  * @return Synthesized source-index column
  */
-[[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
+[[nodiscard]] std::unique_ptr<cudf::column> synthesize_source_index_column(
   std::span<std::size_t const> num_rows_per_source,
   cuda::stream_ref stream,
   cudf::memory_resources mr);
@@ -42,8 +41,8 @@ struct row_group_info;
  * @param mr Memory resources used for output and temporary device allocations
  * @return Synthesized row-group index column
  */
-[[nodiscard]] std::unique_ptr<column> synthesize_row_group_index_column(
-  column_view const& source_indices, cuda::stream_ref stream, cudf::memory_resources mr);
+[[nodiscard]] std::unique_ptr<cudf::column> synthesize_row_group_index_column(
+  cudf::column_view const& source_indices, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Synthesizes a row-index column for the selected row groups.
@@ -54,7 +53,7 @@ struct row_group_info;
  * @param mr Memory resources used for output and temporary device allocations
  * @return Synthesized row-index column
  */
-[[nodiscard]] std::unique_ptr<column> synthesize_row_index_column(
+[[nodiscard]] std::unique_ptr<cudf::column> synthesize_row_index_column(
   std::span<row_group_info const> row_groups,
   row_range const& read_info,
   cuda::stream_ref stream,

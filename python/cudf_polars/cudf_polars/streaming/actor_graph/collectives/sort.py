@@ -211,20 +211,18 @@ async def extract_orderscheme_partitioning(
             # The corresponding empty chunk must be dropped
             # from the data channel.
             continue
-        with stream_ordered_after(
-            lambda: stream, upstreams=(chunk.stream,)
-        ) as work_stream:
+        with stream_ordered_after(lambda: stream, upstreams=(chunk.stream,)):
             row_indices = plc.Column.from_iterable_of_py(
                 [0, n - 1],
                 plc.DataType(plc.TypeId.INT32),
-                stream=work_stream,
+                stream=stream,
             )
             min_max_rows.append(
                 plc.copying.gather(
                     tbl,
                     row_indices,
                     plc.copying.OutOfBoundsPolicy.DONT_CHECK,
-                    stream=work_stream,
+                    stream=stream,
                 )
             )
         chunks.insert(Message(msg.sequence_number, chunk))

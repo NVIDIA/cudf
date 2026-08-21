@@ -32,6 +32,11 @@ namespace cudf::io::parquet::experimental::detail {
  *        Hybrid Scan operation.
  */
 class hybrid_scan_reader_impl;
+
+/**
+ * @brief Internal parsed Parquet file metadata for the Hybrid Scan reader.
+ */
+class aggregate_reader_metadata;
 }  // namespace cudf::io::parquet::experimental::detail
 
 //! Using `byte_range_info` from cudf::io::text
@@ -51,6 +56,70 @@ namespace io::parquet::experimental {
 enum class use_data_page_mask : bool {
   YES = true,  ///< Compute and use a data page mask
   NO  = false  ///< Do not compute or use a data page mask
+};
+
+/**
+ * @brief Shareable, pre-parsed Parquet file metadata for the Hybrid Scan reader.
+ *
+ * Parses the Parquet file metadata once so that multiple `hybrid_scan_reader` instances reading
+ * the same file can share it rather than each re-parsing and copying the row group metadata.
+ * The intended use is to read disjoint row-group ranges of a single file: construct one
+ * `hybrid_scan_metadata` per file and pass it to as many readers as there are ranges.
+ *
+ * @code{.cpp}
+ * // Parse the metadata once
+ * auto metadata = parquet::experimental::hybrid_scan_metadata{*footer_buffer, options};
+ * // Construct lightweight readers that share it
+ * auto reader_a = std::make_unique<parquet::experimental::hybrid_scan_reader>(metadata);
+ * auto reader_b = std::make_unique<parquet::experimental::hybrid_scan_reader>(metadata);
+ * @endcode
+ *
+ * @note The metadata is immutable after `setup_page_index()` has been called (or immediately after
+ * construction if page index setup is skipped). Concurrent usage by multiple readers is thread
+ * safe. This handle does not support multi-source (multi-file) metadata.
+ */
+class hybrid_scan_metadata {
+ public:
+  /**
+   * @brief Parse and own Parquet file metadata from a span of footer bytes
+   *
+   * @param footer_bytes Host span of Parquet file footer bytes
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
+                       parquet_reader_options const& options);
+
+  /**
+   * @brief Own Parquet file metadata from a pre-populated `FileMetaData`
+   *
+   * @param parquet_metadata Pre-populated Parquet file metadata
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(FileMetaData const& parquet_metadata, parquet_reader_options const& options);
+
+  /**
+   * @brief Destructor for the shared Parquet metadata
+   */
+  ~hybrid_scan_metadata();
+
+  hybrid_scan_metadata(hybrid_scan_metadata const&) = default;  ///< Copy constructor
+  hybrid_scan_metadata(hybrid_scan_metadata&&)      = default;  ///< Move constructor
+
+  /**
+   * @brief Copy assignment operator
+   * @return Reference to this object
+   */
+  hybrid_scan_metadata& operator=(hybrid_scan_metadata const&) = default;
+
+  /**
+   * @brief Move assignment operator
+   * @return Reference to this object
+   */
+  hybrid_scan_metadata& operator=(hybrid_scan_metadata&&) = default;
+
+ private:
+  std::shared_ptr<detail::aggregate_reader_metadata> _metadata;
+  friend class hybrid_scan_reader;
 };
 
 /**
@@ -300,6 +369,15 @@ class hybrid_scan_reader {
    */
   explicit hybrid_scan_reader(FileMetaData const& parquet_metadata,
                               parquet_reader_options const& options);
+
+  /**
+   * @brief Constructor that takes shared ownership of pre-parsed Parquet file metadata
+   *
+   * Constructs a reader that shares the pre-parsed metadata object.
+   *
+   * @param metadata Shared, pre-parsed Parquet file metadata
+   */
+  explicit hybrid_scan_reader(hybrid_scan_metadata metadata);
 
   /**
    * @brief Destructor for the experimental parquet reader class

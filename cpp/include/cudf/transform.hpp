@@ -11,8 +11,10 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -285,8 +287,6 @@ std::unique_ptr<column> compute_column(
  * transform.
  *
  * @throws cudf::logic_error if passed an expression operating on table_reference::RIGHT.
- * @throws cudf::data_type_error if the expression applies a non-comparison binary operator to
- * decimal128 operands.
  * @throws cudf::evaluation_error if the evaluation of the expression results in an error during
  * execution.
  *
@@ -300,6 +300,34 @@ std::unique_ptr<column> compute_column_jit(
   table_view const& table,
   ast::expression const& expr,
   cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Compute a new table by evaluating expression trees on a table using a JIT-compiled
+ * kernel.
+ *
+ * This evaluates expressions over a table to produce a new table. Also called an n-ary
+ * transform. Expressions are evaluated in the order supplied, and output column `i` contains the
+ * result of `expressions[i]`. Common subexpressions shared by multiple outputs are evaluated once
+ * by the generated function.
+ *
+ * @pre `expressions` must not be empty.
+ *
+ * @throws cudf::logic_error if passed an empty collection of expressions.
+ * @throws cudf::logic_error if passed an expression operating on table_reference::RIGHT.
+ * @throws cudf::evaluation_error if the evaluation of the expression results in an error during
+ * execution.
+ *
+ * @param table The table used for expression evaluation
+ * @param expressions Non-empty collection of expression-tree roots, one per output column
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource
+ * @return Table containing one output column per expression, in the same order as `expressions`
+ */
+std::unique_ptr<table> compute_table_jit(
+  table_view const& table,
+  std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

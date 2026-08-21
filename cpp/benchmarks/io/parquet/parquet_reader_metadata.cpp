@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -309,7 +309,7 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   auto constexpr pass_read_limit  = 0;
 
   // No column projection is requested, so the reader reads all columns; this isolates filter name
-  // resolution (named_to_reference_converter) from select_columns name scanning.
+  // resolution (`parquet_filter_normalizer`) from select_columns name scanning.
   auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
                      .use_arrow_schema(false)
                      .build();
@@ -326,7 +326,7 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
       auto metadatas = cudf::io::read_parquet_footers(sources);
 
       // Reader construction resolves all referenced filter column names
-      // (named_to_reference_converter) and runs column selection. Construction throws if a
+      // (`parquet_filter_normalizer`) and runs column selection. Construction throws if a
       // referenced name is missing, so successful construction is the validation; has_next() is
       // intentionally not called so per-sample timing is not perturbed by row-group filter
       // evaluation over the wide predicate.

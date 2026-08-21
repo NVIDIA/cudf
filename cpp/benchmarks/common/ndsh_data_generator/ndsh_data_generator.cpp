@@ -396,41 +396,12 @@ std::unique_ptr<cudf::table> generate_lineitem_core(cudf::table_view const& orde
     return std::make_tuple(std::move(gathered_table->release()[1]), std::move(mask_index_type));
   }();
 
-  // Generate the `lineitem` core
-  std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.push_back(std::move(l_linestatus_mask));
-  columns.push_back(std::move(l_orderkey));
-  columns.push_back(std::move(l_partkey));
-  columns.push_back(std::move(l_suppkey));
-  columns.push_back(std::move(l_linenumber));
-  columns.push_back(std::move(l_quantity));
-  columns.push_back(std::move(l_discount));
-  columns.push_back(std::move(l_tax));
-  columns.push_back(std::move(l_returnflag));
-  columns.push_back(std::move(l_linestatus));
-  columns.push_back(std::move(l_shipdate_ts));
-  columns.push_back(std::move(l_commitdate_ts));
-  columns.push_back(std::move(l_receiptdate_ts));
-  return std::make_unique<cudf::table>(std::move(columns));
-}
-
-std::unique_ptr<cudf::table> generate_lineitem_core_with_extended_price(
-  cudf::table_view const& orders_independent,
-  double scale_factor,
-  unsigned int seed,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
-{
-  auto lineitem_core = generate_lineitem_core(orders_independent, scale_factor, seed, stream, mr);
-
   // `p_retailprice` is a deterministic function of `p_partkey`, so a full `part` table is not
   // required to calculate `l_extendedprice`.
   auto l_extendedprice = [&]() {
-    auto const l_partkey     = lineitem_core->get_column(2).view();
-    auto const l_quantity    = lineitem_core->get_column(5).view();
-    auto const p_retailprice = calculate_p_retailprice(l_partkey, stream, mr);
+    auto const p_retailprice = calculate_p_retailprice(l_partkey->view(), stream, mr);
     auto const l_quantity_fp =
-      cudf::cast(l_quantity, cudf::data_type{cudf::type_id::FLOAT64}, stream, mr);
+      cudf::cast(l_quantity->view(), cudf::data_type{cudf::type_id::FLOAT64}, stream, mr);
     return cudf::binary_operation(l_quantity_fp->view(),
                                   p_retailprice->view(),
                                   cudf::binary_operator::MUL,
@@ -439,9 +410,23 @@ std::unique_ptr<cudf::table> generate_lineitem_core_with_extended_price(
                                   mr);
   }();
 
-  auto lineitem_core_columns = lineitem_core->release();
-  lineitem_core_columns.insert(lineitem_core_columns.begin() + 6, std::move(l_extendedprice));
-  return std::make_unique<cudf::table>(std::move(lineitem_core_columns));
+  // Generate the `lineitem` core
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(std::move(l_linestatus_mask));
+  columns.push_back(std::move(l_orderkey));
+  columns.push_back(std::move(l_partkey));
+  columns.push_back(std::move(l_suppkey));
+  columns.push_back(std::move(l_linenumber));
+  columns.push_back(std::move(l_quantity));
+  columns.push_back(std::move(l_extendedprice));
+  columns.push_back(std::move(l_discount));
+  columns.push_back(std::move(l_tax));
+  columns.push_back(std::move(l_returnflag));
+  columns.push_back(std::move(l_linestatus));
+  columns.push_back(std::move(l_shipdate_ts));
+  columns.push_back(std::move(l_commitdate_ts));
+  columns.push_back(std::move(l_receiptdate_ts));
+  return std::make_unique<cudf::table>(std::move(columns));
 }
 
 std::vector<cudf::table_view> partition_orders(cudf::table_view const& orders,
@@ -765,8 +750,7 @@ std::unique_ptr<cudf::table> generate_orders(double scale_factor,
   dependent_partitions.reserve(order_partitions.size());
   unsigned int seed = 0;
   for (auto const& order_partition : order_partitions) {
-    auto lineitem_core =
-      generate_lineitem_core_with_extended_price(order_partition, scale_factor, seed++, stream, mr);
+    auto lineitem_core = generate_lineitem_core(order_partition, scale_factor, seed++, stream, mr);
     dependent_partitions.push_back(generate_orders_dependent(lineitem_core->view(), stream, mr));
   }
 
@@ -799,8 +783,7 @@ void generate_lineitem_partitions(double scale_factor,
   unsigned int seed       = 0;
   for (auto const& order_partition :
        partition_orders(orders_independent->view(), orders_per_chunk, stream)) {
-    auto lineitem_core =
-      generate_lineitem_core_with_extended_price(order_partition, scale_factor, seed, stream, mr);
+    auto lineitem_core = generate_lineitem_core(order_partition, scale_factor, seed, stream, mr);
     consumer(
       finish_lineitem(std::move(lineitem_core), include_lineitem_comment, seed++, stream, mr));
   }

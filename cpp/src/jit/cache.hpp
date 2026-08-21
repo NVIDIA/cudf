@@ -64,7 +64,7 @@ struct [[nodiscard]] kernel {
                    rtcx::cuda_dim3 block_dim,
                    uint32_t shared_mem_bytes,
                    rmm::cuda_stream_view stream,
-                   Args&&... args)
+                   Args&&... args) const
     requires(sizeof...(Args) > 0)
   {
     void const* params[] = {&args...};  // NOLINT(modernize-avoid-c-arrays)

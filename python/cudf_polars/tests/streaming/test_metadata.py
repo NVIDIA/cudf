@@ -44,6 +44,7 @@ from cudf_polars.streaming.actor_graph.hint_sorted import extract_hint_sorted_me
 from cudf_polars.streaming.actor_graph.utils import (
     NormalizedPartitioning,
     _apply_ordering_metadata,
+    _leading_order_keys,
     maybe_remap_partitioning,
 )
 from cudf_polars.utils.config import ConfigOptions
@@ -585,7 +586,7 @@ def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:
         partitioning=Partitioning(scheme, local="inherit"),
     )
 
-    result = _apply_ordering_metadata(df, metadata)
+    result = _apply_ordering_metadata(df, _leading_order_keys(metadata))
 
     assert result.column_map["a"].is_sorted == plc.types.Sorted.YES
     assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
@@ -605,7 +606,7 @@ def test_apply_ordering_metadata_ignores_inter_rank_ordering_if_local_hash(
         ),
     )
 
-    result = _apply_ordering_metadata(df, metadata)
+    result = _apply_ordering_metadata(df, _leading_order_keys(metadata))
 
     assert result.column_map["a"].is_sorted == plc.types.Sorted.NO
 
@@ -642,7 +643,7 @@ def test_apply_ordering_metadata_skips_conflicting_keys(spmd_engine) -> None:
         partitioning=Partitioning(scheme, local="inherit"),
     )
 
-    result = _apply_ordering_metadata(df, metadata)
+    result = _apply_ordering_metadata(df, _leading_order_keys(metadata))
 
     assert result.column_map["a"].is_sorted == plc.types.Sorted.NO
 

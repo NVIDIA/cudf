@@ -74,6 +74,7 @@ if TYPE_CHECKING:
 
 InterRankScheme: TypeAlias = HashScheme | OrderScheme | None
 PartitioningScheme: TypeAlias = InterRankScheme | Literal["inherit"]
+OrderingMetadata: TypeAlias = dict[int, OrderKey]
 
 # cuDF column/concatenate row limit (int32)
 CUDF_ROW_LIMIT = 2**31 - 1
@@ -726,7 +727,7 @@ def _evaluate_chunk_sync(
     ir_context: IRExecutionContext,
     br: BufferResource,
     *,
-    metadata: ChannelMetadata | None = None,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> TableChunk:
     """
     Apply an IR node's do_evaluate to a table chunk (synchronous).
@@ -744,14 +745,15 @@ def _evaluate_chunk_sync(
         The IR execution context.
     br
         The buffer resource for lifetime tracking.
-    metadata
-        Optional channel metadata to synthesize local DataFrame metadata from.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from.
 
     Returns
     -------
     The resulting table chunk after evaluation.
     """
-    df_in = chunk_to_frame(chunk, ir.children[0], metadata=metadata)
+    df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
     df = ir.do_evaluate(
         *ir._non_child_args,
         df_in,
@@ -767,7 +769,7 @@ async def evaluate_chunk(
     chunk: TableChunk,
     *irs: IR,
     ir_context: IRExecutionContext,
-    metadata: ChannelMetadata | None = None,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> TableChunk:
     """
     Make chunk available, reserve memory, and evaluate.
@@ -783,9 +785,9 @@ async def evaluate_chunk(
         in order within a single memory reservation.
     ir_context
         The IR execution context.
-    metadata
-        Optional channel metadata to synthesize local DataFrame metadata from
-        during the first evaluation.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from during the first evaluation.
 
     Returns
     -------
@@ -806,9 +808,9 @@ async def evaluate_chunk(
                 single_ir,
                 ir_context,
                 context.br(),
-                metadata=metadata,
+                ordering_metadata=ordering_metadata,
             )
-            metadata = None
+            ordering_metadata = None
         return chunk
 
 
@@ -984,6 +986,10 @@ async def chunkwise_evaluate(
     if tracer is not None and metadata.duplicated:
         tracer.set_duplicated()
 
+    input_ordering_metadata = _leading_order_keys(
+        metadata if input_metadata is None else input_metadata
+    )
+
     received_any = False
     while (msg := await ch_in.recv(context)) is not None:
         received_any = True
@@ -999,7 +1005,7 @@ async def chunkwise_evaluate(
                 TableChunk.from_message(msg, br=context.br()),
                 ir,
                 ir_context=ir_context,
-                metadata=metadata if input_metadata is None else input_metadata,
+                ordering_metadata=input_ordering_metadata,
             )
         del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
@@ -1011,7 +1017,7 @@ async def chunkwise_evaluate(
             chunk,
             ir,
             ir_context=ir_context,
-            metadata=metadata if input_metadata is None else input_metadata,
+            ordering_metadata=input_ordering_metadata,
         )
         del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
@@ -1573,7 +1579,7 @@ def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> TableChunk:
     )
 
 
-def _leading_order_keys(metadata: ChannelMetadata | None) -> dict[int, OrderKey]:
+def _leading_order_keys(metadata: ChannelMetadata | None) -> OrderingMetadata:
     """Return unambiguous leading order keys implied by channel metadata."""
     if metadata is None or metadata.partitioning is None:
         return {}
@@ -1595,10 +1601,10 @@ def _leading_order_keys(metadata: ChannelMetadata | None) -> dict[int, OrderKey]
 
 
 def _apply_ordering_metadata(
-    df: DataFrame, metadata: ChannelMetadata | None
+    df: DataFrame, ordering_metadata: OrderingMetadata
 ) -> DataFrame:
-    """Apply safe column-level sortedness metadata implied by ``metadata``."""
-    for index, key in _leading_order_keys(metadata).items():
+    """Apply precomputed safe column-level sortedness metadata."""
+    for index, key in ordering_metadata.items():
         if index >= df.num_columns:
             continue
         df.columns[index].set_sorted(
@@ -1610,7 +1616,10 @@ def _apply_ordering_metadata(
 
 
 def chunk_to_frame(
-    chunk: TableChunk, ir: IR, *, metadata: ChannelMetadata | None = None
+    chunk: TableChunk,
+    ir: IR,
+    *,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> DataFrame:
     """
     Convert a TableChunk to a DataFrame.
@@ -1621,8 +1630,9 @@ def chunk_to_frame(
         The TableChunk to convert.
     ir
         The IR node to use for the schema.
-    metadata
-        Optional channel metadata to synthesize local DataFrame metadata from.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from.
 
     Returns
     -------
@@ -1634,7 +1644,11 @@ def chunk_to_frame(
         list(ir.schema.values()),
         chunk.stream,
     )
-    return _apply_ordering_metadata(df, metadata)
+    return (
+        df
+        if ordering_metadata is None
+        else _apply_ordering_metadata(df, ordering_metadata)
+    )
 
 
 def _is_already_partitioned(

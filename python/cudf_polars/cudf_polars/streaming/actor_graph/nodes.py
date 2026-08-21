@@ -25,6 +25,7 @@ from cudf_polars.streaming.actor_graph.dispatch import (
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
+    _leading_order_keys,
     chunk_to_frame,
     chunkwise_evaluate,
     empty_table_chunk,
@@ -141,6 +142,9 @@ async def default_node_multi(
         child_metadatas = await gather_in_task_group(
             *(recv_metadata(ch, context) for ch in chs_in)
         )
+        child_ordering_metadatas = [
+            _leading_order_keys(md_child) for md_child in child_metadatas
+        ]
         for idx, md_child in enumerate(child_metadatas):
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
@@ -215,10 +219,13 @@ async def default_node_multi(
                 chunk_to_frame(
                     cast("TableChunk", chunk),
                     child,
-                    metadata=child_metadata,
+                    ordering_metadata=child_ordering_metadata,
                 )
-                for chunk, child, child_metadata in zip(
-                    ready_chunks, ir.children, child_metadatas, strict=True
+                for chunk, child, child_ordering_metadata in zip(
+                    ready_chunks,
+                    ir.children,
+                    child_ordering_metadatas,
+                    strict=True,
                 )
             ]
             with opaque_memory_usage(extra):

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import (
@@ -39,14 +39,17 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
 
+HintSortedOptions: TypeAlias = tuple[
+    tuple[str, ...], tuple[bool, ...], tuple[bool, ...]
+]
+
+
 def _hint_sorted_options(
     ir: MapFunction,
-) -> tuple[tuple[str, ...], tuple[bool, ...], tuple[bool, ...]]:
+) -> HintSortedOptions:
     """Return normalized ``hint_sorted`` options."""
     assert ir.name == "hint_sorted"
-    return cast(
-        "tuple[tuple[str, ...], tuple[bool, ...], tuple[bool, ...]]", ir.options
-    )
+    return cast("HintSortedOptions", ir.options)
 
 
 def _hint_sorted_order_keys(ir: MapFunction) -> list[OrderKey]:

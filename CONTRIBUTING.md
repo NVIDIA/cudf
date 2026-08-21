@@ -150,6 +150,10 @@ conda activate cudf_dev
   active Python environment. Finally, note that the script depends on the `nvcc` executable being on
   your path, or defined in `$CUDACXX`.
 
+  The `PARALLEL_LEVEL` environment variable sets the number of C++ build jobs passed to
+  `cmake --build -j` and defaults to `nproc`. Lowering it reduces peak memory use at the cost of
+  longer C++ build times.
+
 ```bash
 cd $CUDF_HOME
 

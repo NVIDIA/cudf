@@ -76,7 +76,7 @@ def _two_key_ordering_from_boundary_values(
                         int_values, plc.DataType(plc.TypeId.INT64), 0
                     ),
                     _column_from_values(
-                        string_values, plc.DataType(plc.TypeId.STRING), ""
+                        string_values, plc.DataType(plc.TypeId.STRING), "x"
                     ),
                 ]
             ),

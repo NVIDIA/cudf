@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
@@ -239,6 +240,8 @@ class numeric_scalar_device_view : public detail::fixed_width_scalar_device_view
 
 /**
  * @brief A type of scalar_device_view that stores a pointer to a fixed_point value
+ *
+ * @tparam T The fixed-point value type
  */
 template <typename T>
 class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
@@ -259,11 +262,35 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   }
 
   /**
+   * @brief Returns the fixed-point value
+   *
+   * @return The fixed-point value
+   */
+  [[nodiscard]] __device__ T value() const noexcept
+  {
+    return T{numeric::scaled_integer<rep_type>{*_data, numeric::scale_type{this->type().scale()}}};
+  }
+
+  /**
    * @brief Stores the value in scalar
    *
    * @param value The value to store in scalar
    */
   __device__ void set_value(rep_type value) { *_data = value; }
+
+  /**
+   * @brief Stores the fixed-point value in the scalar
+   *
+   * The value is rescaled to the scalar's scale before its representation is stored.
+   *
+   * @param value The fixed-point value to store in the scalar
+   */
+  __device__ void set_value(T value)
+  {
+    auto const target_scale = numeric::scale_type{this->type().scale()};
+
+    *_data = value.rescaled(target_scale).value();
+  }
 
   /**
    * @brief Get the value of the scalar, as a `rep_type`.

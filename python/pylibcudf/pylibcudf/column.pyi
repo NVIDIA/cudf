@@ -18,17 +18,6 @@ from .types import DataType
 
 __all__ = ['Column', 'ListsColumnView', 'StructsColumnView', 'is_c_contiguous']
 
-class OwnerWithCAI:
-    @property
-    def __cuda_array_interface__(self): ...
-
-class OwnerMaskWithCAI:
-    @property
-    def __cuda_array_interface__(self): ...
-
-class ArrayInterfaceWrapper:
-    def __init__(self, iface): ...
-
 class Column:
     __hash__ = None
 

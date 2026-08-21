@@ -1775,6 +1775,24 @@ TEST_F(JoinTest, EmptyLeftTableFullJoin)
   auto sorted_gold     = cudf::gather(gold.view(), *gold_sort_order);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
+
+  auto hash_joiner       = cudf::hash_join(rhs, cudf::null_equality::EQUAL);
+  auto const output_size = hash_joiner.full_join_size(lhs);
+  EXPECT_EQ(output_size, rhs.num_rows());
+
+  auto const [left_indices, right_indices] = hash_joiner.full_join(lhs, output_size);
+  EXPECT_EQ(left_indices->size(), output_size);
+  EXPECT_EQ(right_indices->size(), output_size);
+
+  column_wrapper<cudf::size_type> expected_left_indices{
+    {NoneValue, NoneValue, NoneValue, NoneValue, NoneValue}};
+  column_wrapper<cudf::size_type> expected_right_indices{{0, 1, 2, 3, 4}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected_left_indices,
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*left_indices}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected_right_indices,
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*right_indices}});
 }
 
 // Empty Right Table

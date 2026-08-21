@@ -750,7 +750,9 @@ async def over_actor(
             keys=ir.key_indices,
             allow_subset=True,
         )
-        if partitioning.is_strictly_partitioned():
+        if partitioning.is_strictly_partitioned(
+            level="local" if metadata_in.duplicated else "flat",
+        ):
             metadata_out = ChannelMetadata(
                 local_count=metadata_in.local_count,
                 partitioning=maybe_remap_partitioning(

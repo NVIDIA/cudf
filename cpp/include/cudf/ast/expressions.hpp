@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/ast/ast_operator.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
@@ -249,7 +250,8 @@ class literal : public expression {
    * @param value A numeric scalar value
    */
   template <typename T>
-  literal(cudf::numeric_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::numeric_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
 
@@ -260,7 +262,8 @@ class literal : public expression {
    * @param value A timestamp scalar value
    */
   template <typename T>
-  literal(cudf::timestamp_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::timestamp_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
 
@@ -271,7 +274,8 @@ class literal : public expression {
    * @param value A duration scalar value
    */
   template <typename T>
-  literal(cudf::duration_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::duration_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
 
@@ -280,7 +284,10 @@ class literal : public expression {
    *
    * @param value A string scalar value
    */
-  literal(cudf::string_scalar& value) : scalar(value), value(value) {}
+  literal(cudf::string_scalar& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
+  {
+  }
 
   /**
    * @brief Construct a new literal object.
@@ -288,30 +295,75 @@ class literal : public expression {
    * @param value A fixed-point scalar value
    */
   template <typename T>
-  literal(cudf::fixed_point_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::fixed_point_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
+
+  /**
+   * @brief Construct a new literal object.
+   *
+   * @param value A scalar column view value
+   */
+  literal(scalar_column_view value) : scalar{std::move(value)} {}
 
   /**
    * @brief Get the data type.
    *
    * @return The data type of the literal
    */
-  [[nodiscard]] cudf::data_type get_data_type() const { return get_value().type(); }
+  [[nodiscard]] cudf::data_type get_data_type() const
+  {
+    return std::visit(
+      [](auto const& value) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(value)>, ast_scalar>) {
+          return value.value.type();
+        } else {
+          return value.type();
+        }
+      },
+      scalar);
+  }
+
+  /**
+   * @brief Check whether the literal is backed by a scalar column view.
+   *
+   * @return true if the literal is backed by a scalar column view
+   */
+  [[nodiscard]] bool is_scalar_column_view() const noexcept
+  {
+    return std::holds_alternative<scalar_column_view>(scalar);
+  }
 
   /**
    * @brief Get the value object.
    *
    * @return The device scalar object
    */
-  [[nodiscard]] generic_scalar_device_view get_value() const { return value; }
+  [[nodiscard]] generic_scalar_device_view get_value() const
+  {
+    return std::get<ast_scalar>(scalar).value;
+  }
 
   /**
    * @brief Get the scalar.
    *
    * @return The scalar object
    */
-  [[nodiscard]] cudf::scalar const& get_scalar() const { return scalar; }
+  [[nodiscard]] cudf::scalar const& get_scalar() const
+  {
+    return std::get<ast_scalar>(scalar).scalar.get();
+  }
+
+  /**
+   * @brief Get scalar column view.
+   *
+   * @return The scalar column view object
+   */
+  [[nodiscard]] scalar_column_view const& get_scalar_column_view() const
+  {
+    return std::get<scalar_column_view>(scalar);
+  }
 
   /**
    * @copydoc expression::accept
@@ -345,12 +397,21 @@ class literal : public expression {
    */
   [[nodiscard]] bool is_valid(rmm::cuda_stream_view stream) const
   {
-    return scalar.is_valid(stream);
+    if (auto* s = std::get_if<ast_scalar>(&scalar)) {
+      return s->scalar.get().is_valid(stream);
+    } else {
+      auto& c = std::get<scalar_column_view>(scalar);
+      return c.null_count() == 0;
+    }
   }
 
  private:
-  cudf::scalar const& scalar;
-  generic_scalar_device_view const value;
+  struct ast_scalar {
+    std::reference_wrapper<cudf::scalar const> scalar;
+    generic_scalar_device_view value;
+  };
+
+  std::variant<ast_scalar, scalar_column_view> scalar;
 };
 
 /**

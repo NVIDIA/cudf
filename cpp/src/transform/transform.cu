@@ -1060,7 +1060,8 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
   auto stencil_arg       = stencil.has_value() ? stencil->first : nullptr;
   auto stencil_has_nulls = stencil.has_value() ? (stencil->second > 0) : false;
 
-  cudf::detail::device_scalar<int32_t> d_max_error(static_cast<int32_t>(errc::SUCCESS), stream, mr);
+  cudf::detail::device_scalar<int32_t> d_max_error(
+    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
 
   jit_transform::run(is_null_aware == null_aware::YES,
                      user_data.has_value(),
@@ -1251,7 +1252,8 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
   auto precompiled_kernel_fragment = dispatch_lto_kernel_fragment(
     is_null_aware == null_aware::YES, user_data.has_value(), inputs, output_columns);
 
-  cudf::detail::device_scalar<int32_t> d_max_error(static_cast<int32_t>(errc::SUCCESS), stream, mr);
+  cudf::detail::device_scalar<int32_t> d_max_error(
+    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
 
   jit_transform::run_lto(precompiled_kernel_fragment,
                          is_null_aware == null_aware::YES,

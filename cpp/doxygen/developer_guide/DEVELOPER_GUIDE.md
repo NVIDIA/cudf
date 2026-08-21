@@ -754,7 +754,9 @@ A self-contained device scalar that owns a size-1 `rmm::device_uvector<T>` inter
 All host<->device transfers go through a pinned-host bounce buffer, avoiding the implicit
 stream synchronization overhead that pageable memory copies require.
 
-Use this for scalar input/outputs into device kernels, e.g., reduction results, null count, etc.
+Use this for internal libcudf scalar input/outputs into device kernels, e.g., reduction results,
+null count, etc. Public libcudf APIs should use `cudf::scalar` and derived public scalar classes
+instead of this detail type.
 
 Key properties:
 - Owns `rmm::device_uvector<T> _storage{1, stream, mr}`.

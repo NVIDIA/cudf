@@ -21,7 +21,7 @@ from .types cimport DataType
 from .scalar cimport Scalar
 
 
-cdef class OwnerWithCAI:
+cdef class _OwnerWithCAI:
     cdef object owner
     cdef dict cai
 
@@ -29,7 +29,7 @@ cdef class OwnerWithCAI:
     cdef create(column_view cv, object owner, object stream)
 
 
-cdef class OwnerMaskWithCAI:
+cdef class _OwnerMaskWithCAI:
     cdef object owner
     cdef dict cai
 

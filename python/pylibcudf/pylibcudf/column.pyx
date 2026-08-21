@@ -104,11 +104,11 @@ cdef class _ArrowColumnHolder:
     cdef DeviceMemoryResource mr
 
 
-cdef class OwnerWithCAI:
+cdef class _OwnerWithCAI:
     """An interface for column view's data with gpumemoryview via CAI."""
     @staticmethod
     cdef create(column_view cv, object owner, object stream):
-        obj = OwnerWithCAI()
+        obj = _OwnerWithCAI()
         obj.owner = owner
         # The default size of 0 will be applied for any type that stores data in the
         # children (such that the parent size is 0).
@@ -138,11 +138,11 @@ cdef class OwnerWithCAI:
         return self.cai
 
 
-cdef class OwnerMaskWithCAI:
+cdef class _OwnerMaskWithCAI:
     """An interface for column view's null mask with gpumemoryview via CAI."""
     @staticmethod
     cdef create(column_view cv, object owner):
-        obj = OwnerMaskWithCAI()
+        obj = _OwnerMaskWithCAI()
         obj.owner = owner
 
         obj.cai = {
@@ -162,7 +162,7 @@ cdef class OwnerMaskWithCAI:
         return self.cai
 
 
-class ArrayInterfaceWrapper:
+class _ArrayInterfaceWrapper:
     def __init__(self, iface):
         self.__array_interface__ = iface
 
@@ -811,11 +811,11 @@ cdef class Column:
                 )
 
         cdef gpumemoryview owning_data = gpumemoryview(
-            OwnerWithCAI.create(cv, owner, stream)
+            _OwnerWithCAI.create(cv, owner, stream)
         )
         cdef gpumemoryview owning_mask = None
         if cv.null_count() > 0:
-            owning_mask = gpumemoryview(OwnerMaskWithCAI.create(cv, owner))
+            owning_mask = gpumemoryview(_OwnerMaskWithCAI.create(cv, owner))
 
         return Column(
             DataType.from_libcudf(cv.type()),
@@ -1277,7 +1277,7 @@ cdef class Column:
             "version": 3,
         }
 
-        return Column.from_array_interface(ArrayInterfaceWrapper(iface), stream)
+        return Column.from_array_interface(_ArrayInterfaceWrapper(iface), stream)
 
     cpdef list to_pylist(self):
         """

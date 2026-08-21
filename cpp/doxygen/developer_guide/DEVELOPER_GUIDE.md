@@ -749,34 +749,6 @@ custom_memory_resource *mr...;
 rmm::device_buffer custom_buff(100, mr, stream);
 ```
 
-#### cudf::detail::device_scalar<T>
-A self-contained device scalar that owns a size-1 `rmm::device_uvector<T>` internally.
-All host<->device transfers go through a pinned-host bounce buffer, avoiding the implicit
-stream synchronization overhead that pageable memory copies require.
-
-Use this for internal libcudf scalar input/outputs into device kernels, e.g., reduction results,
-null count, etc. Public libcudf APIs should use `cudf::scalar` and derived public scalar classes
-instead of this detail type.
-
-Key properties:
-- Owns `rmm::device_uvector<T> _storage{1, stream, mr}`.
-- Uses a `cudf::detail::host_vector<T>` bounce buffer (pinned host memory) for `value()` and
-  `set_value_async()`, enabling fully async host<->device transfers.
-- Requires `T` to be trivially copyable (enforced via `static_assert`).
-- Exposes `data()`, `value()`, `set_value_async()`, etc.
-
-```c++
-// Allocates device memory for a single int using the specified resource and stream
-// and initializes the value to 42
-cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
-
-// scalar.data() returns pointer to value in device memory
-kernel<<<...>>>(int_scalar.data(),...);
-
-// value() copies device->host via pinned bounce buffer; no implicit stream sync
-int host_value = int_scalar.value(stream);
-```
-
 #### rmm::device_vector<T>
 
 Allocates a specified number of elements of the specified type. If no initialization value is

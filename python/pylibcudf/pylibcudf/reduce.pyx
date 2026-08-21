@@ -163,7 +163,11 @@ cpdef Column scan(
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef tuple minmax(Column col, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
+cpdef tuple[Scalar, Scalar] minmax(
+    Column col,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Compute the minimum and maximum of a column
 
     For details, see ``cudf::minmax`` documentation.

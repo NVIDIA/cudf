@@ -197,7 +197,7 @@ cpdef DeviceBuffer create_null_mask(
     return buffer_to_python(move(db), _stream, mr)
 
 
-cpdef tuple bitmask_and(
+cpdef tuple[DeviceBuffer, int] bitmask_and(
     columns: Sequence[Column],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -235,7 +235,7 @@ cpdef tuple bitmask_and(
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
-cpdef tuple bitmask_or(
+cpdef tuple[DeviceBuffer, int] bitmask_or(
     columns: Sequence[Column],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,

@@ -118,7 +118,7 @@ cdef class ParquetColumnSchema:
         """
         return ParquetColumnSchema.from_column_schema(self.column_schema.child(idx))
 
-    cpdef list children(self):
+    cpdef list[ParquetColumnSchema] children(self):
         """
         Returns schemas of all child columns.
 
@@ -177,7 +177,7 @@ cdef class ParquetSchema:
         """
         return ParquetColumnSchema.from_column_schema(self.schema.root())
 
-    cpdef dict column_types(self):
+    cpdef dict[str, DataType] column_types(self):
         """
         Returns a dictionary mapping column names to their cudf data types.
 
@@ -250,7 +250,7 @@ cdef class ParquetMetadata:
         """
         return self.meta.num_rowgroups_per_file()
 
-    cpdef dict metadata(self):
+    cpdef dict[str, str] metadata(self):
         """
         Returns the key-value metadata in the file footer.
 
@@ -261,7 +261,7 @@ cdef class ParquetMetadata:
         """
         return {key.decode(): val.decode() for key, val in self.meta.metadata()}
 
-    cpdef list rowgroup_metadata(self):
+    cpdef list[dict[str, int]] rowgroup_metadata(self):
         """
         Returns the row group metadata in the file footer.
 
@@ -275,7 +275,7 @@ cdef class ParquetMetadata:
             for metadata in self.meta.rowgroup_metadata()
         ]
 
-    cpdef dict columnchunk_metadata(self):
+    cpdef dict[str, list[int]] columnchunk_metadata(self):
         """
         Returns a map of leaf column names to lists of `total_uncompressed_size`
         metadata from all column chunks in the file footer.
@@ -762,7 +762,7 @@ cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
     return ParquetMetadata.from_metadata(c_result)
 
 
-cpdef list read_parquet_footers(SourceInfo src_info):
+cpdef list[FileMetaData] read_parquet_footers(SourceInfo src_info):
     """
     Read parquet file footers as ``FileMetaData`` objects.
 

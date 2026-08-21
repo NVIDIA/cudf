@@ -902,10 +902,14 @@ TEST_F(ExtractVariantFieldTest, LargeDictionary100FieldsExtractLast)
 TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
 {
   // 50-entry sorted dictionary ("k00".."k49"); the binary search must find a key beyond the
-  // midpoint and correctly report a miss for a key that is absent.
-  auto const keys        = make_numeric_keys(50);
-  auto const meta        = build_metadata(keys, /*sorted=*/true);
-  auto const val         = build_sequential_int32_object(50);
+  // midpoint and correctly report a miss for a key that is present in the dictionary but has no
+  // corresponding field id in the object (as opposed to a key absent from the dictionary
+  // altogether, which would be rejected earlier by find_key_in_metadata and never reach
+  // locate_object_field's sorted lookup).
+  auto const keys = make_numeric_keys(50);
+  auto const meta = build_metadata(keys, /*sorted=*/true);
+  // Only 49 fields (ids 0..48); dictionary index 49 ("k49") has no matching field id.
+  auto const val         = build_sequential_int32_object(49);
   auto col               = wrap_single_variant(meta, val);
   auto stream            = cudf::test::get_default_stream();
   auto const int32_dtype = cudf::data_type{cudf::type_id::INT32};
@@ -915,7 +919,7 @@ TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hit, cudf::test::fixed_width_column_wrapper<int32_t>{37});
 
   auto miss = cudf::io::parquet::experimental::extract_variant_field(
-    col, "k99", int32_dtype, std::nullopt, stream);
+    col, "k49", int32_dtype, std::nullopt, stream);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*miss,
                                  cudf::test::fixed_width_column_wrapper<int32_t>({0}, {false}));
 }
@@ -992,12 +996,19 @@ TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeEntryCountBoundary)
   // `entry_count - 1`. The value object references only that single field, so field_count / field
   // ids stay within the 1-byte encoding used by make_variant_object_header() regardless of
   // dictionary size.
-  auto const test_entry_count = [&](int entry_count) {
+  auto const test_entry_count = [&](int entry_count, int expected_offset_size) {
     std::vector<std::string> keys(entry_count - 1, std::string{});
     keys.emplace_back("target");
+    auto const meta = build_metadata(keys);
+    // Header bits [7:6] encode offset_size_minus_one; verify build_metadata actually picked the
+    // offset width this test case is exercising, rather than relying solely on successful
+    // extraction to imply it.
+    int const actual_offset_size = ((meta[0] >> 6) & 0x03) + 1;
+    EXPECT_EQ(actual_offset_size, expected_offset_size);
+
     auto const val =
       build_single_field_object(static_cast<uint8_t>(entry_count - 1), enc_int32(kExpected));
-    auto col = wrap_single_variant(build_metadata(keys), val);
+    auto col = wrap_single_variant(meta, val);
     auto got = cudf::io::parquet::experimental::extract_variant_field(
       col, "target", int32_dtype, std::nullopt, stream);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got,
@@ -1006,11 +1017,11 @@ TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeEntryCountBoundary)
 
   {
     SCOPED_TRACE("count=255, 1-byte offsets");
-    test_entry_count(255);
+    test_entry_count(255, /*expected_offset_size=*/1);
   }
   {
     SCOPED_TRACE("count=256, 2-byte offsets");
-    test_entry_count(256);
+    test_entry_count(256, /*expected_offset_size=*/2);
   }
 }
 

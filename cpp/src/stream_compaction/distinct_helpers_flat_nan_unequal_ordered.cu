@@ -10,9 +10,10 @@
 #include <cudf/stream_compaction.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -23,7 +24,7 @@ template rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(
     cudf::detail::row::equality::physical_equality_comparator>>& set,
   size_type num_rows,
   duplicate_keep_option keep,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::detail

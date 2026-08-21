@@ -27,10 +27,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/gather.h>
 #include <thrust/logical.h>
 
@@ -112,7 +112,7 @@ void gather_helper(InputItr source_itr,
                    MapIterator gather_map_begin,
                    MapIterator gather_map_end,
                    bool nullify_out_of_bounds,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   using map_type = typename std::iterator_traits<MapIterator>::value_type;
   if (nullify_out_of_bounds) {
@@ -166,7 +166,7 @@ struct column_gatherer {
                                      MapIterator gather_map_begin,
                                      MapIterator gather_map_end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     column_gatherer_impl<Element> gatherer{};
@@ -206,7 +206,7 @@ struct column_gatherer_impl<Element, std::enable_if_t<is_rep_layout_compatible<E
                                      MapIterator gather_map_begin,
                                      MapIterator gather_map_end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto const num_rows     = cudf::distance(gather_map_begin, gather_map_end);
@@ -251,7 +251,7 @@ struct column_gatherer_impl<string_view> {
                                      MapItType gather_map_begin,
                                      MapItType gather_map_end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     if (true == nullify_out_of_bounds) {
@@ -325,7 +325,7 @@ struct column_gatherer_impl<list_view> {
                                      MapItRoot gather_map_begin,
                                      MapItRoot gather_map_end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     lists_column_view list(column);
@@ -388,7 +388,7 @@ struct column_gatherer_impl<dictionary32> {
                                      MapItType gather_map_begin,
                                      MapItType gather_map_end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     dictionary_column_view dictionary(source_column);
@@ -425,7 +425,7 @@ struct column_gatherer_impl<struct_view> {
                                      MapItRoot gather_map_begin,
                                      MapItRoot gather_map_end,
                                      bool nullify_out_of_bounds,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto const gather_map_size = std::distance(gather_map_begin, gather_map_end);
@@ -510,7 +510,7 @@ void gather_bitmask(table_device_view input,
                     size_type mask_count,
                     size_type mask_size,
                     size_type* valid_counts,
-                    rmm::cuda_stream_view stream)
+                    cuda::stream_ref stream)
 {
   if (mask_size == 0) { return; }
 
@@ -522,7 +522,7 @@ void gather_bitmask(table_device_view input,
     valid_if_n_kernel<decltype(counting_it), decltype(counting_it), Selector, block_size>;
 
   cudf::detail::grid_1d grid{mask_size, block_size, 1};
-  kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(
+  kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
     counting_it, counting_it, selector, masks, mask_count, mask_size, valid_counts);
 }
 
@@ -531,7 +531,7 @@ void gather_bitmask(table_view const& source,
                     MapIterator gather_map,
                     std::vector<std::unique_ptr<column>>& target,
                     gather_bitmask_op op,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr)
 {
   if (target.empty()) { return; }
@@ -629,7 +629,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               MapIterator gather_map_begin,
                               MapIterator gather_map_end,
                               out_of_bounds_policy bounds_policy,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> destination_columns;

@@ -308,7 +308,8 @@ class stats_columns_collector : public ast::detail::expression_transformer {
  public:
   stats_columns_collector() = default;
 
-  stats_columns_collector(ast::expression const& expr, cudf::size_type num_columns);
+  stats_columns_collector(ast::expression const& expr,
+                          std::span<cudf::data_type const> output_dtypes);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -340,7 +341,10 @@ class stats_columns_collector : public ast::detail::expression_transformer {
   std::pair<thrust::host_vector<bool>, bool> get_stats_columns_mask() &&;
 
  protected:
+  stats_columns_collector(std::span<cudf::data_type const> output_dtypes);
+
   size_type _num_columns;
+  std::span<cudf::data_type const> _output_dtypes;
 
  private:
   thrust::host_vector<bool> _columns_mask;

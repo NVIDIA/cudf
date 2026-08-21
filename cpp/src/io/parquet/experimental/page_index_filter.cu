@@ -865,9 +865,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
 
   // Get a boolean mask indicating which columns will participate in stats based filtering
   auto const [stats_columns_mask, has_is_null_operator] =
-    parquet::detail::stats_columns_collector{filter.get(),
-                                             static_cast<size_type>(output_dtypes.size())}
-      .get_stats_columns_mask();
+    parquet::detail::stats_columns_collector{filter.get(), output_dtypes}.get_stats_columns_mask();
 
   // Return early if no columns will participate in stats based page filtering
   if (stats_columns_mask.empty()) { return build_all_true_row_mask(row_group_indices, stream, mr); }

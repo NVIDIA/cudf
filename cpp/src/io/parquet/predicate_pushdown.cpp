@@ -69,8 +69,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
   // Get a boolean mask indicating which columns can participate in stats based filtering
   auto const [stats_columns_mask, has_is_null_operator] =
-    stats_columns_collector{filter.get(), static_cast<size_type>(output_dtypes.size())}
-      .get_stats_columns_mask();
+    stats_columns_collector{filter.get(), output_dtypes}.get_stats_columns_mask();
 
   // Return early if no columns will participate in stats based filtering
   if (stats_columns_mask.empty()) { return std::nullopt; }

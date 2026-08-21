@@ -14,11 +14,16 @@
 
 namespace cudf::io::parquet::detail {
 
-stats_columns_collector::stats_columns_collector(ast::expression const& expr,
-                                                 cudf::size_type num_columns)
-  : _num_columns(num_columns)
+stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
+  : _num_columns(static_cast<size_type>(output_dtypes.size())), _output_dtypes(output_dtypes)
 {
-  _columns_mask.resize(num_columns, false);
+}
+
+stats_columns_collector::stats_columns_collector(ast::expression const& expr,
+                                                 std::span<cudf::data_type const> output_dtypes)
+  : stats_columns_collector(output_dtypes)
+{
+  _columns_mask.resize(_num_columns, false);
   expr.accept(*this);
 }
 
@@ -75,7 +80,12 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
     if (op == ast_operator::EQUAL or op == ast_operator::NOT_EQUAL or op == ast_operator::LESS or
         op == ast_operator::LESS_EQUAL or op == ast_operator::GREATER or
         op == ast_operator::GREATER_EQUAL) {
-      _columns_mask[col_ref->get_column_index()] = true;
+      // NOT_EQUAL leaf for floating points relaxes to always true as Parquet statistics do not
+      // record NaNs.
+      if (op != ast_operator::NOT_EQUAL or
+          not cudf::is_floating_point(_output_dtypes[col_ref->get_column_index()])) {
+        _columns_mask[col_ref->get_column_index()] = true;
+      }
     }
   } else {
     // Visit the operands and ignore any output as we only want to build the column mask
@@ -94,12 +104,11 @@ stats_expression_converter::stats_expression_converter(
   std::span<cudf::data_type const> output_dtypes,
   bool has_is_null_operator,
   cuda::stream_ref stream)
-  : _output_dtypes{output_dtypes},
+  : stats_columns_collector{output_dtypes},
     _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
     _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
 {
   _stats_cols_per_column = has_is_null_operator ? 3 : 2;
-  _num_columns           = static_cast<size_type>(output_dtypes.size());
   expr.accept(*this);
 }
 

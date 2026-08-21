@@ -2428,7 +2428,10 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
                         cudf::ast::ast_operator::GREATER,
                         cudf::ast::ast_operator::GREATER_EQUAL}) {
     auto literal_left = cudf::ast::operation(op, lit_50, col_ref_a);
-    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, literal_left));
+    auto const expected_row_groups =
+      op == cudf::ast::ast_operator::LESS or op == cudf::ast::ast_operator::LESS_EQUAL ? 1 : 4;
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, literal_left),
+                               expected_row_groups);
   }
 
   // NOT(col_a + 10 > 50) - operand is not `col op lit`, so it must NOT be complemented. The
@@ -2438,7 +2441,7 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     auto sum_gt_50 = cudf::ast::operation(cudf::ast::ast_operator::GREATER, sum, lit_50);
     auto not_sum   = cudf::ast::operation(cudf::ast::ast_operator::NOT, sum_gt_50);
     expect_matches_unrewritten(
-      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, a_lt_150, not_sum));
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, a_lt_150, not_sum), 1);
   }
 
   // Double negation over a non-boolean operand must NOT be eliminated.

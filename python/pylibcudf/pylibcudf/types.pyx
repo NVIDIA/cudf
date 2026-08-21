@@ -26,10 +26,12 @@ from pylibcudf.libcudf.types import order as Order  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import sorted as Sorted  # no-cython-lint, isort:skip
 
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 if TYPE_CHECKING:
     import pyarrow as pa
+
+PyarrowDataType: TypeAlias = type[Any]
 
 try:
     import pyarrow as pa
@@ -194,7 +196,7 @@ cdef class DataType:
         ret.c_obj = dt
         return ret
 
-    def to_arrow(self, **kwargs) -> pa.DataType:
+    def to_arrow(self, **kwargs) -> PyarrowDataType:
         """
         Convert a datatype to arrow.
 
@@ -249,7 +251,7 @@ cdef class DataType:
                 )
 
     @staticmethod
-    def from_arrow(pa_typ: pa.DataType) -> DataType:
+    def from_arrow(pa_typ: PyarrowDataType) -> DataType:
         """
         Construct a DataType from a Python type.
 
@@ -273,13 +275,13 @@ cdef class DataType:
         return _from_arrow(pa_typ)
 
     @staticmethod
-    def from_py(typ: type) -> DataType:
+    def from_py(type: type) -> DataType:
         """
         Construct a DataType from a Python type.
 
         Parameters
         ----------
-        typ : type
+        type : type
             A Python type (eg. int, str, list)
 
         Returns
@@ -292,20 +294,20 @@ cdef class DataType:
         TypeError
             If the Python type is not supported.
         """
-        if typ is bool:
+        if type is bool:
             return DataType(type_id.BOOL8)
-        elif typ is int:
+        elif type is int:
             return DataType(type_id.INT64)
-        elif typ is float:
+        elif type is float:
             return DataType(type_id.FLOAT64)
-        elif typ is str:
+        elif type is str:
             return DataType(type_id.STRING)
-        elif typ is list:
+        elif type is list:
             return DataType(type_id.LIST)
-        elif typ is dict:
+        elif type is dict:
             return DataType(type_id.STRUCT)
         else:
-            raise TypeError(f"Cannot infer DataType from Python type {typ}")
+            raise TypeError(f"Cannot infer DataType from Python type {type}")
 
 cpdef size_t size_of(DataType t):
     """Returns the size in bytes of elements of the specified data_type.
@@ -329,7 +331,7 @@ cpdef size_t size_of(DataType t):
 
 
 @cache
-def _from_arrow(obj: pa.DataType) -> DataType:
+def _from_arrow(obj: PyarrowDataType) -> DataType:
     if pa_err is not None:
         raise RuntimeError(
             "pyarrow was not found on your system. Please "

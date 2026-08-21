@@ -63,15 +63,15 @@ cdef class gpumemoryview:
     It will be expanded to encompass more memoryview functionality over time.
     """
     # TODO: dlpack support
-    def __init__(self, object obj):
+    def __init__(self, object data: Any):
         try:
-            cai = obj.__cuda_array_interface__
+            cai = data.__cuda_array_interface__
         except AttributeError:
             raise ValueError(
                 "gpumemoryview must be constructed from an object supporting "
                 "the CUDA array interface"
             )
-        self.obj = obj
+        self.obj = data
         self.cai = cai
         # TODO: Need to respect readonly
         # TODO: Need to synchronize on stream if present in cai

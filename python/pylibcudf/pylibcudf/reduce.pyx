@@ -386,9 +386,9 @@ cdef class ApproxDistinctCount:
         int32_t precision=12,
         null_policy null_handling=null_policy.EXCLUDE,
         nan_policy nan_handling=nan_policy.NAN_IS_NULL,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> None:
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
@@ -403,7 +403,7 @@ cdef class ApproxDistinctCount:
                 )
             )
 
-    cpdef void add(self, Table input, object stream=None):
+    cpdef void add(self, Table input, object stream: CudaStreamLike | None = None):
         """Add rows from a table to the sketch.
 
         Parameters
@@ -419,7 +419,11 @@ cdef class ApproxDistinctCount:
         with nogil:
             dereference(self.c_obj).add(c_input, _cs)
 
-    cpdef void merge(self, ApproxDistinctCount other, object stream=None):
+    cpdef void merge(
+        self,
+        ApproxDistinctCount other,
+        object stream: CudaStreamLike | None = None,
+    ):
         """Merge another sketch into this sketch.
 
         Parameters
@@ -434,7 +438,7 @@ cdef class ApproxDistinctCount:
         with nogil:
             dereference(self.c_obj).merge(dereference(other.c_obj), _cs)
 
-    cpdef size_t estimate(self, object stream=None):
+    cpdef size_t estimate(self, object stream: CudaStreamLike | None = None):
         """Estimate the approximate number of distinct rows in the sketch.
 
         Parameters
@@ -471,7 +475,7 @@ cdef class ApproxDistinctCount:
         return dereference(self.c_obj).standard_error()
 
     @staticmethod
-    def sketch_bytes(int32_t precision):
+    def sketch_bytes(int32_t precision) -> int:
         """Return the bytes required for sketch storage at a given precision.
 
         Parameters
@@ -487,7 +491,7 @@ cdef class ApproxDistinctCount:
         return cpp_approx_distinct_count.sketch_bytes(precision)
 
     @staticmethod
-    def sketch_alignment():
+    def sketch_alignment() -> int:
         """Return the alignment required for sketch storage.
 
         Returns

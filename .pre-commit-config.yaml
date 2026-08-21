@@ -217,6 +217,14 @@ repos:
         language: system
         pass_filenames: false
         verbose: true
+      - id: stubgen-pyx-pylibcudf
+        name: Generate pylibcudf .pyi stubs
+        entry: python ci/checks/generate_pylibcudf_stubs.py
+        language: python
+        files: ^python/pylibcudf/pylibcudf/.*[.](pyx|pxd)$
+        pass_filenames: false
+        additional_dependencies:
+          - stubgen-pyx==0.2.18
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3
     hooks:
@@ -233,7 +241,9 @@ repos:
     hooks:
       - id: ruff
         args: ["--fix"]
+        exclude: .*[.]pyi$
       - id: ruff-format
+        exclude: .*[.]pyi$
   - repo: https://github.com/rapidsai/pre-commit-hooks
     rev: v1.6.0
     hooks:

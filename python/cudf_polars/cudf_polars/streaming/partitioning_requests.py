@@ -4,9 +4,14 @@
 Downstream partitioning requests for streaming actor-graph construction.
 
 A partitioning request is attached to an IR node when a downstream consumer
-may benefit if that node produces data with a specific layout. These requests
-do not describe or guarantee the current layout of the node's output; actual
-runtime layout metadata is tracked separately in ``ChannelMetadata``.
+may benefit from that node producing a specific partitioning. These requests
+use "partitioning" in the same broad sense as ``ChannelMetadata.Partitioning``:
+rows may be strictly partitioned by equality keys, ordered by key values, or
+both.
+
+Requests are planning-time information. They do not describe or guarantee the
+actual partitioning of the node's output. Runtime partitioning metadata is
+tracked separately in ``ChannelMetadata``.
 """
 
 from __future__ import annotations
@@ -67,12 +72,12 @@ def collect_partitioning_requests(
     ir: IR,
 ) -> dict[IR, tuple[PartitioningRequest, ...]]:
     """
-    Collect downstream layout requests for each IR node.
+    Collect downstream partitioning requests for each IR node.
 
-    The returned mapping answers "which layouts could make downstream consumers
-    cheaper if this node produced them?" A request is therefore aspirational:
-    it is not evidence that the data is currently sorted, hash partitioned, or
-    otherwise laid out that way.
+    The returned mapping answers "which partitionings could make downstream
+    consumers cheaper if this node produced them?" A request is therefore
+    aspirational: it is not evidence that the data is currently sorted, hash
+    partitioned, or otherwise partitioned that way.
     """
     requests: dict[IR, tuple[PartitioningRequest, ...]] = {}
     # Reverse post-order ensures every downstream consumer is processed before
@@ -86,7 +91,7 @@ def collect_partitioning_requests(
 
 
 def _direct_child_requests(ir: IR) -> list[tuple[IR, PartitioningRequest]]:
-    """Create child requests implied by operators that consume a layout."""
+    """Create child requests implied by partitioning-aware operators."""
     if isinstance(ir, Sort):
         names = _column_names(ir.by)
         if names is not None:

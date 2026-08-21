@@ -405,20 +405,20 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       multibyte_split_init_kernel<<<tiles_in_launch,
                                     THREADS_PER_TILE,
                                     0,
-                                    scan_stream.value()>>>(  //
+                                    scan_stream.get()>>>(  //
         base_tile_idx,
         tiles_in_launch,
         tile_multistates,
         tile_offsets);
 
-      CUDF_CUDA_TRY(cudaStreamWaitEvent(scan_stream.value(), last_launch_event));
+      CUDF_CUDA_TRY(cudaStreamWaitEvent(scan_stream.get(), last_launch_event));
 
       if (delimiter.size() == 1) {
         // the single-byte case allows for a much more efficient kernel, so we special-case it
         byte_split_kernel<<<tiles_in_launch,
                             THREADS_PER_TILE,
                             0,
-                            scan_stream.value()>>>(  //
+                            scan_stream.get()>>>(  //
           base_tile_idx,
           chunk_offset,
           row_offset_storage.size(),
@@ -431,7 +431,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         multibyte_split_kernel<<<tiles_in_launch,
                                  THREADS_PER_TILE,
                                  0,
-                                 scan_stream.value()>>>(  //
+                                 scan_stream.get()>>>(  //
           base_tile_idx,
           chunk_offset,
           row_offset_storage.size(),
@@ -492,7 +492,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         char_storage.advance_output(output_size, scan_stream);
       }
 
-      CUDF_CUDA_TRY(cudaEventRecord(last_launch_event, scan_stream.value()));
+      CUDF_CUDA_TRY(cudaEventRecord(last_launch_event, scan_stream.get()));
 
       std::swap(read_stream, scan_stream);
       base_tile_idx += tiles_in_launch;

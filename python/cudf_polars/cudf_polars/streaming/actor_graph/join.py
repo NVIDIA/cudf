@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never
 
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
@@ -83,35 +83,57 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class JoinStrategy:
-    """Summary of sampling and strategy selection for a dynamic join."""
+class BroadcastJoinStrategy:
+    """Broadcast one side to all ranks."""
 
-    broadcast_side: Literal["left", "right"] | None = None
-    """The side to broadcast. If None, the strategy is a shuffle join."""
+    side: Literal["left", "right"]
+
+
+@dataclass(frozen=True)
+class HashJoinStrategy:
+    """Hash-partition both sides before joining."""
+
     shuffle_modulus: int = 0
-    """The shuffle modulus. Only used for shuffle joins."""
+    """The shuffle modulus."""
     output_indices: tuple[int, ...] = ()
-    """The shuffle indices for the output. Only used for shuffle joins."""
+    """Output key-column indices for output metadata."""
     left_indices: tuple[int, ...] = ()
-    """The shuffle indices for the left side. Only used for shuffle joins."""
+    """Left input key-column indices."""
     right_indices: tuple[int, ...] = ()
-    """The shuffle indices for the right side. Only used for shuffle joins."""
+    """Right input key-column indices."""
     left_keys: tuple[NamedExpr, ...] = ()
-    """The key expressions for the left side. Only used for shuffle joins."""
+    """Left key expressions."""
     right_keys: tuple[NamedExpr, ...] = ()
-    """The key expressions for the right side. Only used for shuffle joins."""
-    ordered: bool = False
-    """Whether this strategy uses ordered boundary alignment."""
-    left_input_ordering: Ordering | None = None
-    """Input ordering for the left side. Only used for ordered joins."""
-    right_input_ordering: Ordering | None = None
-    """Input ordering for the right side. Only used for ordered joins."""
-    left_output_ordering: Ordering | None = None
-    """Aligned output ordering for the left side. Only used for ordered joins."""
-    right_output_ordering: Ordering | None = None
-    """Aligned output ordering for the right side. Only used for ordered joins."""
-    output_ordering: Ordering | None = None
-    """Join-output ordering metadata. Only used for ordered joins."""
+    """Right key expressions."""
+
+
+@dataclass(frozen=True)
+class OrderedJoinStrategy:
+    """Align existing ordered partitioning before joining."""
+
+    output_indices: tuple[int, ...]
+    """Output key-column indices for output metadata."""
+    left_indices: tuple[int, ...]
+    """Left input key-column indices."""
+    right_indices: tuple[int, ...]
+    """Right input key-column indices."""
+    left_keys: tuple[NamedExpr, ...]
+    """Left key expressions."""
+    right_keys: tuple[NamedExpr, ...]
+    """Right key expressions."""
+    left_input_ordering: Ordering
+    """Input ordering for the left side."""
+    right_input_ordering: Ordering
+    """Input ordering for the right side."""
+    left_output_ordering: Ordering
+    """Aligned output ordering for the left side."""
+    right_output_ordering: Ordering
+    """Aligned output ordering for the right side."""
+    output_ordering: Ordering
+    """Join-output ordering metadata."""
+
+
+JoinStrategy: TypeAlias = BroadcastJoinStrategy | HashJoinStrategy | OrderedJoinStrategy
 
 
 @define_actor()
@@ -169,7 +191,7 @@ async def broadcast_join_actor(
             ch_out,
             ch_left,
             ch_right,
-            JoinStrategy(broadcast_side=broadcast_side),
+            BroadcastJoinStrategy(side=broadcast_side),
             [collective_id],
             target_partition_size,
             tracer=tracer,
@@ -308,7 +330,7 @@ async def _broadcast_join(
     ch_out: Channel[TableChunk],
     ch_left: Channel[TableChunk],
     ch_right: Channel[TableChunk],
-    strategy: JoinStrategy,
+    strategy: BroadcastJoinStrategy,
     collective_ids: list[int],
     target_partition_size: int,
     *,
@@ -327,8 +349,7 @@ async def _broadcast_join(
     )
 
     collective_id = collective_ids.pop(0) if collective_ids else 0
-    broadcast_side = strategy.broadcast_side
-    assert broadcast_side is not None
+    broadcast_side = strategy.side
     left, right = ir.children
     if tracer is not None:
         tracer.decision = f"broadcast_{broadcast_side}"
@@ -470,7 +491,7 @@ def _make_ordered_strategy(
     ir: Join,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
-) -> JoinStrategy | None:
+) -> OrderedJoinStrategy | None:
     """Make an ordered strategy when both sides can align to strict boundaries."""
     if ir.options[0] not in ("Inner", "Left", "Semi", "Anti"):
         return None
@@ -509,13 +530,12 @@ def _make_ordered_strategy(
     if not _ordering_prefix_matches(right_ordering, reference, right_key_indices):
         return None
 
-    return JoinStrategy(
+    return OrderedJoinStrategy(
         output_indices=output_key_indices,
         left_indices=left_key_indices,
         right_indices=right_key_indices,
         left_keys=left_keys[:reference_key_count],
         right_keys=right_keys[:reference_key_count],
-        ordered=True,
         left_input_ordering=left_ordering,
         right_input_ordering=right_ordering,
         left_output_ordering=_ordering_with_column_indices(reference, left_key_indices),
@@ -604,7 +624,7 @@ async def _join_chunks(
 
 def _log_shuffle_strategy_decision(
     tracer: ActorTracer,
-    strategy: JoinStrategy,
+    strategy: HashJoinStrategy,
     partitioning_left: NormalizedPartitioning,
     partitioning_right: NormalizedPartitioning,
 ) -> None:
@@ -636,7 +656,7 @@ async def _shuffle_join(
     ch_out: Channel[TableChunk],
     ch_left: Channel[TableChunk],
     ch_right: Channel[TableChunk],
-    strategy: JoinStrategy,
+    strategy: HashJoinStrategy,
     collective_ids: list[int],
     *,
     tracer: ActorTracer | None,
@@ -759,16 +779,12 @@ async def _ordered_join(
     ch_out: Channel[TableChunk],
     ch_left: Channel[TableChunk],
     ch_right: Channel[TableChunk],
-    strategy: JoinStrategy,
+    strategy: OrderedJoinStrategy,
     collective_ids: list[int],
     *,
     tracer: ActorTracer | None,
 ) -> None:
     """Align ordered inputs to common boundaries, then join partition-wise."""
-    assert strategy.left_output_ordering is not None
-    assert strategy.right_output_ordering is not None
-    assert strategy.output_ordering is not None
-
     metadata_out = ChannelMetadata(
         local_count=_local_count_for_ordering(comm, strategy.output_ordering),
         partitioning=Partitioning(
@@ -783,9 +799,6 @@ async def _ordered_join(
         recv_metadata(ch_left, context),
         recv_metadata(ch_right, context),
     )
-    assert strategy.left_input_ordering is not None
-    assert strategy.right_input_ordering is not None
-
     ch_left_adjusted = context.create_channel()
     ch_right_adjusted = context.create_channel()
     async with shutdown_on_error(
@@ -835,8 +848,8 @@ def _make_shuffle_strategy(
     shuffle_modulus: int,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
-) -> JoinStrategy:
-    """Make a shuffle strategy."""
+) -> HashJoinStrategy:
+    """Make a hash-partitioned join strategy."""
 
     # Use the coarsest prefix so we only shuffle on keys one side may already have
     def _num_indices(partitioning: NormalizedPartitioning) -> int:
@@ -863,7 +876,7 @@ def _make_shuffle_strategy(
         right_keys,
     ) = _get_key_indices(ir, n_partitioned_keys)
 
-    return JoinStrategy(
+    return HashJoinStrategy(
         shuffle_modulus=shuffle_modulus,
         output_indices=output_key_indices,
         left_indices=left_key_indices,
@@ -990,7 +1003,7 @@ async def _choose_strategy_from_samples(
     elif can_broadcast_right:
         broadcast_side = "right"
     if broadcast_side is not None:
-        return JoinStrategy(broadcast_side=broadcast_side)
+        return BroadcastJoinStrategy(side=broadcast_side)
 
     # Couldn't broadcast - Use a shuffle join instead.
     estimated_output_size = max(left_total, right_total)
@@ -1186,9 +1199,9 @@ async def join_actor(
     """
     Dynamic Join actor that selects the best strategy at runtime.
 
-    Receives metadata from the left and right channels, then either
-    executes a shuffle join or a broadcast join. Strategy is chosen
-    at runtime from sampled chunks when partitioning is not aligned.
+    Receives metadata from the left and right channels, then executes a
+    broadcast, hash-partitioned, or ordered join. Strategy is chosen at
+    runtime from metadata and sampled chunks when partitioning is not aligned.
 
     Parameters
     ----------
@@ -1266,7 +1279,7 @@ async def join_actor(
             ch_left = ch_left_replay
             ch_right = ch_right_replay
 
-            if strategy.broadcast_side is not None:
+            if isinstance(strategy, BroadcastJoinStrategy):
                 actor_tasks.append(
                     _broadcast_join(
                         context,
@@ -1282,7 +1295,7 @@ async def join_actor(
                         tracer=tracer,
                     )
                 )
-            elif strategy.ordered:
+            elif isinstance(strategy, OrderedJoinStrategy):
                 actor_tasks.append(
                     _ordered_join(
                         context,
@@ -1297,7 +1310,7 @@ async def join_actor(
                         tracer=tracer,
                     )
                 )
-            else:
+            elif isinstance(strategy, HashJoinStrategy):
                 actor_tasks.append(
                     _shuffle_join(
                         context,
@@ -1312,6 +1325,8 @@ async def join_actor(
                         tracer=tracer,
                     )
                 )
+            else:
+                assert_never(strategy)
             await gather_in_task_group(*actor_tasks)
 
 

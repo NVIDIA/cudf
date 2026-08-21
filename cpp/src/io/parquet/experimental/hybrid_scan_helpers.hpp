@@ -400,19 +400,20 @@ class dictionary_literals_collector : public equality_literals_collector {
 };
 
 /**
- * @brief Converts named columns to index reference columns
+ * @brief Converts named columns to index reference columns and pushes logical negations down to
+ * expression leaves
  */
-class named_to_reference_converter : public parquet::detail::named_to_reference_converter {
+class parquet_filter_normalizer : public parquet::detail::parquet_filter_normalizer {
  public:
-  named_to_reference_converter() = default;
+  parquet_filter_normalizer() = default;
 
-  named_to_reference_converter(std::optional<std::reference_wrapper<ast::expression const>> expr,
-                               table_metadata const& metadata,
-                               std::vector<SchemaElement> const& schema_tree,
-                               cudf::io::parquet_reader_options const& options,
-                               bool case_sensitive_names);
+  parquet_filter_normalizer(std::optional<std::reference_wrapper<ast::expression const>> expr,
+                            table_metadata const& metadata,
+                            std::vector<SchemaElement> const& schema_tree,
+                            cudf::io::parquet_reader_options const& options,
+                            bool case_sensitive_names);
 
-  using parquet::detail::named_to_reference_converter::visit;
+  using parquet::detail::parquet_filter_normalizer::visit;
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::column_reference const& )

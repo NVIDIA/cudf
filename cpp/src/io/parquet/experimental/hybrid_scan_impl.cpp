@@ -122,7 +122,7 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   parquet_reader_options const& options)
 {
-  _metadata = std::make_unique<aggregate_reader_metadata>(
+  _metadata = std::make_shared<aggregate_reader_metadata>(
     footer_bytes, options.is_enabled_use_arrow_schema(), has_cols_from_mismatched_sources(options));
 
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
@@ -132,9 +132,17 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   cudf::host_span<FileMetaData const> parquet_metadatas, parquet_reader_options const& options)
 {
   _metadata =
-    std::make_unique<aggregate_reader_metadata>(parquet_metadatas,
+    std::make_shared<aggregate_reader_metadata>(parquet_metadatas,
                                                 options.is_enabled_use_arrow_schema(),
                                                 has_cols_from_mismatched_sources(options));
+  _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
+}
+
+hybrid_scan_reader_impl::hybrid_scan_reader_impl(
+  std::shared_ptr<aggregate_reader_metadata> metadata)
+{
+  CUDF_EXPECTS(metadata != nullptr, "Shared parquet metadata must not be null");
+  _metadata          = std::move(metadata);
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
 }
 
@@ -245,15 +253,15 @@ void hybrid_scan_reader_impl::reset_column_selection()
   _is_payload_columns_selected = false;
 }
 
-std::pair<named_to_reference_converter, std::vector<cudf::data_type>>
+std::pair<parquet_filter_normalizer, std::vector<cudf::data_type>>
 hybrid_scan_reader_impl::prepare_filter_and_output_types(parquet_reader_options const& options)
 {
   CUDF_EXPECTS(options.get_filter().has_value(), "Empty input filter expression encountered");
 
   select_columns(read_columns_mode::FILTER_COLUMNS, options);
 
-  // Convert the input expression (must be done after column selection)
-  auto expr_conv     = build_converted_expression(options);
+  // Normalize the input expression (must be done after column selection)
+  auto expr_conv     = build_normalized_expression(options);
   auto output_dtypes = get_output_types(_output_buffers_template);
 
   return {std::move(expr_conv), std::move(output_dtypes)};
@@ -673,8 +681,8 @@ table_with_metadata hybrid_scan_reader_impl::materialize_filter_columns(
   prepare_materialization(
     read_columns_mode::FILTER_COLUMNS, row_group_indices.size(), options, stream, mr);
 
-  // Convert the input expression (must be done after prepare_materialization)
-  _expr_conv = build_converted_expression(options);
+  // Normalize the input expression (must be done after prepare_materialization)
+  _expr_conv = build_normalized_expression(options);
 
   // Return early if all rows are pruned
   if (are_all_rows_pruned(row_mask, stream)) {
@@ -747,8 +755,8 @@ table_with_metadata hybrid_scan_reader_impl::materialize_all_columns(
   prepare_materialization(
     read_columns_mode::ALL_COLUMNS, row_group_indices.size(), options, stream, mr);
 
-  // Convert the input expression (must be done after prepare_materialization)
-  _expr_conv = build_converted_expression(options);
+  // Normalize the input expression after materialization preparation.
+  _expr_conv = build_normalized_expression(options);
 
   prepare_data(read_mode::READ_ALL, row_group_indices, column_chunk_data, {});
 
@@ -782,8 +790,8 @@ void hybrid_scan_reader_impl::setup_chunking_for_filter_columns(
   _input_pass_read_limit   = pass_read_limit;
   _output_chunk_read_limit = chunk_read_limit;
 
-  // Convert the input expression (must be done after prepare_materialization)
-  _expr_conv = build_converted_expression(options);
+  // Normalize the input expression (must be done after prepare_materialization)
+  _expr_conv = build_normalized_expression(options);
 
   // Return early if all rows are pruned
   if (are_all_rows_pruned(row_mask, stream)) {
@@ -949,8 +957,8 @@ void hybrid_scan_reader_impl::setup_chunking_for_all_columns(
   _input_pass_read_limit   = pass_read_limit;
   _output_chunk_read_limit = chunk_read_limit;
 
-  // Convert the input expression (must be done after column selection)
-  _expr_conv = build_converted_expression(options);
+  // Normalize the input expression (must be done after column selection)
+  _expr_conv = build_normalized_expression(options);
 
   prepare_data(read_mode::CHUNKED_READ, row_group_indices, column_chunk_data, {});
 }
@@ -1090,7 +1098,7 @@ void hybrid_scan_reader_impl::reset_internal_state()
   _output_chunk_read_limit = 0;
   _strings_to_categorical  = false;
   _reader_column_schema.reset();
-  _expr_conv = named_to_reference_converter{};
+  _expr_conv = parquet_filter_normalizer{};
   _mr        = cudf::get_current_device_resource_ref();
 }
 
@@ -1124,18 +1132,18 @@ void hybrid_scan_reader_impl::initialize_options(parquet_reader_options const& o
   _mr = mr;
 }
 
-named_to_reference_converter hybrid_scan_reader_impl::build_converted_expression(
+parquet_filter_normalizer hybrid_scan_reader_impl::build_normalized_expression(
   parquet_reader_options const& options)
 {
-  if (not options.get_filter().has_value()) { return named_to_reference_converter{}; }
+  if (not options.get_filter().has_value()) { return parquet_filter_normalizer{}; }
 
   table_metadata metadata;
   populate_metadata(metadata);
-  auto expr_conv = named_to_reference_converter(options.get_filter(),
-                                                metadata,
-                                                _extended_metadata->get_schema_tree(),
-                                                options,
-                                                options.is_enabled_case_sensitive_names());
+  auto expr_conv = parquet_filter_normalizer(options.get_filter(),
+                                             metadata,
+                                             _extended_metadata->get_schema_tree(),
+                                             options,
+                                             options.is_enabled_case_sensitive_names());
   CUDF_EXPECTS(expr_conv.get_converted_expr().has_value(),
                "Columns names in filter expression must be convertible to index references");
   return expr_conv;

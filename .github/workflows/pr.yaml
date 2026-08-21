@@ -1,9 +1,6 @@
 # TEMP: pr.yaml slimmed to the Java Maven Central publish path for a
-# negative-path rehearsal (`is_release=false`) on a PR. All other jobs were
-# removed for this test run and must be restored before merge. Since the
-# runner ref is `refs/heads/pull-request/N`, `rapids-is-release-build`
-# returns false, `java-gather.outputs.is_release=false`, and `java-publish`
-# must be skipped by its new gate.
+# 26.08.01 release-candidate rehearsal on a PR. All other jobs were removed
+# for this test run and must be restored before merge.
 name: pr
 on:
   push:
@@ -71,10 +68,13 @@ jobs:
       arch: ${{ matrix.ARCH }}
       node_type: cpu16
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
-      # TEMP: negative-path rehearsal. Plain SNAPSHOT build so the produced
-      # jars match what a real PR would emit. No pom rewrite or `GITHUB_REF`
-      # override, since the point of this run is that `java-publish` skips.
-      script: "ci/build_java.sh"
+      # TEMP: 26.08.01 release rehearsal. Rewrite the pom version and force
+      # the release-tag path via GITHUB_REF so packaged artifacts are 26.08.01.
+      # `custom-job.yaml` expands `$INPUTS_SCRIPT` unquoted, so quotes and
+      # operators inside the value are literal on first pass. Prepending
+      # `eval` re-parses the joined args as a fresh shell command, which
+      # restores quote and `&&` handling.
+      script: "eval sed -i 's|<version>26.10.0-SNAPSHOT</version>|<version>26.08.01-SNAPSHOT</version>|' java/pom.xml && GITHUB_REF=refs/tags/v26.08.01 ci/build_java.sh"
       file_to_upload: output_jars
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.
@@ -116,18 +116,17 @@ jobs:
       - name: Determine release-build status
         id: release-check
         run: |
-          # Negative-path rehearsal. No `GITHUB_REF` override, so
-          # `rapids-is-release-build` sees `refs/heads/pull-request/N` and
-          # returns false. Expected: `is_release=false`.
-          if rapids-is-release-build; then
+          # TEMP: force the release-tag ref so rapids-is-release-build returns
+          # true and exercises the java-publish gate.
+          if GITHUB_REF=refs/tags/v26.08.01 rapids-is-release-build; then
             echo "is_release=true" >> "${GITHUB_OUTPUT}"
           else
             echo "is_release=false" >> "${GITHUB_OUTPUT}"
           fi
 
-  # TEMP: negative-path rehearsal. The `if:` mirrors the new is_release-based
-  # gate from build.yaml. Because `java-gather.outputs.is_release=false` on
-  # this run, this job must be reported as skipped.
+  # TEMP: 26.08.01 rehearsal. Validate against Sonatype only, do not stage.
+  # The `if:` mirrors the new is_release-based gate from build.yaml so this
+  # run exercises the gate itself, not just the downstream publish workflow.
   java-publish:
     needs: [java-gather]
     if: ${{ needs.java-gather.outputs.is_release == 'true' && (inputs.build_type || 'branch') == 'branch' }}

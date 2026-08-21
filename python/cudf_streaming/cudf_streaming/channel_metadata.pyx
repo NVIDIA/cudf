@@ -150,12 +150,6 @@ cdef class Ordering:
         ret._handle = move(ordering)
         return ret
 
-    def as_strict(self) -> Ordering:
-        """Return an equivalent ``Ordering`` with strict boundaries."""
-        return Ordering.from_cpp(
-            cpp_Ordering(self._handle.keys, self._handle.boundaries, True)
-        )
-
     @property
     def keys(self) -> tuple:
         """Sort keys, one per sort column."""

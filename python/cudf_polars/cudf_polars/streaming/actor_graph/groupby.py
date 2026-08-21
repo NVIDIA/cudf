@@ -28,7 +28,6 @@ from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
     _partition_range,
     adjust_ordering,
-    get_strict_ordering,
 )
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.dispatch import (
@@ -565,7 +564,7 @@ async def _ordered_adjust_reduce(
         input_ordering,
         decomposed.shuffle_indices[: len(input_ordering.keys)],
     )
-    partial_output_ordering = get_strict_ordering(partial_input_ordering, context.br())
+    partial_output_ordering = partial_input_ordering.as_strict()
     ch_local = context.create_channel()
     ch_adjusted = context.create_channel()
     adjusted_metadata = _adjusted_ordering_metadata(

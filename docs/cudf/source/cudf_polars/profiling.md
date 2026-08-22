@@ -58,6 +58,85 @@ print(total)
 ```
 
 
+## I/O Statistics
+
+The same `statistics=True` also turns on [KvikIO I/O statistics][kvikio-stats] on every rank,
+which report what storage did. `gather_io_summary()` returns one `kvikio.Summary` per rank,
+keyed by rank index:
+
+```python
+import polars as pl
+from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.engine.ray import RayEngine
+
+opts = StreamingOptions(statistics=True)
+
+with RayEngine.from_options(opts) as engine:
+    pl.scan_parquet("/data/*.parquet").collect(engine=engine)
+
+    for rank, summary in engine.gather_io_summary().items():
+        print(f"--- rank {rank} ---")
+        print(summary)
+```
+
+Like `gather_statistics()`, this is a collective, so every rank must call it. `clear=True`
+restarts each rank's measured span after reading, which scopes the next gather to whatever
+follows. A rank that is not counting is absent, so the result is empty unless `statistics=True` is
+set. That is distinct from a zeroed summary, which means the rank was counting and did no
+I/O.
+
+Printing a summary gives KvikIO's own report, with byte counts, durations and rates scaled to
+readable units. The fields are also available as attributes:
+
+```python
+for rank, s in engine.gather_io_summary(clear=True).items():
+    print(
+        f"rank {rank}: {s.num_ops} ops, {s.bytes_read / 1e6:.1f} MB read, "
+        f"{s.busy_bytes_per_sec / 1e9:.2f} GB/s while busy "
+        f"({s.busy_fraction * 100:.1f}% of the span)"
+    )
+```
+
+`busy_ns` counts only the stretches with at least one read in flight, so overlapping reads count
+once and the gaps between them count as idle. `busy_bytes_per_sec` divides by that rather than by
+the wall time, which makes it a measure of the storage rather than of the query: a query that
+reads for 10 ms and then computes for 90 ms is not reported as ten times slower than its disks
+really are. Multiply by `busy_fraction` to recover the whole-span rate.
+
+`by_backend` splits the operations, bytes, time and errors by the backend that carried them.
+Compatibility mode decides per call whether a read reaches cuFile or falls back to POSIX, so this
+is the only place that says whether a run used GDS.
+
+### What is and is not counted
+
+Counting happens per process, so what a summary covers depends on what else shares that
+process. With {class}`~cudf_polars.engine.ray.RayEngine` and
+{class}`~cudf_polars.engine.dask.DaskEngine` each rank has a process to itself, so a summary
+covers only cudf-polars[^shared-worker]. With {class}`~cudf_polars.engine.spmd.SPMDEngine`
+cudf-polars shares your script's process, so KvikIO operations your own code performs are
+counted too.
+
+Some I/O never reaches the monitor. On a system with working GDS the cuFile asynchronous API
+reports nothing, the batch API reports nothing, and anything cudf-polars reads outside KvikIO is
+invisible.
+
+[^shared-worker]: A Dask worker can host more than one rank if you run several engines, or other
+    Dask work, against one cluster. Neither is a recommended setup, and the summaries would be
+    mixed together.
+
+
+### In the benchmarks
+
+The PDS benchmark runners record per-rank I/O summaries alongside the streaming statistics when
+`--rapidsmpf-statistics` is passed. Each record carries an `io_summaries` list, one entry per
+rank, so I/O skew stays queryable across a whole sweep:
+
+```bash
+python -m cudf_polars.streaming.benchmarks.pdsh \
+    --path /data/tpch/ --output results.json --frontend ray \
+    --rapidsmpf-statistics
+```
+
 ## GPU Profiling
 
 For streaming queries, we recommend profiling with [NVIDIA NSight Systems][nsight]. `cudf-polars`
@@ -184,6 +263,7 @@ shape: (2, 3)
 
 [nsight]: https://developer.nvidia.com/nsight-systems
 [nvtx]: https://nvidia.github.io/NVTX/
+[kvikio-stats]: https://docs.rapids.ai/api/kvikio/nightly/statistics/
 [rapidsmpf-stats]: https://docs.rapids.ai/api/rapidsmpf/nightly/statistics/
 [structlog]: https://www.structlog.org/en/stable/
 [structlog-configure]: https://www.structlog.org/en/stable/configuration.html

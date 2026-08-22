@@ -695,6 +695,7 @@ nitpick_ignore_regex = [
     ("ref.*", ".*pandas.*"),
     # External libs without configured intersphinx inventories.
     ("py:.*", r"rapidsmpf(\..*)?"),
+    ("py:.*", r"kvikio(\..*)?"),
     ("py:.*", r"ray(\..*)?"),
     ("py:.*", r"distributed(\..*)?"),
     ("py:.*", r"dask_cuda(\..*)?"),

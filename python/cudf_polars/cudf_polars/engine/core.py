@@ -15,6 +15,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
 
 import cuda.core
+import kvikio
 
 import polars as pl
 
@@ -94,6 +95,101 @@ def reset_statistics_from_options(
     else:
         statistics.disable()
     return statistics
+
+
+def make_kvikio_monitor(options: Options) -> kvikio.SummaryMonitor | None:
+    """
+    Create a kvikio I/O monitor if statistics are enabled in ``options``.
+
+    Parameters
+    ----------
+    options
+        Options providing the enabled setting. The same
+        ``RAPIDSMPF_STATISTICS`` knob that gates rapidsmpf statistics.
+
+    Returns
+    -------
+    kvikio.SummaryMonitor
+        A monitor, already counting, if statistics are enabled.
+    None
+        If they are not.
+
+    Notes
+    -----
+    kvikio has no enable/disable: the existence of a monitor is what turns
+    counting on for the process, so "disabled" means "no monitor".
+
+    The monitor counts every thread's kvikio I/O in the process, not only the
+    engine's, and cannot attribute I/O to a particular query.
+    """
+    if not Statistics.from_options(options).enabled:
+        return None
+    return kvikio.SummaryMonitor()
+
+
+def reset_kvikio_monitor_from_options(
+    monitor: kvikio.SummaryMonitor | None, options: Options
+) -> kvikio.SummaryMonitor | None:
+    """
+    Bring a kvikio I/O monitor into line with ``options``.
+
+    Parameters
+    ----------
+    monitor
+        The rank's existing monitor, if it has one.
+    options
+        Options providing the new enabled setting.
+
+    Returns
+    -------
+    kvikio.SummaryMonitor
+        The reset or newly created monitor, if statistics are enabled.
+    None
+        If they are not, in which case any existing monitor has been stopped.
+    """
+    if not Statistics.from_options(options).enabled:
+        if monitor is not None:
+            monitor.stop()
+        return None
+    if monitor is None:
+        return kvikio.SummaryMonitor()
+    monitor.reset()
+    return monitor
+
+
+def take_io_summary(
+    monitor: kvikio.SummaryMonitor | None, *, clear: bool
+) -> kvikio.Summary | None:
+    """
+    Read a rank's I/O totals, optionally restarting the measured span.
+
+    Parameters
+    ----------
+    monitor
+        The rank's monitor, or ``None`` if it is not counting.
+    clear
+        If ``True``, reset the monitor after reading, so the returned summary
+        is the last word on the span that just ended.
+
+    Returns
+    -------
+    kvikio.Summary
+        The totals so far.
+    None
+        If ``monitor`` is ``None``.
+
+    Notes
+    -----
+    ``None`` means "this rank was not counting", which is not the same as a
+    zeroed summary meaning "this rank did no I/O".
+    """
+    if monitor is None:
+        return None
+    # Read before the reset, so the returned summary still carries the span.
+    summary = monitor.get()
+    if clear:
+        monitor.reset()
+    return summary
 
 
 def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
@@ -315,6 +411,30 @@ class StreamingEngine(pl.GPUEngine):
         -------
         List of :class:`~rapidsmpf.statistics.Statistics`, one per rank,
         ordered by rank index.
+        """
+        raise NotImplementedError
+
+    def gather_io_summary(self, *, clear: bool = False) -> dict[int, kvikio.Summary]:
+        """
+        Collect kvikio I/O statistics from every rank.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart each rank's measured span after reading, so
+            the next call describes only what followed this one.
+
+        Returns
+        -------
+        A :class:`kvikio.Summary` per rank, keyed by rank index and in rank
+        order. A rank that is not counting is absent, so the result is empty
+        unless the ``statistics`` option is enabled.
+
+        Examples
+        --------
+        >>> for rank, summary in engine.gather_io_summary().items():  # doctest: +SKIP
+        ...     print(f"--- rank {rank} ---")
+        ...     print(summary)
         """
         raise NotImplementedError
 

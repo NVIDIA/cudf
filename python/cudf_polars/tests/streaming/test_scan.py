@@ -370,6 +370,43 @@ def test_streaming_scan_raises() -> None:
         StreamingScan.do_evaluate([fused], scan, context=ctx)
 
 
+@pytest.mark.parametrize(
+    "predicate,use_columns",
+    [
+        # uses hybrid scan reader
+        (pl.col("x") < 1_000, None),
+        (pl.col("x") < 1_000, ["x", "z"]),
+        (pl.col("x") < 1_000, ["z"]),
+        # falls back to default parquet reader
+        (pl.col("y").str.contains("cat"), None),
+        (None, None),
+    ],
+)
+def test_split_scan_hybrid(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    predicate: pl.Expr | None,
+    use_columns: list[str] | None,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": True,
+            },
+        ),
+    )
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1, row_group_size=100)
+    q = pl.scan_parquet(tmp_path)
+    if predicate is not None:
+        q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
 def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(

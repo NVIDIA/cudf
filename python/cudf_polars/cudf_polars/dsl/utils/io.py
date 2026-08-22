@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import kvikio
@@ -48,10 +48,46 @@ class CachedParquetInfo:
     path: str
     size: int | None
     file_metadata: plc.io.parquet_metadata.FileMetaData
+    # Pre-created during footer prefetch; shared across all splits and scans of this file.
+    # HybridScanReader is not cached: it holds mutable per-read state so each worker
+    # creates its own from the shared metadata.
+    _hybrid_scan_metadata: list[plc.io.experimental.HybridScanMetadata] = field(
+        default_factory=list, compare=False, repr=False
+    )
+
+    def hybrid_scan_reader(  # pragma: no cover; only called from thread pool workers where coverage.py does not trace
+        self,
+        options: plc.io.parquet.ParquetReaderOptions,
+    ) -> plc.io.experimental.HybridScanReader:
+        """Return a fresh HybridScanReader backed by shared pre-parsed file metadata."""
+        if not self._hybrid_scan_metadata:
+            self._hybrid_scan_metadata.append(
+                plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
+                    self.file_metadata, options
+                )
+            )
+        return plc.io.experimental.HybridScanReader.from_metadata(
+            self._hybrid_scan_metadata[0]
+        )
+
+
+def _default_reader_options(
+    info: CachedParquetInfo,
+) -> plc.io.parquet.ParquetReaderOptions:
+    """Return baseline ``ParquetReaderOptions`` for a cached parquet file."""
+    return (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([plc.io.types.FilepathSource(info.path, info.size)])
+        )
+        .decimal_width(plc.TypeId.DECIMAL128)
+        .build()
+    )
 
 
 @nvtx_annotate_cudf_polars(message="fetch_parquet_footers_for_paths")
-def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetInfo]:
+def _prefetch_parquet_footers_for_paths(
+    paths: list[str], *, parse_hybrid_metadata: bool = False
+) -> list[CachedParquetInfo]:
     """
     Prefetch parquet footers for a list of paths.
 
@@ -62,6 +98,8 @@ def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetI
     ----------
     paths
         The paths to prefetch.
+    parse_hybrid_metadata
+        Whether to eagerly parse ``HybridScanMetadata`` for each path.
 
     Returns
     -------
@@ -94,10 +132,14 @@ def _prefetch_parquet_footers_for_paths(paths: list[str]) -> list[CachedParquetI
         )
     )
 
-    return [
+    infos = [
         CachedParquetInfo(path, size, file_metadata)
         for path, size, file_metadata in zip(paths, sizes, metadata, strict=True)
     ]
+    if parse_hybrid_metadata:
+        for info in infos:
+            info.hybrid_scan_reader(_default_reader_options(info))
+    return infos
 
 
 @nvtx_annotate_cudf_polars(message="prefetch_parquet_file_metadata_for_ir")
@@ -107,6 +149,7 @@ def prefetch_parquet_file_metadata_for_ir(
     stats: StatsCollector | None = None,
     *,
     remote_only: bool = False,
+    parse_hybrid_metadata: bool = False,
 ) -> dict[str, CachedParquetInfo]:
     """
     Prefetch parquet metadata for all parquet scans in an IR graph.
@@ -125,6 +168,9 @@ def prefetch_parquet_file_metadata_for_ir(
     remote_only
         If ``True``, only prefetch metadata for remote URIs (e.g. ``s3://``),
         skipping local paths.
+    parse_hybrid_metadata
+        Whether to eagerly parse ``HybridScanMetadata`` for newly-prefetched
+        paths. Only useful when ``ParquetOptions.use_hybrid_scan`` is enabled.
 
     Returns
     -------
@@ -171,7 +217,11 @@ def prefetch_parquet_file_metadata_for_ir(
 
     with cm:
         futures = [
-            py_executor.submit(_prefetch_parquet_footers_for_paths, [path])
+            py_executor.submit(
+                _prefetch_parquet_footers_for_paths,
+                [path],
+                parse_hybrid_metadata=parse_hybrid_metadata,
+            )
             for path in missing_paths
         ]
 

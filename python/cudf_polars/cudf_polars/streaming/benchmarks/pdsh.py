@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import polars as pl
 
@@ -35,6 +35,7 @@ except ImportError as e:
         raise
     # We want to be able to import pdsh in a CPU-only environment.
     COUNT_DTYPE = None  # type: ignore[assignment]
+
 
 if TYPE_CHECKING:
     from cudf_polars.streaming.benchmarks.utils import RunConfig
@@ -120,9 +121,13 @@ class PDSHQueries:
     """PDS-H query definitions."""
 
     name: str = "pdsh"
+    num_queries: int = 22
     EXPECTED_CASTS = EXPECTED_CASTS
     EXPECTED_CASTS_DECIMAL = EXPECTED_CASTS_DECIMAL
     EXPECTED_CASTS_TIMESTAMP = EXPECTED_CASTS_TIMESTAMP
+    # Queries expected to fail on GPU due to known bugs. Keys are query numbers;
+    # values are reasons for the failures. These queries will be skipped in GPU runs.
+    EXPECTED_FAILURES_TPCH: ClassVar[dict[int, str]] = {}
 
     @property
     def duckdb_queries(self) -> PDSHDuckDBQueries:
@@ -1798,7 +1803,7 @@ class PDSHDuckDBQueries:
 
 
 if __name__ == "__main__":
-    parser = build_parser(num_queries=22)
+    parser = build_parser(num_queries=PDSHQueries.num_queries)
     args = parse_args(parser=parser)
     if args.frontend not in _CPU_ENGINES:
         os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "1")

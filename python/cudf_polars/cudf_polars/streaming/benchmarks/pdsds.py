@@ -31,6 +31,7 @@ except ImportError as e:
     if e.name is not None and not e.name.startswith("cudf_polars"):
         raise
 
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -75,12 +76,18 @@ class PDSDSQueries(metaclass=PDSDSQueriesMeta):
 
     q_impl: str
     name: str = "pdsds"
+    num_queries: int = 99
 
 
 class PDSDSPolarsQueries(PDSDSQueries):
     """Polars Queries."""
 
     q_impl = "polars_impl"
+    # Queries expected to fail on GPU due to known bugs. Keys are query numbers;
+    # values are reasons for the failures. These queries will be skipped in GPU runs.
+    EXPECTED_FAILURES_TPCDS: ClassVar[dict[int, str]] = {
+        5: "GPU execution failure (packed data cannot be empty): https://github.com/rapidsai/cudf/issues/22073",
+    }
     # See comments for EXPECTED_CASTS and EXPECTED_CASTS_DECIMAL
     # in cudf/python/cudf_polars/cudf_polars/streaming/benchmarks/pdsh.py
     # for more details.
@@ -111,18 +118,9 @@ class PDSDSPolarsQueries(PDSDSQueries):
             pl.col("total net profit").cast(pl.Decimal(18, 2)),
         ],
         19: [pl.col("ext_price").cast(pl.Decimal(18, 2))],
-        20: [
-            pl.col("itemrevenue").cast(pl.Decimal(18, 2)),
-            pl.col("revenueratio").cast(pl.Decimal(38, 2)),
-        ],
+        20: [pl.col("revenueratio").cast(pl.Decimal(38, 2))],
         24: [pl.col("paid").cast(pl.Decimal(18, 2))],
         30: [pl.col("ctr_total_return").cast(pl.Decimal(18, 2))],
-        31: [
-            pl.col("web_q1_q2_increase").cast(pl.Decimal(38, 2)),
-            pl.col("store_q1_q2_increase").cast(pl.Decimal(38, 2)),
-            pl.col("web_q2_q3_increase").cast(pl.Decimal(38, 2)),
-            pl.col("store_q2_q3_increase").cast(pl.Decimal(38, 2)),
-        ],
         32: [pl.col("excess discount amount").cast(pl.Decimal(18, 2))],
         33: [pl.col("total_sales").cast(pl.Decimal(18, 2))],
         42: [pl.col("sum(ss_ext_sales_price)").cast(pl.Decimal(18, 2))],
@@ -239,6 +237,11 @@ class PDSDSPolarsQueries(PDSDSQueries):
             pl.col("inv_before").cast(pl.Int32),
             pl.col("inv_after").cast(pl.Int32),
         ],
+        29: [
+            pl.col("store_sales_quantity").cast(pl.Int64),
+            pl.col("store_returns_quantity").cast(pl.Int64),
+            pl.col("catalog_sales_quantity").cast(pl.Int64),
+        ],
         34: [pl.col("cnt").cast(COUNT_DTYPE)],
         35: [
             pl.col("cnt1").cast(COUNT_DTYPE),
@@ -331,7 +334,7 @@ class PDSDSDuckDBQueries(PDSDSQueries):
 
 
 if __name__ == "__main__":
-    parser = build_parser(num_queries=99)
+    parser = build_parser(num_queries=PDSDSQueries.num_queries)
     args = parse_args(parser=parser)
     if args.frontend not in _CPU_ENGINES:
         os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "1")

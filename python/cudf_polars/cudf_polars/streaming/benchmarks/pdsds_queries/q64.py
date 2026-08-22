@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -134,11 +135,11 @@ def duckdb_impl(run_config: RunConfig) -> str:
            cs1.s1,
            cs1.s2,
            cs1.s3,
-           cs2.s1,
-           cs2.s2,
-           cs2.s3,
-           cs2.syear,
-           cs2.cnt
+           cs2.s1    AS s1_1,
+           cs2.s2    AS s2_1,
+           cs2.s3    AS s3_1,
+           cs2.syear AS syear_1,
+           cs2.cnt   AS cnt_1
     FROM   cross_sales cs1,
            cross_sales cs2
     WHERE  cs1.item_sk = cs2.item_sk
@@ -364,18 +365,9 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                     pl.len().alias("cnt"),
                     # Polars sum() returns 0 for all-null groups; SQL returns NULL.
                     # See https://github.com/NVIDIA/cudf/issues/19560.
-                    pl.when(pl.col("ss_wholesale_cost").count() > 0)
-                    .then(pl.col("ss_wholesale_cost").sum())
-                    .otherwise(None)
-                    .alias("s1"),
-                    pl.when(pl.col("ss_list_price").count() > 0)
-                    .then(pl.col("ss_list_price").sum())
-                    .otherwise(None)
-                    .alias("s2"),
-                    pl.when(pl.col("ss_coupon_amt").count() > 0)
-                    .then(pl.col("ss_coupon_amt").sum())
-                    .otherwise(None)
-                    .alias("s3"),
+                    sql_sum("ss_wholesale_cost").alias("s1"),
+                    sql_sum("ss_list_price").alias("s2"),
+                    sql_sum("ss_coupon_amt").alias("s3"),
                 ]
             )
             .select(

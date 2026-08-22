@@ -475,6 +475,14 @@ files:
       - test_python_common
       - test_python_cudf_polars
       - cudf_polars_trace
+  py_tpch_cudf_polars:
+    output: pyproject
+    pyproject_dir: python/cudf_polars
+    extras:
+      table: project.optional-dependencies
+      key: tpch
+    includes:
+      - test_cudf_polars_tpch
   py_trace_cudf_polars:
     output: pyproject
     matrix:
@@ -724,6 +732,10 @@ files:
       polars_compat_version: ["1.35", "1.36", "1.37", "1.38", "1.39", "1.40", "1.41", "1.42"]
     includes:
       - test_cudf_polars_compat
+  test_cudf_polars_tpch:
+    output: none
+    includes:
+      - test_cudf_polars_tpch
 channels:
   - rapidsai-nightly
   - rapidsai
@@ -1321,6 +1333,15 @@ dependencies:
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
+  test_cudf_polars_tpch:
+    common:
+      - output_types: [conda, requirements, pyproject]
+        packages:
+          - duckdb
+          - pyarrow
+          # added lower bound pinning to get pytest-subtests for free
+          - pytest>=9
+          - tpchgen-cli>=3.0.0
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, pyproject]

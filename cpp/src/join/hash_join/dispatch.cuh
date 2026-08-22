@@ -6,7 +6,6 @@
 
 #include "common.cuh"
 
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
@@ -39,36 +38,6 @@ class pair_equal {
 
  private:
   Equal _check_row_equality;
-};
-
-/**
- * @brief Extracts the right-side row index from a cuco hash table slot.
- */
-struct output_fn {
-  __device__ constexpr cudf::size_type operator()(
-    cuco::pair<hash_value_type, cudf::size_type> const& slot) const
-  {
-    return slot.second;
-  }
-};
-
-/**
- * @brief Extracts a right-side row index and marks it as matched.
- *
- * This is used while retrieving a full join to build the right-side match set without a
- * subsequent pass over the join output.
- */
-struct mark_matched_output_fn {
-  size_type* right_matches;
-  size_type right_table_num_rows;
-
-  __device__ cudf::size_type operator()(
-    cuco::pair<hash_value_type, cudf::size_type> const& slot) const
-  {
-    auto const index = slot.second;
-    if (index >= 0 && index < right_table_num_rows) { right_matches[index] = 1; }
-    return index;
-  }
 };
 
 /**

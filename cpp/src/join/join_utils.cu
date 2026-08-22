@@ -43,6 +43,7 @@ double checked_load_factor(double load_factor)
 }
 
 VectorPair get_trivial_left_join_indices(table_view const& left,
+                                         size_type left_offset,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
@@ -50,7 +51,7 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    left_indices->begin(),
                    left_indices->end(),
-                   0);
+                   left_offset);
   auto right_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
   thrust::uninitialized_fill(

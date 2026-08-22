@@ -172,6 +172,19 @@ def test_literal_hash(dtype, val):
     assert isinstance(hash(Literal(DataType(dtype), val)), int)
 
 
+def test_literal_stable_id_is_content_based():
+    a = Literal(DataType(pl.Int64()), 42)
+    b = Literal(DataType(pl.Int64()), 42)
+    c = Literal(DataType(pl.Int64()), 43)
+    assert a.get_stable_id() == b.get_stable_id()
+    assert a.get_stable_id() != c.get_stable_id()
+    # Distinct Python types with the same dtype stay distinct via value.
+    assert (
+        Literal(DataType(pl.String()), "42").get_stable_id()
+        != Literal(DataType(pl.Int64()), 42).get_stable_id()
+    )
+
+
 def test_struct_literal_not_supported(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3]})
     q = df.select(pl.lit({"x": 1, "y": "foo"}))

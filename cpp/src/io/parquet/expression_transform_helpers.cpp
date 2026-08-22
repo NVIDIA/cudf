@@ -50,6 +50,9 @@ namespace {
 template <operator_transform mode>
 std::optional<ast::ast_operator> transform_operator(ast::ast_operator op)
 {
+  static_assert(mode == operator_transform::INVERT or mode == operator_transform::NEGATE,
+                "Unhandled operator transform");
+
   if constexpr (mode == operator_transform::INVERT) {
     switch (op) {
       case ast::ast_operator::LESS: return ast::ast_operator::GREATER;

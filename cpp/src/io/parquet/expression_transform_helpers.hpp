@@ -157,8 +157,8 @@ class names_from_expression : public ast::detail::expression_transformer {
 };
 
 /**
- * @brief Converts named columns to index reference columns and pushes logical negations down to the
- * leaves of the expression.
+ * @brief Converts named columns to index reference columns and rewrites the expression into
+ * negation normal form, pushing logical negations down to the leaves.
  */
 class parquet_filter_normalizer : public ast::detail::expression_transformer {
  public:

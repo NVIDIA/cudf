@@ -2422,6 +2422,28 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, not_lt), 1);
   }
 
+  // NOT(50 op col_a) - literal-left ordering comparisons preserve operand order when complemented.
+  for (auto const op : {cudf::ast::ast_operator::LESS,
+                        cudf::ast::ast_operator::LESS_EQUAL,
+                        cudf::ast::ast_operator::GREATER,
+                        cudf::ast::ast_operator::GREATER_EQUAL}) {
+    auto literal_left = cudf::ast::operation(op, lit_50, col_ref_a);
+    auto const expected_row_groups =
+      op == cudf::ast::ast_operator::LESS or op == cudf::ast::ast_operator::LESS_EQUAL ? 1 : 4;
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, literal_left),
+                               expected_row_groups);
+  }
+
+  // NOT(col_a + 10 > 50) - operand is not `col op lit`, so it must NOT be complemented. The
+  // `col_a < 150` conjunct keeps the filter stats-usable.
+  {
+    auto sum       = cudf::ast::operation(cudf::ast::ast_operator::ADD, col_ref_a, lit_10);
+    auto sum_gt_50 = cudf::ast::operation(cudf::ast::ast_operator::GREATER, sum, lit_50);
+    auto not_sum   = cudf::ast::operation(cudf::ast::ast_operator::NOT, sum_gt_50);
+    expect_matches_unrewritten(
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, a_lt_150, not_sum), 1);
+  }
+
   // Double negation over a non-boolean operand must NOT be eliminated.
   {
     auto not_a     = cudf::ast::operation(cudf::ast::ast_operator::NOT, col_ref_a);
@@ -4414,9 +4436,10 @@ void filter_unary_operation_typed_test()
     filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, not_expr1, expr2);
     ref_filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, ref_not_expr1, ref_expr2);
-    // For signed numeric types, RGs 1,2,3 pass. Otherwise, RGs 2,3 pass
+    // Signed numeric types pass RGs 1,2,3, others pass RGs 2,3. Floats keep all 4: NaN makes
+    // every ordered comparison false, so `NOT(col0 < 100)` is not `col0 >= 100` and gets relaxed.
     auto constexpr expected_filtered_row_groups_with_unary_or =
-      (cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2;
+      cudf::is_floating_point<T>() ? 4 : ((cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2);
     test_predicate_pushdown(filter_expression,
                             ref_filter,
                             expected_total_row_groups,

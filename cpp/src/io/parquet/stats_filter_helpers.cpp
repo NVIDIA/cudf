@@ -14,11 +14,16 @@
 
 namespace cudf::io::parquet::detail {
 
-stats_columns_collector::stats_columns_collector(ast::expression const& expr,
-                                                 cudf::size_type num_columns)
-  : _num_columns(num_columns)
+stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
+  : _num_columns(static_cast<size_type>(output_dtypes.size())), _output_dtypes(output_dtypes)
 {
-  _columns_mask.resize(num_columns, false);
+  _columns_mask.resize(_num_columns, false);
+}
+
+stats_columns_collector::stats_columns_collector(ast::expression const& expr,
+                                                 std::span<cudf::data_type const> output_dtypes)
+  : stats_columns_collector(output_dtypes)
+{
   expr.accept(*this);
 }
 
@@ -75,7 +80,12 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
     if (op == ast_operator::EQUAL or op == ast_operator::NOT_EQUAL or op == ast_operator::LESS or
         op == ast_operator::LESS_EQUAL or op == ast_operator::GREATER or
         op == ast_operator::GREATER_EQUAL) {
-      _columns_mask[col_ref->get_column_index()] = true;
+      // NOT_EQUAL leaf for floating points relaxes to always true as Parquet statistics do not
+      // record NaNs.
+      if (op != ast_operator::NOT_EQUAL or
+          not cudf::is_floating_point(_output_dtypes[col_ref->get_column_index()])) {
+        _columns_mask[col_ref->get_column_index()] = true;
+      }
     }
   } else {
     // Visit the operands and ignore any output as we only want to build the column mask
@@ -89,15 +99,16 @@ std::pair<thrust::host_vector<bool>, bool> stats_columns_collector::get_stats_co
   return {std::move(_columns_mask), _has_is_null_operator};
 }
 
-stats_expression_converter::stats_expression_converter(ast::expression const& expr,
-                                                       size_type num_columns,
-                                                       bool has_is_null_operator,
-                                                       cuda::stream_ref stream)
-  : _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
+stats_expression_converter::stats_expression_converter(
+  ast::expression const& expr,
+  std::span<cudf::data_type const> output_dtypes,
+  bool has_is_null_operator,
+  cuda::stream_ref stream)
+  : stats_columns_collector{output_dtypes},
+    _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
     _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
 {
   _stats_cols_per_column = has_is_null_operator ? 3 : 2;
-  _num_columns           = num_columns;
   expr.accept(*this);
 }
 
@@ -153,18 +164,32 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             }
           }  // Binary operation wrapped
           else if (cudf::ast::detail::ast_operator_arity(child_op) == 2) {
+            // For NOT(col op lit) or NOT(lit op col), negate the operator if negatable and visit
+            // the negated operation directly.
             auto const binary_operands = extract_binary_operands(*child_operation);
             auto const lhs_kind        = binary_operands.lhs_type;
             auto const rhs_kind        = binary_operands.rhs_type;
 
-            // For NOT(col op lit) negate the operator if negatable and visit the negated operation
-            // directly
+            // `col_ref` is only non-null for the `col op lit` form, so both checks below must
+            // stay inside this branch
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
-              auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
-              if (negated_op.has_value()) {
-                auto const& child_operands = child_operation->get_operands();
-                return visit(
-                  ast::operation{*negated_op, child_operands.front(), child_operands.back()});
+              // Equality is always exact
+              auto const is_equality =
+                child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
+
+              // An ordering comparison is only exact when the column cannot hold a `NaN`. i.e., not
+              // a floating point type
+              auto const can_negate_ordering = not cudf::is_floating_point(
+                _output_dtypes[binary_operands.col_ref->get_column_index()]);
+
+              if (is_equality or can_negate_ordering) {
+                auto const negated_op =
+                  transform_operator<operator_transform::NEGATE>(child_operation->get_operator());
+                if (negated_op.has_value()) {
+                  auto const& child_operands = child_operation->get_operands();
+                  return visit(
+                    ast::operation{*negated_op, child_operands.front(), child_operands.back()});
+                }
               }
             }
           }
@@ -210,6 +235,12 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         break;
       }
       case ast_operator::NOT_EQUAL: {
+        // Some Parquet writers exclude `NaN`s from stats so we can't reliably prune row groups for
+        // columns that may contain them.
+        if (cudf::is_floating_point(_output_dtypes[col_index])) {
+          _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+          return *_always_true;
+        }
         auto const& vmin =
           _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column});
         auto const& vmax =

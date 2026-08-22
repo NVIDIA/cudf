@@ -55,7 +55,7 @@ namespace cudf_streaming::detail {
 namespace {
 using KeyType = std::uint64_t;
 
-using BloomFilterPolicy  = cudf::arrow_filter_policy<cuco::identity_hash<KeyType>>;
+using BloomFilterPolicy  = cudf::arrow_bloom_filter_policy<KeyType, cuco::identity_hash<KeyType>>;
 using BloomFilterRefType = cuco::bloom_filter_ref<KeyType,
                                                   cuco::extent<std::size_t>,
                                                   cuco::thread_scope_device,

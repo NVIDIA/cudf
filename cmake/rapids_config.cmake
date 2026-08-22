@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -34,6 +34,10 @@ endif()
 if(NOT rapids-cmake-branch)
   set(rapids-cmake-branch "${RAPIDS_BRANCH}")
 endif()
+
+# Test the cuco bump from PointKernel/rapids-cmake
+set(rapids-cmake-repo "PointKernel/rapids-cmake")
+set(rapids-cmake-branch "bump-cuco-4b26118")
 include("${CMAKE_CURRENT_LIST_DIR}/RAPIDS.cmake")
 
 # Don't use sccache-dist for CMake's compiler tests

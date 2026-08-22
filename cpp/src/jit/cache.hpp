@@ -4,6 +4,8 @@
  */
 
 #pragma once
+#include "jit/arch_name.hpp"
+
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/stream>

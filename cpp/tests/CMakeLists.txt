@@ -750,7 +750,7 @@ ConfigureTest(LABEL_BINS_TEST labeling/label_bins_tests.cpp)
 
 # ##################################################################################################
 # * jit tests ----------------------------------------------------------------------------------
-ConfigureTest(JIT_PARSER_TEST jit/parse_ptx_function.cpp)
+ConfigureTest(JIT_PARSER_TEST jit/parse_ptx_function.cpp jit/arch_name.cpp)
 target_include_directories(JIT_PARSER_TEST PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>")
 
 ConfigureTest(ROW_IR_TEST jit/row_ir.cpp)

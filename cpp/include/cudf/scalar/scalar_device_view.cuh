@@ -44,8 +44,8 @@ class scalar_device_view_base {
   bitmask_type const* _is_valid{};  ///< Pointer to the scalar validity bitmask.
 
   /**
-   * @brief Construct a new scalar device view base object  from a device pointer
-   * and a validity boolean.
+   * @brief Construct a new scalar device view base object from a device pointer
+   * and a validity bitmask.
    *
    * @param type The data type of the scalar
    * @param is_valid Pointer to the validity bitmask in device memory.

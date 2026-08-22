@@ -32,7 +32,7 @@ namespace CUDF_EXPORT cudf {
  *
  * @param type The desired numeric element type
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns An uninitialized numeric scalar
  */
 std::unique_ptr<scalar> make_numeric_scalar(
@@ -49,7 +49,7 @@ std::unique_ptr<scalar> make_numeric_scalar(
  *
  * @param type The desired timestamp element type
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @return An uninitialized timestamp scalar
  */
 std::unique_ptr<scalar> make_timestamp_scalar(
@@ -66,7 +66,7 @@ std::unique_ptr<scalar> make_timestamp_scalar(
  *
  * @param type The desired duration element type
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @return An uninitialized duration scalar
  */
 std::unique_ptr<scalar> make_duration_scalar(
@@ -83,7 +83,7 @@ std::unique_ptr<scalar> make_duration_scalar(
  *
  * @param type The desired fixed-width element type
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @return An uninitialized fixed-width scalar
  */
 std::unique_ptr<scalar> make_fixed_width_scalar(
@@ -100,7 +100,7 @@ std::unique_ptr<scalar> make_fixed_width_scalar(
  *
  * @param string The `std::string` to copy to device
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A string scalar with the contents of `string`
  */
 std::unique_ptr<scalar> make_string_scalar(
@@ -115,7 +115,7 @@ std::unique_ptr<scalar> make_string_scalar(
  *
  * @param type The desired element type
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A scalar of type `type`
  */
 std::unique_ptr<scalar> make_default_constructed_scalar(
@@ -130,7 +130,7 @@ std::unique_ptr<scalar> make_default_constructed_scalar(
  *
  * @param input Immutable view of input column to emulate
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A scalar of type of `input` column
  */
 std::unique_ptr<scalar> make_empty_scalar_like(
@@ -144,7 +144,7 @@ std::unique_ptr<scalar> make_empty_scalar_like(
  * @tparam T Datatype of the value to be represented by the scalar
  * @param value The value to store in the scalar object
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A scalar of type `T`
  */
 template <typename T>
@@ -163,7 +163,7 @@ std::unique_ptr<scalar> make_fixed_width_scalar(
  * @param value The value to store in the scalar object
  * @param scale The scale of the fixed point value
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A scalar of type `T`
  */
 template <typename T>
@@ -181,7 +181,7 @@ std::unique_ptr<scalar> make_fixed_point_scalar(
  *
  * @param elements Elements of the list
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A list scalar
  */
 std::unique_ptr<scalar> make_list_scalar(
@@ -196,7 +196,7 @@ std::unique_ptr<scalar> make_list_scalar(
  *
  * @param data The columnar data to store in the scalar object
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A struct scalar
  */
 std::unique_ptr<scalar> make_struct_scalar(
@@ -211,7 +211,7 @@ std::unique_ptr<scalar> make_struct_scalar(
  *
  * @param data The columnar data to store in the scalar object
  * @param stream CUDA stream used for device memory operations.
- * @param mr Device memory resource used to allocate the scalar's `data` and `is_valid` bool.
+ * @param mr Device memory resource used to allocate the scalar's column storage.
  * @returns A struct scalar
  */
 std::unique_ptr<scalar> make_struct_scalar(

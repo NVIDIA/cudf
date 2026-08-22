@@ -403,22 +403,23 @@ Use `cudf::host_span<T>` only when one of the following applies:
 A `cudf::scalar` is an object that can represent a singular, nullable value of any of the types
 currently supported by cudf. Each type of value is represented by a separate type of scalar class
 which are all derived from `cudf::scalar`. e.g. A `numeric_scalar` holds a single numerical value,
-a `string_scalar` holds a single string. The data for the stored value resides in device memory.
+a `string_scalar` holds a single string.
 
-A `list_scalar` holds the underlying data of a single list. This means the underlying data can be
-any type that cudf supports. For example, a `list_scalar` representing a list of integers stores a
-`cudf::column` of type `INT32`. A `list_scalar` representing a list of lists of integers stores a
-`cudf::column` of type `LIST`, which in turn stores a column of type `INT32`.
+A scalar owns its value and validity in an Arrow-compatible, one-row `cudf::column`. This common
+storage representation includes the offsets and child hierarchy required by strings and nested
+types. `scalar::as_column_view()` returns an allocation-free, non-owning `scalar_column_view`
+directly over that storage.
 
 |Value type|Scalar class|Notes|
 |-|-|-|
 |fixed-width|`fixed_width_scalar<T>`| `T` can be any fixed-width type|
 |numeric|`numeric_scalar<T>` | `T` can be `int8_t`, `int16_t`, `int32_t`, `int64_t`, `float` or `double`|
-|fixed-point|`fixed_point_scalar<T>` | `T` can be `numeric::decimal32` or `numeric::decimal64`|
+|fixed-point|`fixed_point_scalar<T>` | `T` can be `numeric::decimal32`, `numeric::decimal64`, or `numeric::decimal128`|
 |timestamp|`timestamp_scalar<T>` | `T` can be `timestamp_D`, `timestamp_s`, etc.|
 |duration|`duration_scalar<T>` | `T` can be `duration_D`, `duration_s`, etc.|
 |string|`string_scalar`| This class object is immutable|
 |list|`list_scalar`| Underlying data can be any type supported by cudf |
+|struct|`struct_scalar`| Children can be any types supported by cudf |
 
 ### Construction
 `scalar`s can be created using either their respective constructors or using factory functions like
@@ -441,15 +442,17 @@ auto s1 = static_cast<ScalarType *>(s.get());
 ```
 
 ### Passing to device
-Each scalar type, except `list_scalar`, has a corresponding non-owning device view class which
-allows access to the value and its validity from the device. This can be obtained using the function
-`get_scalar_device_view(ScalarType s)`. Note that a device view is not provided for a base scalar
-object, only for the derived typed scalar class objects.
+Use `scalar::as_column_view()` and `column_device_view::create()` to access a scalar from device
+code. The resulting `column_device_view` has one row, so its value and validity are accessed at
+index `0`. Specialized column device views may be constructed from it for nested types.
 
-The underlying data for `list_scalar` can be accessed via `view()` method. For non-nested data,
-the device view can be obtained via function `column_device_view::create(column_view)`. For nested
-data, a specialized device view for list columns can be constructed via
-`lists_column_device_view(column_device_view)`.
+Use `scalar::as_mutable_column_view()` and `mutable_column_device_view::create()` when device code
+must modify a scalar value. Scalar validity is host-authoritative: establish it separately with
+`scalar::set_valid_async()` and do not mutate the null mask through the mutable column view.
+
+Typed scalar device views and `get_scalar_device_view()` remain compatibility APIs. New code should
+prefer column views so it works through the type-erased `scalar` interface and uses the same storage
+and access patterns as columns.
 
 # libcudf Policies and Design Principles
 

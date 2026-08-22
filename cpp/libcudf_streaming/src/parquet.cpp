@@ -9,10 +9,11 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/types.hpp>
 
+#include <cudf_streaming/detail/stream_adapter.hpp>
 #include <cudf_streaming/parquet.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/memory/memory_type.hpp>
@@ -195,7 +196,7 @@ class FileCache {
  * @return Message representing the read chunk.
  */
 rapidsmpf::streaming::Message read_parquet_chunk(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  cudf::io::parquet_reader_options options,
                                                  std::uint64_t sequence_number)
 {
@@ -319,7 +320,7 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
     options.set_filter(filter->filter);
     // Let's just join all the possible streams here rather than inducing cross-stream
     // deps in the tasks
-    rapidsmpf::cuda_stream_join(
+    cudf_streaming::detail::cuda_stream_join(
       std::ranges::transform_view(
         std::ranges::iota_view(std::size_t{0}, ctx->br()->stream_pool()->get_pool_size()),
         [&](auto i) { return ctx->br()->stream_pool()->get_stream(i); }),
@@ -398,7 +399,7 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
   if (filter != nullptr) {
     // Let's just join all the possible streams here rather than inducing cross-stream
     // deps in the tasks
-    rapidsmpf::cuda_stream_join(
+    cudf_streaming::detail::cuda_stream_join(
       std::ranges::single_view(filter->stream),
       std::ranges::transform_view(
         std::ranges::iota_view(std::size_t{0}, ctx->br()->stream_pool()->get_pool_size()),

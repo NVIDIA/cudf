@@ -9,11 +9,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cudf_streaming/detail/stream_adapter.hpp>
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/utils.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/error.hpp>
@@ -36,7 +38,7 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -75,7 +77,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -102,7 +104,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -128,7 +130,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
 }
 
 std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData>&& partitions,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rapidsmpf::BufferResource* br,
                                                rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -151,7 +153,7 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
 
   std::vector<cudf::table_view> unpacked;
   std::vector<cudf::packed_columns> references;
-  std::vector<rmm::cuda_stream_view> packed_data_streams;
+  std::vector<cuda::stream_ref> packed_data_streams;
   unpacked.reserve(partitions.size());
   references.reserve(partitions.size());
   packed_data_streams.reserve(partitions.size());
@@ -175,7 +177,7 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
   // underlying device buffers to use `stream` going forward. This ensures
   // the packed data are not deallocated before we have a chance to
   // concatenate them on `stream`.
-  rapidsmpf::cuda_stream_join(std::views::single(stream), packed_data_streams);
+  cudf_streaming::detail::cuda_stream_join(std::views::single(stream), packed_data_streams);
   for (cudf::packed_columns& packed_columns : references) {
     packed_columns.gpu_data->set_stream(stream);
   }

@@ -46,7 +46,7 @@ partition_and_split(
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
 
@@ -78,7 +78,7 @@ partition_and_pack(
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
 
@@ -104,7 +104,7 @@ partition_and_pack(
 [[nodiscard]] std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
 
@@ -134,7 +134,7 @@ partition_and_pack(
  */
 [[nodiscard]] std::unique_ptr<cudf::table> unpack_and_concat(
   std::vector<rapidsmpf::PackedData>&& partitions,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
 

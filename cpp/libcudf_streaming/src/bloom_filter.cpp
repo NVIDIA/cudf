@@ -7,6 +7,7 @@
 
 #include <cudf_streaming/bloom_filter.hpp>
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
+#include <cudf_streaming/detail/stream_adapter.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
 #include <cuda_runtime_api.h>
@@ -78,7 +79,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     // kernels doing that concurrently because the updates are atomic.
     build_event.stream_wait(chunk.stream());
     filter.add(chunk.table_view(), chunk.stream(), mr);
-    rapidsmpf::cuda_stream_join(filter_stream, chunk.stream(), &event);
+    cudf_streaming::detail::cuda_stream_join(filter_stream, chunk.stream(), &event);
   }
   if (comm_->nranks() > 1) {
     auto reducer = rapidsmpf::streaming::AllReduce(
@@ -91,7 +92,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
       tag,
       [filter_size = filter_size_, seed = seed_](rapidsmpf::Buffer const* left,
                                                  rapidsmpf::Buffer* right) {
-        right->write_access([&](std::byte* out_bytes, rmm::cuda_stream_view stream) {
+        right->write_access([&](std::byte* out_bytes, cuda::stream_ref stream) {
           auto const in =
             cudf_streaming::detail::device_bloom_filter::view(filter_size, seed, left->data());
           cudf_streaming::detail::device_bloom_filter(filter_size, seed, out_bytes)
@@ -130,7 +131,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
       ctx_,
       -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)));
     auto chunk_stream = chunk.stream();
-    rapidsmpf::cuda_stream_join(chunk_stream, stream, &event);
+    cudf_streaming::detail::cuda_stream_join(chunk_stream, stream, &event);
     // Reservation for the mask construction and guess at output size.
     auto res = co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)
                  ->reserve_or_wait(rapidsmpf::safe_cast<std::size_t>(chunk.table_view().num_rows())
@@ -142,7 +143,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
                                    0);
     auto mask =
       filter.contains(chunk.table_view().select(keys), chunk_stream, ctx_->br()->device_mr());
-    rapidsmpf::cuda_stream_join(stream, chunk_stream, &event);
+    cudf_streaming::detail::cuda_stream_join(stream, chunk_stream, &event);
     RAPIDSMPF_EXPECTS(mask.size() == static_cast<std::size_t>(chunk.table_view().num_rows()),
                       "Invalid mask size");
     auto mask_view = cudf::column_view{cudf::data_type{cudf::type_id::BOOL8},

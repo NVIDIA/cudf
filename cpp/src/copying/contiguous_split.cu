@@ -2156,6 +2156,26 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
   return state.contiguous_split();
 }
 
+std::vector<std::size_t> contiguous_split_packed_sizes(cudf::table_view const& input,
+                                                       std::vector<size_type> const& splits,
+                                                       rmm::cuda_stream_view stream,
+                                                       rmm::device_async_resource_ref mr)
+{
+  std::size_t const num_partitions = splits.size() + 1;
+
+  // check_inputs validates splits and returns true when the table has 0 rows or 0 columns,
+  // in which case every partition has a 0-byte buffer.
+  if (input.num_columns() == 0 || check_inputs(input, splits)) {
+    return std::vector<std::size_t>(num_partitions, 0);
+  }
+
+  auto partition_buf_size_and_dst_buf_info =
+    std::get<2>(compute_num_bufs_and_splits(input, splits, stream, mr));
+
+  auto const* h_buf_sizes = partition_buf_size_and_dst_buf_info->h_buf_sizes;
+  return std::vector<std::size_t>(h_buf_sizes, h_buf_sizes + num_partitions);
+}
+
 };  // namespace detail
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
@@ -2165,6 +2185,15 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 {
   CUDF_FUNC_RANGE();
   return detail::contiguous_split(input, splits, stream, mr);
+}
+
+std::vector<std::size_t> contiguous_split_packed_sizes(cudf::table_view const& input,
+                                                       std::vector<size_type> const& splits,
+                                                       rmm::cuda_stream_view stream,
+                                                       rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::contiguous_split_packed_sizes(input, splits, stream, mr);
 }
 
 chunked_pack::chunked_pack(cudf::table_view const& input,
@@ -2212,14 +2241,7 @@ std::size_t packed_size(cudf::table_view const& input,
                         cuda::stream_ref stream,
                         rmm::device_async_resource_ref temp_mr)
 {
-  // Handle empty table cases
-  if (input.num_columns() == 0 || input.num_rows() == 0) { return 0; }
-
-  auto result = compute_num_bufs_and_splits(input, {}, stream, temp_mr);
-  auto const& partition_buf_size_and_dst_buf_info = std::get<2>(result);
-
-  // Return the total size for the single partition
-  return partition_buf_size_and_dst_buf_info->h_buf_sizes[0];
+  return detail::contiguous_split_packed_sizes(input, {}, stream, temp_mr).front();
 }
 
 };  // namespace cudf

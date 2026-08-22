@@ -73,6 +73,35 @@ std::vector<packed_table> contiguous_split(
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
+/**
+ * @brief Computes the packed sizes in bytes of each partition that `contiguous_split` would 
+ * produce, without performing the actual copy.
+ *
+ * This is useful when the caller needs to know output buffer sizes upfront — for example to
+ * pre-reserve memory — before committing to the copy.
+ *
+ * The returned vector has `splits.size() + 1` entries, one per partition, in the same order
+ * as the partitions returned by `contiguous_split`.  For a table with 0 columns or 0 rows,
+ * all returned sizes are 0.
+ *
+ * For all `i` it is expected `splits[i] <= splits[i+1] <= input.size()`.
+ *
+ * @throws std::out_of_range if `splits` has end index > size of `input`.
+ * @throws std::out_of_range When the value in `splits` is not in the range [0, input.size()).
+ * @throws std::invalid_argument When the values in the `splits` are 'strictly decreasing'.
+ *
+ * @param input View of a table to split
+ * @param splits A vector of indices where the view will be split
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr A memory resource to use for temporary device allocations
+ * @return A vector of sizes in bytes, one per partition (`splits.size() + 1` entries)
+ */
+std::vector<std::size_t> contiguous_split_packed_sizes(
+  cudf::table_view const& input,
+  std::vector<size_type> const& splits,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
 namespace detail {
 
 /**

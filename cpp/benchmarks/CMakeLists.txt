@@ -438,6 +438,7 @@ ConfigureNVBench(
   text/subword.cpp
   text/tokenize.cpp
   text/vocab.cpp
+  text/unicode_normalize.cpp
 )
 
 # ##################################################################################################

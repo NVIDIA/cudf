@@ -1103,6 +1103,7 @@ add_library(
   src/text/bpe/byte_pair_encoding.cu
   src/text/bpe/load_merge_pairs.cu
   src/text/tokenize.cu
+  src/text/unicode_normalize.cu
   src/text/vocabulary_tokenize.cu
   src/text/wordpiece_tokenize.cu
   src/transform/bools_to_mask.cu

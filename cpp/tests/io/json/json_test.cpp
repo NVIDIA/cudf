@@ -3623,6 +3623,261 @@ TEST_F(JsonBatchedReaderTest, EmptyLastBatch)
                                  cudf::test::strings_column_wrapper{{"b", "b", "b", "b"}});
 }
 
+TEST_F(JsonBatchedReaderTest, UTF8StringValues)
+{
+  // Batched reading with non-ASCII UTF-8 strings.
+  // Each line is ~30-50 bytes; setting batch size to 40 forces batch boundaries
+  // that fall mid-record, exercising the delimiter search across UTF-8 content.
+  std::string const data = R"({"v": "résumé"})"
+                           "\n"
+                           R"({"v": "日本語"})"
+                           "\n"
+                           R"({"v": "emoji: 😀"})"
+                           "\n"
+                           R"({"v": "café ☕"})"
+                           "\n";
+
+  // Read without batching as reference
+  auto opts_full = cudf::io::json_reader_options::builder(
+                     cudf::io::source_info{cudf::host_span<std::byte const>{
+                       reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+                     .lines(true)
+                     .build();
+  auto const expected = cudf::io::read_json(opts_full);
+
+  // Force multiple batches with a small batch size
+  for (auto batch_size : {25, 30, 40, 50, 60}) {
+    this->set_batch_size(batch_size);
+    auto opts = cudf::io::json_reader_options::builder(
+                  cudf::io::source_info{cudf::host_span<std::byte const>{
+                    reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+                  .lines(true)
+                  .build();
+    auto const result = cudf::io::read_json(opts);
+
+    EXPECT_EQ(result.tbl->num_rows(), expected.tbl->num_rows());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view(), result.tbl->view());
+  }
+}
+
+TEST_F(JsonBatchedReaderTest, UTF8FieldNamesAndMixedTypes)
+{
+  // Batched reading with non-ASCII field names and mixed column types
+  std::string const data = R"({"名前": "Alice", "スコア": 95.5})"
+                           "\n"
+                           R"({"名前": "Böb", "スコア": 87.3})"
+                           "\n"
+                           R"({"名前": "Ché", "スコア": 91.0})"
+                           "\n"
+                           R"({"名前": "Dörte", "スコア": 88.8})"
+                           "\n";
+
+  auto opts_full = cudf::io::json_reader_options::builder(
+                     cudf::io::source_info{cudf::host_span<std::byte const>{
+                       reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+                     .lines(true)
+                     .build();
+  auto const expected = cudf::io::read_json(opts_full);
+
+  for (auto batch_size : {30, 45, 60, 80}) {
+    this->set_batch_size(batch_size);
+    auto opts = cudf::io::json_reader_options::builder(
+                  cudf::io::source_info{cudf::host_span<std::byte const>{
+                    reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+                  .lines(true)
+                  .build();
+    auto const result = cudf::io::read_json(opts);
+
+    EXPECT_EQ(result.tbl->num_rows(), expected.tbl->num_rows());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view(), result.tbl->view());
+  }
+}
+
+TEST_F(JsonBatchedReaderTest, UTF8RecoveryMode)
+{
+  // Batched reading with recovery mode and non-ASCII content
+  std::string const data = R"({"v": "café"})"
+                           "\n"
+                           R"({"v": bad})"
+                           "\n"
+                           R"({"v": "naïve"})"
+                           "\n"
+                           R"({"v": "über"})"
+                           "\n";
+
+  auto opts_full = cudf::io::json_reader_options::builder(
+                     cudf::io::source_info{cudf::host_span<std::byte const>{
+                       reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+                     .lines(true)
+                     .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                     .build();
+  auto const expected = cudf::io::read_json(opts_full);
+
+  for (auto batch_size : {20, 35, 50}) {
+    this->set_batch_size(batch_size);
+    auto opts = cudf::io::json_reader_options::builder(
+                  cudf::io::source_info{cudf::host_span<std::byte const>{
+                    reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+                  .lines(true)
+                  .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                  .build();
+    auto const result = cudf::io::read_json(opts);
+
+    EXPECT_EQ(result.tbl->num_rows(), expected.tbl->num_rows());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view(), result.tbl->view());
+  }
+}
+
+// Tests for non-ASCII UTF-8 input handling.
+// The PdaSymbolToSymbolGroupId operator casts char (signed) to int32_t, producing negative indices
+// for bytes 0x80-0xFF. The one-sided min() clamp in tos_sg_to_pda_sgid[] lookup does not guard
+// against negative values, causing an OOB read from __constant__ memory.
+
+TEST_F(JsonReaderTest, UTF8StringValues)
+{
+  // Two-byte (Latin), three-byte (CJK), and four-byte (emoji) UTF-8 sequences in string values
+  std::string const data = R"({"col0": "résumé", "col1": 1})"
+                           "\n"
+                           R"({"col0": "日本語テスト", "col1": 2})"
+                           "\n"
+                           R"({"col0": "emoji: 😀🎉", "col1": 3})"
+                           "\n"
+                           R"({"col0": "mixed: café ☕ 𝄞", "col1": 4})"
+                           "\n";
+
+  cudf::io::json_reader_options const in_opts =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .lines(true);
+
+  auto const result = cudf::io::read_json(in_opts);
+
+  EXPECT_EQ(result.tbl->num_columns(), 2);
+  EXPECT_EQ(result.tbl->num_rows(), 4);
+  EXPECT_EQ(result.tbl->get_column(0).type().id(), cudf::type_id::STRING);
+  EXPECT_EQ(result.metadata.schema_info[0].name, "col0");
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0),
+                                 cudf::test::strings_column_wrapper(
+                                   {"résumé", "日本語テスト", "emoji: 😀🎉", "mixed: café ☕ 𝄞"}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(1), int64_wrapper{{1, 2, 3, 4}});
+}
+
+TEST_F(JsonReaderTest, UTF8FieldNames)
+{
+  // Non-ASCII characters in JSON field names
+  std::string const data = R"({"名前": "Alice", "年齢": 30})"
+                           "\n"
+                           R"({"名前": "Bob", "年齢": 25})"
+                           "\n";
+
+  cudf::io::json_reader_options const in_opts =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .lines(true);
+
+  auto const result = cudf::io::read_json(in_opts);
+
+  EXPECT_EQ(result.tbl->num_columns(), 2);
+  EXPECT_EQ(result.tbl->num_rows(), 2);
+  EXPECT_EQ(result.metadata.schema_info[0].name, "名前");
+  EXPECT_EQ(result.metadata.schema_info[1].name, "年齢");
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0),
+                                 cudf::test::strings_column_wrapper({"Alice", "Bob"}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(1), int64_wrapper{{30, 25}});
+}
+
+TEST_F(JsonReaderTest, UTF8NestedStructsAndLists)
+{
+  // Non-ASCII in nested structures: struct values, list elements, and field names
+  std::string const data = R"({"obj": {"clé": "données"}, "arr": ["α", "β", "γ"]})"
+                           "\n"
+                           R"({"obj": {"clé": "über"}, "arr": ["δ", "ε"]})"
+                           "\n";
+
+  cudf::io::json_reader_options const in_opts =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .lines(true);
+
+  auto const result = cudf::io::read_json(in_opts);
+
+  EXPECT_EQ(result.tbl->num_columns(), 2);
+  EXPECT_EQ(result.tbl->num_rows(), 2);
+  EXPECT_EQ(result.metadata.schema_info[0].name, "obj");
+  EXPECT_EQ(result.metadata.schema_info[1].name, "arr");
+}
+
+TEST_F(JsonReaderTest, UTF8AllBytePatterns)
+{
+  // Exercise all UTF-8 byte lengths: 1-byte (ASCII), 2-byte, 3-byte, 4-byte
+  // This ensures every high-bit-set lead byte (0xC0-0xF4) and continuation byte (0x80-0xBF)
+  // is exercised in the PDA symbol group lookup.
+  std::string const data = R"({"s": "A"})"  // 1-byte: U+0041
+                           "\n"
+                           R"({"s": "ñ"})"  // 2-byte: U+00F1 = 0xC3 0xB1
+                           "\n"
+                           R"({"s": "€"})"  // 3-byte: U+20AC = 0xE2 0x82 0xAC
+                           "\n"
+                           R"({"s": "𐍈"})"  // 4-byte: U+10348 = 0xF0 0x90 0x8D 0x88
+                           "\n"
+                           R"({"s": "Ω"})"  // 2-byte: U+03A9 = 0xCE 0xA9
+                           "\n"
+                           R"({"s": "한"})"  // 3-byte: U+D55C = 0xED 0x95 0x9C
+                           "\n"
+                           R"({"s": "𝄞"})"  // 4-byte: U+1D11E = 0xF0 0x9D 0x84 0x9E
+                           "\n";
+
+  cudf::io::json_reader_options const in_opts =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .lines(true);
+
+  auto const result = cudf::io::read_json(in_opts);
+
+  EXPECT_EQ(result.tbl->num_columns(), 1);
+  EXPECT_EQ(result.tbl->num_rows(), 7);
+  EXPECT_EQ(result.tbl->get_column(0).type().id(), cudf::type_id::STRING);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    result.tbl->get_column(0),
+    cudf::test::strings_column_wrapper({"A", "ñ", "€", "𐍈", "Ω", "한", "𝄞"}));
+}
+
+TEST_F(JsonReaderTest, UTF8RecoveryMode)
+{
+  // Non-ASCII input with recovery mode enabled (JSON lines with errors)
+  std::string const data = R"({"v": "café"})"
+                           "\n"
+                           R"({"v": invalid})"
+                           "\n"
+                           R"({"v": "naïve"})"
+                           "\n";
+
+  cudf::io::json_reader_options const in_opts =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .lines(true)
+      .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL);
+
+  auto const result = cudf::io::read_json(in_opts);
+
+  EXPECT_EQ(result.tbl->num_columns(), 1);
+  EXPECT_EQ(result.tbl->num_rows(), 3);
+  EXPECT_EQ(result.tbl->get_column(0).type().id(), cudf::type_id::STRING);
+
+  // The invalid line should produce a null; valid UTF-8 lines should parse correctly
+  cudf::test::strings_column_wrapper expected({"café", "", "naïve"},
+                                              cudf::test::iterators::nulls_at({1}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0), expected);
+}
+
 TEST_F(JsonReaderTest, DeviceReadAsyncThrows)
 {
   // Create simple JSON data

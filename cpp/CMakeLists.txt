@@ -1520,6 +1520,7 @@ if(CUDF_BUILD_TESTUTIL)
 endif()
 
 # * build cudf_identify_stream_usage --------------------------------------------------------------
+message(STATUS "CUDF: Build with stream testing enabled: ${CUDF_BUILD_STREAMS_TEST_UTIL}")
 if(CUDF_BUILD_STREAMS_TEST_UTIL)
   # Libraries for stream-related testing. We build the library twice, one with STREAM_MODE_TESTING
   # on and one with it set to off. Each test will then be configured to use the appropriate library

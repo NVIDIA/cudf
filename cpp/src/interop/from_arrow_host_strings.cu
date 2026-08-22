@@ -114,7 +114,7 @@ std::unique_ptr<column> from_arrow_stringview(ArrowSchemaView const* schema,
       return {data, size};
     });
 
-  cudf::detail::sync_stream(stream);
+  cudf::detail::sync_stream(stream);  // variadic_ptrs goes out of scope
   return cudf::make_strings_column(d_indices, stream, mr);
 }
 

@@ -20,6 +20,7 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
+#include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
@@ -221,8 +222,8 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
         }),
         cuda::std::plus<NodeIndexT>{});
     } else {
-      auto single_node = 1;
-      row_idx.set_element_async(1, single_node, stream);
+      auto exec_policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+      thrust::fill(exec_policy, row_idx.begin() + 1, row_idx.end(), NodeIndexT{1});
     }
 
 #ifdef CSR_DEBUG_PRINT

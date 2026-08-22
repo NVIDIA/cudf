@@ -8,14 +8,17 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 
 /**
@@ -148,6 +151,39 @@ namespace io::parquet::experimental {
 [[nodiscard]] std::unique_ptr<column> get_variant_type_id(
   column_view const& values,
   cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * `@brief` Encode a strings column of flat JSON objects as Parquet VARIANT.
+ *
+ * Each row of `@p` input must be a non-nested JSON object string (e.g. `{"a":1,"b":"hi"}`).
+ * The function extracts the scalar fields named in `@p` column_names and encodes the result
+ * as a Parquet VARIANT column: a `struct<list<uint8> metadata, list<uint8> value>`.
+ *
+ * Supported JSON value types per field:
+ *   - `null`              → VARIANT null primitive
+ *   - `true` / `false`    → VARIANT boolean primitive
+ *   - Integer literals    → VARIANT INT64 primitive
+ *   - Floating-point      → VARIANT FLOAT64 primitive
+ *   - Quoted strings      → VARIANT short-string or long-string
+ *
+ * Fields absent from a row (or whose input row is null) are omitted from that row's
+ * VARIANT object; they do not appear in the value blob.
+ *
+ * `@param` input Strings column where each non-null row is a flat JSON object
+ * `@param` column_names Field names to encode; ordering need not be sorted. At most 255 names
+ * `@param` stream CUDA stream
+ * `@param` mr Device memory resource
+ * `@return` `struct<list<uint8> metadata, list<uint8> value>` VARIANT column
+ *
+ * `@throws` std::invalid_argument if `column_names` contains more than 255 names
+ * `@throws` std::invalid_argument if `column_names` contains duplicate entries
+ * `@throws` std::invalid_argument if any name in `column_names` contains '.' or '['
+ */
+[[nodiscard]] std::unique_ptr<column> encode_strings_to_variant(
+  cudf::strings_column_view const& input,
+  cudf::host_span<std::string const> column_names,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */

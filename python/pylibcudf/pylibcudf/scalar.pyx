@@ -61,7 +61,7 @@ from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 from .column cimport Column
-from .traits cimport is_floating_point
+from .traits cimport is_fixed_point, is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
@@ -463,6 +463,8 @@ def _(
         c_dtype = dtype = DataType(type_id.INT64)
     elif is_floating_point(dtype):
         return _from_py(float(py_val), dtype, _stream, mr)
+    elif is_fixed_point(dtype):
+        return _from_py(decimal.Decimal(py_val), dtype, _stream, mr)
     else:
         c_dtype = <DataType>dtype
     cdef type_id tid = c_dtype.id()

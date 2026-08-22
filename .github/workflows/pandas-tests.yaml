@@ -22,7 +22,14 @@ permissions: {}
 
 jobs:
   pandas-tests:
-    # run the Pandas unit tests
+    # run the Pandas unit tests, sharded across runners.
+    # To change the shard count, update both places it appears: the matrix list
+    # below and the num-shards argument to run.sh, plus the argument to
+    # merge-nightly.sh in the pandas-tests-merge job.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_id: [0, 1]
     permissions:
       actions: read
       contents: read
@@ -38,6 +45,30 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-l4-latest-1"
       container_image: "rapidsai/citestwheel:26.10-latest"
-      script: ci/cudf_pandas_scripts/pandas-tests/run.sh main
+      script: "ci/cudf_pandas_scripts/pandas-tests/run.sh main ${{ matrix.shard_id }} 2"
+      file_to_upload: ./main-results.json
+      artifact-name: "pandas-test-main-results-${{ matrix.shard_id }}"
+  pandas-tests-merge:
+    # Merge the sharded results back into the single main-results.json artifact
+    # that PR runs diff against. Deliberately runs only when every shard
+    # succeeded: a partial baseline would surface as spurious "new failures" in
+    # PRs, so it is better for the nightly to have no successful run at all.
+    needs: pandas-tests
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: nightly
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "cpu8"
+      container_image: "rapidsai/citestwheel:26.10-latest"
+      script: "ci/cudf_pandas_scripts/pandas-tests/merge-nightly.sh 2"
       file_to_upload: ./main-results.json
       artifact-name: main-results.json

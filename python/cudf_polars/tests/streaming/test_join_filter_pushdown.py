@@ -11,7 +11,7 @@ import polars as pl
 
 from cudf_polars import Translator
 from cudf_polars.dsl.expr import Col
-from cudf_polars.dsl.ir import Cache, DataFrameScan, Distinct, Join, Select, Slice
+from cudf_polars.dsl.ir import Cache, DataFrameScan, Distinct, Join, Scan, Select, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.column_domain import ColumnRef
 from cudf_polars.engine.options import StreamingOptions
@@ -36,6 +36,7 @@ from cudf_polars.utils.config import ConfigOptions
 
 if TYPE_CHECKING:
     import concurrent.futures
+    import pathlib
     from typing import Any
 
     from cudf_polars.dsl.ir import IR
@@ -559,6 +560,77 @@ def test_rewritten_domain_filters_other_side_instead_of_stacking(
         isinstance(semi.children[0], Join) and semi.children[0].options[0] == "Semi"
         for semi in semis
     )
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "nulls_equal", [False, True], ids=["nulls_not_equal", "nulls_equal"]
+)
+def test_reuses_existing_aggregate_domain_to_replace_detail_join(
+    nulls_equal: bool,  # noqa: FBT001
+    tmp_path: pathlib.Path,
+    engine: SPMDEngine,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+) -> None:
+    lineitem_path = tmp_path / "lineitem.parquet"
+    orders_path = tmp_path / "orders.parquet"
+    customer_path = tmp_path / "customer.parquet"
+    pl.DataFrame(
+        {
+            "l_orderkey": [1, 1, 2, 3],
+            "l_quantity": [2.0, 3.0, 7.0, 1.0],
+        }
+    ).write_parquet(lineitem_path)
+    pl.DataFrame({"o_orderkey": [1, 2, 3], "o_custkey": [10, 20, 30]}).write_parquet(
+        orders_path
+    )
+    pl.DataFrame({"c_custkey": [10, 20, 30], "c_name": ["a", "b", "c"]}).write_parquet(
+        customer_path
+    )
+
+    lineitem = pl.scan_parquet(lineitem_path)
+    orders = pl.scan_parquet(orders_path)
+    customer = pl.scan_parquet(customer_path)
+    selected_keys = (
+        lineitem.group_by("l_orderkey")
+        .agg(pl.col("l_quantity").sum().alias("sum_quantity"))
+        .filter(pl.col("sum_quantity") > 4)
+        .select("l_orderkey")
+    )
+    query = (
+        orders.join(
+            selected_keys,
+            how="semi",
+            left_on="o_orderkey",
+            right_on="l_orderkey",
+            nulls_equal=nulls_equal,
+        )
+        .join(
+            lineitem,
+            left_on="o_orderkey",
+            right_on="l_orderkey",
+            nulls_equal=nulls_equal,
+        )
+        .join(customer, left_on="o_custkey", right_on="c_custkey")
+        .group_by("c_name", "o_custkey", "o_orderkey")
+        .agg(pl.col("l_quantity").sum())
+    )
+    ir = remove_cache_nodes(Translator(query._ldf.visit(), engine).translate_ir())
+    config = ConfigOptions.from_polars_engine(engine)
+
+    optimized = optimize_join_filter_pushdown(
+        ir,
+        collect_statistics(ir, config, parquet_stats_executor),
+        config,
+    )
+
+    detail_semis = [
+        join
+        for join in find_joins(optimized, "Semi")
+        if isinstance(join.children[0], Scan)
+        and "l_quantity" in join.children[0].schema
+    ]
+    assert not detail_semis
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 

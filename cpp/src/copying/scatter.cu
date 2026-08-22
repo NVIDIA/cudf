@@ -16,7 +16,7 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/lists/list_view.hpp>
-#include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/scatter.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/structs/struct_view.hpp>
@@ -178,10 +178,10 @@ struct column_scalar_scatterer_impl<dictionary32, MapIterator> {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
+    auto const source_view = source.get().as_column_view();
     auto dict_target = dictionary::detail::add_keys(
       dictionary_column_view(target),
-      make_column_from_scalar(source.get(), 1, stream, cudf::get_current_device_resource_ref())
-        ->view(),
+      source_view.as_column_view(),
       stream,
       mr);
     auto dict_view    = dictionary_column_view(dict_target->view());

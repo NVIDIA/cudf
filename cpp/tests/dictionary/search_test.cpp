@@ -6,7 +6,11 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/dictionary/search.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 
 struct DictionarySearchTest : public cudf::test::BaseFixture {};
 
@@ -33,6 +37,20 @@ TEST_F(DictionarySearchTest, WithNulls)
 
   result = cudf::dictionary::get_index(dictionary, cudf::numeric_scalar<int64_t>(5));
   EXPECT_FALSE(result->is_valid());
+}
+
+TEST_F(DictionarySearchTest, FixedPointColumn)
+{
+  using decimal_type = numeric::decimal64;
+  auto const scale   = numeric::scale_type{-2};
+  auto const keys    = cudf::test::fixed_point_column_wrapper<int64_t>{{100, 123, 250}, scale};
+  auto const dictionary = cudf::dictionary::encode(keys);
+  auto const present    = cudf::make_fixed_point_scalar<decimal_type>(123, scale);
+  auto const missing    = cudf::make_fixed_point_scalar<decimal_type>(124, scale);
+  auto const dictionary_view = cudf::dictionary_column_view{dictionary->view()};
+
+  EXPECT_TRUE(cudf::dictionary::get_index(dictionary_view, *present)->is_valid());
+  EXPECT_FALSE(cudf::dictionary::get_index(dictionary_view, *missing)->is_valid());
 }
 
 TEST_F(DictionarySearchTest, EmptyColumn)

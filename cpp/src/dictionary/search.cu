@@ -7,7 +7,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/search.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -49,14 +49,16 @@ struct find_index_fn {
                  "search key type must match dictionary keys type",
                  std::invalid_argument);
 
-    using ScalarType = cudf::scalar_type_t<Element>;
-    auto const find_key =
-      get_scalar_device_view(static_cast<ScalarType&>(const_cast<scalar&>(key)));
-    auto keys_view  = column_device_view::create(input.keys(), stream);
-    auto const keys = keys_view->begin<Element>();
+    auto const key_view = key.as_column_view();
+    auto find_key_view  = column_device_view::create(key_view.as_column_view(), stream);
+    auto keys_view     = column_device_view::create(input.keys(), stream);
+    auto const find_key = *find_key_view;
+    auto const keys     = keys_view->begin<Element>();
 
     auto result   = std::make_unique<numeric_scalar<size_type>>(-1, true, stream, mr);
-    auto find_fn  = [find_key] __device__(auto const& k) { return k == find_key.value(); };
+    auto find_fn  = [find_key] __device__(auto const& k) {
+      return k == find_key.element<Element>(0);
+    };
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));

@@ -117,12 +117,9 @@ std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
                cudf::data_type_error);
 
   // first add the replacement to the keys so only the indices need to be processed
+  auto const replacement_view = replacement.as_column_view();
   auto input_matched = dictionary::detail::add_keys(
-    input,
-    make_column_from_scalar(replacement, 1, stream, cudf::get_current_device_resource_ref())
-      ->view(),
-    stream,
-    mr);
+    input, replacement_view.as_column_view(), stream, mr);
   auto const input_view = dictionary_column_view(input_matched->view());
   auto const scalar_index =
     get_index(input_view, replacement, stream, cudf::get_current_device_resource_ref());

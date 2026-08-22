@@ -4,7 +4,6 @@
  */
 
 #include <cudf/column/column.hpp>
-#include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy_range.cuh>
 #include <cudf/detail/fill.hpp>
 #include <cudf/detail/null_mask.hpp>
@@ -155,10 +154,9 @@ std::unique_ptr<cudf::column> out_of_place_fill_range_dispatch::operator()<cudf:
   }
 
   // add the scalar to get the output dictionary key-set
-  auto scalar_column =
-    cudf::make_column_from_scalar(value, 1, stream, cudf::get_current_device_resource_ref());
-  auto target_matched =
-    cudf::dictionary::detail::add_keys(target, scalar_column->view(), stream, mr);
+  auto const value_view = value.as_column_view();
+  auto target_matched   = cudf::dictionary::detail::add_keys(
+    target, value_view.as_column_view(), stream, mr);
   cudf::column_view const target_indices =
     cudf::dictionary_column_view(target_matched->view()).get_indices_annotated();
 

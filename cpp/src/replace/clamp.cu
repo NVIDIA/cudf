@@ -129,12 +129,9 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
     std::unique_ptr<column> result = nullptr;
     auto add_scalar_key            = [&](scalar const& key, scalar const& key_replace) {
       if (key.is_valid(stream)) {
+        auto const key_replace_view = key_replace.as_column_view();
         result = dictionary::detail::add_keys(
-          matched_view,
-          make_column_from_scalar(key_replace, 1, stream, cudf::get_current_device_resource_ref())
-            ->view(),
-          stream,
-          mr);
+          matched_view, key_replace_view.as_column_view(), stream, mr);
         matched_view = dictionary_column_view(result->view());
       }
     };

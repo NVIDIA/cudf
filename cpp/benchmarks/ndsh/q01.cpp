@@ -6,6 +6,7 @@
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -95,8 +96,10 @@
     disc_price, one_plus_tax->view(), cudf::binary_operator::MUL, tax.type(), stream, mr);
 }
 
-void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
+void run_ndsh_q1(cudf::io::source_info const& source)
 {
+  auto const query_execution_range = cudf::benchmark::scoped_range{"query_execution"};
+
   // Define the column projections and filter predicate for `lineitem` table
   std::vector<std::string> const lineitem_cols = {"l_returnflag",
                                                   "l_linestatus",
@@ -165,7 +168,7 @@ void ndsh_q1(nvbench::state& state)
     state.skip("Only scale_factor=1 supported with filename input");
     return;
   }
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   auto source = [&] {
     if (filename.empty()) {
       generate_parquet_data_sources(scale_factor, {"lineitem"}, sources);
@@ -177,7 +180,7 @@ void ndsh_q1(nvbench::state& state)
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) { run_ndsh_q1(state, source); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) { run_ndsh_q1(source); });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

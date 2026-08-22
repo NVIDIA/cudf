@@ -155,7 +155,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
 
   // Generate the `s` col
   auto s_empty = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows, cudf::mask_state::UNALLOCATED, stream);
+    cudf::data_type{cudf::type_id::INT32}, num_rows, cudf::mask_state::UNALLOCATED, stream, mr);
 
   auto s = cudf::fill(s_empty->view(),
                       0,
@@ -227,7 +227,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
 
   // Generate the `s` col
   auto s_empty = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows, cudf::mask_state::UNALLOCATED, stream);
+    cudf::data_type{cudf::type_id::INT32}, num_rows, cudf::mask_state::UNALLOCATED, stream, mr);
 
   auto s = cudf::fill(s_empty->view(),
                       0,

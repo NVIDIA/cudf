@@ -240,6 +240,7 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
   auto const header = meta[0];
   int const version = header & 0x0F;
   if (version != variant_version_v1) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
+  bool const is_sorted  = (header >> 4) & 0x01;
   int const offset_size = ((header >> 6) & 0x03) + 1;
 
   size_type pos          = 1;
@@ -253,26 +254,62 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
     return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
   }
 
-  auto start_off = read_uint64(meta, offsets_start, offset_size);
-  // Parquet VARIANT spec requires offsets[0] == 0; any other value is malformed.
-  if (!start_off.has_value() || start_off.value() != 0) {
-    return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
-  }
-  auto const strings_base   = offsets_start + static_cast<size_type>(offsets_bytes);
+  auto const strings_base = offsets_start + static_cast<size_type>(offsets_bytes);
+  // Bytes available for dictionary string payloads
   auto const strings_extent = meta_len - strings_base;
-  // Read the terminal offset offsets[num_entries] before scanning entries. An early key match
-  // must be bounded by this declared extent, not the physical buffer, so validate it upfront.
-  auto const terminal_off_pos =
-    offsets_start + static_cast<uint64_t>(num_entries.value()) * offset_size;
-  auto const terminal_off = read_uint64(meta, terminal_off_pos, offset_size);
-  if (!terminal_off.has_value() || cuda::std::cmp_greater(terminal_off.value(), strings_extent)) {
+
+  // The trailing offset (entry `num_entries`) declares the total size of the string data region.
+  // Validate it against the physically available bytes up front, rather than only implicitly when
+  // the scan happens to reach the last entry -- otherwise a match on an earlier key could return
+  // success despite the dictionary being malformed.
+  auto const terminal_off =
+    read_uint64(meta, offsets_start + num_entries.value() * offset_size, offset_size);
+  if (!terminal_off.has_value() || terminal_off.value() != static_cast<uint64_t>(strings_extent)) {
     return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
   }
-  auto const strings_declared = static_cast<size_type>(terminal_off.value());
+
+  // Helper: read the string for entry i without bounds-checking strings_extent
+  // (callers must validate). Returns nullopt on a bad offset read.
+  auto read_entry = [&](size_type i) -> cuda::std::optional<cudf::string_view> {
+    auto const s = read_uint64(meta, offsets_start + i * offset_size, offset_size);
+    auto const e = read_uint64(meta, offsets_start + (i + 1) * offset_size, offset_size);
+    if (!s.has_value() || !e.has_value()) { return cuda::std::nullopt; }
+    if (e.value() < s.value() || cuda::std::cmp_greater(e.value(), strings_extent)) {
+      return cuda::std::nullopt;
+    }
+    return cudf::string_view{reinterpret_cast<char const*>(meta.data() + strings_base + s.value()),
+                             static_cast<size_type>(e.value() - s.value())};
+  };
+
+  // Not using thrust::lower_bound since it does not propagate entry read failures
+  if (is_sorted) {
+    size_type lo = 0;
+    size_type hi = num_entries.value();
+    while (lo < hi) {
+      size_type const mid = lo + (hi - lo) / 2;
+      auto const entry    = read_entry(mid);
+      if (!entry.has_value()) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
+      auto const cmp = entry.value().compare(key);
+      if (cmp == 0) { return {mid, op_status::SUCCESS}; }
+      if (cmp < 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return {cuda::std::nullopt, op_status::MISSING_PATH};
+  }
+
+  // Linear scan: each offset is read once and carried forward as the next entry's start, rather
+  // than re-reading offsets[i] twice (once as offsets[i-1]'s end, once as offsets[i]'s start) via
+  // read_entry().
+  auto start_off = read_uint64(meta, offsets_start, offset_size);
+  if (!start_off.has_value()) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
   for (size_type i = 0; i < num_entries.value(); ++i) {
     auto const end_off = read_uint64(meta, offsets_start + (i + 1) * offset_size, offset_size);
     if (!end_off.has_value()) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
-    if (end_off.value() < start_off.value() || end_off.value() > strings_declared) {
+    if (end_off.value() < start_off.value() ||
+        cuda::std::cmp_greater(end_off.value(), strings_extent)) {
       return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
     }
     cudf::string_view const entry{

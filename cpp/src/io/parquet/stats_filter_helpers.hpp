@@ -333,9 +333,13 @@ class stats_columns_collector : public ast::detail::expression_transformer {
 
   /**
    * @brief Return a boolean vector indicating input columns that can participate in stats based
-   * filtering
+   * filtering, and whether the stats table needs a per-column nullability column
    *
-   * @return Boolean vector indicating input columns that can participate in stats based filtering
+   * The nullability column is needed by an `IS_NULL` operator, which is answered from it alone, and
+   * by any comparison against a literal, which uses it to rule out a chunk of nothing but nulls.
+   *
+   * @return Boolean vector indicating input columns that can participate in stats based filtering,
+   * and whether the nullability column is needed
    */
   std::pair<thrust::host_vector<bool>, bool> get_stats_columns_mask() &&;
 
@@ -383,6 +387,24 @@ class stats_expression_converter : public stats_columns_collector {
   thrust::host_vector<bool> get_stats_columns_mask() && = delete;
 
  private:
+  /**
+   * @brief Push `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
+   * nulls fails a predicate that needs a non-null value to match
+   *
+   * A writer has no non-null value to compute min and max from for such a chunk, so it omits them
+   * and every min/max comparison evaluates to null, which keeps the chunk. The nullability
+   * statistic is decisive where min and max are absent: despite being built as `is_null`, it is
+   * true only when *every* value in the chunk is null, false when none are, and null when only some
+   * are or when the writer recorded no null count. Reading three states out of that column takes
+   * more than a `NOT`, since the null state answers "not entirely null" with a definite yes.
+   *
+   * Does nothing when the nullability column was not built, leaving `stats_expr` as the result.
+   *
+   * @param col_index Index of the column in the input table
+   * @param stats_expr Statistics expression to guard, already pushed onto the tree
+   */
+  void push_non_null_guard(size_type col_index, ast::expression const& stats_expr);
+
   ast::tree _stats_expr;
   cudf::size_type _stats_cols_per_column;
   std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;

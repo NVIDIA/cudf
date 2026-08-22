@@ -277,13 +277,13 @@ struct page_stats_caster : public stats_caster_base {
 
   /**
    * @brief Computes host side data including page row offsets, column chunk page offsets, and host
-   * columns containing page-level min, max and (optional) is_null statistics for a column
+   * columns containing page-level min, max and (optional) all-null statistics for a column
    *
    * @param schema_idx Column schema index
    * @param dtype Column data type
    * @param stream CUDA stream
    * @return A tuple of page row offsets, column chunk page offsets, and host columns containing
-   * page-level min, max and (optional) is_null statistics
+   * page-level min, max and (optional) all-null statistics
    */
   template <typename T>
   [[nodiscard]] auto compute_host_data(cudf::size_type schema_idx,
@@ -300,11 +300,13 @@ struct page_stats_caster : public stats_caster_base {
 
     auto const total_pages = col_chunk_page_offsets.back();
 
-    // Create host columns with page-level min, max and optionally is_null statistics
+    // Create host columns with page-level min, max and optionally all-null statistics. The
+    // all-null column is true only when every value in the page is null, false when none are, and
+    // null when only some are, which is what lets it answer both IS_NULL and IS NOT NULL.
     host_column<T> min(total_pages, stream);
     host_column<T> max(total_pages, stream);
-    std::optional<host_column<bool>> is_null;
-    if (has_is_null_operator) { is_null = host_column<bool>(total_pages, stream); }
+    std::optional<host_column<bool>> all_null;
+    if (has_is_null_operator) { all_null = host_column<bool>(total_pages, stream); }
 
     // Compute timestamp scale factor for precision conversion
     auto const ts_scale = [&] {
@@ -353,22 +355,24 @@ struct page_stats_caster : public stats_caster_base {
               if (has_is_null_operator) {
                 // Check if the page is completely null
                 if (column_index.null_pages[page_idx]) {
-                  is_null->val[column_page_idx] = true;
+                  all_null->val[column_page_idx] = true;
                   return;
                 }
                 // Check if the page doesn't have a null count
                 if (not column_index.null_counts.has_value()) {
-                  is_null->set_index(column_page_idx, std::nullopt, {});
+                  all_null->set_index(column_page_idx, std::nullopt, {});
                   return;
                 }
                 // Use the null count to determine if the page is completely null
                 auto const page_row_count =
                   page_row_offsets[column_page_idx + 1] - page_row_offsets[column_page_idx];
                 auto const& null_count = column_index.null_counts.value()[page_idx];
-                if (null_count == page_row_count) {
-                  is_null->val[column_page_idx] = false;
-                } else if (null_count > 0 and null_count < page_row_count) {
-                  is_null->set_index(column_page_idx, std::nullopt, {});
+                if (null_count == 0) {
+                  all_null->val[column_page_idx] = false;
+                } else if (null_count < page_row_count) {
+                  all_null->set_index(column_page_idx, std::nullopt, {});
+                } else if (null_count == page_row_count) {
+                  all_null->val[column_page_idx] = true;
                 } else {
                   CUDF_FAIL("Invalid null count");
                 }
@@ -381,7 +385,7 @@ struct page_stats_caster : public stats_caster_base {
                       std::move(col_chunk_page_offsets),
                       std::move(min),
                       std::move(max),
-                      std::move(is_null)};
+                      std::move(all_null)};
   }
 
   /**

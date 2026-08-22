@@ -621,6 +621,7 @@ template <typename RowIndexIter>
 struct get_page_span {
   device_span<size_type const> page_offsets;
   device_span<ColumnChunkDesc const> chunks;
+  device_span<PageInfo const> pages;
   RowIndexIter page_row_index;
   size_t const start_row;
   size_t const end_row;
@@ -629,6 +630,7 @@ struct get_page_span {
 
   get_page_span(device_span<size_type const> _page_offsets,
                 device_span<ColumnChunkDesc const> _chunks,
+                device_span<PageInfo const> _pages,
                 RowIndexIter _page_row_index,
                 size_t _start_row,
                 size_t _end_row,
@@ -636,6 +638,7 @@ struct get_page_span {
                 bool _has_offset_index)
     : page_offsets(_page_offsets),
       chunks(_chunks),
+      pages(_pages),
       page_row_index(_page_row_index),
       start_row(_start_row),
       end_row(_end_row),
@@ -665,12 +668,26 @@ struct get_page_span {
       start_page++;
     }
 
-    auto end_page =
+    auto const first_page_with_end_row =
       cuda::std::distance(
         column_page_start,
         thrust::lower_bound(thrust::seq, column_page_start, column_page_end, end_row)) +
       first_page_index;
-    if (end_page < (first_page_index + num_pages)) { end_page++; }
+
+    // Pages following first_page_with_end_row that hold no rows of their own have to be read too:
+    // all of their values continue a row that began in an earlier page. They share that page's end
+    // row index, so a search by row cannot reach them, and at the end of a pass no later subpass is
+    // left to read them, which would lose their values.
+    auto const column_end_page = first_page_index + num_pages;
+    auto last_page_to_read     = first_page_with_end_row;
+    while ((last_page_to_read + 1) < column_end_page and
+           pages[static_cast<size_t>(last_page_to_read + 1)].num_rows == 0) {
+      last_page_to_read++;
+    }
+
+    // The returned span is exclusive, so it ends one past the last page to read.
+    auto const end_page =
+      (last_page_to_read < column_end_page) ? (last_page_to_read + 1) : last_page_to_read;
 
     return {static_cast<size_t>(start_page), static_cast<size_t>(end_page)};
   }

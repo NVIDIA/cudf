@@ -1394,6 +1394,100 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
   EXPECT_LT(one_col_chunks, all_cols_chunks);
 }
 
+// A row whose list is long enough to span several data pages produces continuation pages that
+// contain no new rows, and those pages share the end row index of the page that started the row.
+// When selecting the pages for a subpass, only the first page with that end row index was picked
+// up, so the trailing continuation pages were dropped. At the end of a pass there is no later
+// subpass to read them, so their values were lost: the two children of a map column ended up with
+// different row counts ("Child columns must have the same number of rows as the Struct column"),
+// while a list<string> column silently produced truncated rows.
+//
+// This only happens when an input (pass) read limit is set, which is what makes the reader choose
+// pages by row range instead of taking every page in the pass.
+TEST_F(ParquetChunkedReaderInputLimitTest, ListSpanningPagesAtPassEnd)
+{
+  auto constexpr num_rows   = 1'000;
+  auto constexpr small_size = 2;
+  auto constexpr giant_size = 20'000;
+
+  // The last row is giant so that its continuation pages sit at the end of the pass. The middle
+  // row covers the case where a later subpass exists.
+  std::vector<cudf::size_type> list_sizes(num_rows, small_size);
+  list_sizes[num_rows / 2] = giant_size;
+  list_sizes[num_rows - 1] = giant_size;
+
+  std::vector<cudf::size_type> offsets(num_rows + 1, 0);
+  for (int i = 0; i < num_rows; ++i) {
+    offsets[i + 1] = offsets[i] + list_sizes[i];
+  }
+  auto const num_children = offsets.back();
+
+  // Distinct strings so the writer uses PLAIN instead of dictionary encoding.
+  std::vector<std::string> keys(num_children);
+  std::vector<std::string> values(num_children);
+  for (cudf::size_type i = 0; i < num_children; ++i) {
+    keys[i]   = "key_" + std::to_string(i);
+    values[i] = "value_" + std::to_string(i);
+  }
+
+  // Nulls in the values only, so that the two leaves of the map have different maximum definition
+  // levels as they do in the file from the bug report.
+  auto const value_valid = std::views::iota(cudf::size_type{0}) |
+                           std::views::transform([](cudf::size_type i) { return i % 7 != 0; });
+
+  auto const make_offsets = [&] { return int32s_col(offsets.begin(), offsets.end()).release(); };
+
+  // array<string>
+  auto list_of_string = cudf::make_lists_column(num_rows,
+                                                make_offsets(),
+                                                strings_col(keys.begin(), keys.end()).release(),
+                                                0,
+                                                rmm::device_buffer{});
+
+  // map<string, string>, modeled as list<struct<string, string>>
+  std::vector<std::unique_ptr<cudf::column>> key_value;
+  key_value.emplace_back(strings_col(keys.begin(), keys.end()).release());
+  key_value.emplace_back(strings_col(values.begin(), values.end(), value_valid.begin()).release());
+  auto list_of_struct = cudf::make_lists_column(
+    num_rows, make_offsets(), structs_col{std::move(key_value)}.release(), 0, rmm::device_buffer{});
+
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  cols.emplace_back(std::move(list_of_string));
+  cols.emplace_back(std::move(list_of_struct));
+  auto const expected = std::make_unique<cudf::table>(std::move(cols));
+
+  // The input limit path is only taken for compressed data, and the pages have to be small for the
+  // giant rows to span them.
+  auto const write = [&](std::string const& filename, cudf::io::compression_type compression) {
+    auto const filepath = temp_env->get_temp_filepath(filename);
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected->view())
+        .compression(compression)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .write_v2_headers(false)
+        .max_page_size_bytes(4 * 1024)
+        .max_page_size_rows(128)
+        .build());
+    return filepath;
+  };
+
+  auto const filepaths = std::vector<std::string>{
+    write("list_spanning_pages_snappy.parquet", cudf::io::compression_type::SNAPPY),
+    write("list_spanning_pages_zstd.parquet", cudf::io::compression_type::ZSTD)};
+
+  for (auto const& filepath : filepaths) {
+    for (auto const input_limit : {std::size_t{1},
+                                   std::size_t{64 * 1024},
+                                   std::size_t{1024 * 1024},
+                                   std::size_t{8 * 1024 * 1024}}) {
+      for (auto const output_limit : {std::size_t{0}, std::size_t{100'000}}) {
+        auto const [result, num_chunks] = chunked_read(filepath, output_limit, input_limit);
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), *result);
+      }
+    }
+  }
+}
+
 namespace {
 struct offset_gen {
   int const group_size;

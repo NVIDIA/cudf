@@ -46,7 +46,7 @@ enum class mask_type : bool {
 };
 
 /**
- * @copydoc cudf::apply_boolean_mask
+ * @copydoc cudf::apply_retention_mask
  *
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
  */

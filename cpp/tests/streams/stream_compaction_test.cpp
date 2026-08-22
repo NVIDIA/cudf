@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -365,7 +365,7 @@ TEST_F(StreamCompactionTest, ApplyBooleanMask)
   cudf::table_view input({col});
   auto const col_expected = int32s_col{9526, 9347, 9569, 9807, 9279, 9691};
   cudf::table_view expected({col_expected});
-  auto const result = cudf::apply_boolean_mask(input, mask, cudf::test::get_default_stream());
+  auto const result = cudf::apply_retention_mask(input, mask, cudf::test::get_default_stream());
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, *result);
 }
 

@@ -14,7 +14,7 @@ namespace cudf {
 namespace lists::detail {
 
 /**
- * @copydoc cudf::lists::apply_boolean_mask
+ * @copydoc cudf::lists::apply_retention_mask
  *
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
  */

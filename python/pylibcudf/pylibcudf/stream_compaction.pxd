@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.libcudf.stream_compaction cimport duplicate_keep_option
@@ -35,6 +35,13 @@ cpdef Table apply_boolean_mask(
     Column boolean_mask,
     object stream = *,
     DeviceMemoryResource mr = *,
+)
+
+cpdef Table apply_retention_mask(
+  Table source_table,
+  Column retention_mask,
+  object stream = *,
+  DeviceMemoryResource mr = *,
 )
 
 cpdef Table apply_deletion_mask(

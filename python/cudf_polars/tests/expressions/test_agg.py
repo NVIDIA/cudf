@@ -332,12 +332,10 @@ def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
 @pytest.mark.parametrize(
     "expr",
     [
-        pl.col("a").entropy(),
         pl.col("a").skew(),
         pl.col("a").kurtosis(),
     ],
     ids=[
-        "entropy",
         "skew",
         "kurtosis",
     ],

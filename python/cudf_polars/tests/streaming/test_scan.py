@@ -105,7 +105,7 @@ def test_scan_parquet_prefetch_file_metadata(
     streaming_engine = streaming_engine_factory(
         StreamingOptions(
             target_partition_size=target_partition_size,
-            parquet_options={"prefetch_file_metadata": True},
+            parquet_options={"prefetch_file_metadata": "always"},
         ),
     )
     make_partitioned_source(df, tmp_path, "parquet", n_files=n_files)
@@ -114,7 +114,7 @@ def test_scan_parquet_prefetch_file_metadata(
 
 def test_prefetch_file_metadata_non_parquet_scan(df, streaming_engine_factory) -> None:
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(parquet_options={"prefetch_file_metadata": "always"}),
     )
     assert_gpu_result_equal(df.lazy().select("x"), engine=streaming_engine)
 
@@ -153,7 +153,7 @@ def test_prefetch_file_metadata_select_fast_count(
     tmp_path: Path,
 ) -> None:
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(parquet_options={"prefetch_file_metadata": "always"}),
     )
     source = tmp_path / "data.parquet"
     df.write_parquet(source)
@@ -373,7 +373,8 @@ def test_streaming_scan_raises() -> None:
 def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
-        ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
+        ["file.parquet"],
+        parquet_options=ParquetOptions(prefetch_file_metadata="always"),
     )
     ctx = IRExecutionContext()
 
@@ -401,7 +402,8 @@ def test_scan_path_mismatch_raises() -> None:
 def test_streaming_scan_missing_prefetch_metadata_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
-        ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
+        ["file.parquet"],
+        parquet_options=ParquetOptions(prefetch_file_metadata="always"),
     )
     fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, [])
 
@@ -412,7 +414,7 @@ def test_streaming_scan_missing_prefetch_metadata_raises() -> None:
 
 def test_split_scan_do_evaluate_missing_prefetch_metadata() -> None:
     paths = ["/some/missing/file.parquet"]
-    parquet_options = ParquetOptions(prefetch_file_metadata=True)
+    parquet_options = ParquetOptions(prefetch_file_metadata="always")
     context = IRExecutionContext()
     schema = {"x": DataType(pl.Int64())}
 
@@ -448,7 +450,7 @@ def test_prefetch_file_metadata_join(
     pl.DataFrame({"k": [1, 2, 3], "b": [7, 8, 9]}).write_parquet(p2)
 
     engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(parquet_options={"prefetch_file_metadata": "always"}),
     )
 
     q = pl.scan_parquet(p1).join(pl.scan_parquet(p2), on="k")
@@ -483,7 +485,7 @@ def test_prefetch_file_metadata_with_cached_scan_parent_nodes(
     ).write_parquet(source)
 
     engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(parquet_options={"prefetch_file_metadata": "always"}),
     )
 
     cached_scan = pl.scan_parquet(source).cache()

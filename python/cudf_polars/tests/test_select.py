@@ -182,7 +182,7 @@ def test_get_parquet_row_count_from_metadata_no_cache_falls_back(tmp_path) -> No
     # rather than raising.
     source = tmp_path / "data.parquet"
     pl.DataFrame({"a": range(5)}).write_parquet(source)
-    parquet_options = ParquetOptions(prefetch_file_metadata=True)
+    parquet_options = ParquetOptions(prefetch_file_metadata="always")
 
     row_count = Scan._get_parquet_row_count_from_metadata(
         [str(source)],
@@ -196,7 +196,7 @@ def test_get_parquet_row_count_from_metadata_no_cache_falls_back(tmp_path) -> No
 
 def test_get_parquet_row_count_from_metadata_path_mismatch_raises() -> None:
     paths = ["/some/missing/file.parquet"]
-    parquet_options = ParquetOptions(prefetch_file_metadata=True)
+    parquet_options = ParquetOptions(prefetch_file_metadata="always")
 
     with pytest.raises(
         AssertionError,

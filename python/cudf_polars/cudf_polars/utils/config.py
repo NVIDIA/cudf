@@ -70,11 +70,9 @@ class Unspecified:
     Sentinel value meaning "no value was explicitly provided".
 
     The singleton instance :data:`UNSPECIFIED` is used as the default for every
-    :class:`StreamingOptions` field, as well as for
-    ``ParquetOptions.prefetch_file_metadata``. When a field is still
-    ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
-    matching environment variable was provided), the consuming component decides
-    on the semantics.
+    :class:`StreamingOptions` field. When a field is still ``UNSPECIFIED`` after
+    construction (i.e. neither an explicit value nor a matching environment
+    variable was provided), the consuming component decides on the semantics.
     """
 
     _instance: Unspecified | None = None
@@ -91,8 +89,7 @@ class Unspecified:
 
 
 UNSPECIFIED = Unspecified()
-"""Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
-``ParquetOptions.prefetch_file_metadata``.
+"""Singleton sentinel for all :class:`StreamingOptions` fields.
 
 A field set to ``UNSPECIFIED`` after construction means no explicit value and no
 matching environment variable was found; the consuming component decides on the
@@ -221,6 +218,24 @@ def _bool_converter(v: str) -> bool:
         raise ValueError(f"Invalid boolean value: '{v}'")
 
 
+PrefetchFileMetadata = Literal["remote_only", "always", "never"]
+
+
+def _prefetch_file_metadata_converter(v: str) -> PrefetchFileMetadata:
+    lowered = v.lower()
+    if lowered in {"remote_only", "always", "never"}:
+        return lowered  # type: ignore[return-value]
+    try:
+        # Also accept boolean-style values, for parity with other options:
+        # true/1 means "always", false/0 means "never".
+        return "always" if _bool_converter(v) else "never"
+    except ValueError:
+        raise ValueError(
+            f"Invalid value for prefetch_file_metadata: '{v}'. "
+            "Must be one of 'remote_only', 'always', 'never'."
+        ) from None
+
+
 def _quent_context_converter(v: str) -> QuentContext | None:
     from cudf_polars.quent._context import QuentContext
 
@@ -271,10 +286,14 @@ class ParquetOptions:
         will also be skipped if ``max_footer_samples`` is 0.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
-        `parquet_metadatas` to avoid rereading file footers. Not supported
-        by the in-memory executor, where it defaults to disabled. For the
-        streaming executor, it defaults to being enabled for remote URIs
-        (e.g. ``s3://``) only; pass ``True`` to also prefetch local files.
+        `parquet_metadatas` to avoid rereading file footers. One of
+        ``"remote_only"``, ``"always"``, or ``"never"``. ``"remote_only"``
+        (the default) prefetches remote URIs (e.g. ``s3://``) only, and only
+        for the streaming executor. ``"always"`` prefetches local files too.
+        ``"never"`` disables prefetching. ``"always"`` is not supported by
+        the in-memory executor. The environment variable also accepts
+        boolean-style values (``"1"``/``"0"``, ``"true"``/``"false"``, etc.),
+        which map to ``"always"``/``"never"`` respectively.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
@@ -314,11 +333,11 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    prefetch_file_metadata: bool | Unspecified = dataclasses.field(
+    prefetch_file_metadata: PrefetchFileMetadata = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__PREFETCH_FILE_METADATA",
-            _bool_converter,
-            default=UNSPECIFIED,
+            _prefetch_file_metadata_converter,
+            default="remote_only",
         )
     )
     use_jit_filter: bool = dataclasses.field(
@@ -342,8 +361,10 @@ class ParquetOptions:
             raise TypeError("max_footer_samples must be an int")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
-            raise TypeError("prefetch_file_metadata must be a bool when specified")
+        if self.prefetch_file_metadata not in {"remote_only", "always", "never"}:
+            raise TypeError(
+                "prefetch_file_metadata must be one of 'remote_only', 'always', 'never'"
+            )
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -1002,27 +1023,6 @@ class ConfigOptions(Generic[ExecutorType]):
     device: int | None = None
     memory_resource_config: MemoryResourceConfig | None = None
 
-    @staticmethod
-    def dict_factory(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        """
-        ``dict_factory`` for :func:`dataclasses.asdict`.
-
-        Converts any :data:`UNSPECIFIED` value to ``None``
-        (e.g. ParquetOptions.prefetch_file_metadata) so the resulting
-        dict can be serialized with :func:`json.dumps`.
-
-        Parameters
-        ----------
-        items
-            The ``(key, value)`` pairs for a single dataclass level, as passed
-            by :func:`dataclasses.asdict`.
-
-        Returns
-        -------
-        A dict with :data:`UNSPECIFIED` values replaced by ``None``.
-        """
-        return {k: (None if isinstance(v, Unspecified) else v) for k, v in items}
-
     def drop_unserializable(self) -> ConfigOptions[ExecutorType]:
         """
         Return a copy safe to pickle to a worker/actor.
@@ -1064,7 +1064,9 @@ class ConfigOptions(Generic[ExecutorType]):
 
         # Engine-dependent default: only prefetch for the streaming executor.
         # Skipped if the user or the environment has already set a value.
-        prefetch_default = UNSPECIFIED if user_executor == "streaming" else False
+        prefetch_default: PrefetchFileMetadata = (
+            "remote_only" if user_executor == "streaming" else "never"
+        )
         prefetch_env_set = (
             os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
             is not None
@@ -1080,7 +1082,7 @@ class ConfigOptions(Generic[ExecutorType]):
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
             if (
-                isinstance(user_parquet_options.prefetch_file_metadata, Unspecified)
+                user_parquet_options.prefetch_file_metadata == "remote_only"
                 and not prefetch_env_set
             ):
                 user_parquet_options = dataclasses.replace(
@@ -1115,7 +1117,7 @@ class ConfigOptions(Generic[ExecutorType]):
         match user_executor:
             case "in-memory":
                 executor = InMemoryExecutor(**user_executor_options)
-                if parquet_options.prefetch_file_metadata is True:
+                if parquet_options.prefetch_file_metadata == "always":
                     raise NotImplementedError(
                         "Prefetching is not supported for the in-memory executor."
                     )

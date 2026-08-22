@@ -277,7 +277,7 @@ conditional_join(table_view const& left,
   // by any row in the left table.
   if (join_type == join_kind::FULL_JOIN) {
     join_indices = detail::finalize_full_join(
-      std::move(join_indices), left.num_rows(), right.num_rows(), stream, mr);
+      std::move(join_indices), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
   }
   return join_indices;
 }

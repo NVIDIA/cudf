@@ -32,6 +32,7 @@
 #include <jit/util.hpp>
 
 #include <algorithm>
+#include <array>
 #include <numeric>
 #include <span>
 #include <variant>
@@ -1161,8 +1162,9 @@ std::unique_ptr<column> compute_column_jit(table_view const& table,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
-  auto args = detail::row_ir::ast_converter::compute_column(
-    detail::row_ir::target::CUDA, expr, table, {}, "compute_operation", stream, mr);
+  std::array<std::reference_wrapper<ast::expression const>, 1> expressions{expr};
+  auto args = detail::row_ir::ast_converter::compute_table(
+    detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
   auto result = transform(args.udf,
                           args.source_type,
                           args.is_null_aware,
@@ -1175,6 +1177,26 @@ std::unique_ptr<column> compute_column_jit(table_view const& table,
                           mr);
   auto cols   = result->release();
   return std::move(cols[0]);
+}
+
+std::unique_ptr<table> compute_table_jit(
+  table_view const& table,
+  std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto args = detail::row_ir::ast_converter::compute_table(
+    detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
+  return transform(args.udf,
+                   args.source_type,
+                   args.is_null_aware,
+                   args.user_data,
+                   args.inputs,
+                   args.outputs,
+                   std::move(args.string_offsets),
+                   args.row_size,
+                   stream,
+                   mr);
 }
 
 // if we have a matching pre-compiled kernel fragment for the given transform configuration, return

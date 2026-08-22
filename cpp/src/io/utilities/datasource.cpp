@@ -200,7 +200,7 @@ class device_buffer_source final : public datasource {
   size_t host_read(size_t offset, size_t size, uint8_t* dst) override
   {
     auto const count  = std::min(size, this->size() - offset);
-    auto const stream = cudf::detail::global_cuda_stream_pool().get_stream();
+    auto const stream = cudf::detail::current_cuda_stream_pool().get_stream();
     cudf::detail::cuda_memcpy(host_span<uint8_t>{dst, count},
                               device_span<uint8_t const>{
                                 reinterpret_cast<uint8_t const*>(_d_buffer.data() + offset), count},
@@ -211,10 +211,10 @@ class device_buffer_source final : public datasource {
   std::unique_ptr<buffer> host_read(size_t offset, size_t size) override
   {
     auto const count  = std::min(size, this->size() - offset);
-    auto const stream = cudf::detail::global_cuda_stream_pool().get_stream();
+    auto const stream = cudf::detail::current_cuda_stream_pool().get_stream();
     auto h_data       = cudf::detail::make_host_vector_async(
       cudf::device_span<std::byte const>{_d_buffer.data() + offset, count}, stream);
-    stream.synchronize();
+    stream.sync();
     return std::make_unique<owning_buffer<cudf::detail::host_vector<std::byte>>>(std::move(h_data));
   }
 

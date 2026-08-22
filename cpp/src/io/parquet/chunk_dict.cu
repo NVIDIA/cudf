@@ -31,7 +31,7 @@ namespace {
 constexpr size_type MAX_FRAGMENTS_PER_CHUNK = 1024;
 
 /// Default block size for kernel launches
-constexpr int DEFAULT_BLOCK_SIZE = 256;
+constexpr int DEFAULT_BLOCK_SIZE = dict_encode_block_size;
 
 /**
  * @brief Functor for checking equality of two keys.
@@ -97,6 +97,7 @@ struct map_insert_fn {
       auto const t                       = threadIdx.x;
       auto const col                     = chunk->col_desc;
       column_device_view const& data_col = *col->leaf_column;
+      auto const dict_entry_limit        = chunk->dict_entry_limit;
       __shared__ size_type total_num_dict_entries;
       __shared__ size_type num_dict_vals;
       if (t == 0) { num_dict_vals = 0; };
@@ -119,9 +120,11 @@ struct map_insert_fn {
       // Create a map ref with `cuco::insert` operator
       auto map_insert_ref = hash_map_ref.rebind_operators(cuco::insert);
 
-      // Create atomic refs to the current chunk's num_dict_entries and uniq_data_size
-      cuda::atomic_ref<size_type, SCOPE> const chunk_num_dict_entries{chunk->num_dict_entries};
-      cuda::atomic_ref<size_type, SCOPE> const chunk_uniq_data_size{chunk->uniq_data_size};
+      // Atomic refs to the current chunk's num_dict_entries and uniq_data_size
+      cuda::atomic_ref<size_type, cuda::thread_scope_device> const chunk_num_dict_entries{
+        chunk->num_dict_entries};
+      cuda::atomic_ref<size_type, cuda::thread_scope_device> const chunk_uniq_data_size{
+        chunk->uniq_data_size};
 
       // Note: Adjust the following loop to use `cg::tile<map_cg_size>` if needed in the future.
       for (size_type val_idx = start_value_idx + t; val_idx - t < end_value_idx;
@@ -186,8 +189,9 @@ struct map_insert_fn {
         }
         __syncthreads();
 
-        // Check if the num unique values in chunk has already exceeded max dict size and early exit
-        if (total_num_dict_entries > MAX_DICT_SIZE) { break; }
+        // Check if the num unique values in chunk has already exceeded the number of entries this
+        // chunk could possibly use and early exit
+        if (total_num_dict_entries > dict_entry_limit) { break; }
       }  // for loop
       // Flush the number of unique values inserted by this fragment
       if (t == 0) { frag->num_dict_vals = num_dict_vals; };
@@ -481,8 +485,8 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cuda::stream_ref stream)
 {
   dim3 const dim_grid(frags.size().second, frags.size().first);
-  populate_chunk_hash_maps_kernel<DEFAULT_BLOCK_SIZE>
-    <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(map_storage, frags);
+  populate_chunk_hash_maps_kernel<dict_encode_block_size>
+    <<<dim_grid, dict_encode_block_size, 0, stream.get()>>>(map_storage, frags);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

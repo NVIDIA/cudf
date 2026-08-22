@@ -55,7 +55,7 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
                     });
 
   // convert vector into strings column
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

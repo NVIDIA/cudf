@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -59,18 +60,228 @@ from cudf_polars.streaming.sort import (
     _select_local_split_candidates,
     find_sort_splits,
 )
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import get_joined_cuda_stream, stream_ordered_after
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
+    from rmm.pylibrmm.stream import Stream
 
-    from cudf_polars.dsl.ir import IRExecutionContext
+    from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.typing import Schema
     from cudf_polars.utils.config import StreamingExecutor
+
+
+@dataclass(frozen=True)
+class OrderSchemePartitioningResult:
+    """OrderScheme partitioning and buffered chunks consumed to derive it."""
+
+    partitioning: Partitioning | None
+    """The extracted partitioning, or ``None`` if extraction was not possible."""
+    chunks: ChunkStore
+    """The consumed non-empty chunks, stored in replay order."""
+
+
+def _extract_boundaries(
+    min_max_key_table: plc.Table,
+    num_partitions: int,
+    stream: Stream,
+) -> tuple[plc.Table, bool]:
+    """
+    Extract boundaries from the maxima of each partition.
+
+    Parameters
+    ----------
+    min_max_key_table
+        The table containing min and max key values.
+    num_partitions
+        The number of partitions.
+    stream
+        The CUDA stream to use for the operation.
+
+    Returns
+    -------
+    The boundaries table and whether they are strict.
+    """
+    partition_ends = plc.concatenate.concatenate(
+        plc.copying.slice(
+            min_max_key_table, list(range(1, 2 * num_partitions - 1)), stream=stream
+        ),
+        stream=stream,
+    )
+    partition_starts = plc.concatenate.concatenate(
+        plc.copying.slice(
+            min_max_key_table, list(range(2, 2 * num_partitions)), stream=stream
+        ),
+        stream=stream,
+    )
+
+    # Single-kernel row-equality check across all key columns using AST
+    num_cols = partition_ends.num_columns()
+    combined = plc.Table(
+        list(partition_ends.columns()) + list(partition_starts.columns())
+    )
+    eq_exprs = [
+        plc.expressions.Operation(
+            plc.expressions.ASTOperator.NULL_EQUAL,
+            plc.expressions.ColumnReference(j),
+            plc.expressions.ColumnReference(num_cols + j),
+        )
+        for j in range(num_cols)
+    ]
+    row_eq_expr = eq_exprs[0]
+    for expr in eq_exprs[1:]:
+        row_eq_expr = plc.expressions.Operation(
+            plc.expressions.ASTOperator.NULL_LOGICAL_AND,
+            row_eq_expr,
+            expr,
+        )
+    row_eq_col = plc.transform.compute_column(combined, row_eq_expr, stream=stream)
+    strict = (
+        plc.stream_compaction.apply_boolean_mask(
+            plc.Table([row_eq_col]), row_eq_col, stream=stream
+        ).num_rows()
+        == 0
+    )
+    return partition_starts, strict
+
+
+async def extract_orderscheme_partitioning(
+    context: Context,
+    comm: Communicator,
+    schema_ir: IR,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    order_keys: Sequence[OrderKey],
+    collective_id: int,
+) -> OrderSchemePartitioningResult:
+    """
+    Extract the partitioning metadata for a sorted channel.
+
+    Parameters
+    ----------
+    context
+        The RapidsMPF context.
+    comm
+        The RapidsMPF communicator.
+    schema_ir
+        The IR reference to use for the boundary table schema.
+    ir_context
+        The IR execution context.
+    ch_in
+        The channel to collect boundaries from.
+    order_keys
+        The order keys associated with the boundaries.
+    collective_id
+        The collective ID for the allgather.
+
+    Returns
+    -------
+    A result containing a ``Partitioning`` whose ``inter_rank`` is an
+    ``OrderScheme`` built from the observed boundaries and ``local`` is
+    ``"inherit"``, or ``None`` if the channel contains insufficient data
+    or the data is not globally sorted. The result also contains the
+    consumed non-empty chunks in replay order.
+
+    Notes
+    -----
+    This utility does not collect channel metadata, nor does
+    it push any messages into an output channel. All data
+    messages from the input channel are consumed.
+
+    Boundaries are NOT collected for empty chunks. Empty chunks
+    should be dropped from the channel that the returned
+    partitioning is ultimately attached to.
+    """
+    # Collect local min/max values table for each rank
+    min_max_rows: list[plc.Table] = []
+    chunks = ChunkStore(context)
+    stream = ir_context.get_cuda_stream()
+    while (msg := await ch_in.recv(context)) is not None:
+        chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
+            context.br(), allow_overbooking=True
+        )
+        tbl = chunk.table_view()
+        if (n := tbl.num_rows()) == 0:
+            # The corresponding empty chunk must be dropped
+            # from the data channel.
+            continue
+        with stream_ordered_after(lambda: stream, upstreams=(chunk.stream,)):
+            row_indices = plc.Column.from_iterable_of_py(
+                [0, n - 1],
+                plc.DataType(plc.TypeId.INT32),
+                stream=stream,
+            )
+            min_max_rows.append(
+                plc.copying.gather(
+                    tbl,
+                    row_indices,
+                    plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                    stream=stream,
+                )
+            )
+        chunks.insert(Message(msg.sequence_number, chunk))
+    min_max_table: plc.Table | None = (
+        plc.concatenate.concatenate(min_max_rows, stream=stream)
+        if min_max_rows
+        else None
+    )
+    del min_max_rows
+
+    # Allgather min/max values across all ranks
+    if comm.nranks > 1:
+        local_chunk = (
+            TableChunk.from_pylibcudf_table(
+                min_max_table, stream, exclusive_view=True, br=context.br()
+            )
+            if min_max_table is not None
+            else empty_table_chunk(schema_ir, context, stream)
+        )
+        allgather = AllGatherManager(context, comm, collective_id)
+        with allgather.inserting() as inserter:
+            inserter.insert(comm.rank, local_chunk)
+        min_max_table = await allgather.extract_concatenated(
+            stream, ordered=True, ir_context=ir_context
+        )
+
+    # Return None if there are insufficient min/max values to process
+    if min_max_table is None or (num_partitions := min_max_table.num_rows() // 2) < 2:
+        return OrderSchemePartitioningResult(None, chunks)
+
+    key_indices = [key.column_index for key in order_keys]
+    min_max_key_table = plc.Table(
+        [min_max_table.columns()[index] for index in key_indices]
+    )
+    del min_max_table
+
+    # Return None if the min/max values are not sorted
+    column_order = [key.order for key in order_keys]
+    null_order = [key.null_order for key in order_keys]
+    if not plc.sorting.is_sorted(
+        min_max_key_table, column_order, null_order, stream=stream
+    ):
+        return OrderSchemePartitioningResult(None, chunks)
+
+    # Extract boundaries and construct the Partitioning
+    boundaries, strict = _extract_boundaries(min_max_key_table, num_partitions, stream)
+    del min_max_key_table
+    boundaries_chunk = TableChunk.from_pylibcudf_table(
+        boundaries, stream, exclusive_view=True, br=context.br()
+    )
+    return OrderSchemePartitioningResult(
+        Partitioning(
+            inter_rank=OrderScheme(
+                [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict)]
+            ),
+            local="inherit",
+        ),
+        chunks,
+    )
 
 
 async def _simple_top_or_bottom_k(

@@ -811,6 +811,36 @@ TEST_F(BinaryOperationCompiledTest_NullOpsString, NullMin_Vector_Vector)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
 }
 
+TEST_F(BinaryOperationCompiledTest_NullOpsString, NullMinMax_ScalarOperands)
+{
+  auto const input = cudf::test::strings_column_wrapper(
+    {"aaa", "zzz", "unused", ""}, {true, true, false, true});
+  auto const valid_scalar = cudf::string_scalar{"bbb"};
+  auto const null_scalar  = cudf::string_scalar{"unused", false};
+  auto const string_type  = cudf::data_type{cudf::type_id::STRING};
+
+  auto const expected_max =
+    cudf::test::strings_column_wrapper({"bbb", "zzz", "bbb", "bbb"});
+  auto const expected_min =
+    cudf::test::strings_column_wrapper({"aaa", "bbb", "bbb", ""});
+
+  auto result = cudf::binary_operation(
+    input, valid_scalar, cudf::binary_operator::NULL_MAX, string_type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_max, result->view());
+
+  result = cudf::binary_operation(
+    valid_scalar, input, cudf::binary_operator::NULL_MIN, string_type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_min, result->view());
+
+  result =
+    cudf::binary_operation(null_scalar, input, cudf::binary_operator::NULL_MAX, string_type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(input, result->view());
+
+  result =
+    cudf::binary_operation(input, null_scalar, cudf::binary_operator::NULL_MIN, string_type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(input, result->view());
+}
+
 TEST(BinaryOperationCompiledTest, LargeColumnNoOverflow)
 {
   cudf::size_type num_rows{1'799'989'091};

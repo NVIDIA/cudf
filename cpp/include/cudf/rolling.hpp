@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/aggregation.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/rolling/range_window_bounds.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -32,6 +33,18 @@ namespace CUDF_EXPORT cudf {
  */
 
 /**
+ * @brief Normalized delta source for a single range-window endpoint.
+ *
+ * A range-window endpoint carries at most one delta, and each endpoint kind supplies it
+ * differently: `bounded_closed`/`bounded_open` hold a single scalar delta (exposed as a
+ * `cudf::scalar const*`), the column-valued endpoints hold a per-row delta `cudf::column_view`, and
+ * `unbounded`/`current_row` carry no delta at all (`std::monostate`). Every window tag exposes its
+ * delta uniformly through `delta()`, so a single typed value is threaded through the dispatch stack
+ * instead of a pair of nullable pointers.
+ */
+using range_window_delta = std::variant<std::monostate, cudf::scalar const*, cudf::column_view>;
+
+/**
  * @brief Strongly typed wrapper for bounded closed rolling windows.
  *
  * @param delta The scalar delta from the current row. Must be valid,
@@ -53,10 +66,10 @@ struct bounded_closed {
    */
   bounded_closed(cudf::scalar const& delta) : delta_{delta} {}
   /**
-   * @brief Return pointer to the row delta scalar.
-   * @return pointer to scalar, not null.
+   * @brief Return the window's delta source.
+   * @return the scalar delta.
    */
-  [[nodiscard]] cudf::scalar const* delta() const noexcept { return &delta_; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return &delta_; }
 };
 
 /**
@@ -82,10 +95,66 @@ struct bounded_open {
   bounded_open(cudf::scalar const& delta) : delta_{delta} {}
 
   /**
-   * @brief Return pointer to the row delta scalar.
-   * @return pointer to scalar, not null.
+   * @brief Return the window's delta source.
+   * @return the scalar delta.
    */
-  [[nodiscard]] cudf::scalar const* delta() const noexcept { return &delta_; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return &delta_; }
+};
+
+/**
+ * @brief Strongly typed wrapper for bounded closed rolling windows whose delta varies row-to-row.
+ *
+ * Unlike `bounded_closed`, which applies a single scalar delta to every row, this endpoint reads a
+ * per-row delta from a column: row `i`'s endpoint is computed from `orderby[i]` and `delta[i]`.
+ * This lets engines evaluate windows such as `RANGE BETWEEN <expr> PRECEDING AND ...` where the
+ * bound is a projected column rather than a literal.
+ *
+ * The delta column must have exactly one entry per orderby row, must not contain nulls, and must
+ * have the same type as the orderby column (or, when the orderby column is a TIMESTAMP, the
+ * matching DURATION type). Per-row delta values must be finite, otherwise behaviour is undefined.
+ *
+ * The endpoints of this window are included.
+ */
+struct bounded_closed_column {
+  cudf::column_view delta_;  ///< Per-row delta column, one entry per orderby row. Must not contain
+                             ///< nulls and must match the orderby column's type.
+
+  /**
+   * @brief Construct a bounded closed rolling window with a per-row delta column.
+   *
+   * @param delta Per-row delta column. Must not contain nulls and must match the orderby type.
+   */
+  bounded_closed_column(cudf::column_view delta) : delta_{delta} {}
+  /**
+   * @brief Return the window's delta source.
+   * @return the per-row delta column.
+   */
+  [[nodiscard]] range_window_delta delta() const noexcept { return delta_; }
+};
+
+/**
+ * @brief Strongly typed wrapper for bounded open rolling windows whose delta varies row-to-row.
+ *
+ * The column-valued analogue of `bounded_open`. See `bounded_closed_column` for the per-row delta
+ * column requirements.
+ *
+ * The endpoints of this window are excluded.
+ */
+struct bounded_open_column {
+  cudf::column_view delta_;  ///< Per-row delta column, one entry per orderby row. Must not contain
+                             ///< nulls and must match the orderby column's type.
+
+  /**
+   * @brief Construct a bounded open rolling window with a per-row delta column.
+   *
+   * @param delta Per-row delta column. Must not contain nulls and must match the orderby type.
+   */
+  bounded_open_column(cudf::column_view delta) : delta_{delta} {}
+  /**
+   * @brief Return the window's delta source.
+   * @return the per-row delta column.
+   */
+  [[nodiscard]] range_window_delta delta() const noexcept { return delta_; }
 };
 
 /**
@@ -95,10 +164,10 @@ struct bounded_open {
  */
 struct unbounded {
   /**
-   * @brief Return a null row delta
-   * @return nullptr
+   * @brief Return an empty delta source.
+   * @return a monostate (no delta).
    */
-  [[nodiscard]] constexpr cudf::scalar const* delta() const noexcept { return nullptr; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return std::monostate{}; }
 };
 /**
  * @brief Strongly typed wrapper for current_row rolling windows.
@@ -107,16 +176,24 @@ struct unbounded {
  */
 struct current_row {
   /**
-   * @brief Return a null row delta
-   * @return nullptr
+   * @brief Return an empty delta source.
+   * @return a monostate (no delta).
    */
-  [[nodiscard]] constexpr cudf::scalar const* delta() const noexcept { return nullptr; }
+  [[nodiscard]] range_window_delta delta() const noexcept { return std::monostate{}; }
 };
 
 /**
  * @brief The type of the range-based rolling window endpoint.
+ *
+ * `bounded_closed_column` and `bounded_open_column` carry a per-row delta column (one entry per
+ * orderby row) instead of a single scalar delta, so the window width can vary row-to-row.
  */
-using range_window_type = std::variant<unbounded, current_row, bounded_closed, bounded_open>;
+using range_window_type = std::variant<unbounded,
+                                       current_row,
+                                       bounded_closed,
+                                       bounded_open,
+                                       bounded_closed_column,
+                                       bounded_open_column>;
 
 /**
  * @brief A request for a rolling aggregation on a column.

@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/search.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/search.hpp>
 
 #include <rmm/device_buffer.hpp>
@@ -579,6 +580,18 @@ TEST_F(SearchTest, contains_false)
   result = cudf::contains(column, scalar);
 
   ASSERT_EQ(result, expect);
+}
+
+TEST_F(SearchTest, contains_fixed_point)
+{
+  using decimal_type = numeric::decimal64;
+  auto const scale   = numeric::scale_type{-2};
+  auto const column  = cudf::test::fixed_point_column_wrapper<int64_t>{{100, 123, 250}, scale};
+  auto const present = cudf::make_fixed_point_scalar<decimal_type>(123, scale);
+  auto const missing = cudf::make_fixed_point_scalar<decimal_type>(124, scale);
+
+  EXPECT_TRUE(cudf::contains(column, *present));
+  EXPECT_FALSE(cudf::contains(column, *missing));
 }
 
 TEST_F(SearchTest, contains_empty_value)

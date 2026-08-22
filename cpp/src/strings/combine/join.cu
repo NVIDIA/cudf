@@ -8,7 +8,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/combine.hpp>
 #include <cudf/strings/detail/combine.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -48,16 +48,16 @@ constexpr size_type AVG_CHAR_BYTES_THRESHOLD = 32;
 
 struct join_base_fn {
   column_device_view const d_strings;
-  string_view d_separator;
-  string_scalar_device_view d_narep;
+  column_device_view const d_separator;
+  column_device_view const d_narep;
 
   __device__ cuda::std::pair<string_view, string_view> process_string(size_type idx) const
   {
     string_view d_str{};
-    string_view d_sep = (idx + 1 < d_strings.size()) ? d_separator : d_str;
+    string_view d_sep = (idx + 1 < d_strings.size()) ? d_separator.element<string_view>(0) : d_str;
     if (d_strings.is_null(idx)) {
-      if (d_narep.is_valid()) {
-        d_str = d_narep.value();
+      if (d_narep.is_valid(0)) {
+        d_str = d_narep.element<string_view>(0);
       } else {
         // if null and no narep, don't output a separator either
         d_sep = d_str;
@@ -80,8 +80,8 @@ struct join_fn : public join_base_fn {
   cudf::detail::input_offsetalator d_offsets;
 
   join_fn(column_device_view const d_strings,
-          string_view d_separator,
-          string_scalar_device_view d_narep)
+          column_device_view const d_separator,
+          column_device_view const d_narep)
     : join_base_fn{d_strings, d_separator, d_narep}
   {
   }
@@ -104,8 +104,8 @@ struct join_fn : public join_base_fn {
 
 struct join_gather_fn : public join_base_fn {
   join_gather_fn(column_device_view const d_strings,
-                 string_view d_separator,
-                 string_scalar_device_view d_narep)
+                 column_device_view const d_separator,
+                 column_device_view const d_narep)
     : join_base_fn{d_strings, d_separator, d_narep}
   {
   }
@@ -128,10 +128,12 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
-  CUDF_EXPECTS(separator.is_valid(stream), "Parameter separator must be a valid string_scalar");
+  CUDF_EXPECTS(separator.is_valid(), "Parameter separator must be a valid string_scalar");
 
-  string_view d_separator(separator.data(), separator.size());
-  auto d_narep = get_scalar_device_view(const_cast<string_scalar&>(narep));
+  auto const separator_view = separator.as_column_view();
+  auto const narep_view     = narep.as_column_view();
+  auto const d_separator    = column_device_view::create(separator_view.as_column_view(), stream);
+  auto const d_narep        = column_device_view::create(narep_view.as_column_view(), stream);
 
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -141,12 +143,12 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
         ((input.chars_size(stream) / (input.size() - input.null_count())) <=
          AVG_CHAR_BYTES_THRESHOLD)) {
       return std::get<1>(make_strings_children(
-                           join_fn{*d_strings, d_separator, d_narep}, input.size(), stream, mr))
+                           join_fn{*d_strings, *d_separator, *d_narep}, input.size(), stream, mr))
         .release();
     }
     // dynamically feeds index pairs to build the output
     auto indices = cudf::detail::make_counting_transform_iterator(
-      0, join_gather_fn{*d_strings, d_separator, d_narep});
+      0, join_gather_fn{*d_strings, *d_separator, *d_narep});
     auto joined_col = make_strings_column(indices, indices + (input.size() * 2), stream, mr);
     auto chars_data = joined_col->release().data;
     return std::move(*chars_data);
@@ -164,7 +166,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
 
   // build the null mask: only one output row so it is either all-valid or all-null
   auto const null_count =
-    static_cast<size_type>(input.null_count() == input.size() && !narep.is_valid(stream));
+    static_cast<size_type>(input.null_count() == input.size() && !narep.is_valid());
   auto null_mask = null_count
                      ? cudf::detail::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr)
                      : rmm::device_buffer{0, stream, mr};

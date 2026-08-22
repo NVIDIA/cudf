@@ -4,7 +4,7 @@
  */
 
 #include <cudf/column/column_device_view.cuh>
-#include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/fill.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -25,14 +25,14 @@ struct fill_fn {
   column_device_view const d_strings;
   size_type const begin;
   size_type const end;
-  string_scalar_device_view const d_value;
+  column_device_view const d_value;
 
   __device__ string_index_pair operator()(size_type idx) const
   {
     auto d_str = string_view();
     if ((begin <= idx) && (idx < end)) {
-      if (!d_value.is_valid()) { return string_index_pair{nullptr, 0}; }
-      d_str = d_value.value();
+      if (!d_value.is_valid(0)) { return string_index_pair{nullptr, 0}; }
+      d_str = d_value.element<string_view>(0);
     } else {
       if (d_strings.is_null(idx)) { return string_index_pair{nullptr, 0}; }
       d_str = d_strings.element<string_view>(idx);
@@ -58,10 +58,11 @@ std::unique_ptr<column> fill(strings_column_view const& input,
   CUDF_EXPECTS(begin <= end, "Parameters [begin,end) have invalid range values");
   if (begin == end) { return std::make_unique<column>(input.parent(), stream, mr); }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
-  auto const d_value   = cudf::get_scalar_device_view(const_cast<string_scalar&>(value));
+  auto const d_strings  = column_device_view::create(input.parent(), stream);
+  auto const value_view = value.as_column_view();
+  auto const d_value    = column_device_view::create(value_view.as_column_view(), stream);
 
-  auto fn = fill_fn{*d_strings, begin, end, d_value};
+  auto fn = fill_fn{*d_strings, begin, end, *d_value};
   rmm::device_uvector<string_index_pair> indices(strings_count, stream);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},

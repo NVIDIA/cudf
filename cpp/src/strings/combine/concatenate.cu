@@ -8,7 +8,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/detail/valid_if.cuh>
-#include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/combine.hpp>
 #include <cudf/strings/detail/combine.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -37,7 +37,7 @@ namespace {
 
 struct concat_strings_base {
   table_device_view const d_table;
-  string_scalar_device_view const d_narep;
+  column_device_view const d_narep;
   separator_on_nulls separate_nulls;
   size_type* d_sizes;
   char* d_chars;
@@ -55,7 +55,7 @@ struct concat_strings_base {
    */
   __device__ void process_row(size_type idx, string_view const d_separator)
   {
-    if (!d_narep.is_valid() &&
+    if (!d_narep.is_valid(0) &&
         thrust::any_of(thrust::seq, d_table.begin(), d_table.end(), [idx](auto const& col) {
           return col.is_null(idx);
         })) {
@@ -78,7 +78,8 @@ struct concat_strings_base {
       }
 
       // write out column's row data (or narep if the row is null)
-      auto const d_str = null_element ? d_narep.value() : d_column.element<string_view>(idx);
+      auto const d_str =
+        null_element ? d_narep.element<string_view>(0) : d_column.element<string_view>(idx);
       if (d_buffer) d_buffer = detail::copy_string(d_buffer, d_str);
       bytes += d_str.size_bytes();
 
@@ -94,17 +95,20 @@ struct concat_strings_base {
  * @brief Single separator concatenate functor
  */
 struct concat_strings_fn : concat_strings_base {
-  string_view const d_separator;
+  column_device_view const d_separator;
 
   concat_strings_fn(table_device_view const& d_table,
-                    string_view const& d_separator,
-                    string_scalar_device_view const& d_narep,
+                    column_device_view const& d_separator,
+                    column_device_view const& d_narep,
                     separator_on_nulls separate_nulls)
     : concat_strings_base{d_table, d_narep, separate_nulls}, d_separator(d_separator)
   {
   }
 
-  __device__ void operator()(std::size_t idx) { process_row(idx, d_separator); }
+  __device__ void operator()(std::size_t idx)
+  {
+    process_row(idx, d_separator.element<string_view>(0));
+  }
 };
 
 }  // namespace
@@ -127,21 +131,23 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
   if (strings_count == 0)  // empty begets empty
     return make_empty_column(type_id::STRING);
 
-  CUDF_EXPECTS(separator.is_valid(stream), "Parameter separator must be a valid string_scalar");
-  string_view d_separator(separator.data(), separator.size());
-  auto d_narep = get_scalar_device_view(const_cast<string_scalar&>(narep));
+  CUDF_EXPECTS(separator.is_valid(), "Parameter separator must be a valid string_scalar");
+  auto const separator_view = separator.as_column_view();
+  auto const narep_view     = narep.as_column_view();
+  auto const d_separator    = column_device_view::create(separator_view.as_column_view(), stream);
+  auto const d_narep        = column_device_view::create(narep_view.as_column_view(), stream);
 
   // Create device views from the strings columns.
   auto d_table = table_device_view::create(strings_columns, stream);
-  concat_strings_fn fn{*d_table, d_separator, d_narep, separate_nulls};
+  concat_strings_fn fn{*d_table, *d_separator, *d_narep, separate_nulls};
   auto [offsets_column, chars] = make_strings_children(fn, strings_count, stream, mr);
 
   // create resulting null mask
   auto [null_mask, null_count] = cudf::detail::valid_if(
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings_count},
-    [d_table = *d_table, d_narep] __device__(size_type idx) {
-      if (d_narep.is_valid()) return true;
+    [d_table = *d_table, d_narep = *d_narep] __device__(size_type idx) {
+      if (d_narep.is_valid(0)) return true;
       return !thrust::any_of(
         thrust::seq, d_table.begin(), d_table.end(), [idx](auto col) { return col.is_null(idx); });
     },
@@ -163,12 +169,12 @@ namespace {
  */
 struct multi_separator_concat_fn : concat_strings_base {
   column_device_view const d_separators;
-  string_scalar_device_view const d_separator_narep;
+  column_device_view const d_separator_narep;
 
   multi_separator_concat_fn(table_device_view const& d_table,
                             column_device_view const& d_separators,
-                            string_scalar_device_view const& d_separator_narep,
-                            string_scalar_device_view const& d_narep,
+                            column_device_view const& d_separator_narep,
+                            column_device_view const& d_narep,
                             separator_on_nulls separate_nulls)
     : concat_strings_base{d_table, d_narep, separate_nulls},
       d_separators(d_separators),
@@ -178,13 +184,13 @@ struct multi_separator_concat_fn : concat_strings_base {
 
   __device__ void operator()(size_type idx)
   {
-    if (d_separators.is_null(idx) && !d_separator_narep.is_valid()) {
+    if (d_separators.is_null(idx) && !d_separator_narep.is_valid(0)) {
       if (!d_chars) { d_sizes[idx] = 0; }
       return;
     }
 
     auto const d_separator = d_separators.is_valid(idx) ? d_separators.element<string_view>(idx)
-                                                        : d_separator_narep.value();
+                                                        : d_separator_narep.element<string_view>(0);
     // base class utility function handles the rest
     process_row(idx, d_separator);
   }
@@ -214,10 +220,11 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
   if (strings_count == 0)  // Empty begets empty
     return make_empty_column(type_id::STRING);
 
-  // Invalid output column strings - null rows
-  string_view const invalid_str{nullptr, 0};
-  auto const separator_rep = get_scalar_device_view(const_cast<string_scalar&>(separator_narep));
-  auto const col_rep       = get_scalar_device_view(const_cast<string_scalar&>(col_narep));
+  auto const separator_narep_view = separator_narep.as_column_view();
+  auto const col_narep_view       = col_narep.as_column_view();
+  auto const separator_rep =
+    column_device_view::create(separator_narep_view.as_column_view(), stream);
+  auto const col_rep = column_device_view::create(col_narep_view.as_column_view(), stream);
   auto const separator_col_view_ptr = column_device_view::create(separators.parent(), stream);
   auto const separator_col_view     = *separator_col_view_ptr;
 
@@ -225,16 +232,19 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
   auto d_table = table_device_view::create(strings_columns, stream);
 
   multi_separator_concat_fn mscf{
-    *d_table, separator_col_view, separator_rep, col_rep, separate_nulls};
+    *d_table, separator_col_view, *separator_rep, *col_rep, separate_nulls};
   auto [offsets_column, chars] = make_strings_children(mscf, strings_count, stream, mr);
 
   // Create resulting null mask
   auto [null_mask, null_count] = cudf::detail::valid_if(
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings_count},
-    [d_table = *d_table, separator_col_view, separator_rep, col_rep] __device__(size_type idx) {
-      if (!separator_col_view.is_valid(idx) && !separator_rep.is_valid()) return false;
-      if (col_rep.is_valid()) return true;
+    [d_table = *d_table,
+     separator_col_view,
+     separator_rep = *separator_rep,
+     col_rep       = *col_rep] __device__(size_type idx) {
+      if (!separator_col_view.is_valid(idx) && !separator_rep.is_valid(0)) return false;
+      if (col_rep.is_valid(0)) return true;
       return !thrust::any_of(
         thrust::seq, d_table.begin(), d_table.end(), [idx](auto col) { return col.is_null(idx); });
     },

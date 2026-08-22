@@ -1587,6 +1587,10 @@ if(CUDF_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
 
+if(CUDF_BUILD_TESTS)
+  rapids_test_install_relocatable(INSTALL_COMPONENT_SET testing DESTINATION bin/gtests/libcudf)
+endif()
+
 # ##################################################################################################
 # * install targets -------------------------------------------------------------------------------
 rapids_cmake_install_lib_dir(lib_dir)

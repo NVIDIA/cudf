@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -54,7 +54,8 @@
  *     c_address,
  *     c_comment
  * order by
- *     revenue desc;
+ *     revenue desc
+ * limit 20;
  */
 
 /**
@@ -84,8 +85,8 @@
   return revenue;
 }
 
-void run_ndsh_q10(nvbench::state& state,
-                  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q10(
+  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {
   // Define the column projection and filter predicate for the `orders` table
   std::vector<std::string> const orders_cols = {"o_custkey", "o_orderkey", "o_orderdate"};
@@ -112,17 +113,31 @@ void run_ndsh_q10(nvbench::state& state,
 
   // Read out the tables from parquet files
   // while pushing down the column projections and filter predicates
-  auto const customer = read_parquet(
-    sources.at("customer").make_source_info(),
-    {"c_custkey", "c_name", "c_nationkey", "c_acctbal", "c_address", "c_phone", "c_comment"});
-  auto const orders =
-    read_parquet(sources.at("orders").make_source_info(), orders_cols, std::move(orders_pred));
-  auto const lineitem =
-    read_parquet(sources.at("lineitem").make_source_info(),
-                 {"l_extendedprice", "l_discount", "l_orderkey", "l_returnflag"},
-                 std::move(lineitem_pred));
-  auto const nation =
-    read_parquet(sources.at("nation").make_source_info(), {"n_name", "n_nationkey"});
+  std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
+  tables.emplace(
+    "customer",
+    read_parquet(
+      sources.at("customer").make_source_info(),
+      {"c_custkey", "c_name", "c_nationkey", "c_acctbal", "c_address", "c_phone", "c_comment"}));
+  tables.emplace(
+    "orders",
+    read_parquet(sources.at("orders").make_source_info(), orders_cols, std::move(orders_pred)));
+  tables.emplace("lineitem",
+                 read_parquet(sources.at("lineitem").make_source_info(),
+                              {"l_extendedprice", "l_discount", "l_orderkey", "l_returnflag"},
+                              std::move(lineitem_pred)));
+  tables.emplace("nation",
+                 read_parquet(sources.at("nation").make_source_info(), {"n_name", "n_nationkey"}));
+  return tables;
+}
+
+std::unique_ptr<table_with_names> execute_ndsh_q10(
+  std::unordered_map<std::string, std::unique_ptr<table_with_names>> const& tables)
+{
+  auto const& customer = tables.at("customer");
+  auto const& orders   = tables.at("orders");
+  auto const& lineitem = tables.at("lineitem");
+  auto const& nation   = tables.at("nation");
 
   // Perform the joins
   auto const join_a       = apply_inner_join(customer, nation, {"c_nationkey"}, {"n_nationkey"});
@@ -142,30 +157,52 @@ void run_ndsh_q10(nvbench::state& state,
       {
         {"revenue", {{cudf::aggregation::Kind::SUM, "revenue"}}},
       }});
+  auto const projected = apply_projection(
+    groupedby_table,
+    {"c_custkey", "c_name", "revenue", "c_acctbal", "n_name", "c_address", "c_phone", "c_comment"});
 
   // Perform the order by operation
-  auto const orderedby_table =
-    apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
-
-  // Write query result to a parquet file
-  orderedby_table->to_parquet("q10.parquet");
+  auto const ordered = apply_orderby(projected, {"revenue"}, {cudf::order::DESCENDING});
+  return apply_slice(ordered, 0, 20);
 }
 
 void ndsh_q10(nvbench::state& state)
 {
   // Generate the required parquet files in device buffers
   double const scale_factor = state.get_float64("scale_factor");
+  auto const mode           = query_mode_from_string(state.get_string("mode"));
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
   generate_parquet_data_sources(
     scale_factor, {"customer", "orders", "lineitem", "nation"}, sources);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
+  if (mode == query_mode::COMPUTE_ONLY) { tables = load_ndsh_q10(sources); }
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { run_ndsh_q10(state, sources); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    std::unique_ptr<table_with_names> result;
+    if (mode == query_mode::END_TO_END) {
+      auto input = load_ndsh_q10(sources);
+      result     = execute_ndsh_q10(input);
+    } else {
+      result = execute_ndsh_q10(tables);
+    }
+  });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  if (not write_ndsh_results()) { return; }
+  std::unique_ptr<table_with_names> result;
+  if (mode == query_mode::END_TO_END) {
+    auto input = load_ndsh_q10(sources);
+    result     = execute_ndsh_q10(input);
+  } else {
+    result = execute_ndsh_q10(tables);
+  }
+  write_ndsh_result(*result, "q10");
 }
 
-NVBENCH_BENCH(ndsh_q10).set_name("ndsh_q10").add_float64_axis("scale_factor", {0.01, 0.1, 1});
+NVBENCH_BENCH(ndsh_q10)
+  .set_name("ndsh_q10")
+  .add_string_axis("mode", {"end_to_end", "compute_only"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1});

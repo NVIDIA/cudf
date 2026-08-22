@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -79,8 +79,8 @@
   return revenue;
 }
 
-void run_ndsh_q5(nvbench::state& state,
-                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+std::unordered_map<std::string, std::unique_ptr<table_with_names>> load_ndsh_q5(
+  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {
   // Define the column projection and filter predicate for the `orders` table
   std::vector<std::string> const orders_cols = {"o_custkey", "o_orderkey", "o_orderdate"};
@@ -110,18 +110,37 @@ void run_ndsh_q5(nvbench::state& state,
 
   // Read out the tables from parquet files
   // while pushing down the column projections and filter predicates
-  auto const customer =
-    read_parquet(sources.at("customer").make_source_info(), {"c_custkey", "c_nationkey"});
-  auto const orders =
-    read_parquet(sources.at("orders").make_source_info(), orders_cols, std::move(orders_pred));
-  auto const lineitem = read_parquet(sources.at("lineitem").make_source_info(),
-                                     {"l_orderkey", "l_suppkey", "l_extendedprice", "l_discount"});
-  auto const supplier =
-    read_parquet(sources.at("supplier").make_source_info(), {"s_suppkey", "s_nationkey"});
-  auto const nation =
-    read_parquet(sources.at("nation").make_source_info(), {"n_nationkey", "n_regionkey", "n_name"});
-  auto const region =
-    read_parquet(sources.at("region").make_source_info(), region_cols, std::move(region_pred));
+  std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
+  tables.emplace(
+    "customer",
+    read_parquet(sources.at("customer").make_source_info(), {"c_custkey", "c_nationkey"}));
+  tables.emplace(
+    "orders",
+    read_parquet(sources.at("orders").make_source_info(), orders_cols, std::move(orders_pred)));
+  tables.emplace("lineitem",
+                 read_parquet(sources.at("lineitem").make_source_info(),
+                              {"l_orderkey", "l_suppkey", "l_extendedprice", "l_discount"}));
+  tables.emplace(
+    "supplier",
+    read_parquet(sources.at("supplier").make_source_info(), {"s_suppkey", "s_nationkey"}));
+  tables.emplace("nation",
+                 read_parquet(sources.at("nation").make_source_info(),
+                              {"n_nationkey", "n_regionkey", "n_name"}));
+  tables.emplace(
+    "region",
+    read_parquet(sources.at("region").make_source_info(), region_cols, std::move(region_pred)));
+  return tables;
+}
+
+std::unique_ptr<table_with_names> execute_ndsh_q5(
+  std::unordered_map<std::string, std::unique_ptr<table_with_names>> const& tables)
+{
+  auto const& customer = tables.at("customer");
+  auto const& orders   = tables.at("orders");
+  auto const& lineitem = tables.at("lineitem");
+  auto const& supplier = tables.at("supplier");
+  auto const& nation   = tables.at("nation");
+  auto const& region   = tables.at("region");
 
   // Perform the joins
   auto const join_a = apply_inner_join(region, nation, {"r_regionkey"}, {"n_regionkey"});
@@ -145,28 +164,46 @@ void run_ndsh_q5(nvbench::state& state,
                                     }});
 
   // Perform the order by operation
-  auto const orderedby_table =
-    apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
-
-  // Write query result to a parquet file
-  orderedby_table->to_parquet("q5.parquet");
+  return apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
 }
 
 void ndsh_q5(nvbench::state& state)
 {
   // Generate the required parquet files in device buffers
   double const scale_factor = state.get_float64("scale_factor");
+  auto const mode           = query_mode_from_string(state.get_string("mode"));
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
   generate_parquet_data_sources(
     scale_factor, {"customer", "orders", "lineitem", "supplier", "nation", "region"}, sources);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
+  if (mode == query_mode::COMPUTE_ONLY) { tables = load_ndsh_q5(sources); }
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { run_ndsh_q5(state, sources); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    std::unique_ptr<table_with_names> result;
+    if (mode == query_mode::END_TO_END) {
+      auto input = load_ndsh_q5(sources);
+      result     = execute_ndsh_q5(input);
+    } else {
+      result = execute_ndsh_q5(tables);
+    }
+  });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  if (not write_ndsh_results()) { return; }
+  std::unique_ptr<table_with_names> result;
+  if (mode == query_mode::END_TO_END) {
+    auto input = load_ndsh_q5(sources);
+    result     = execute_ndsh_q5(input);
+  } else {
+    result = execute_ndsh_q5(tables);
+  }
+  write_ndsh_result(*result, "q05");
 }
 
-NVBENCH_BENCH(ndsh_q5).set_name("ndsh_q5").add_float64_axis("scale_factor", {0.01, 0.1, 1});
+NVBENCH_BENCH(ndsh_q5)
+  .set_name("ndsh_q5")
+  .add_string_axis("mode", {"end_to_end", "compute_only"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1});

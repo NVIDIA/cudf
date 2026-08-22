@@ -133,7 +133,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_name(name.encode())
         return self
@@ -149,7 +149,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_nullability(nullable)
         return self
@@ -161,7 +161,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_list_column_as_map()
         return self
@@ -178,7 +178,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_int96_timestamps(req)
         return self
@@ -195,7 +195,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_decimal_precision(precision)
         return self
@@ -227,7 +227,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_output_as_binary(binary)
         return self
@@ -243,7 +243,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_type_length(type_length)
         return self
@@ -260,7 +260,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_skip_compression(skip)
         return self

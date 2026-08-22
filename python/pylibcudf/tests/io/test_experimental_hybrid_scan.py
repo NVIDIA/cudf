@@ -430,6 +430,73 @@ def test_hybrid_scan_materialize_columns(
     assert expected_arrow.equals(hybrid_arrow)
 
 
+def test_hybrid_scan_payload_page_mask_without_page_index(
+    simple_parquet_bytes: bytes,
+    simple_hybrid_scan_reader: HybridScanReader,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    simple_parquet_table: pa.Table,
+    num_rows: int,
+) -> None:
+    """Test payload page pruning without a page index set up on the reader."""
+    reader = simple_hybrid_scan_reader
+    row_groups = reader.all_row_groups(simple_parquet_options)
+
+    # Keep the first half of the rows so the trailing data pages get pruned.
+    num_selected = num_rows // 2
+    row_mask = plc.Column.from_arrow(
+        pa.array([i < num_selected for i in range(num_rows)], type=pa.bool_())
+    )
+
+    payload_data = [
+        plc.gpumemoryview(
+            rmm.DeviceBuffer.to_device(
+                simple_parquet_bytes[r.offset : r.offset + r.size],
+                plc.utils._get_stream(),
+            )
+        )
+        for r in reader.payload_column_chunks_byte_ranges(
+            row_groups, simple_parquet_options
+        )
+    ]
+    synchronize_stream()
+
+    # Chunks can disagree on field nullability, so compare row values only.
+    def to_rows(tbl: plc.Table) -> list:
+        return (
+            tbl.to_arrow()
+            .rename_columns(simple_parquet_table.column_names)
+            .to_pylist()
+        )
+
+    expected_rows = simple_parquet_table.slice(0, num_selected).to_pylist()
+
+    payload_result = reader.materialize_payload_columns(
+        row_groups,
+        payload_data,
+        row_mask,
+        UseDataPageMask.YES,
+        simple_parquet_options,
+    )
+    synchronize_stream()
+    assert to_rows(payload_result.tbl) == expected_rows
+
+    reader.setup_chunking_for_payload_columns(
+        256,
+        0,
+        row_groups,
+        row_mask,
+        UseDataPageMask.YES,
+        payload_data,
+        simple_parquet_options,
+    )
+    chunked_rows = []
+    while reader.has_next_table_chunk():
+        chunk = reader.materialize_payload_columns_chunk(row_mask)
+        chunked_rows.extend(to_rows(chunk.tbl))
+    synchronize_stream()
+    assert chunked_rows == expected_rows
+
+
 @pytest.mark.parametrize("stream", [None, Stream()])
 def test_hybrid_scan_single_step_materialize(
     simple_parquet_bytes: bytes,

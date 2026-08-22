@@ -126,7 +126,18 @@ void hybrid_scan_reader_impl::setup_next_pass(
       set_sparse_pass_page_mask(column_chunk_data);
     } else {
       setup_compressed_data(column_chunk_data);
-      set_pass_page_mask(data_page_mask);
+      // Without an offset index, pages can only be pruned once their headers have been decoded, so
+      // compute the data page mask here rather than using the input one
+      auto const data_page_mask_pghdr = [&]() {
+        if (not _has_offset_index and not _row_mask.is_empty()) {
+          return compute_data_page_mask_with_page_headers();
+        }
+        return thrust::host_vector<bool>{};
+      }();
+      set_pass_page_mask(
+        data_page_mask_pghdr.empty()
+          ? data_page_mask
+          : std::span<bool const>{data_page_mask_pghdr.data(), data_page_mask_pghdr.size()});
     }
 
     // detect malformed columns.

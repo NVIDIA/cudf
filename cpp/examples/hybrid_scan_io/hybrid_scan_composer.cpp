@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -426,22 +426,6 @@ std::unique_ptr<cudf::table> hybrid_scan(
   }
 }
 
-// Specialization for two-step read without page index
-template <bool single_step_read, bool use_page_index>
-  requires(not single_step_read and not use_page_index)
-std::unique_ptr<cudf::table> inline hybrid_scan(
-  io_source const& io_source,
-  std::optional<cudf::ast::operation const> filter_expression,
-  std::unordered_set<hybrid_scan_filter_type> const& filters,
-  bool verbose,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
-{
-  static_assert(single_step_read or use_page_index,
-                "Hybrid scan requires parquet page index for two-step parquet read");
-  return nullptr;
-}
-
 // Instantiations for hybrid_scan template
 
 template std::unique_ptr<cudf::table> hybrid_scan<true, false>(
@@ -453,6 +437,14 @@ template std::unique_ptr<cudf::table> hybrid_scan<true, false>(
   rmm::device_async_resource_ref);
 
 template std::unique_ptr<cudf::table> hybrid_scan<true, true>(
+  io_source const&,
+  std::optional<cudf::ast::operation const>,
+  std::unordered_set<hybrid_scan_filter_type> const&,
+  bool,
+  rmm::cuda_stream_view,
+  rmm::device_async_resource_ref);
+
+template std::unique_ptr<cudf::table> hybrid_scan<false, false>(
   io_source const&,
   std::optional<cudf::ast::operation const>,
   std::unordered_set<hybrid_scan_filter_type> const&,

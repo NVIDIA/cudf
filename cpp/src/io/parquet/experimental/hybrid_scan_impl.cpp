@@ -8,6 +8,7 @@
 #include "cudf/io/text/byte_range_info.hpp"
 #include "hybrid_scan_helpers.hpp"
 #include "io/parquet/reader_impl_chunking_utils.cuh"
+#include "page_index_filter_utils.hpp"
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/stream_compaction.hpp>
@@ -696,6 +697,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_filter_columns(
 
   auto data_page_mask = thrust::host_vector<bool>{};
   if (mask_data_pages == use_data_page_mask::YES) {
+    _row_mask      = row_mask;
     data_page_mask = _extended_metadata->compute_data_page_mask(
       row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
   }
@@ -734,6 +736,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_payload_columns(
 
   auto data_page_mask = thrust::host_vector<bool>{};
   if (not row_mask.is_empty() and mask_data_pages == use_data_page_mask::YES) {
+    _row_mask      = row_mask;
     data_page_mask = _extended_metadata->compute_data_page_mask(
       row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
   }
@@ -805,6 +808,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_filter_columns(
 
   auto data_page_mask = thrust::host_vector<bool>{};
   if (mask_data_pages == use_data_page_mask::YES) {
+    _row_mask      = row_mask;
     data_page_mask = _extended_metadata->compute_data_page_mask(
       row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
   }
@@ -865,6 +869,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
 
   auto data_page_mask = thrust::host_vector<bool>{};
   if (not row_mask.is_empty() and mask_data_pages == use_data_page_mask::YES) {
+    _row_mask      = row_mask;
     data_page_mask = _extended_metadata->compute_data_page_mask(
       row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
   }
@@ -1074,7 +1079,6 @@ bool hybrid_scan_reader_impl::has_next_table_chunk()
 
 void hybrid_scan_reader_impl::reset_internal_state()
 {
-  _row_mask_offset   = 0;
   _file_itm_data     = file_intermediate_data{};
   _file_preprocessed = false;
   _has_offset_index  = false;
@@ -1098,6 +1102,10 @@ void hybrid_scan_reader_impl::reset_internal_state()
   _output_chunk_read_limit = 0;
   _strings_to_categorical  = false;
   _reader_column_schema.reset();
+
+  _row_mask        = column_view{};
+  _row_mask_offset = 0;
+
   _expr_conv = parquet_filter_normalizer{};
   _mr        = cudf::get_current_device_resource_ref();
 }
@@ -1439,6 +1447,70 @@ void hybrid_scan_reader_impl::set_pass_page_mask(std::span<bool const> data_page
   // Make sure we inserted exactly the number of pages for this pass
   CUDF_EXPECTS(_pass_page_mask.size() == pass->pages.size(),
                "Encountered mismatch in number of pass pages and page mask size");
+}
+
+thrust::host_vector<bool> hybrid_scan_reader_impl::compute_data_page_mask_with_page_headers()
+{
+  auto& pass = *_pass_itm_data;
+  pass.pages.device_to_host_async(_stream);
+  _stream.sync();
+
+  std::vector<cudf::size_type> page_row_offsets;
+  page_row_offsets.reserve(pass.pages.size() * 2);
+
+  // Maps each data page to its flat-page range; -1 keeps nested pages enabled.
+  std::vector<cudf::size_type> row_range_map;
+  row_range_map.reserve(pass.pages.size());
+
+  cudf::size_type previous_chunk_idx = -1;
+  auto max_page_size                 = cudf::size_type{0};
+
+  for (auto const& page : pass.pages) {
+    // Ignore dictionary pages altogether
+    if (page.flags & parquet::detail::PAGEINFO_FLAGS_DICTIONARY) { continue; }
+
+    auto const& chunk = pass.chunks[page.chunk_idx];
+
+    // Don't prune list column pages as rows may span page boundaries when offset index isn't
+    // present.
+    if (chunk.max_level[parquet::detail::level_type::REPETITION] > 0) {
+      row_range_map.push_back(-1);
+      continue;
+    }
+
+    auto const page_start = chunk.start_row + page.chunk_row;
+    auto const page_end   = page_start + page.num_rows;
+    max_page_size         = std::max<cudf::size_type>(max_page_size, page_end - page_start);
+
+    // Starting a new column chunk. Push page start row
+    if (previous_chunk_idx == -1 or page.chunk_idx != previous_chunk_idx) {
+      page_row_offsets.push_back(page_start);
+      previous_chunk_idx = page.chunk_idx;
+    }
+
+    // Push row range index and page end row
+    row_range_map.push_back(page_row_offsets.size() - 1);
+    page_row_offsets.push_back(page_end);
+  }
+
+  auto data_page_mask = thrust::host_vector<bool>{};
+
+  // Compute the row range mask
+  auto const row_range_mask = compute_row_range_selection_mask(
+    _row_mask, _row_mask_offset, pass.num_rows, page_row_offsets, max_page_size, _stream);
+
+  if (row_range_mask.empty()) { return data_page_mask; }
+
+  CUDF_EXPECTS(row_range_mask.size() == page_row_offsets.size() - 1,
+               "Encountered invalid row range mask size");
+
+  data_page_mask.reserve(row_range_map.size());
+
+  // Scatter row range results while retaining list column pages.
+  for (auto const range_idx : row_range_map) {
+    data_page_mask.push_back(range_idx < 0 ? true : row_range_mask[range_idx]);
+  }
+  return data_page_mask;
 }
 
 void hybrid_scan_reader_impl::set_sparse_pass_page_mask(

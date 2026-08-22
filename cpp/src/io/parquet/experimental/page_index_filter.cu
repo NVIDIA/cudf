@@ -1170,7 +1170,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   //  Copy over search results to host
   auto host_results      = cudf::detail::make_pinned_vector_async(device_data_page_mask, stream);
   auto const total_pages = pinned_page_offsets.size() - num_columns;
-  auto data_page_mask    = thrust::host_vector<bool>(total_pages);
+  auto data_page_mask    = thrust::host_vector<bool>{};
+  data_page_mask.reserve(total_pages);
   auto host_results_iter = host_results.begin();
   stream.sync();
 

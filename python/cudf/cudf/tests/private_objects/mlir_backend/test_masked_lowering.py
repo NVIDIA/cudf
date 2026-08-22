@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import operator
 
 import cupy as cp
@@ -460,4 +461,205 @@ def test_masked_binary_with_na_is_invalid(na_first):
         cp.array([5], dtype=np.int64),
         cp.array([True], dtype=np.bool_),  # valid operand; NA still poisons
     )
+    assert bool(out_valid.get()[0]) is False
+
+
+@pytest.mark.parametrize(
+    "op,ref", [(operator.neg, lambda x: -x), (operator.pos, lambda x: +x)]
+)
+def test_masked_unary_sign(op, ref):
+    """TODO: write docstring."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = op(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([7], dtype=np.int64),
+        cp.array([False], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == ref(7)
+    # validity carried from the operand
+    assert bool(out_valid.get()[0]) is False
+
+
+@pytest.mark.parametrize("x", [5, 0, -6, 255])
+def test_masked_invert(x):
+    """TODO: write docstring."""
+
+    @cuda.jit(types.void(types.int64[::1], types.int64[::1], types.boolean[::1]))
+    def k(out, a, av):
+        out[0] = (~Masked(a[0], av[0])).value
+
+    out = cp.zeros(1, dtype=np.int64)
+    _launch(k, out, cp.array([x], dtype=np.int64), cp.array([True], dtype=np.bool_))
+    assert int(out.get()[0]) == ~x
+
+
+@pytest.mark.parametrize(
+    "fn,ref",
+    [
+        (math.sin, math.sin),
+        (math.cos, math.cos),
+        (math.sqrt, math.sqrt),
+        (math.exp, math.exp),
+    ],
+)
+def test_masked_unary_math(fn, ref):
+    """TODO: write docstring."""
+
+    @cuda.jit(types.void(types.float64[::1], types.float64[::1], types.boolean[::1]))
+    def k(out, a, av):
+        out[0] = fn(Masked(a[0], av[0])).value
+
+    out = cp.zeros(1, dtype=np.float64)
+    _launch(
+        k, out, cp.array([1.5], dtype=np.float64), cp.array([True], dtype=np.bool_)
+    )
+    np.testing.assert_allclose(float(out.get()[0]), ref(1.5), rtol=1e-12)
+
+
+@pytest.mark.parametrize("x", [-9, 0, 12])
+def test_masked_abs(x):
+    """TODO: write docstring."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = abs(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([x], dtype=np.int64),
+        cp.array([True], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == abs(x)
+    assert bool(out_valid.get()[0]) is True
+
+
+@pytest.mark.parametrize(
+    "value,valid,expected",
+    [
+        (5, True, True),   # valid & truthy
+        (0, True, False),  # valid & falsy
+        (5, False, False),  # invalid -> False regardless of payload
+        (0, False, False),
+    ],
+)
+def test_masked_bool_truth(value, valid, expected):
+    """TODO: write docstring."""
+
+    @cuda.jit(types.void(types.boolean[::1], types.int64[::1], types.boolean[::1]))
+    def k(out, a, av):
+        out[0] = bool(Masked(a[0], av[0]))
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([value], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+def test_masked_bool_in_if_condition():
+    """TODO: write docstring."""
+
+    @cuda.jit(types.void(types.int64[::1], types.int64[::1], types.boolean[::1]))
+    def k(out, a, av):
+        m = Masked(a[0], av[0])
+        if m:
+            out[0] = 1
+        else:
+            out[0] = 0
+
+    out = cp.zeros(1, dtype=np.int64)
+    _launch(k, out, cp.array([5], dtype=np.int64), cp.array([True], dtype=np.bool_))
+    assert int(out.get()[0]) == 1
+    _launch(k, out, cp.array([5], dtype=np.int64), cp.array([False], dtype=np.bool_))
+    assert int(out.get()[0]) == 0
+
+
+def test_masked_float_cast():
+    """TODO: write docstring."""
+
+    @cuda.jit(
+        types.void(
+            types.float64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = float(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.float64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([3], dtype=np.int64),
+        cp.array([True], dtype=np.bool_),
+    )
+    assert float(out_v.get()[0]) == 3.0
+    assert bool(out_valid.get()[0]) is True
+
+
+def test_masked_int_cast():
+    """TODO: write docstring."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.float64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = int(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([3.9], dtype=np.float64),
+        cp.array([False], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == 3
     assert bool(out_valid.get()[0]) is False

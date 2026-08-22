@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,12 +8,17 @@
 #include "parquet_common.hpp"
 
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/std/bit>
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
+#include <limits>
+#include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace CUDF_EXPORT cudf {
@@ -36,10 +41,20 @@ class CompactProtocolReader {
   explicit CompactProtocolReader(uint8_t const* base = nullptr, size_t len = 0) { init(base, len); }
   void init(uint8_t const* base, size_t len)
   {
+    // A null base is valid only for an empty buffer; a positive length would then have no backing
+    // storage. This keeps every later pointer op defined (the empty state has all-null pointers).
+    CUDF_EXPECTS(base != nullptr || len == 0,
+                 "CompactProtocolReader requires a non-null buffer when length is non-zero",
+                 std::invalid_argument);
     m_base = m_cur = base;
-    m_end          = base + len;
+    // Guard against `nullptr + len` (undefined) so a zero-length buffer stays fully defined.
+    m_end = base != nullptr ? base + len : base;
   }
-  [[nodiscard]] ptrdiff_t bytecount() const noexcept { return m_cur - m_base; }
+  [[nodiscard]] ptrdiff_t bytecount() const noexcept
+  {
+    // Avoid `nullptr - nullptr` on a null-base reader; it has consumed nothing.
+    return m_base != nullptr ? m_cur - m_base : 0;
+  }
   unsigned int getb() noexcept { return (m_cur < m_end) ? *m_cur++ : 0; }
   void skip_bytes(size_t bytecnt) noexcept
   {
@@ -47,13 +62,22 @@ class CompactProtocolReader {
     m_cur += bytecnt;
   }
 
-  // returns a varint encoded integer
-  template <typename T>
-  T get_varint() noexcept
+  // Returns a varint-encoded integer. `T` is constrained to unsigned so `numeric_limits<T>::digits`
+  // is the full value width; a signed `T` would drop the sign bit and misplace the overflow bound.
+  template <std::unsigned_integral T>
+  T get_varint()
   {
     T v = 0;
     for (uint32_t l = 0;; l += 7) {
-      T c = getb();
+      T const c = getb();
+      // Reject overlong varints. `l < digits` keeps the shift in range (and guards `max() >> l`);
+      // `c <= max() >> l` then bounds the value, since the shift-count check alone would let the
+      // top group's bits silently wrap past `T`'s width instead of being rejected. `c` is the raw
+      // byte (continuation bit included): comparing it, not the masked payload, only rejects a
+      // boundary continuation byte one group early; correct, since the next group overflows anyway.
+      CUDF_EXPECTS(l < std::numeric_limits<T>::digits && c <= (std::numeric_limits<T>::max() >> l),
+                   "Parquet varint exceeds the width of its target type",
+                   std::overflow_error);
       v |= (c & 0x7f) << l;
       if (c < 0x80) { break; }
     }
@@ -62,7 +86,7 @@ class CompactProtocolReader {
 
   // returns a zigzag encoded signed integer
   template <typename T>
-  T get_zigzag() noexcept
+  T get_zigzag()
   {
     using U   = std::make_unsigned_t<T>;
     U const u = get_varint<U>();
@@ -70,14 +94,14 @@ class CompactProtocolReader {
   }
 
   // thrift spec says to use zigzag i32 for i16 types
-  int32_t get_i16() noexcept { return get_zigzag<int32_t>(); }
-  int32_t get_i32() noexcept { return get_zigzag<int32_t>(); }
-  int64_t get_i64() noexcept { return get_zigzag<int64_t>(); }
+  int32_t get_i16() { return get_zigzag<int32_t>(); }
+  int32_t get_i32() { return get_zigzag<int32_t>(); }
+  int64_t get_i64() { return get_zigzag<int64_t>(); }
 
-  uint32_t get_u32() noexcept { return get_varint<uint32_t>(); }
-  uint64_t get_u64() noexcept { return get_varint<uint64_t>(); }
+  uint32_t get_u32() { return get_varint<uint32_t>(); }
+  uint64_t get_u64() { return get_varint<uint64_t>(); }
 
-  [[nodiscard]] std::pair<uint8_t, uint32_t> get_listh() noexcept
+  [[nodiscard]] std::pair<uint8_t, uint32_t> get_listh()
   {
     uint32_t const c = getb();
     uint32_t sz      = c >> 4;

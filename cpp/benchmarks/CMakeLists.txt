@@ -338,6 +338,11 @@ ConfigureNVBench(PARQUET_READER_FILTER_NVBENCH io/parquet/parquet_reader_filter.
 ConfigureNVBench(PARQUET_READER_METADATA_NVBENCH io/parquet/parquet_reader_metadata.cpp)
 
 # ##################################################################################################
+# * parquet varint decode benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(PARQUET_VARINT_DECODE_NVBENCH io/parquet/parquet_varint_decode.cpp)
+
+# ##################################################################################################
 # * parquet deletion vector benchmark
 # ----------------------------------------------------------------------
 ConfigureNVBench(

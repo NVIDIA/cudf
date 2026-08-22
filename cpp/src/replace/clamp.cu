@@ -17,7 +17,6 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/replace.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/strings_column_view.hpp>
@@ -159,8 +158,14 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
   auto indices_itr =
     cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
 
-  auto lo_itr  = make_optional_iterator<T>(lo, nullate::YES{});
-  auto hi_itr  = make_optional_iterator<T>(hi, nullate::YES{});
+  auto const lo_view = lo.as_column_view();
+  auto const hi_view = hi.as_column_view();
+  auto d_lo          = column_device_view::create(lo_view.as_column_view(), stream);
+  auto d_hi          = column_device_view::create(hi_view.as_column_view(), stream);
+  auto lo_itr  = cuda::make_permutation_iterator(make_optional_iterator<T>(*d_lo, nullate::YES{}),
+                                                cuda::make_constant_iterator<size_type>(0));
+  auto hi_itr  = cuda::make_permutation_iterator(make_optional_iterator<T>(*d_hi, nullate::YES{}),
+                                                cuda::make_constant_iterator<size_type>(0));
   auto d_input = column_device_view::create(input.parent(), stream);
 
   using OptionalIterator = decltype(lo_itr);
@@ -280,10 +285,24 @@ struct dispatch_clamp {
         dictionary_column_view(input), lo, lo_replace, hi, hi_replace, stream, mr);
     }
 
-    auto lo_itr         = make_optional_iterator<T>(lo, nullate::YES{});
-    auto hi_itr         = make_optional_iterator<T>(hi, nullate::YES{});
-    auto lo_replace_itr = make_optional_iterator<T>(lo_replace, nullate::NO{});
-    auto hi_replace_itr = make_optional_iterator<T>(hi_replace, nullate::NO{});
+    auto const lo_view         = lo.as_column_view();
+    auto const hi_view         = hi.as_column_view();
+    auto const lo_replace_view = lo_replace.as_column_view();
+    auto const hi_replace_view = hi_replace.as_column_view();
+    auto d_lo                  = column_device_view::create(lo_view.as_column_view(), stream);
+    auto d_hi                  = column_device_view::create(hi_view.as_column_view(), stream);
+    auto d_lo_replace = column_device_view::create(lo_replace_view.as_column_view(), stream);
+    auto d_hi_replace = column_device_view::create(hi_replace_view.as_column_view(), stream);
+
+    auto const scalar_index = cuda::make_constant_iterator<size_type>(0);
+    auto lo_itr = cuda::make_permutation_iterator(make_optional_iterator<T>(*d_lo, nullate::YES{}),
+                                                  scalar_index);
+    auto hi_itr = cuda::make_permutation_iterator(make_optional_iterator<T>(*d_hi, nullate::YES{}),
+                                                  scalar_index);
+    auto lo_replace_itr = cuda::make_permutation_iterator(
+      make_optional_iterator<T>(*d_lo_replace, nullate::NO{}), scalar_index);
+    auto hi_replace_itr = cuda::make_permutation_iterator(
+      make_optional_iterator<T>(*d_hi_replace, nullate::NO{}), scalar_index);
 
     return clamp<T>(input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr, stream, mr);
   }

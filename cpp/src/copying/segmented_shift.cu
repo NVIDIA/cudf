@@ -65,11 +65,15 @@ struct segmented_shift_functor<T, std::enable_if_t<is_rep_layout_compatible<T>()
                                      rmm::device_async_resource_ref mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
-    bool nullable           = not fill_value.is_valid(stream) or segmented_values.nullable();
+    auto const fill_view    = fill_value.as_column_view();
+    auto fill_device_view   = column_device_view::create(fill_view.as_column_view(), stream);
+    bool nullable           = not fill_value.is_valid() or segmented_values.nullable();
     auto input_iterator     = cudf::detail::make_optional_iterator<T>(
                             *values_device_view, nullate::DYNAMIC{segmented_values.has_nulls()}) -
                           offset;
-    auto fill_iterator = cudf::detail::make_optional_iterator<T>(fill_value, nullate::YES{});
+    auto fill_iterator = cuda::make_permutation_iterator(
+      cudf::detail::make_optional_iterator<T>(*fill_device_view, nullate::YES{}),
+      cuda::make_constant_iterator<size_type>(0));
     return copy_if_else(nullable,
                         input_iterator,
                         input_iterator + segmented_values.size(),
@@ -94,10 +98,14 @@ struct segmented_shift_functor<string_view> {
                                      rmm::device_async_resource_ref mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
+    auto const fill_view    = fill_value.as_column_view();
+    auto fill_device_view   = column_device_view::create(fill_view.as_column_view(), stream);
     auto input_iterator     = make_optional_iterator<cudf::string_view>(
                             *values_device_view, nullate::DYNAMIC{segmented_values.has_nulls()}) -
                           offset;
-    auto fill_iterator = make_optional_iterator<cudf::string_view>(fill_value, nullate::YES{});
+    auto fill_iterator = cuda::make_permutation_iterator(
+      make_optional_iterator<cudf::string_view>(*fill_device_view, nullate::YES{}),
+      cuda::make_constant_iterator<size_type>(0));
     return strings::detail::copy_if_else(input_iterator,
                                          input_iterator + segmented_values.size(),
                                          fill_iterator,

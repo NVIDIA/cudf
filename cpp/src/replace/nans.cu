@@ -33,6 +33,7 @@ struct replace_nans_functor {
   std::unique_ptr<column> operator()(column_view const& input,
                                      Replacement const& replacement,
                                      bool replacement_nullable,
+                                     bool broadcast_replacement,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_floating_point_v<T>)
@@ -51,8 +52,14 @@ struct replace_nans_functor {
 
     auto input_iterator =
       make_optional_iterator<T>(*input_device_view, nullate::DYNAMIC{input.has_nulls()});
-    auto replacement_iterator =
+    auto replacement_values =
       make_optional_iterator<T>(replacement, nullate::DYNAMIC{replacement_nullable});
+    auto replacement_indices = make_counting_transform_iterator(
+      size_type{0}, [broadcast_replacement] __device__(size_type i) -> size_type {
+        return broadcast_replacement ? 0 : i;
+      });
+    auto replacement_iterator =
+      cuda::make_permutation_iterator(replacement_values, replacement_indices);
     return copy_if_else(input.has_nulls() or replacement_nullable,
                         input_iterator,
                         input_iterator + size,
@@ -81,11 +88,13 @@ std::unique_ptr<column> replace_nans(column_view const& input,
   CUDF_EXPECTS(input.size() == replacement.size(),
                "Input and replacement must be of the same size");
 
+  auto replacement_device_view = column_device_view::create(replacement, stream);
   return type_dispatcher(input.type(),
                          replace_nans_functor{},
                          input,
-                         *column_device_view::create(replacement, stream),
+                         *replacement_device_view,
                          replacement.nullable(),
+                         false,
                          stream,
                          mr);
 }
@@ -95,8 +104,11 @@ std::unique_ptr<column> replace_nans(column_view const& input,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr)
 {
+  auto const replacement_view = replacement.as_column_view();
+  auto replacement_device_view =
+    column_device_view::create(replacement_view.as_column_view(), stream);
   return type_dispatcher(
-    input.type(), replace_nans_functor{}, input, replacement, true, stream, mr);
+    input.type(), replace_nans_functor{}, input, *replacement_device_view, true, true, stream, mr);
 }
 
 }  // namespace detail

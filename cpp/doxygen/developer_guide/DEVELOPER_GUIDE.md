@@ -1035,8 +1035,9 @@ libcudf as well as Thrust algorithms. Most are defined in `include/detail/iterat
 
 The pair iterator is used to access elements of nullable columns as a pair containing an element's
 value and validity. `cudf::detail::make_pair_iterator` can be used to create a pair iterator from a
-`column_device_view` or a `cudf::scalar`. `make_pair_iterator` is not available for
-`mutable_column_device_view`.
+`column_device_view`. Scalar callers use `scalar::as_column_view()` to create a
+`column_device_view` and must retain the returned device-view owner until iterator use completes.
+`make_pair_iterator` is not available for `mutable_column_device_view`.
 
 ### Null-replacement iterator
 

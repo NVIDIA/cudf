@@ -5,11 +5,11 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/datetime_ops.cuh>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -33,8 +33,8 @@ struct calendrical_month_sequence_functor {
     // Return empty column if n = 0
     if (n == 0) return cudf::make_empty_column(input.type());
 
-    auto const device_input =
-      get_scalar_device_view(static_cast<cudf::scalar_type_t<T>&>(const_cast<scalar&>(input)));
+    auto const input_view   = input.as_column_view();
+    auto const device_input = column_device_view::create(input_view.as_column_view(), stream);
     auto output_column_type = cudf::data_type{cudf::type_to_id<T>()};
     auto output             = cudf::make_fixed_width_column(
       output_column_type, n, cudf::mask_state::UNALLOCATED, stream, mr);
@@ -43,9 +43,9 @@ struct calendrical_month_sequence_functor {
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{n},
                       output->mutable_view().begin<T>(),
-                      [initial = device_input, months] __device__(size_type i) {
+                      [initial = *device_input, months] __device__(size_type i) {
                         return datetime::detail::add_calendrical_months_with_scale_back(
-                          initial.value(), cuda::std::chrono::months{i * months});
+                          initial.element<T>(0), cuda::std::chrono::months{i * months});
                       });
 
     return output;

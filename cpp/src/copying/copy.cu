@@ -52,12 +52,24 @@ struct get_iterable_device_view {
   }
 
   template <typename T>
-  auto operator()(T const& input, cuda::stream_ref)
+  auto operator()(T const& input, cuda::stream_ref stream)
     requires(std::is_same_v<T, cudf::scalar>)
   {
-    return &input;
+    auto const input_view = input.as_column_view();
+    return cudf::column_device_view::create(input_view.as_column_view(), stream);
   }
 };
+
+template <typename T, typename Input>
+auto make_iterable_optional_iterator(column_device_view const& input, bool nullable)
+{
+  auto values = cudf::detail::make_optional_iterator<T>(input, nullate::DYNAMIC{nullable});
+  if constexpr (std::is_same_v<Input, cudf::scalar>) {
+    return cuda::make_permutation_iterator(values, cuda::make_constant_iterator<size_type>(0));
+  } else {
+    return values;
+  }
+}
 
 template <typename T>
 struct copy_if_else_functor_impl<T, std::enable_if_t<is_rep_layout_compatible<T>()>> {
@@ -76,8 +88,8 @@ struct copy_if_else_functor_impl<T, std::enable_if_t<is_rep_layout_compatible<T>
     auto const& lhs = *p_lhs;
     auto const& rhs = *p_rhs;
 
-    auto lhs_iter = cudf::detail::make_optional_iterator<T>(lhs, nullate::DYNAMIC{left_nullable});
-    auto rhs_iter = cudf::detail::make_optional_iterator<T>(rhs, nullate::DYNAMIC{right_nullable});
+    auto lhs_iter = make_iterable_optional_iterator<T, Left>(lhs, left_nullable);
+    auto rhs_iter = make_iterable_optional_iterator<T, Right>(rhs, right_nullable);
     return detail::copy_if_else(left_nullable || right_nullable,
                                 lhs_iter,
                                 lhs_iter + size,
@@ -111,8 +123,8 @@ struct copy_if_else_functor_impl<string_view> {
     auto const& lhs = *p_lhs;
     auto const& rhs = *p_rhs;
 
-    auto lhs_iter = cudf::detail::make_optional_iterator<T>(lhs, nullate::DYNAMIC{left_nullable});
-    auto rhs_iter = cudf::detail::make_optional_iterator<T>(rhs, nullate::DYNAMIC{right_nullable});
+    auto lhs_iter = make_iterable_optional_iterator<T, Left>(lhs, left_nullable);
+    auto rhs_iter = make_iterable_optional_iterator<T, Right>(rhs, right_nullable);
     return strings::detail::copy_if_else(lhs_iter, lhs_iter + size, rhs_iter, filter, stream, mr);
   }
 };

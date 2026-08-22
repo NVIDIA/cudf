@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/detail/fill.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>

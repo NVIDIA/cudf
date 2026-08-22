@@ -35,10 +35,16 @@ TYPED_TEST(IteratorTest, scalar_iterator)
                  [](auto v, auto b) { return cuda::std::pair<T, bool>{v, b}; });
 
   // GPU test
-  auto it_dev = cudf::detail::make_scalar_iterator<T>(*s);
+  auto const scalar_view = s->as_column_view();
+  auto const d_scalar =
+    cudf::column_device_view::create(scalar_view.as_column_view(), cudf::get_default_stream());
+  auto it_dev = cuda::make_permutation_iterator(d_scalar->begin<T>(),
+                                                cuda::make_constant_iterator<cudf::size_type>(0));
   this->iterator_test_thrust(host_values, it_dev, host_values.size());
 
-  auto it_pair_dev = cudf::detail::make_pair_iterator<T>(*s);
+  auto it_pair_dev =
+    cuda::make_permutation_iterator(cudf::detail::make_pair_iterator<T, true>(*d_scalar),
+                                    cuda::make_constant_iterator<cudf::size_type>(0));
   this->iterator_test_thrust(value_and_validity, it_pair_dev, host_values.size());
 }
 
@@ -49,11 +55,11 @@ TYPED_TEST(IteratorTest, null_scalar_iterator)
     cudf::test::UniformRandomGenerator<int>(-128, 128).generate());
   // data and valid arrays
   std::vector<T> host_values(100, init);
-  std::vector<bool> host_bools(100, true);
+  std::vector<bool> host_bools(100, false);
 
   // create a scalar
   using ScalarType = cudf::scalar_type_t<T>;
-  std::unique_ptr<cudf::scalar> s(new ScalarType{init, true});
+  std::unique_ptr<cudf::scalar> s(new ScalarType{init, false});
 
   // calculate the expected value by CPU.
   thrust::host_vector<cuda::std::pair<T, bool>> value_and_validity(host_values.size());
@@ -64,6 +70,11 @@ TYPED_TEST(IteratorTest, null_scalar_iterator)
                  [](auto v, auto b) { return cuda::std::pair<T, bool>{v, b}; });
 
   // GPU test
-  auto it_pair_dev = cudf::detail::make_pair_iterator<T>(*s);
+  auto const scalar_view = s->as_column_view();
+  auto const d_scalar =
+    cudf::column_device_view::create(scalar_view.as_column_view(), cudf::get_default_stream());
+  auto it_pair_dev =
+    cuda::make_permutation_iterator(cudf::detail::make_pair_iterator<T, true>(*d_scalar),
+                                    cuda::make_constant_iterator<cudf::size_type>(0));
   this->iterator_test_thrust(value_and_validity, it_pair_dev, host_values.size());
 }

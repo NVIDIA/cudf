@@ -40,16 +40,15 @@ inline bool __device__ out_of_bounds(size_type size, size_type idx)
 
 std::pair<rmm::device_buffer, size_type> create_null_mask(column_device_view const& input,
                                                           size_type offset,
-                                                          scalar const& fill_value,
+                                                          column_device_view const& fill,
                                                           cuda::stream_ref stream,
                                                           rmm::device_async_resource_ref mr)
 {
-  auto const size = input.size();
-  auto func_validity =
-    [size, offset, fill = fill_value.validity_data(), input] __device__(size_type idx) {
-      auto src_idx = idx - offset;
-      return out_of_bounds(size, src_idx) ? bit_is_set(fill, 0) : input.is_valid(src_idx);
-    };
+  auto const size    = input.size();
+  auto func_validity = [size, offset, fill, input] __device__(size_type idx) {
+    auto src_idx = idx - offset;
+    return out_of_bounds(size, src_idx) ? fill.is_valid(0) : input.is_valid(src_idx);
+  };
   return detail::valid_if(cuda::counting_iterator<size_type>{0},
                           cuda::counting_iterator<size_type>{size},
                           func_validity,
@@ -76,9 +75,11 @@ struct shift_functor {
     auto output = cudf::strings::detail::shift(
       cudf::strings_column_view(input), offset, fill_value, stream, mr);
 
-    if (input.nullable() || not fill_value.is_valid(stream)) {
+    if (input.nullable() || not fill_value.is_valid()) {
       auto const d_input           = column_device_view::create(input, stream);
-      auto [null_mask, null_count] = create_null_mask(*d_input, offset, fill_value, stream, mr);
+      auto const fill_view         = fill_value.as_column_view();
+      auto const d_fill            = column_device_view::create(fill_view.as_column_view(), stream);
+      auto [null_mask, null_count] = create_null_mask(*d_input, offset, *d_fill, stream, mr);
       output->set_null_mask(std::move(null_mask), null_count);
     }
 
@@ -93,19 +94,18 @@ struct shift_functor {
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_width<T>())
   {
-    using ScalarType = cudf::scalar_type_t<T>;
-    auto& scalar     = static_cast<ScalarType const&>(fill_value);
-
-    auto device_input = column_device_view::create(input, stream);
+    auto device_input    = column_device_view::create(input, stream);
+    auto const fill_view = fill_value.as_column_view();
+    auto device_fill     = column_device_view::create(fill_view.as_column_view(), stream);
     auto output =
       detail::allocate_like(input, input.size(), mask_allocation_policy::NEVER, stream, mr);
     auto device_output = mutable_column_device_view::create(*output, stream);
 
-    auto const scalar_is_valid = scalar.is_valid(stream);
+    auto const scalar_is_valid = fill_value.is_valid();
 
     if (input.nullable() || not scalar_is_valid) {
       auto [null_mask, null_count] =
-        create_null_mask(*device_input, offset, fill_value, stream, mr);
+        create_null_mask(*device_input, offset, *device_fill, stream, mr);
       output->set_null_mask(std::move(null_mask), null_count);
     }
 
@@ -126,9 +126,9 @@ struct shift_functor {
     }
 
     auto func_value =
-      [size, offset, fill = scalar.data(), input = *device_input] __device__(size_type idx) {
+      [size, offset, fill = *device_fill, input = *device_input] __device__(size_type idx) {
         auto src_idx = idx - offset;
-        return out_of_bounds(size, src_idx) ? *fill : input.element<T>(src_idx);
+        return out_of_bounds(size, src_idx) ? fill.element<T>(0) : input.element<T>(src_idx);
       };
 
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

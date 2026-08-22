@@ -9,7 +9,10 @@
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column_factories.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
@@ -62,7 +65,7 @@ class lifetime_test_scalar : public cudf::numeric_scalar<int32_t> {
 
   void set_data_async(int32_t const& value, cuda::stream_ref stream)
   {
-    this->_data.set_value_async(value, stream);
+    this->set_value(value, stream);
   }
 };
 
@@ -226,6 +229,13 @@ TEST_F(StringScalarTest, MoveConstructor)
   EXPECT_EQ(data_ptr, s2.data());
 }
 
+TEST_F(StringScalarTest, OverflowCheckedBeforeAllocation)
+{
+  char source{};
+  auto const oversized = static_cast<std::size_t>(std::numeric_limits<cudf::size_type>::max()) + 1;
+  EXPECT_THROW(cudf::string_scalar(std::string_view{&source, oversized}), std::overflow_error);
+}
+
 struct ListScalarTest : public cudf::test::BaseFixture {};
 
 TEST_F(ListScalarTest, DefaultValidityNonNested)
@@ -244,6 +254,66 @@ TEST_F(ListScalarTest, DefaultValidityNested)
 
   EXPECT_TRUE(s.is_valid());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(data, s.view());
+}
+
+TEST_F(ScalarTest, OneRowColumnLayoutBaseline)
+{
+  auto const numeric      = cudf::numeric_scalar<int32_t>{42};
+  auto const null_numeric = cudf::numeric_scalar<int32_t>{42, false};
+  auto const decimal = cudf::fixed_point_scalar<numeric::decimal64>{1234, numeric::scale_type{-2}};
+  auto const decimal128 =
+    cudf::fixed_point_scalar<numeric::decimal128>{__int128_t{5678}, numeric::scale_type{-7}};
+  auto const raw_int128      = cudf::numeric_scalar<__int128_t>{__int128_t{9012}};
+  auto const string          = cudf::string_scalar{"scalar"};
+  auto const null_string     = cudf::string_scalar{"null scalar", false};
+  auto const list_elements   = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
+  auto const list            = cudf::list_scalar{list_elements};
+  auto const null_list       = cudf::list_scalar{list_elements, false};
+  auto const nested_elements = cudf::test::lists_column_wrapper<int32_t>{{1, 2}, {}, {3}};
+  auto const nested_list     = cudf::list_scalar{nested_elements};
+
+  auto const numeric_column      = numeric.as_column_view();
+  auto const null_numeric_column = null_numeric.as_column_view();
+  auto const decimal_column      = decimal.as_column_view();
+  auto const decimal128_column   = decimal128.as_column_view();
+  auto const raw_int128_column   = raw_int128.as_column_view();
+  auto const string_column       = string.as_column_view();
+  auto const null_string_column  = null_string.as_column_view();
+  auto const list_column         = list.as_column_view();
+  auto const null_list_column    = null_list.as_column_view();
+  auto const nested_list_column  = nested_list.as_column_view();
+
+  auto const expected_numeric = cudf::test::fixed_width_column_wrapper<int32_t>{42};
+  auto const expected_decimal =
+    cudf::test::fixed_point_column_wrapper<int64_t>({1234}, numeric::scale_type{-2});
+  auto const expected_decimal128 =
+    cudf::test::fixed_point_column_wrapper<__int128_t>({5678}, numeric::scale_type{-7});
+  auto const expected_raw_int128 =
+    cudf::test::fixed_point_column_wrapper<__int128_t>({9012}, numeric::scale_type{0});
+  auto const expected_string = cudf::test::strings_column_wrapper{"scalar"};
+  auto const expected_list   = cudf::test::lists_column_wrapper<int32_t>{{1, 2, 3}};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_numeric, numeric_column.as_column_view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_decimal, decimal_column.as_column_view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_decimal128, decimal128_column.as_column_view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_raw_int128, raw_int128_column.as_column_view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_string, string_column.as_column_view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_list, list_column.as_column_view());
+
+  EXPECT_EQ(1, null_numeric_column.null_count());
+  EXPECT_TRUE(null_numeric_column.nullable());
+  EXPECT_EQ(cudf::data_type(cudf::type_id::DECIMAL128, 0), raw_int128_column.type());
+  EXPECT_EQ(1, null_string_column.null_count());
+  EXPECT_EQ(1, null_list_column.null_count());
+  EXPECT_EQ(cudf::type_id::STRING, null_string_column.type().id());
+  EXPECT_EQ(cudf::type_id::LIST, null_list_column.type().id());
+  EXPECT_EQ(2, null_string_column.as_column_view().child(0).size());
+  EXPECT_EQ(3, null_list_column.as_column_view().child(1).size());
+  EXPECT_EQ(cudf::type_id::LIST, nested_list_column.as_column_view().child(1).type().id());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(nested_elements, nested_list_column.as_column_view().child(1));
+  EXPECT_EQ(numeric.data(), numeric_column.data<int32_t>());
+  EXPECT_EQ(string.data(), string_column.data<char>());
+  EXPECT_EQ(list.view().data<int32_t>(), list_column.as_column_view().child(1).data<int32_t>());
 }
 
 TEST_F(ListScalarTest, MoveColumnConstructor)

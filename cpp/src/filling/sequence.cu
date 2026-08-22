@@ -10,7 +10,6 @@
 #include <cudf/detail/sequence.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -31,20 +30,20 @@ namespace {
 // __T289 link error.  This seems to be related to lambda usage within functions using SFINAE.
 template <typename T>
 struct tabulator {
-  cudf::numeric_scalar_device_view<T> const n_init;
-  cudf::numeric_scalar_device_view<T> const n_step;
+  cudf::column_device_view const init;
+  cudf::column_device_view const step;
 
   T __device__ operator()(cudf::size_type i)
   {
-    return n_init.value() + (static_cast<T>(i) * n_step.value());
+    return init.element<T>(0) + (static_cast<T>(i) * step.element<T>(0));
   }
 };
 
 template <typename T>
 struct const_tabulator {
-  cudf::numeric_scalar_device_view<T> const n_init;
+  cudf::column_device_view const init;
 
-  T __device__ operator()(cudf::size_type i) { return n_init.value() + static_cast<T>(i); }
+  T __device__ operator()(cudf::size_type i) { return init.element<T>(0) + static_cast<T>(i); }
 };
 
 /**
@@ -63,10 +62,10 @@ struct sequence_functor {
     auto result = make_fixed_width_column(init.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto result_device_view = mutable_column_device_view::create(*result, stream);
 
-    auto n_init =
-      get_scalar_device_view(static_cast<cudf::scalar_type_t<T>&>(const_cast<scalar&>(init)));
-    auto n_step =
-      get_scalar_device_view(static_cast<cudf::scalar_type_t<T>&>(const_cast<scalar&>(step)));
+    auto const init_view = init.as_column_view();
+    auto const step_view = step.as_column_view();
+    auto const d_init    = column_device_view::create(init_view.as_column_view(), stream);
+    auto const d_step    = column_device_view::create(step_view.as_column_view(), stream);
 
     // not using thrust::sequence because it requires init and step to be passed as
     // constants, not iterators. to do that we would have to retrieve the scalar values off the gpu,
@@ -74,7 +73,7 @@ struct sequence_functor {
     thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      result_device_view->begin<T>(),
                      result_device_view->end<T>(),
-                     tabulator<T>{n_init, n_step});
+                     tabulator<T>{*d_init, *d_step});
 
     return result;
   }
@@ -89,8 +88,8 @@ struct sequence_functor {
     auto result = make_fixed_width_column(init.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto result_device_view = mutable_column_device_view::create(*result, stream);
 
-    auto n_init =
-      get_scalar_device_view(static_cast<cudf::scalar_type_t<T>&>(const_cast<scalar&>(init)));
+    auto const init_view = init.as_column_view();
+    auto const d_init    = column_device_view::create(init_view.as_column_view(), stream);
 
     // not using thrust::sequence because it requires init and step to be passed as
     // constants, not iterators. to do that we would have to retrieve the scalar values off the gpu,
@@ -98,7 +97,7 @@ struct sequence_functor {
     thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      result_device_view->begin<T>(),
                      result_device_view->end<T>(),
-                     const_tabulator<T>{n_init});
+                     const_tabulator<T>{*d_init});
 
     return result;
   }
@@ -125,8 +124,8 @@ std::unique_ptr<column> sequence(size_type size,
   CUDF_EXPECTS(size >= 0, "size must be >= 0", std::invalid_argument);
   CUDF_EXPECTS(
     is_numeric(init.type()), "Input scalar types must be numeric", std::invalid_argument);
-  CUDF_EXPECTS(init.is_valid(stream), "init must be a valid scalar", std::invalid_argument);
-  CUDF_EXPECTS(step.is_valid(stream), "step must be a valid scalar", std::invalid_argument);
+  CUDF_EXPECTS(init.is_valid(), "init must be a valid scalar", std::invalid_argument);
+  CUDF_EXPECTS(step.is_valid(), "step must be a valid scalar", std::invalid_argument);
 
   return type_dispatcher(init.type(), sequence_functor{}, size, init, step, stream, mr);
 }
@@ -138,7 +137,7 @@ std::unique_ptr<column> sequence(size_type size,
 {
   CUDF_EXPECTS(size >= 0, "size must be >= 0", std::invalid_argument);
   CUDF_EXPECTS(is_numeric(init.type()), "init scalar type must be numeric", cudf::data_type_error);
-  CUDF_EXPECTS(init.is_valid(stream), "init must be a valid scalar", std::invalid_argument);
+  CUDF_EXPECTS(init.is_valid(), "init must be a valid scalar", std::invalid_argument);
 
   return type_dispatcher(init.type(), sequence_functor{}, size, init, stream, mr);
 }

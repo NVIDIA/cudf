@@ -174,11 +174,7 @@ std::unique_ptr<scalar> dictionary_reduction(
  */
 template <typename InputType, typename OutputType>
 struct assign_scalar_fn {
-  __device__ void operator()()
-  {
-    d_output.set_value(static_cast<OutputType>(d_input.value()));
-    d_output.set_valid(d_input.is_valid());
-  }
+  __device__ void operator()() { d_output.set_value(static_cast<OutputType>(d_input.value())); }
 
   cudf::numeric_scalar_device_view<InputType> d_input;
   cudf::numeric_scalar_device_view<OutputType> d_output;
@@ -208,8 +204,9 @@ struct cast_numeric_scalar_fn {
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<ResultType>())
   {
-    auto d_input  = cudf::get_scalar_device_view(*input);
-    auto result   = std::make_unique<numeric_scalar<ResultType>>(ResultType{}, true, stream, mr);
+    auto d_input = cudf::get_scalar_device_view(*input);
+    auto result  = std::make_unique<numeric_scalar<ResultType>>(
+      ResultType{}, input->is_valid(stream), stream, mr);
     auto d_output = cudf::get_scalar_device_view(*result);
     cudf::detail::device_single_thread(assign_scalar_fn<InputType, ResultType>{d_input, d_output},
                                        stream);

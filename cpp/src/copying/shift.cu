@@ -48,7 +48,7 @@ std::pair<rmm::device_buffer, size_type> create_null_mask(column_device_view con
   auto func_validity =
     [size, offset, fill = fill_value.validity_data(), input] __device__(size_type idx) {
       auto src_idx = idx - offset;
-      return out_of_bounds(size, src_idx) ? *fill : input.is_valid(src_idx);
+      return out_of_bounds(size, src_idx) ? bit_is_set(fill, 0) : input.is_valid(src_idx);
     };
   return detail::valid_if(cuda::counting_iterator<size_type>{0},
                           cuda::counting_iterator<size_type>{size},

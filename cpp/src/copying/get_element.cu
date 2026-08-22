@@ -36,6 +36,7 @@ struct get_element_functor {
                                      rmm::device_async_resource_ref mr)
   {
     auto s = make_fixed_width_scalar(data_type(type_to_id<T>()), stream, mr);
+    s->set_valid_async(is_element_valid_sync(input, index, stream), stream);
 
     using ScalarType = cudf::scalar_type_t<T>;
     auto typed_s     = static_cast<ScalarType*>(s.get());
@@ -46,7 +47,6 @@ struct get_element_functor {
     device_single_thread(
       [device_s, d_col = *device_col, index] __device__() mutable {
         device_s.set_value(d_col.element<T>(index));
-        device_s.set_valid(d_col.is_valid(index));
       },
       stream);
     return s;
@@ -84,16 +84,16 @@ struct get_element_functor {
   {
     auto dict_view    = dictionary_column_view(input);
     auto indices_iter = detail::indexalator_factory::make_input_iterator(dict_view.indices());
-    numeric_scalar<size_type> key_index_scalar{
-      index, true, stream, cudf::get_current_device_resource_ref()};
+    numeric_scalar<size_type> key_index_scalar{index,
+                                               is_element_valid_sync(input, index, stream),
+                                               stream,
+                                               cudf::get_current_device_resource_ref()};
     auto d_key_index = get_scalar_device_view(key_index_scalar);
-    auto d_col       = column_device_view::create(input, stream);
 
     // retrieve the indices value at index
     device_single_thread(
-      [d_key_index, d_col = *d_col, indices_iter, index] __device__() mutable {
+      [d_key_index, indices_iter, index] __device__() mutable {
         d_key_index.set_value(indices_iter[index]);
-        d_key_index.set_valid(d_col.is_valid(index));
       },
       stream);
 
@@ -144,16 +144,16 @@ struct get_element_functor {
 
     auto device_col = column_device_view::create(input, stream);
 
-    auto result = std::make_unique<fixed_point_scalar<T>>(
-      Type{}, numeric::scale_type{input.type().scale()}, false, stream, mr);
+    auto result =
+      std::make_unique<fixed_point_scalar<T>>(Type{},
+                                              numeric::scale_type{input.type().scale()},
+                                              is_element_valid_sync(input, index, stream),
+                                              stream,
+                                              mr);
 
     device_single_thread(
-      [buffer   = result->data(),
-       validity = result->validity_data(),
-       d_col    = *device_col,
-       index] __device__() mutable {
-        *buffer   = d_col.element<Type>(index);
-        *validity = d_col.is_valid(index);
+      [buffer = result->data(), d_col = *device_col, index] __device__() mutable {
+        *buffer = d_col.element<Type>(index);
       },
       stream);
 

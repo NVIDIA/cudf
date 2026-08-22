@@ -822,7 +822,7 @@ if(expected__{1}.has_value()) {{
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::literal const& expr)
 {
   auto id = expr.is_scalar_column_view() ? instance_.add_input(expr.get_scalar_column_view())
-                                         : instance_.add_input(expr.get_scalar());
+                                         : instance_.add_input(expr.get_scalar().as_column_view());
   return std::make_unique<row_ir::node>(input_reference{id});
 }
 
@@ -876,9 +876,9 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
 bool is_nullable(scalar_input const& in)
 {
   if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
-    return (*s)->nullable();
+    return (*s)->has_nulls();
   } else {
-    return std::get<scalar_column_view>(in).nullable();
+    return std::get<scalar_column_view>(in).has_nulls();
   }
 }
 

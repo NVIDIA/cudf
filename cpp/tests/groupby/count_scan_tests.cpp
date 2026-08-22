@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,6 +44,25 @@ TYPED_TEST(groupby_count_scan_test, basic)
   auto agg2 =
     cudf::make_count_aggregation<cudf::groupby_scan_aggregation>(cudf::null_policy::INCLUDE);
   test_single_scan(keys, vals, expect_keys, expect_vals, std::move(agg2));
+}
+
+struct groupby_count_scan_all_valid_test : public cudf::test::BaseFixture {};
+
+TEST_F(groupby_count_scan_all_valid_test, all_valid_values)
+{
+  using value_wrapper  = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using result_wrapper = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+
+  // An allocated mask with no nulls should produce the same result as a non-nullable column.
+  key_wrapper keys{1, 1, 1, 2, 2, 3};
+  value_wrapper vals({0, 1, 2, 3, 4, 5}, cudf::test::iterators::no_nulls());
+
+  key_wrapper expect_keys{1, 1, 1, 2, 2, 3};
+  result_wrapper expect_vals{1, 2, 3, 1, 2, 1};
+
+  auto agg =
+    cudf::make_count_aggregation<cudf::groupby_scan_aggregation>(cudf::null_policy::EXCLUDE);
+  test_single_scan(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_count_scan_test, empty_cols)

@@ -370,6 +370,48 @@ def test_rolling_numba_udf_with_offset():
     )
 
 
+@pytest.mark.parametrize("window_size", [1, 2, 3])
+@pytest.mark.parametrize("min_periods", [1, 2, 3])
+def test_rolling_groupby_numba_udf(window_size, min_periods):
+    if min_periods > window_size:
+        pytest.skip("min_periods cannot exceed window_size")
+    pdf = pd.DataFrame(
+        {
+            "a": [1, 1, 1, 2, 2, 2, 2],
+            "b": [1.0, 2.0, 4.0, 8.0, 9.0, 4.0, 2.0],
+        }
+    )
+    gdf = cudf.from_pandas(pdf)
+
+    def some_func(A):
+        b = 0
+        for a in A:
+            b = b + a**2
+        return b / len(A)
+
+    assert_eq(
+        pdf.groupby("a").rolling(window_size, min_periods).apply(some_func),
+        gdf.groupby("a").rolling(window_size, min_periods).apply(some_func),
+    )
+
+
+def test_rolling_numba_udf_base_indexer():
+    indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=3)
+    pdf = pd.DataFrame({"a": [1.0, 2.0, 4.0, 9.0, 9.0, 4.0]})
+    gdf = cudf.from_pandas(pdf)
+
+    def some_func(A):
+        b = 0
+        for a in A:
+            b = b + a
+        return b / len(A)
+
+    assert_eq(
+        pdf.rolling(window=indexer, min_periods=1).apply(some_func),
+        gdf.rolling(window=indexer, min_periods=1).apply(some_func),
+    )
+
+
 def test_rolling_groupby_simple(supported_rolling_reductions):
     pdf = pd.DataFrame(
         {

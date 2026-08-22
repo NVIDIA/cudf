@@ -54,4 +54,45 @@ struct scalar_column_view : private column_view {
   [[nodiscard]] column_view const& as_column_view() const noexcept { return *this; }
 };
 
+/**
+ * @brief A non-owning, mutable view of one row of device column storage.
+ *
+ * The owning scalar is responsible for keeping its host null-count metadata consistent with any
+ * device-side changes made through this view.
+ *
+ * @ingroup column_classes
+ */
+struct mutable_scalar_column_view : private mutable_column_view {
+  /**
+   * @brief Construct a `mutable_scalar_column_view` from a `mutable_column_view`.
+   *
+   * @throws cudf::logic_error if the column view does not have exactly one element.
+   *
+   * @param view The mutable column view to construct from
+   */
+  explicit mutable_scalar_column_view(mutable_column_view view)
+    : mutable_column_view(std::move(view))
+  {
+    CUDF_EXPECTS(
+      this->size() == 1, "A scalar column view must have exactly one element.", std::logic_error);
+  }
+
+  using mutable_column_view::data;
+  using mutable_column_view::head;
+  using mutable_column_view::is_empty;
+  using mutable_column_view::null_count;
+  using mutable_column_view::null_mask;
+  using mutable_column_view::nullable;
+  using mutable_column_view::offset;
+  using mutable_column_view::size;
+  using mutable_column_view::type;
+
+  /**
+   * @brief Returns the underlying `mutable_column_view`.
+   *
+   * @return A reference to the underlying mutable view
+   */
+  [[nodiscard]] mutable_column_view const& as_mutable_column_view() const noexcept { return *this; }
+};
+
 }  // namespace CUDF_EXPORT cudf

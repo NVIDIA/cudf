@@ -316,6 +316,16 @@ TEST_F(ScalarTest, OneRowColumnLayoutBaseline)
   EXPECT_EQ(list.view().data<int32_t>(), list_column.as_column_view().child(1).data<int32_t>());
 }
 
+TEST_F(ScalarTest, MutableOneRowColumnLayout)
+{
+  auto numeric        = cudf::numeric_scalar<int32_t>{42};
+  auto mutable_column = numeric.as_mutable_column_view();
+
+  EXPECT_EQ(1, mutable_column.size());
+  EXPECT_EQ(numeric.data(), mutable_column.data<int32_t>());
+  EXPECT_EQ(numeric.validity_data(), mutable_column.null_mask());
+}
+
 TEST_F(ListScalarTest, MoveColumnConstructor)
 {
   auto data = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};

@@ -100,6 +100,11 @@ TYPED_TEST(TypedScalarDeviceViewTest, SetNull)
 
   test_setnull<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view);
   CUDF_CHECK_CUDA(0);
+  cudf::get_default_stream().synchronize();
+
+  // Like column::null_count(), scalar host validity metadata is not implicitly updated when
+  // device code mutates the null mask.
+  EXPECT_TRUE(s.is_valid());
   s.synchronize_validity();
 
   EXPECT_FALSE(s.is_valid());

@@ -7,6 +7,7 @@
 
 #include "nested_types_extrema_utils.cuh"
 
+#include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
@@ -14,7 +15,6 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/reduction/detail/reduction.cuh>
 #include <cudf/reduction/detail/reduction_functions.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -174,10 +174,13 @@ std::unique_ptr<scalar> dictionary_reduction(
  */
 template <typename InputType, typename OutputType>
 struct assign_scalar_fn {
-  __device__ void operator()() { d_output.set_value(static_cast<OutputType>(d_input.value())); }
+  __device__ void operator()()
+  {
+    d_output.element<OutputType>(0) = static_cast<OutputType>(d_input.element<InputType>(0));
+  }
 
-  cudf::numeric_scalar_device_view<InputType> d_input;
-  cudf::numeric_scalar_device_view<OutputType> d_output;
+  cudf::column_device_view d_input;
+  cudf::mutable_column_device_view d_output;
 };
 
 /**
@@ -204,11 +207,14 @@ struct cast_numeric_scalar_fn {
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<ResultType>())
   {
-    auto d_input = cudf::get_scalar_device_view(*input);
-    auto result  = std::make_unique<numeric_scalar<ResultType>>(
-      ResultType{}, input->is_valid(stream), stream, mr);
-    auto d_output = cudf::get_scalar_device_view(*result);
-    cudf::detail::device_single_thread(assign_scalar_fn<InputType, ResultType>{d_input, d_output},
+    auto result =
+      std::make_unique<numeric_scalar<ResultType>>(ResultType{}, input->is_valid(), stream, mr);
+    auto const input_view = input->as_column_view();
+    auto output_view      = result->as_mutable_column_view();
+    auto d_input          = cudf::column_device_view::create(input_view.as_column_view(), stream);
+    auto d_output =
+      cudf::mutable_column_device_view::create(output_view.as_mutable_column_view(), stream);
+    cudf::detail::device_single_thread(assign_scalar_fn<InputType, ResultType>{*d_input, *d_output},
                                        stream);
     return result;
   }

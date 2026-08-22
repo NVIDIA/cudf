@@ -14,7 +14,6 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/lists/detail/copying.hpp>
 #include <cudf/lists/lists_column_view.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -38,15 +37,14 @@ struct get_element_functor {
     auto s = make_fixed_width_scalar(data_type(type_to_id<T>()), stream, mr);
     s->set_valid_async(is_element_valid_sync(input, index, stream), stream);
 
-    using ScalarType = cudf::scalar_type_t<T>;
-    auto typed_s     = static_cast<ScalarType*>(s.get());
-
-    auto device_s   = get_scalar_device_view(*typed_s);
+    auto output_view = s->as_mutable_column_view();
+    auto device_s =
+      mutable_column_device_view::create(output_view.as_mutable_column_view(), stream);
     auto device_col = column_device_view::create(input, stream);
 
     device_single_thread(
-      [device_s, d_col = *device_col, index] __device__() mutable {
-        device_s.set_value(d_col.element<T>(index));
+      [d_scalar = *device_s, d_col = *device_col, index] __device__() mutable {
+        d_scalar.element<T>(0) = d_col.element<T>(index);
       },
       stream);
     return s;
@@ -88,12 +86,14 @@ struct get_element_functor {
                                                is_element_valid_sync(input, index, stream),
                                                stream,
                                                cudf::get_current_device_resource_ref()};
-    auto d_key_index = get_scalar_device_view(key_index_scalar);
+    auto key_index_view = key_index_scalar.as_mutable_column_view();
+    auto d_key_index =
+      mutable_column_device_view::create(key_index_view.as_mutable_column_view(), stream);
 
     // retrieve the indices value at index
     device_single_thread(
-      [d_key_index, indices_iter, index] __device__() mutable {
-        d_key_index.set_value(indices_iter[index]);
+      [d_key_index = *d_key_index, indices_iter, index] __device__() mutable {
+        d_key_index.element<size_type>(0) = indices_iter[index];
       },
       stream);
 

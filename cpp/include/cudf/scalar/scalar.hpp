@@ -59,17 +59,22 @@ class scalar {
   /**
    * @brief Updates the validity of the value.
    *
+   * Updates the host null-count metadata immediately and enqueues the corresponding device
+   * bitmask update on `stream`.
+   *
    * @param is_valid true: set the value to valid. false: set it to null.
-   * @param stream CUDA stream used for device memory operations.
+   * @param stream CUDA stream used for the device bitmask update.
    */
   void set_valid_async(bool is_valid, cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Indicates whether the scalar contains a valid value.
    *
+   * This reads host null-count metadata and does not inspect or synchronize the device bitmask.
+   *
    * @note Using the value when `is_valid() == false` is undefined behavior.
    *
-   * @param stream CUDA stream used for device memory operations.
+   * @param stream Retained for API compatibility; no synchronization is performed.
    * @return true Value is valid
    * @return false Value is invalid/null
    */
@@ -77,6 +82,9 @@ class scalar {
 
   /**
    * @brief Returns a raw pointer to the validity bitmask in device memory.
+   *
+   * Device code that modifies this bitmask must call `synchronize_validity()` before host code
+   * observes validity or the scalar is returned from the producing operation.
    *
    * @return Raw pointer to the validity bitmask in device memory
    */
@@ -92,6 +100,9 @@ class scalar {
   /**
    * @brief Reconciles host validity metadata after device code modifies the validity bitmask.
    *
+   * This performs a device-to-host copy and synchronizes `stream`. It is the scalar equivalent of
+   * a column-producing algorithm setting the owning column's null count after generating a mask.
+   *
    * @param stream CUDA stream used for device memory operations.
    */
   void synchronize_validity(cuda::stream_ref stream = cudf::get_default_stream());
@@ -102,6 +113,17 @@ class scalar {
    * @return A view directly referencing the scalar's owned column storage
    */
   [[nodiscard]] scalar_column_view as_column_view() const;
+
+  /**
+   * @brief Returns an allocation-free mutable one-row column view of this scalar.
+   *
+   * Device code may modify the value through this view. If it modifies the null mask, the caller
+   * must invoke `synchronize_validity()` before host validity is observed or the scalar is
+   * returned.
+   *
+   * @return A mutable view directly referencing the scalar's owned column storage
+   */
+  [[nodiscard]] mutable_scalar_column_view as_mutable_column_view();
 
  protected:
   cudf::column _storage;  ///< Arrow-compatible one-row column storage

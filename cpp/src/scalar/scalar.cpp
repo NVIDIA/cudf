@@ -230,6 +230,11 @@ void scalar::synchronize_validity(cuda::stream_ref stream)
 
 scalar_column_view scalar::as_column_view() const { return scalar_column_view{_storage.view()}; }
 
+mutable_scalar_column_view scalar::as_mutable_column_view()
+{
+  return mutable_scalar_column_view{_storage.mutable_view()};
+}
+
 string_scalar::string_scalar(std::string_view string,
                              bool is_valid,
                              cuda::stream_ref stream,

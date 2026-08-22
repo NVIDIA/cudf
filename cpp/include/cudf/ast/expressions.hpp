@@ -216,10 +216,9 @@ class generic_scalar_device_view : public cudf::detail::scalar_device_view_base 
    *
    * @param type The data type of the value
    * @param data The pointer to the data in device memory
-   * @param is_valid The pointer to the bool in device memory that indicates the
-   * validity of the stored value
+   * @param is_valid Pointer to the validity bitmask in device memory
    */
-  generic_scalar_device_view(data_type type, void const* data, bitmask_type* is_valid)
+  generic_scalar_device_view(data_type type, void const* data, bitmask_type const* is_valid)
     : cudf::detail::scalar_device_view_base(type, is_valid), _data(data)
   {
   }
@@ -228,13 +227,12 @@ class generic_scalar_device_view : public cudf::detail::scalar_device_view_base 
    *
    * @param type The data type of the value
    * @param data The pointer to the data in device memory
-   * @param is_valid The pointer to the bool in device memory that indicates the
-   * validity of the stored value
+   * @param is_valid Pointer to the validity bitmask in device memory
    * @param size The size of the string in bytes
    */
   generic_scalar_device_view(data_type type,
                              void const* data,
-                             bitmask_type* is_valid,
+                             bitmask_type const* is_valid,
                              size_type size)
     : cudf::detail::scalar_device_view_base(type, is_valid), _data(data), _size(size)
   {

@@ -81,31 +81,11 @@ class scalar {
   [[nodiscard]] bool is_valid(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
-   * @brief Returns a raw pointer to the validity bitmask in device memory.
-   *
-   * Device code that modifies this bitmask must call `synchronize_validity()` before host code
-   * observes validity or the scalar is returned from the producing operation.
-   *
-   * @return Raw pointer to the validity bitmask in device memory
-   */
-  bitmask_type* validity_data();
-
-  /**
    * @brief Return a const raw pointer to the validity bitmask in device memory.
    *
    * @return Raw pointer to the validity bitmask in device memory
    */
   [[nodiscard]] bitmask_type const* validity_data() const;
-
-  /**
-   * @brief Reconciles host validity metadata after device code modifies the validity bitmask.
-   *
-   * This performs a device-to-host copy and synchronizes `stream`. It is the scalar equivalent of
-   * a column-producing algorithm setting the owning column's null count after generating a mask.
-   *
-   * @param stream CUDA stream used for device memory operations.
-   */
-  void synchronize_validity(cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Returns an allocation-free one-row column view of this scalar.
@@ -117,9 +97,8 @@ class scalar {
   /**
    * @brief Returns an allocation-free mutable one-row column view of this scalar.
    *
-   * Device code may modify the value through this view. If it modifies the null mask, the caller
-   * must invoke `synchronize_validity()` before host validity is observed or the scalar is
-   * returned.
+   * Device code may modify the value through this view. Validity must be established separately
+   * with `set_valid_async()`; the null mask must not be modified through this view.
    *
    * @return A mutable view directly referencing the scalar's owned column storage
    */

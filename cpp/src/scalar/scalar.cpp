@@ -215,18 +215,7 @@ void scalar::set_valid_async(bool is_valid, cuda::stream_ref stream)
 
 bool scalar::is_valid(cuda::stream_ref) const { return _storage.null_count() == 0; }
 
-bitmask_type* scalar::validity_data() { return _storage.mutable_view().null_mask(); }
-
 bitmask_type const* scalar::validity_data() const { return _storage.view().null_mask(); }
-
-void scalar::synchronize_validity(cuda::stream_ref stream)
-{
-  auto host_mask = cudf::detail::make_pinned_vector<bitmask_type>(1, stream);
-  CUDF_CUDA_TRY(cudaMemcpyAsync(
-    host_mask.data(), validity_data(), sizeof(bitmask_type), cudaMemcpyDeviceToHost, stream.get()));
-  stream.sync();
-  _storage.set_null_count((host_mask[0] & bitmask_type{1}) != 0 ? 0 : 1);
-}
 
 scalar_column_view scalar::as_column_view() const { return scalar_column_view{_storage.view()}; }
 

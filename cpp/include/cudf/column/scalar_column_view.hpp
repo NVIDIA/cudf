@@ -57,8 +57,8 @@ struct scalar_column_view : private column_view {
 /**
  * @brief A non-owning, mutable view of one row of device column storage.
  *
- * The owning scalar is responsible for keeping its host null-count metadata consistent with any
- * device-side changes made through this view.
+ * This view is intended for updating scalar values. Scalar validity is managed separately by the
+ * owning scalar and the null mask must not be modified through this view.
  *
  * @ingroup column_classes
  */

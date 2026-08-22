@@ -13,6 +13,7 @@ import cupy as cp
 import numpy as np
 import pandas as pd
 import pytest
+import zstandard as zstd
 
 import cudf
 from cudf import read_csv
@@ -2053,12 +2054,62 @@ def test_to_csv_encoding_error():
         df.to_csv("test.csv", encoding=encoding)
 
 
-def test_to_csv_compression_error():
+@pytest.mark.parametrize("compression", ["snappy", "gzip", "bz2", "xz"])
+def test_to_csv_unsupported_compression_error(compression):
     df = cudf.DataFrame({"a": ["test"]})
-    compression = "snappy"
-    error_message = "Writing compressed csv is not currently supported in cudf"
+    error_message = f"Compression {compression} is not supported"
     with pytest.raises(NotImplementedError, match=re.escape(error_message)):
         df.to_csv("test.csv", compression=compression)
+
+
+def test_to_csv_compression_no_path_error():
+    df = cudf.DataFrame({"a": ["test"]})
+    with pytest.raises(
+        ValueError, match="returning the CSV output as a string"
+    ):
+        df.to_csv(compression="zstd")
+
+
+# chunksize=None writes a single chunk; the small value forces multiple chunks
+@pytest.mark.parametrize("chunksize", [None, 10])
+@pytest.mark.parametrize(
+    "data",
+    [
+        {
+            "int_col": [1, 2, 3, 4, 5],
+            "str_col": ["a", "b", "c", "d", "e"],
+            "float_col": [1.1, 2.2, 3.3, 4.4, 5.5],
+        },
+        {
+            "int_col": list(range(100)),
+            "str_col": [f"row_{i}" for i in range(100)],
+        },
+        {"a": [1]},
+        {"a": []},
+        {},
+        {"a": [1, None, 3], "b": ["x", None, "z"]},
+        {"a": [None, None]},
+        # highly repetitive strings exercise a large compression ratio
+        {"str_col": ["x" * 100] * 500},
+    ],
+)
+def test_to_csv_zstd_compression(tmp_path, data, chunksize):
+    df = cudf.DataFrame(data)
+    fname = tmp_path / "test_zstd.csv.zst"
+    df.to_csv(fname, index=False, compression="zstd", chunksize=chunksize)
+
+    # the compressed output must hold exactly what an uncompressed write produces
+    expected = df.to_csv(index=False, chunksize=chunksize)
+    with open(fname, "rb") as f:
+        # the writer emits concatenated frames, so the streaming API is required
+        decompressed = zstd.ZstdDecompressor().stream_reader(f).read()
+    assert decompressed.decode("utf-8") == expected
+
+    # the reader must be able to consume the output too
+    assert_eq(
+        cudf.read_csv(StringIO(expected)),
+        cudf.read_csv(fname, compression="zstd"),
+    )
 
 
 def test_empty_df_no_index():

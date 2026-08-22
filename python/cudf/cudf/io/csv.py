@@ -126,6 +126,7 @@ def read_csv(
             "gzip": plc.io.types.CompressionType.GZIP,
             "bz2": plc.io.types.CompressionType.BZIP2,
             "zip": plc.io.types.CompressionType.ZIP,
+            "zstd": plc.io.types.CompressionType.ZSTD,
         }
         c_compression = compression_map[compression]
 
@@ -376,9 +377,14 @@ def to_csv(
         )
         raise NotImplementedError(error_msg)
 
-    if compression:
-        error_msg = "Writing compressed csv is not currently supported in cudf"
-        raise NotImplementedError(error_msg)
+    # Validate compression type
+    # Only zstd is supported because it supports concatenated frames
+    # which allows progressive compression with standard tool decompression
+    if compression and compression != "zstd":
+        raise NotImplementedError(
+            f"Compression {compression} is not supported. "
+            "Only 'zstd' is supported for CSV compression."
+        )
 
     if quoting not in (csv.QUOTE_MINIMAL, csv.QUOTE_NONE):
         raise NotImplementedError(
@@ -397,6 +403,12 @@ def to_csv(
 
     return_as_string = False
     if path_or_buf is None:
+        # compressed output is binary, so it cannot be returned as a string
+        if compression:
+            raise ValueError(
+                f"Compression {compression} is not supported when returning "
+                "the CSV output as a string; please provide `path_or_buf`."
+            )
         path_or_buf = StringIO()
         return_as_string = True
 
@@ -449,6 +461,7 @@ def to_csv(
                 rows_per_chunk=rows_per_chunk,
                 index=index,
                 quoting=quoting,
+                compression=compression,
             )
     else:
         _plc_write_csv(
@@ -461,6 +474,7 @@ def to_csv(
             rows_per_chunk=rows_per_chunk,
             index=index,
             quoting=quoting,
+            compression=compression,
         )
 
     if return_as_string:
@@ -478,6 +492,7 @@ def _plc_write_csv(
     rows_per_chunk: int = 8,
     index: bool = True,
     quoting: int = csv.QUOTE_MINIMAL,
+    compression: str | None = None,
 ) -> None:
     iter_columns = (
         itertools.chain(table.index._columns, table._columns)
@@ -486,6 +501,17 @@ def _plc_write_csv(
     )
     # Materialize iterator to avoid consuming it during access context setup
     columns_list = list(iter_columns)
+
+    # Map compression string to pylibcudf enum
+    if compression is None:
+        plc_compression = plc.io.types.CompressionType.NONE
+    elif compression == "zstd":
+        plc_compression = plc.io.types.CompressionType.ZSTD
+    else:
+        raise NotImplementedError(
+            f"Compression {compression} is not supported. "
+            "Only 'zstd' is supported for CSV compression."
+        )
 
     with access_columns(*columns_list, mode="read", scope="internal"):
         columns = [col.plc_column for col in columns_list]
@@ -528,6 +554,7 @@ def _plc_write_csv(
                     .true_value("True")
                     .false_value("False")
                     .quoting(quote_style)
+                    .compression(plc_compression)
                     .build()
                 )
             )

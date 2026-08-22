@@ -1189,7 +1189,7 @@ parse_dates : list of int or names, default None
     speed, explicitly specify `dtype='date'` for the desired columns.
 dayfirst : bool, default False
     DD/MM format dates, international and European format.
-compression : {{'infer', 'gzip', 'zip', None}}, default 'infer'
+compression : {{'infer', 'gzip', 'bz2', 'zip', 'zstd', None}}, default 'infer'
     For on-the-fly decompression of on-disk data. If 'infer', then detect
     compression from the following extensions: '.gz','.zip' (otherwise no
     decompression). If using 'zip', the ZIP file must contain only one
@@ -1310,9 +1310,12 @@ index : bool, default True
 encoding : str, default 'utf-8'
     A string representing the encoding to use in the output file
     Only 'utf-8' is currently supported
-compression : str, None
-    A string representing the compression scheme to use in the output file
-    Compression while writing csv is not supported currently
+compression : {{'zstd', None}}, default None
+    A string representing the compression scheme to use in the output file.
+    Only 'zstd' is currently supported. ZSTD compression uses nvCOMP for
+    GPU-accelerated compression with concatenated frames, enabling
+    progressive compression compatible with standard tools (zstd -d).
+    Not supported when the CSV output is returned as a string.
 quoting : int, optional
     Control field quoting behavior per ``csv.QUOTE_*`` constants.
     Use one of ``csv.QUOTE_MINIMAL`` (0) or ``csv.QUOTE_NONE`` (3).

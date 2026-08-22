@@ -14,6 +14,8 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/spark_hashing.cuh>
+#include <cudf/hashing/detail/spark_murmurhash3.cuh>
 #include <cudf/hashing/detail/xxhash_64.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 
@@ -451,6 +453,31 @@ TEST_F(RowOperatorTest, TestRowHasher64BitHash)
     {4246796580750024372ul, 15516826743637085169ul, 9462334144942111946ul}, stream, mr};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+}
+
+TEST_F(RowOperatorTest, TestSparkMurmurRowHasher)
+{
+  auto const first  = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, -1, 42, 123456789};
+  auto const second = cudf::test::fixed_width_column_wrapper<int32_t>{10, 20, 30, -40, -987654321};
+  auto const input  = cudf::table_view{{first, second}};
+
+  auto const stream     = cudf::get_default_stream();
+  auto const row_hasher = cudf::detail::row::hash::row_hasher{input, stream};
+  auto const hasher     = row_hasher.device_hasher<cudf::hashing::detail::Spark_MurmurHash3_x86_32,
+                                                   cudf::detail::row::hash::spark_device_row_hasher>(
+    cudf::nullate::DYNAMIC{false}, 42);
+
+  auto results = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0};
+  thrust::transform(rmm::exec_policy_nosync(stream),
+                    cuda::counting_iterator<cudf::size_type>{0},
+                    cuda::counting_iterator<cudf::size_type>{input.num_rows()},
+                    cudf::mutable_column_view{results}.begin<int32_t>(),
+                    hasher);
+
+  // Values produced by Apache Spark for the same input and seed.
+  auto const expected = cudf::test::fixed_width_column_wrapper<int32_t>{
+    -1721723333, 1151116018, 1549484878, -1287750896, -1980733329};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(results, expected);
 }
 
 TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)

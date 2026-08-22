@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,6 +40,9 @@ TEST_F(HashTest, MultiValue)
   auto const input1 = cudf::table_view({strings_col, ints_col, bools_col1, secs_col});
 
   auto const output1 = cudf::hashing::murmurhash3_x86_32(
+    input1, cudf::DEFAULT_HASH_SEED, cudf::test::get_default_stream());
+
+  auto const output2 = cudf::hashing::spark_murmurhash3_x86_32(
     input1, cudf::DEFAULT_HASH_SEED, cudf::test::get_default_stream());
 }
 

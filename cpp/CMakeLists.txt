@@ -706,6 +706,7 @@ add_library(
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
   src/hash/murmurhash3_x64_128.cu
+  src/hash/spark_murmurhash3_x86_32.cu
   src/hash/sha1_hash.cu
   src/hash/sha224_hash.cu
   src/hash/sha256_hash.cu

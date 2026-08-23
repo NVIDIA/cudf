@@ -7,7 +7,7 @@
 
 #include <rmm/cuda_stream.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 #include <cuda_runtime.h>
 
 #include <dlfcn.h>

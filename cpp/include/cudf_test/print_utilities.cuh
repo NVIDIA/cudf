@@ -9,7 +9,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <iterator>

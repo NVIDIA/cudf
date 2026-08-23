@@ -12,7 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 namespace CUDF_EXPORT cudf {
 namespace test {

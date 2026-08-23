@@ -12,7 +12,7 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>

@@ -10,7 +10,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <cstddef>
 #include <cstdint>

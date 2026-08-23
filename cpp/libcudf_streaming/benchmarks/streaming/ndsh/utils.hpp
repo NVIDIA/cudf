@@ -14,7 +14,7 @@
 #include <cudf_streaming/table_chunk.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <rapidsmpf/communicator/communicator.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>

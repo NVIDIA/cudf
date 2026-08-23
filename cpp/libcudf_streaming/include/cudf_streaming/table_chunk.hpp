@@ -9,7 +9,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <coro/task.hpp>
 #include <rapidsmpf/memory/content_description.hpp>

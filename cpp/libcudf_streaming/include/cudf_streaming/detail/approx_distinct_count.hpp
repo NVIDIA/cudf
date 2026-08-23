@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <cstdint>
 

@@ -14,7 +14,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>

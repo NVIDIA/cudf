@@ -27,7 +27,7 @@
 
 #include <rmm/mr/per_device_resource.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <rapidsmpf/coll/allgather.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>

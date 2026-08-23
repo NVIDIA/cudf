@@ -14,7 +14,7 @@
 
 #include <rmm/device_buffer.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <rapidsmpf/memory/buffer_resource.hpp>
 

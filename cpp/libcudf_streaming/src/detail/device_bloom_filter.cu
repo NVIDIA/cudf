@@ -39,7 +39,7 @@
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/std/tuple>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/error.hpp>

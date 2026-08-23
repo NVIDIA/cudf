@@ -40,7 +40,9 @@ SCALAR_NAME_TO_POLARS_TYPE_MAP: dict[str, pl.DataType] = {
 }
 
 
-def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
+def _dtype_to_header(dtype: PolarsDataType) -> DataTypeHeader:
+    if isinstance(dtype, type):
+        dtype = dtype()
     name = type(dtype).__name__
     if name in SCALAR_NAME_TO_POLARS_TYPE_MAP:
         return {"kind": "scalar", "name": name}
@@ -63,6 +65,13 @@ def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
         return {
             "kind": "list",
             "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
+        }
+    if isinstance(dtype, pl.Array):
+        # isinstance narrows dtype to pl.Array, but .inner returns DataTypeClass | DataType
+        return {
+            "kind": "array",
+            "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
+            "width": dtype.size,
         }
     if isinstance(dtype, pl.Struct):
         # isinstance narrows dtype to pl.Struct, but field.dtype returns DataTypeClass | DataType
@@ -99,6 +108,8 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
         )
     if header["kind"] == "list":
         return pl.List(_dtype_from_header(header["inner"]))
+    if header["kind"] == "array":
+        return pl.Array(_dtype_from_header(header["inner"]), header["width"])
     if header["kind"] == "struct":
         return pl.Struct(
             [
@@ -110,7 +121,7 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
 
 
 @cache
-def _from_polars(dtype: pl.DataType) -> plc.DataType:
+def _from_polars(dtype: PolarsDataType) -> plc.DataType:
     """
     Convert a polars datatype to a pylibcudf one.
 
@@ -128,6 +139,9 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
     NotImplementedError
         For unsupported conversions.
     """
+    if isinstance(dtype, type):
+        dtype = dtype()
+
     if isinstance(dtype, pl.Boolean):
         return plc.DataType(plc.TypeId.BOOL8)
     elif isinstance(dtype, pl.Int8):
@@ -183,6 +197,13 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
         # Recurse to catch unsupported inner types
         _ = _from_polars(dtype.inner)
         return plc.DataType(plc.TypeId.LIST)
+    elif isinstance(dtype, pl.Array):
+        inner = _from_polars(dtype.inner)
+        if not plc.traits.is_fixed_width(inner):
+            raise NotImplementedError(
+                f"{dtype=} conversion requires a fixed-width scalar inner dtype"
+            )
+        return plc.DataType(plc.TypeId.LIST)
     elif isinstance(dtype, pl.Struct):
         # Recurse to catch unsupported field types
         for field in dtype.fields:
@@ -222,10 +243,9 @@ class DataType:
                 for field in cast("pl.Struct", self.polars_type).fields
             ]
         elif self.plc_type.id() == plc.TypeId.LIST:
-            # .inner returns DataTypeClass | DataType, need to cast to DataType
-            return [
-                DataType(cast("pl.DataType", cast("pl.List", self.polars_type).inner))
-            ]
+            dtype = self.polars_type
+            assert isinstance(dtype, (pl.List, pl.Array))
+            return [DataType(dtype.inner)]
         return []
 
     def scale(self) -> int:

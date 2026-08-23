@@ -72,6 +72,51 @@ def test_can_convert_lists(engine: pl.GPUEngine):
     assert_gpu_result_equal(df, engine=engine)
 
 
+def test_array_pass_through(in_memory_engine: pl.GPUEngine):
+    q = (
+        pl.LazyFrame(
+            {
+                "keep": [False, True, True, True],
+                "embedding": pl.Series(
+                    [[0.0, 0.0], [1.0, None], None, [5.0, 6.0]],
+                    dtype=pl.Array(pl.Float32, 2),
+                ),
+            }
+        )
+        .filter("keep")
+        .select("embedding")
+        .slice(0, 2)
+    )
+    assert_gpu_result_equal(q, engine=in_memory_engine)
+
+
+@pytest.mark.parametrize(
+    "array_expr",
+    [
+        pl.col("a").arr.sum(),
+        pl.col("a") == pl.col("b"),
+        pl.when("keep").then("a").otherwise("b"),
+        pl.col("a").cast(pl.List(pl.Int8)),
+        pl.col("values").cast(pl.Array(pl.Int8, 2)),
+    ],
+    ids=["function", "binary", "non-column", "cast-from", "cast-to"],
+)
+def test_array_expression_falls_back(
+    in_memory_engine: pl.GPUEngine,
+    array_expr: pl.Expr,
+):
+    q = pl.LazyFrame(
+        {
+            "keep": [True],
+            "a": pl.Series([[1, 2]], dtype=pl.Array(pl.Int8, 2)),
+            "b": pl.Series([[3, 4]], dtype=pl.Array(pl.Int8, 2)),
+            "values": pl.Series([[1, 2]], dtype=pl.List(pl.Int8)),
+        }
+    ).select(array_expr)
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_dataframescan_with_decimals(engine: pl.GPUEngine):
     q = pl.LazyFrame(
         {

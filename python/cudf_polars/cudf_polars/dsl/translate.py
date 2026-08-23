@@ -281,6 +281,14 @@ class Translator:
         """
         node = self.visitor.view_expression(n)
         dtype = DataType(self.visitor.get_dtype(n))
+        if isinstance(dtype.polars_type, pl.Array) and not isinstance(
+            node, plrs._expr_nodes.Column
+        ):
+            error = NotImplementedError(
+                "Only pass-through of Array columns is supported"
+            )
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
         try:
             return _translate_expr(node, self, dtype, schema)
         except Exception as e:
@@ -1416,6 +1424,9 @@ def _(
     strict = node.options != 1
     inner = translator.translate_expr(n=node.expr, schema=schema)
 
+    if isinstance(inner.dtype.polars_type, pl.Array):
+        raise NotImplementedError("Casting from Array is not supported")
+
     if plc.traits.is_floating_point(inner.dtype.plc_type) and plc.traits.is_fixed_point(
         dtype.plc_type
     ):
@@ -1509,6 +1520,10 @@ def _(
 ) -> expr.Expr:
     left = translator.translate_expr(n=node.left, schema=schema)
     right = translator.translate_expr(n=node.right, schema=schema)
+    if isinstance(left.dtype.polars_type, pl.Array) or isinstance(
+        right.dtype.polars_type, pl.Array
+    ):
+        raise NotImplementedError("Binary operations on Array are not supported")
     if node.op == plrs._expr_nodes.Operator.TrueDivide and (
         plc.traits.is_fixed_point(left.dtype.plc_type)
         or plc.traits.is_fixed_point(right.dtype.plc_type)

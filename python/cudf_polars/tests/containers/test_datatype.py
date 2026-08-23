@@ -7,6 +7,8 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
 from cudf_polars.containers import DataType
 
 
@@ -41,11 +43,20 @@ def test_repr():
             [DataType(pl.Struct({"b": pl.Int8()}))],
         ),
         (pl.List(pl.Int8()), [DataType(pl.Int8())]),
+        (pl.Array(pl.Int8(), 2), [DataType(pl.Int8())]),
         (pl.Int8(), []),
     ],
 )
 def test_children(dtype, expected):
     assert DataType(dtype).children == expected
+
+
+def test_array_dtype_uses_physical_list():
+    dtype = pl.Array(pl.Float32(), 3)
+    result = DataType(dtype)
+
+    assert result.polars_type == dtype
+    assert result.id() == plc.TypeId.LIST
 
 
 def test_common_decimal_type_raises():

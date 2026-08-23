@@ -10,7 +10,7 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <array>
 #include <utility>

@@ -18,7 +18,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <string>
 #include <vector>

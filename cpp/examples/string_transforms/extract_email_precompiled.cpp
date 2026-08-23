@@ -14,7 +14,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)

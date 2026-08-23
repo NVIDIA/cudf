@@ -10,7 +10,7 @@
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 #include <thrust/host_vector.h>
 
 #include <filesystem>

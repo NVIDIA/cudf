@@ -8,7 +8,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <array>
 #include <utility>

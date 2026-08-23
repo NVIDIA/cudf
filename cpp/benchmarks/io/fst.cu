@@ -19,7 +19,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <nvbench/nvbench.cuh>
 

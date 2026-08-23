@@ -22,7 +22,7 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <filesystem>
 #include <fstream>

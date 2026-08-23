@@ -15,7 +15,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <algorithm>
 #include <thread>

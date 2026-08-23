@@ -113,9 +113,6 @@ public class NativeDepsLoader {
     String os = System.getProperty("os.name");
     String arch = System.getProperty("os.arch");
     String path = arch + "/" + os + "/" + mapped;
-    if (loader.getResource(path + CHUNK_MANIFEST_SUFFIX) != null) {
-      return true;
-    }
     return loader.getResource(path) != null;
   }
 

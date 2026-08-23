@@ -315,6 +315,7 @@ ConfigureTest(
 # ##################################################################################################
 # * io tests --------------------------------------------------------------------------------------
 ConfigureTest(COMPRESSION_TEST io/comp/comp_test.cpp)
+ConfigureTest(AVRO_TEST io/avro_test.cpp)
 ConfigureTest(ROW_SELECTION_TEST io/row_selection_test.cpp)
 ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
 

@@ -81,8 +81,10 @@ __device__ uint32_t get_u32(byte_stream_s* bs)
   uint32_t v = 0, l = 0, c;
   do {
     c = getb(bs);
-    v |= (c & 0x7f) << l;
-    l += 7;
+    if (l < 32) {
+      v |= (c & 0x7f) << l;
+      l += 7;
+    }
   } while (c & 0x80);
   return v;
 }

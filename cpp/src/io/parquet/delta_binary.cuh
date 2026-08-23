@@ -66,8 +66,10 @@ inline __device__ uleb128_t get_uleb128(uint8_t const*& cur, uint8_t const* end)
   uleb128_t v = 0, l = 0, c;
   while (cur < end) {
     c = *cur++;
-    v |= (c & 0x7f) << l;
-    l += 7;
+    if (l < 64) {
+      v |= (c & 0x7f) << l;
+      l += 7;
+    }
     if ((c & 0x80) == 0) { return v; }
   }
   return v;

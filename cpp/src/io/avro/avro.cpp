@@ -20,9 +20,9 @@ uint64_t container::get_encoded()
     // 64-bit int since shift left is upto 64.
     uint64_t const byte = get_raw<uint8_t>();
     val |= (byte & 0x7f) << len;
-    if (byte < 0x80) break;
+    if (byte < 0x80) return val;
   }
-  return val;
+  CUDF_FAIL("Invalid varint: exceeds maximum encoded length");
 }
 
 template <>

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <type_traits>
 #include <utility>
 
 namespace CUDF_EXPORT cudf {
@@ -48,13 +49,16 @@ class CompactProtocolReader {
   }
 
   // returns a varint encoded integer
+  // Shifts are bounded by the width of T so that overlong encodings truncate instead of shifting
+  // out of range, while the byte stream consumption stays identical to the unbounded loop.
   template <typename T>
   T get_varint() noexcept
   {
+    static_assert(std::is_unsigned_v<T>, "varints are decoded into unsigned types");
     T v = 0;
     for (uint32_t l = 0;; l += 7) {
       T c = getb();
-      v |= (c & 0x7f) << l;
+      if (l < sizeof(T) * 8) { v |= (c & 0x7f) << l; }
       if (c < 0x80) { break; }
     }
     return v;

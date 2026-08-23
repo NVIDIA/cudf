@@ -7,7 +7,7 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace java {

@@ -270,6 +270,16 @@ ConfigureTest(UNARY_TEST unary/math_ops_test.cpp unary/unary_ops_test.cpp unary/
 ConfigureTest(ROUND_TEST round/round_tests.cpp)
 
 # ##################################################################################################
+# * benchmark data generator tests ----------------------------------------------------------------
+ConfigureTest(
+  GENERATE_INPUT_TEST generate_input/generate_input_tests.cu
+  ${CUDF_SOURCE_DIR}/benchmarks/common/generate_input.cu
+)
+target_include_directories(
+  GENERATE_INPUT_TEST PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/benchmarks/common>"
+)
+
+# ##################################################################################################
 # * binary tests ----------------------------------------------------------------------------------
 ConfigureTest(
   BINARYOP_TEST

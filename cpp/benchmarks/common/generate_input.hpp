@@ -9,6 +9,9 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <map>
 #include <optional>
 
@@ -208,6 +211,27 @@ std::vector<cudf::type_id> get_type_or_group(int32_t id);
 std::vector<cudf::type_id> get_type_or_group(std::vector<int32_t> const& ids);
 
 /**
+ * @brief Rounds a floating point bound to an integer value, clamping to +/-2^62 before rounding
+ * and mapping NaN to zero so that the conversion is always defined.
+ */
+inline long long bounded_llround(double value)
+{
+  constexpr double kInt64ClampBound = 4611686018427387904.0;  // 2^62
+  if (std::isnan(value)) { return 0; }
+  return std::llround(std::clamp(value, -kInt64ClampBound, kInt64ClampBound));
+}
+
+/**
+ * @brief Rounds a floating point bound to an unsigned 32-bit length value, clamping negative or
+ * out-of-range results to [0, UINT32_MAX] and mapping NaN to zero.
+ */
+inline uint32_t bounded_length_round(double value)
+{
+  if (std::isnan(value)) { return 0; }
+  return static_cast<uint32_t>(std::clamp<long long>(bounded_llround(value), 0, 4294967295LL));
+}
+
+/**
  * @brief Contains data parameters for all types.
  *
  * This class exposes APIs to set and get distribution parameters for each supported type.
@@ -266,8 +290,9 @@ class data_profile {
   [[nodiscard]] auto get_cardinality() const { return cardinality; };
   [[nodiscard]] auto get_avg_run_length() const { return avg_run_length; };
 
-  // Users should pass integral values for bounds when setting the parameters for types that have
-  // discrete distributions (integers, strings, lists). Otherwise the call with have no effect.
+  // Bounds passed as integers are stored as-is for the discrete types (integers, chrono, strings,
+  // lists). Floating-point and fixed-point types in `type_or_group` receive the bounds converted
+  // to their own parameter type so that those calls take effect as well.
   template <typename T,
             typename Type_enum,
             std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
@@ -283,6 +308,14 @@ class data_profile {
       } else if (tid == cudf::type_id::LIST) {
         list_dist_desc.length_params = {
           dist, static_cast<uint32_t>(lower_bound), static_cast<uint32_t>(upper_bound)};
+      } else if (cudf::is_floating_point(cudf::data_type{tid})) {
+        float_params[tid] = {
+          dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
+      } else if (cudf::is_fixed_point(cudf::data_type{tid})) {
+        decimal_params[tid] = {dist,
+                               static_cast<__int128_t>(lower_bound),
+                               static_cast<__int128_t>(upper_bound),
+                               std::nullopt};
       } else {
         int_params[tid] = {
           dist, static_cast<uint64_t>(lower_bound), static_cast<uint64_t>(upper_bound)};
@@ -290,8 +323,11 @@ class data_profile {
     }
   }
 
-  // Users should pass floating point values for bounds when setting the parameters for types that
-  // have continuous distributions (floating point types). Otherwise the call with have no effect.
+  // Bounds passed as floating point values are stored as-is for floating-point types. All other
+  // types in `type_or_group` receive the bounds rounded to their own parameter type so that those
+  // calls take effect as well: integral and chrono bounds via int64 rounding, string and list
+  // lengths via uint32 rounding, fixed-point bounds via int64 rounding with an unspecified scale.
+  // STRUCT and DICTIONARY32 targets have no range parameters and ignore the call.
   template <typename T,
             typename Type_enum,
             std::enable_if_t<std::is_floating_point_v<T>, T>* = nullptr>
@@ -301,13 +337,31 @@ class data_profile {
                                T upper_bound)
   {
     for (auto tid : get_type_or_group(static_cast<int32_t>(type_or_group))) {
-      float_params[tid] = {
-        dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
+      if (cudf::is_floating_point(cudf::data_type{tid})) {
+        float_params[tid] = {
+          dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
+      } else if (tid == cudf::type_id::STRING) {
+        string_dist_desc.length_params = {
+          dist, bounded_length_round(lower_bound), bounded_length_round(upper_bound)};
+      } else if (tid == cudf::type_id::LIST) {
+        list_dist_desc.length_params = {
+          dist, bounded_length_round(lower_bound), bounded_length_round(upper_bound)};
+      } else if (cudf::is_fixed_point(cudf::data_type{tid})) {
+        decimal_params[tid] = {dist,
+                               static_cast<__int128_t>(bounded_llround(lower_bound)),
+                               static_cast<__int128_t>(bounded_llround(upper_bound)),
+                               std::nullopt};
+      } else {
+        int_params[tid] = {dist,
+                           static_cast<uint64_t>(bounded_llround(lower_bound)),
+                           static_cast<uint64_t>(bounded_llround(upper_bound))};
+      }
     }
   }
 
-  // Users should pass integral values for bounds when setting the parameters for fixed-point.
-  // Otherwise the call with have no effect.
+  // Fixed-point parameters are normally set with integer bounds and an explicit scale via this
+  // overload. The two overloads above also accept fixed-point targets without a scale, in which
+  // case the scale is drawn randomly at generation time.
   template <typename T,
             typename Type_enum,
             std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>

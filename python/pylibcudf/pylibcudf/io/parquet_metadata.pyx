@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing_extensions import Buffer
+    from pylibcudf.typing import CudaStreamLike
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 ctypedef const string const_string
@@ -802,7 +803,7 @@ cpdef list[FileMetaData] read_parquet_footers(SourceInfo src_info):
 cpdef Table read_parquet_column_chunk_bounds(
     object file_metadatas,
     object columns,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

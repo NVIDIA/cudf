@@ -491,9 +491,9 @@ cdef class HybridScanReader:
     def build_all_true_row_mask(
         self,
         list row_group_indices,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> Column:
         """Build an all-true boolean survival column for the given row groups.
 
         Parameters

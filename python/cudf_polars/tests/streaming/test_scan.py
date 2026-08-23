@@ -377,6 +377,7 @@ def test_streaming_scan_raises() -> None:
         (pl.col("x") < 1_000, None),
         (pl.col("x") < 1_000, ["x", "z"]),
         (pl.col("x") < 1_000, ["z"]),
+        (pl.col("x") < 1_000, ["x"]),
         # falls back to default parquet reader
         (pl.col("y").str.contains("cat"), None),
         (None, None),

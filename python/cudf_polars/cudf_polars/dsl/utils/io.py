@@ -55,7 +55,7 @@ class CachedParquetInfo:
         default_factory=list, compare=False, repr=False
     )
 
-    def hybrid_scan_reader(  # pragma: no cover; only called from thread pool workers where coverage.py does not trace
+    def hybrid_scan_reader(
         self,
         options: plc.io.parquet.ParquetReaderOptions,
     ) -> plc.io.experimental.HybridScanReader:

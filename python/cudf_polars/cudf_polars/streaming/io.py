@@ -213,6 +213,24 @@ def _fetch_byte_ranges(
     )
 
 
+def hybrid_scan_eligible(
+    parquet_options: ParquetOptions,
+    *,
+    cached_parquet_info: list[CachedParquetInfo] | None,
+    row_index: tuple[str, int] | None,
+    include_file_paths: str | None,
+    predicate: NamedExpr | None,
+) -> bool:
+    """Whether a parquet split is eligible for the HybridScanReader path."""
+    return (
+        parquet_options.use_hybrid_scan
+        and cached_parquet_info is not None
+        and row_index is None
+        and include_file_paths is None
+        and predicate is not None
+    )
+
+
 def _read_with_hybrid_scan(
     schema: Schema,
     paths: list[str],
@@ -297,38 +315,41 @@ def _read_with_hybrid_scan(
             stream=stream,
         )
 
-        payload_chunks = _fetch_byte_ranges(
-            source_info,
-            reader.payload_column_chunks_byte_ranges(row_group_indices, options),
-            stream,
-        )
-        payload_tbl_w_meta = reader.materialize_payload_columns(
-            row_group_indices,
-            payload_chunks,
-            row_mask,
-            plc.io.experimental.UseDataPageMask.YES,
-            options,
-            stream=stream,
-        )
-
         filter_names = filter_tbl_w_meta.column_names(include_children=False)
-        payload_names = payload_tbl_w_meta.column_names(include_children=False)
         filter_df = DataFrame.from_table(
             filter_tbl_w_meta.tbl,
             filter_names,
             [schema[n] for n in filter_names],
             stream=stream,
         )
-        payload_df = DataFrame.from_table(
-            payload_tbl_w_meta.tbl,
-            payload_names,
-            [schema[n] for n in payload_names],
-            stream=stream,
-        )
+
+        requested_columns = with_columns if with_columns is not None else list(schema)
+        columns = filter_df.columns
+        if set(requested_columns) - set(filter_names):
+            payload_chunks = _fetch_byte_ranges(
+                source_info,
+                reader.payload_column_chunks_byte_ranges(row_group_indices, options),
+                stream,
+            )
+            payload_tbl_w_meta = reader.materialize_payload_columns(
+                row_group_indices,
+                payload_chunks,
+                row_mask,
+                plc.io.experimental.UseDataPageMask.YES,
+                options,
+                stream=stream,
+            )
+            payload_names = payload_tbl_w_meta.column_names(include_children=False)
+            payload_df = DataFrame.from_table(
+                payload_tbl_w_meta.tbl,
+                payload_names,
+                [schema[n] for n in payload_names],
+                stream=stream,
+            )
+            columns = [*columns, *payload_df.columns]
+
         stream.synchronize()
-        return DataFrame(
-            [*filter_df.columns, *payload_df.columns], stream=stream
-        ).select(list(schema.keys()))
+        return DataFrame(columns, stream=stream).select(list(schema.keys()))
 
 
 class SplitScan(IR):
@@ -490,21 +511,23 @@ class SplitScan(IR):
             # it is only used when footer prefetching is enabled.
             # TODO: Investigate re-enabling for some of the excluded paths
             # (row_index / include_file_paths). Needs performance investigation.
-            if (
-                parquet_options.use_hybrid_scan
-                and cached_parquet_info is not None
-                and row_index is None
-                and include_file_paths is None
-                and predicate is not None
+            if hybrid_scan_eligible(
+                parquet_options,
+                cached_parquet_info=cached_parquet_info,
+                row_index=row_index,
+                include_file_paths=include_file_paths,
+                predicate=predicate,
             ):
+                assert predicate is not None
+                assert cached_parquet_info is not None
                 stream = context.get_cuda_stream()
-                plc_filter = to_parquet_filter(
+                plc_filter, residual = to_parquet_filter(
                     _prepare_parquet_predicate(
                         predicate.value, paths, schema, with_columns
                     ),
                     stream=stream,
                 )
-                if plc_filter is not None:
+                if plc_filter is not None and residual is None:
                     end_rg = (
                         total_row_groups
                         if split_index == total_splits - 1

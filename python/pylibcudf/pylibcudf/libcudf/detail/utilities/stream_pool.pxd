@@ -12,7 +12,7 @@ cdef extern from * nogil:
     """
     #include <cudf/detail/utilities/stream_pool.hpp>
     #include <cudf/utilities/span.hpp>
-    #include <cuda/stream>
+    #include <cuda/stream_ref>
     #include <vector>
 
     namespace {

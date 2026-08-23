@@ -172,10 +172,10 @@ std::string type_to_name(column_buffer_base<string_policy> const& buffer)
 }
 
 template <class string_policy>
-std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
-                                    column_name_info* schema_info,
-                                    std::optional<reader_column_schema> const& schema,
-                                    cuda::stream_ref stream)
+std::unique_ptr<column> column_buffer_base<string_policy>::make_column(
+  column_name_info* schema_info,
+  std::optional<reader_column_schema> const& schema,
+  cuda::stream_ref stream) &&
 {
   std::function<std::unique_ptr<column>(column_buffer_base<string_policy> & buffer,
                                         column_name_info * schema_info,
@@ -315,7 +315,7 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
     }
   };
 
-  return construct_column(buffer, schema_info, schema);
+  return construct_column(*this, schema_info, schema);
 }
 
 /**
@@ -398,17 +398,15 @@ using string_type  = cudf::io::detail::inline_column_buffer;
 using pointer_column_buffer = column_buffer_base<pointer_type>;
 using string_column_buffer  = column_buffer_base<string_type>;
 
-template std::unique_ptr<column> make_column<string_type>(
-  string_column_buffer& buffer,
+template std::unique_ptr<column> column_buffer_base<string_type>::make_column(
   column_name_info* schema_info,
   std::optional<reader_column_schema> const& schema,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream) &&;
 
-template std::unique_ptr<column> make_column<pointer_type>(
-  pointer_column_buffer& buffer,
+template std::unique_ptr<column> column_buffer_base<pointer_type>::make_column(
   column_name_info* schema_info,
   std::optional<reader_column_schema> const& schema,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream) &&;
 
 template std::unique_ptr<column> empty_like<string_type>(string_column_buffer& buffer,
                                                          column_name_info* schema_info,

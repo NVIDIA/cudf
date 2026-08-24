@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -521,7 +521,6 @@ class PDSHQueries:
 
         jn7 = jn7[(jn7["o_orderdate"] >= var4) & (jn7["o_orderdate"] <= var5)]
         jn7 = jn7[jn7["p_type"] == var3]
-        jn7["o_orderdate"] = jn7["o_orderdate"].astype("datetime64[s]")
 
         jn7["o_year"] = jn7["o_orderdate"].dt.year
         jn7["volume"] = jn7["l_extendedprice"] * (1.0 - jn7["l_discount"])

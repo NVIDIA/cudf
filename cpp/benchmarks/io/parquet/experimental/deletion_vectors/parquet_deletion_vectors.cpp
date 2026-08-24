@@ -225,7 +225,7 @@ void BM_parquet_deletion_vectors(nvbench::state& state)
   };
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_opts.get_source().filepaths());
@@ -266,7 +266,7 @@ void BM_parquet_chunked_deletion_vectors(nvbench::state& state)
 
   auto num_chunks       = 0;
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                drop_page_cache_if_enabled(read_opts.get_source().filepaths());

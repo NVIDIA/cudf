@@ -27,7 +27,7 @@ void nvbench_unique_count(nvbench::state& state, nvbench::type_list<Type>)
 
   auto input = sorted_table->view();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::unique_count(input, cudf::null_equality::EQUAL);

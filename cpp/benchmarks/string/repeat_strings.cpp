@@ -30,7 +30,7 @@ static void bench_repeat(nvbench::state& state)
   auto const input = cudf::strings_column_view(table->view().column(0));
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const data_size = table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
 

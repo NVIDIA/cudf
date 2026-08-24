@@ -49,7 +49,7 @@ void bench_case(nvbench::state& state)
   }
   auto input = cudf::strings_column_view(col_view);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
 
   state.add_global_memory_reads<nvbench::int8_t>(col_size);
   state.add_global_memory_writes<nvbench::int8_t>(col_size);

@@ -129,7 +129,7 @@ void ndsh_q6(nvbench::state& state)
   generate_parquet_data_sources(scale_factor, {"lineitem"}, sources);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch& launch) { run_ndsh_q6(state, sources); });

@@ -26,7 +26,7 @@ static void bench_concatenate(nvbench::state& state)
   auto column_views  = std::vector<cudf::column_view>(input_columns.begin(), input_columns.end());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_reads<int64_t>(num_rows * num_cols);
   state.add_global_memory_writes<int64_t>(num_rows * num_cols);
 
@@ -62,7 +62,7 @@ static void bench_concatenate_strings(nvbench::state& state)
   auto column_views = std::vector<cudf::column_view>(num_cols, input);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const sv = cudf::strings_column_view(input);
   state.add_global_memory_reads<int8_t>(sv.chars_size(stream) * num_cols);
   state.add_global_memory_writes<int64_t>(sv.chars_size(stream) * num_cols);

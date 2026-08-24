@@ -27,7 +27,7 @@ static void bench_sort_strings(nvbench::state& state)
   auto sv    = cudf::strings_column_view(table->view().column(0));
   auto bytes = sv.chars_size(cudf::get_default_stream());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.add_global_memory_reads<nvbench::int8_t>(bytes);
   state.add_global_memory_writes<nvbench::int8_t>(bytes);
 

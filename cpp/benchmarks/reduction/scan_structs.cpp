@@ -44,7 +44,7 @@ static void nvbench_structs_scan(nvbench::state& state)
   auto const null_policy = static_cast<cudf::null_policy>(state.get_int64("null_policy"));
   auto const stream      = cudf::get_default_stream();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   std::unique_ptr<cudf::column> result = nullptr;
   auto const mem_stats_logger          = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {

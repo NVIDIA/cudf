@@ -35,7 +35,7 @@ static void bench_shift(nvbench::state& state)
   auto const null_bytes    = use_validity ? 2 * cudf::bitmask_allocation_size_bytes(num_rows) : 0;
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_reads<int8_t>(bytes_read);
   state.add_global_memory_writes<int8_t>(bytes_written + null_bytes);
 

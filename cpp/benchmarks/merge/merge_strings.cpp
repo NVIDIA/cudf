@@ -37,7 +37,7 @@ void nvbench_merge_strings(nvbench::state& state)
   auto const lhs        = sorted_lhs->view().column(0);
   auto const rhs        = sorted_rhs->view().column(0);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto chars_size = cudf::strings_column_view(lhs).chars_size(stream) +
                     cudf::strings_column_view(rhs).chars_size(stream);
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);   // all bytes are read

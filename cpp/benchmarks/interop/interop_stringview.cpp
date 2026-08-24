@@ -45,7 +45,7 @@ void BM_from_arrow_host_stringview(nvbench::state& state)
   state.add_element_count(num_rows, "num_rows");
   state.add_global_memory_reads(total_size);
   state.add_global_memory_writes(total_size);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
   ArrowSchema schema;
   NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(&schema, NANOARROW_TYPE_STRING_VIEW));

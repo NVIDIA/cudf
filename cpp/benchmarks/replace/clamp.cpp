@@ -42,7 +42,7 @@ void bench_clamp(nvbench::state& state, nvbench::type_list<ClampType>)
   }
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
   auto const data_size = input->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

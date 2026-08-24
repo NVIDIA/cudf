@@ -24,7 +24,7 @@ static void bench_lengths(nvbench::state& state)
     create_random_table({cudf::type_id::STRING}, row_count{num_rows}, table_profile);
   cudf::strings_column_view input(table->view().column(0));
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   // gather some throughput statistics as well
   auto data_size = table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);   // all bytes are read;

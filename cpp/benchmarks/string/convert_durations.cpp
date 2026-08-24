@@ -37,7 +37,7 @@ void bench_convert_duration(nvbench::state& state, nvbench::type_list<DataType>)
 
   auto format = std::string{"%D days %H:%M:%S"};
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
   if (from_dur) {
     state.add_global_memory_reads<DataType>(num_rows);

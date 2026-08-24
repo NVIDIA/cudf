@@ -37,7 +37,7 @@ void bench_row_fixed_rolling_sum(nvbench::state& state, nvbench::type_list<Type>
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::rolling_window(vals->view(), preceding_size, following_size, min_periods, *req);
@@ -96,7 +96,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::rolling_window(vals->view(), preceding->view(), following->view(), 1, *req);

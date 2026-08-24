@@ -32,7 +32,7 @@ static void bench_factory(nvbench::state& state)
   auto stream    = cudf::get_default_stream();
   auto d_strings = cudf::strings::create_string_vector_from_column(sv);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);

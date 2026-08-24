@@ -56,7 +56,7 @@ static void bench_vocab_tokenize(nvbench::state& state)
     return static_cast<cudf::scalar_type_t<cudf::size_type>*>(count.get())->value(stream);
   }();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto chars_size =
     input.chars_size(stream) + cudf::strings_column_view(vocab_col->view()).chars_size(stream);
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);

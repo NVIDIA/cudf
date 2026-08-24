@@ -32,7 +32,7 @@ static void bench_edit_distance_utf8(nvbench::state& state)
   auto sv1    = cudf::strings_column_view(input1.view());
   auto sv2    = cudf::strings_column_view(input2.view());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
 
   state.add_global_memory_reads<nvbench::int8_t>(input1.alloc_size() + input2.alloc_size());
   // output are integers (one per row)
@@ -98,7 +98,7 @@ static void bench_edit_distance_ascii(nvbench::state& state)
                                   0,
                                   {offsets->view()});
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
 
   auto sv1          = cudf::strings_column_view(input1);
   auto sv2          = cudf::strings_column_view(input2);

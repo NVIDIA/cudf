@@ -64,7 +64,7 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
   }();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_element_count(size);
   state.add_global_memory_reads<DataType>(size);
   state.add_global_memory_writes<DataType>(1);

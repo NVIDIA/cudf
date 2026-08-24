@@ -356,7 +356,7 @@ static void BM_sv_hash(nvbench::state& state)
   auto const column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
   auto col_view     = column->view();
   auto stream       = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_writes(num_rows * sizeof(cudf::hash_value_type));
   auto output = rmm::device_uvector<cudf::hash_value_type>(num_rows, stream);
   auto begin  = cuda::counting_iterator<cudf::size_type>{0};
@@ -398,7 +398,7 @@ static void BM_sv_starts(nvbench::state& state)
   auto const column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
   auto col_view     = column->view();
   auto stream       = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_writes(num_rows * sizeof(bool));
   auto output = rmm::device_uvector<bool>(num_rows, stream);
   auto begin  = cuda::counting_iterator<cudf::size_type>{0};
@@ -454,7 +454,7 @@ static void BM_sv_sort(nvbench::state& state)
 
   auto col_view = column->view();
   auto stream   = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_writes(num_rows * sizeof(cudf::size_type));
 
   // indices are the keys that are sorted (not inplace)
@@ -468,12 +468,12 @@ static void BM_sv_sort(nvbench::state& state)
     auto const d_chars          = reinterpret_cast<char const*>(data_buffer.data());
     auto comparator             = compare_arrow_sv{d_items.data(), d_chars};
     cub::DeviceMergeSort::SortKeysCopy(
-      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
+      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
     auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
-        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
+        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
     });
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
@@ -481,12 +481,12 @@ static void BM_sv_sort(nvbench::state& state)
     state.add_global_memory_reads(col_size);
     auto comparator = compare_sv{*d_strings};
     cub::DeviceMergeSort::SortKeysCopy(
-      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
+      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
     auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
     state.add_global_memory_reads(col_size);
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
-        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
+        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
     });
   }
 }
@@ -508,7 +508,7 @@ static void BM_sv_gather(nvbench::state& state)
   auto map_view = map->view();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);

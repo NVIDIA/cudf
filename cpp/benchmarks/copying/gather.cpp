@@ -40,7 +40,7 @@ static void bench_gather(nvbench::state& state)
                                             row_count{num_rows});
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_reads<int8_t>(source_table->alloc_size());
   state.add_global_memory_writes<int8_t>(source_table->alloc_size());
 

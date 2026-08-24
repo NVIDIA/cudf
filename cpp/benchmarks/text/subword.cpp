@@ -32,7 +32,7 @@ static void bench_wordpiece_tokenizer(nvbench::state& state)
     cudf::test::strings_column_wrapper({"", "[UNK]", "This", "is", "a", "test"});
   auto const vocab = nvtext::load_wordpiece_vocabulary(cudf::strings_column_view(vocabulary));
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   auto chars_size = input.chars_size(cudf::get_default_stream());
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
   auto out_size = num_rows * (max_words > 0 ? std::min(max_words, num_words) : num_words);

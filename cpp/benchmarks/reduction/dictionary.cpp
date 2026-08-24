@@ -59,7 +59,7 @@ static void reduction_dictionary(nvbench::state& state,
   auto agg = make_reduce_aggregation<kind>();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_element_count(size);
   state.add_global_memory_reads<DataType>(size);
   if (kind == cudf::aggregation::ANY || kind == cudf::aggregation::ALL) {

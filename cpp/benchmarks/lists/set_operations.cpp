@@ -39,7 +39,7 @@ void nvbench_set_op(nvbench::state& state, BenchFuncPtr bfunc)
   auto const lhs = generate_random_lists(num_rows, depth, null_freq);
   auto const rhs = generate_random_lists(num_rows, depth, null_freq);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     bfunc(cudf::lists_column_view{*lhs},

@@ -63,7 +63,7 @@ void apply_mask_benchmark(nvbench::state& state, nvbench::type_list<DataType>)
   auto mask = create_random_column(cudf::type_id::BOOL8, row_count{n_rows}, profile);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   calculate_bandwidth<DataType>(state);
   auto const mem_stats_logger = cudf::memory_stats_logger();
 

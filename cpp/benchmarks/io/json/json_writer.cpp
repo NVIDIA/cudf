@@ -24,7 +24,7 @@ void json_write_common(cudf::io::json_writer_options const& write_opts,
                        nvbench::state& state)
 {
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                drop_page_cache_if_enabled(write_opts.get_sink().filepaths());

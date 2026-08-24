@@ -114,7 +114,7 @@ void run_benchmark_complex_keys(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   auto const stream           = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     cudf::groupby::groupby gb_obj(keys_table->view());

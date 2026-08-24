@@ -32,7 +32,7 @@ static void bench_copy(nvbench::state& state)
   auto const target     = target_table->view().column(0);
   auto const left_right = booleans->view().column(0);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   auto data_size = target_table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);   // all bytes are read;
   state.add_global_memory_writes<nvbench::int8_t>(data_size);  // both columns are similar size

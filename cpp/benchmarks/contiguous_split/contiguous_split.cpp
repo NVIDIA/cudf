@@ -58,7 +58,7 @@ void contiguous_split_common(nvbench::state& state,
   auto const src_table = cudf::table(std::move(src_cols));
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   state.add_global_memory_reads<int8_t>(src_table.alloc_size());
   state.add_global_memory_writes<int8_t>(src_table.alloc_size());
 

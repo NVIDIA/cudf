@@ -24,7 +24,7 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info());
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_opts.get_source().filepaths());

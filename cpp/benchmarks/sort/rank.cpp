@@ -24,7 +24,7 @@ static void bench_rank(nvbench::state& state)
 
   auto input = create_random_column(cudf::type_id::INT32, row_count{n_rows}, profile);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.add_element_count(n_rows, "n_rows");
   state.add_global_memory_reads<nvbench::int32_t>(n_rows);
   state.add_global_memory_writes<nvbench::int32_t>(n_rows);

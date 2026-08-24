@@ -42,7 +42,7 @@ void filter_join_indices_benchmark(nvbench::state& state,
   cudf::device_span<cudf::size_type const> left_span{left_indices->data(), left_indices->size()};
   cudf::device_span<cudf::size_type const> right_span{right_indices->data(), right_indices->size()};
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
 
   auto const method = state.get_string("method");
 

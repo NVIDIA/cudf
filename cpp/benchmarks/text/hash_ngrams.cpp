@@ -27,7 +27,7 @@ static void bench_hash_ngrams(nvbench::state& state)
     create_random_table({cudf::type_id::STRING}, row_count{num_rows}, strings_profile);
   cudf::strings_column_view input(strings_table->view().column(0));
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
 
   auto chars_size = input.chars_size(cudf::get_default_stream());
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);

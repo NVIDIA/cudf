@@ -38,7 +38,7 @@ static void bench_distinct_count(nvbench::state& state, nvbench::type_list<Type>
   }
 
   auto mem_stats_logger = cudf::memory_stats_logger();  // init stats logger
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::distinct_count(input_table, cudf::null_equality::EQUAL);
   });

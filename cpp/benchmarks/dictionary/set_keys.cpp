@@ -35,7 +35,7 @@ static void bench_dictionary_set_keys(nvbench::state& state)
   auto result = cudf::dictionary::set_keys(dict_view, new_keys->view(), stream);
   state.add_global_memory_writes<uint8_t>(result->alloc_size());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {

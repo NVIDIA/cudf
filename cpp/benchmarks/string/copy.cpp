@@ -31,7 +31,7 @@ static void bench_copy(nvbench::state& state)
   auto const map_view = map_table->view().column(0);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
 
   if (api == "gather") {
     auto result =

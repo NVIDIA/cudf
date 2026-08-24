@@ -39,6 +39,7 @@ EXPECTED_CASTS: dict[int, dict[str, str]] = {
     7: {"l_year": "int32"},
     8: {"o_year": "int32"},
     9: {"o_year": "int32"},
+    12: {"high_line_count": "int64", "low_line_count": "int64"},
 }
 
 EXPECTED_CASTS_DECIMAL: dict[int, dict[str, str]] = {
@@ -1820,6 +1821,7 @@ class PDSHDuckDBQueries:
     @staticmethod
     def q11(run_config: RunConfig) -> str:
         """Query 11."""
+        var2 = float(f"{0.0001 / run_config.scale_factor:.12f}")
         return f"""
             select
                 ps_partkey,
@@ -1835,7 +1837,7 @@ class PDSHDuckDBQueries:
             having
                 sum(ps_supplycost * ps_availqty) > (
                     select
-                        sum(ps_supplycost * ps_availqty) * {0.0001 / run_config.scale_factor}
+                        sum(ps_supplycost * ps_availqty) * {var2}
                     from
                         partsupp, supplier, nation
                     where

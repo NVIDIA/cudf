@@ -99,7 +99,9 @@ rmm::device_uvector<cudf::size_type> create_token_row_offsets(
     cudf::detail::count_if(cuda::counting_iterator<cudf::size_type>{0},
                            cuda::counting_iterator<cudf::size_type>{tokens_counts},
                            fn,
-                           stream);
+                           stream,
+                           cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                  cudf::get_current_device_resource_ref()});
 
   auto tokens_offsets = rmm::device_uvector<cudf::size_type>(output_count + 1, stream);
 
@@ -107,7 +109,9 @@ rmm::device_uvector<cudf::size_type> create_token_row_offsets(
                               cuda::counting_iterator<cudf::size_type>{tokens_counts},
                               tokens_offsets.begin(),
                               fn,
-                              stream);
+                              stream,
+                              cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                     cudf::get_current_device_resource_ref()});
 
   // set the last element to the total number of tokens
   tokens_offsets.set_element(output_count, tokens_counts, stream);

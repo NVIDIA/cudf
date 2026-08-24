@@ -86,13 +86,16 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
     rmm::device_uvector<size_type> group_count = [&] {
       if (n < 0) {
         rmm::device_uvector<size_type> group_count(num_groups, stream);
-        cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                          group_labels.end(),
-                                          bitmask_iterator,
-                                          cuda::make_discard_iterator(),
-                                          group_count.begin(),
-                                          cuda::std::plus<size_type>(),
-                                          stream);
+        cudf::detail::reduce_by_key_async(
+          group_labels.begin(),
+          group_labels.end(),
+          bitmask_iterator,
+          cuda::make_discard_iterator(),
+          group_count.begin(),
+          cuda::std::plus<size_type>(),
+          stream,
+          cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                 cudf::get_current_device_resource_ref()});
         return group_count;
       } else {
         return rmm::device_uvector<size_type>(0, stream);

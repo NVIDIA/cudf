@@ -79,13 +79,16 @@ void reduce_by_key_fn(column_device_view const& values,
                     vars.begin(),
                     var_fn);
 
-  cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                    group_labels.end(),
-                                    vars.begin(),
-                                    cuda::make_discard_iterator(),
-                                    d_result,
-                                    cuda::std::plus<ResultType>(),
-                                    stream);
+  cudf::detail::reduce_by_key_async(
+    group_labels.begin(),
+    group_labels.end(),
+    vars.begin(),
+    cuda::make_discard_iterator(),
+    d_result,
+    cuda::std::plus<ResultType>(),
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
 }
 
 struct var_functor {

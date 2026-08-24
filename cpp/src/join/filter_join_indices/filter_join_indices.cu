@@ -237,7 +237,9 @@ filter_join_indices(cudf::table_view const& left,
             cuda::counting_iterator<size_type>{0},
             cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
             valid_predicate,
-            stream);
+            stream,
+            cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                   cudf::get_current_device_resource_ref()});
 
     if (num_valid == 0) { return make_empty_result(); }
 
@@ -254,7 +256,9 @@ filter_join_indices(cudf::table_view const& left,
       cuda::counting_iterator<size_type>{0},
       output_iter,
       [valid_predicate] __device__(size_type idx) -> bool { return valid_predicate(idx); },
-      stream);
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
 
     return std::pair{std::move(filtered_left_indices), std::move(filtered_right_indices)};
 
@@ -338,7 +342,9 @@ filter_join_indices(cudf::table_view const& left,
                                   cuda::counting_iterator<std::size_t>{0},
                                   output_iter,
                                   valid_predicate,
-                                  stream);
+                                  stream,
+                                  cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                         cudf::get_current_device_resource_ref()});
     }
     if (num_invalid > 0) {
       {
@@ -355,7 +361,9 @@ filter_join_indices(cudf::table_view const& left,
           cuda::counting_iterator{static_cast<std::size_t>(left.num_rows())},
           filtered_left_indices->begin() + num_valid,
           is_unmatched_idx,
-          stream);
+          stream,
+          cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                 cudf::get_current_device_resource_ref()});
       }
       cub::DeviceTransform::Fill(
         filtered_right_indices->begin() + num_valid, num_invalid, JoinNoMatch, stream.get());

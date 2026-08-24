@@ -46,21 +46,27 @@ std::unique_ptr<column> group_count_valid(column_view const& values,
                                cuda::proclaim_return_type<size_type>(
                                  [] __device__(auto b) { return static_cast<size_type>(b); }));
 
-    cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                      group_labels.end(),
-                                      bitmask_iterator,
-                                      cuda::make_discard_iterator(),
-                                      result->mutable_view().begin<size_type>(),
-                                      cuda::std::plus<size_type>(),
-                                      stream);
+    cudf::detail::reduce_by_key_async(
+      group_labels.begin(),
+      group_labels.end(),
+      bitmask_iterator,
+      cuda::make_discard_iterator(),
+      result->mutable_view().begin<size_type>(),
+      cuda::std::plus<size_type>(),
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
   } else {
-    cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                      group_labels.end(),
-                                      cuda::make_constant_iterator(1),
-                                      cuda::make_discard_iterator(),
-                                      result->mutable_view().begin<size_type>(),
-                                      cuda::std::plus<size_type>(),
-                                      stream);
+    cudf::detail::reduce_by_key_async(
+      group_labels.begin(),
+      group_labels.end(),
+      cuda::make_constant_iterator(1),
+      cuda::make_discard_iterator(),
+      result->mutable_view().begin<size_type>(),
+      cuda::std::plus<size_type>(),
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
   }
 
   return result;

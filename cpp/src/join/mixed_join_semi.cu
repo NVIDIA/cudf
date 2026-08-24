@@ -206,7 +206,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     [join_type] __device__(bool keep_row) -> bool {
       return keep_row == (join_type == join_kind::LEFT_SEMI_JOIN);
     },
-    stream);
+    stream,
+    cudf::memory_resources{temp_mr, temp_mr});
 
   gather_map->resize(cuda::std::distance(gather_map->begin(), gather_map_end), stream);
   return gather_map;

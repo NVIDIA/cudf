@@ -173,7 +173,9 @@ VectorPair finalize_full_join(VectorPair&& indices,
                           cuda::counting_iterator<size_type>{right_table_num_rows},
                           out_iter,
                           unmatched_flag{match_flags},
-                          stream);
+                          stream,
+                          cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                 cudf::get_current_device_resource_ref()});
 
   auto const comp_size = cuda::std::distance(out_iter, new_end);
   left_out->resize(match_total + comp_size, stream);

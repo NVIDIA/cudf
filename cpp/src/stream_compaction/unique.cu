@@ -78,7 +78,8 @@ std::unique_ptr<table> unique(table_view const& input,
                                               d_results.begin(),
                                               mutable_view->begin<size_type>(),
                                               cuda::std::identity{},
-                                              stream);
+                                              stream,
+                                              cudf::memory_resources{temp_mr, temp_mr});
       return static_cast<size_type>(
         cuda::std::distance(mutable_view->begin<size_type>(), result_end));
     } else {
@@ -91,7 +92,8 @@ std::unique_ptr<table> unique(table_view const& input,
                                     mutable_view->begin<size_type>(),
                                     row_equal,
                                     keep,
-                                    stream);
+                                    stream,
+                                    cudf::memory_resources{temp_mr, temp_mr});
       return static_cast<size_type>(
         cuda::std::distance(mutable_view->begin<size_type>(), result_end));
     }

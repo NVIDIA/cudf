@@ -193,13 +193,16 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
                            parent_col_ids.end());
     rmm::device_uvector<NodeIndexT> non_leaf_nodes(num_non_leaf_columns, stream);
     rmm::device_uvector<NodeIndexT> non_leaf_nodes_children(num_non_leaf_columns, stream);
-    cudf::detail::reduce_by_key_async(parent_col_ids.begin() + 1,
-                                      parent_col_ids.end(),
-                                      cuda::make_constant_iterator(1),
-                                      non_leaf_nodes.begin(),
-                                      non_leaf_nodes_children.begin(),
-                                      cuda::std::plus<NodeIndexT>(),
-                                      stream);
+    cudf::detail::reduce_by_key_async(
+      parent_col_ids.begin() + 1,
+      parent_col_ids.end(),
+      cuda::make_constant_iterator(1),
+      non_leaf_nodes.begin(),
+      non_leaf_nodes_children.begin(),
+      cuda::std::plus<NodeIndexT>(),
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
 
     thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     non_leaf_nodes_children.begin(),

@@ -1022,18 +1022,23 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
                          pages.device_end(),
                          cuda::proclaim_return_type<bool>(
                            [] __device__(auto const& page) { return page.temp_string_size != 0; }),
-                         stream);
+                         stream,
+                         cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                cudf::get_current_device_resource_ref()});
 
   if (need_sizes) {
     // sum up all of the temp_string_sizes
     auto const page_sizes = cuda::proclaim_return_type<int64_t>(
       [] __device__(PageInfo const& page) { return page.temp_string_size; });
-    auto const total_size = cudf::detail::transform_reduce(pages.device_begin(),
-                                                           pages.device_end(),
-                                                           page_sizes,
-                                                           int64_t{0},
-                                                           cuda::std::plus<int64_t>{},
-                                                           stream);
+    auto const total_size = cudf::detail::transform_reduce(
+      pages.device_begin(),
+      pages.device_end(),
+      page_sizes,
+      int64_t{0},
+      cuda::std::plus<int64_t>{},
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
 
     // now do an exclusive scan over the temp_string_sizes to get offsets for each
     // page's chunk of the temp buffer

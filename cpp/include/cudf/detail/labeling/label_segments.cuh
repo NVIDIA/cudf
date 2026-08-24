@@ -173,13 +173,16 @@ void labels_to_offsets(InputIterator labels_begin,
   auto list_sizes = rmm::device_uvector<OutputType>(num_segments, stream);
 
   // Count the numbers of labels in the each segment.
-  auto const end = cudf::detail::reduce_by_key(labels_begin,  // keys
-                                               labels_end,
-                                               cuda::make_constant_iterator<OutputType>(1),
-                                               list_indices.begin(),  // output unique label values
-                                               list_sizes.begin(),    // count for each label
-                                               cuda::std::plus<OutputType>(),
-                                               stream);
+  auto const end =
+    cudf::detail::reduce_by_key(labels_begin,  // keys
+                                labels_end,
+                                cuda::make_constant_iterator<OutputType>(1),
+                                list_indices.begin(),  // output unique label values
+                                list_sizes.begin(),    // count for each label
+                                cuda::std::plus<OutputType>(),
+                                stream,
+                                cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                       cudf::get_current_device_resource_ref()});
 
   auto const num_non_empty_segments = cuda::std::distance(list_indices.begin(), end.first);
 

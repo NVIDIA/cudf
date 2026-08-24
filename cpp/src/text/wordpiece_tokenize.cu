@@ -245,7 +245,9 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
     cuda::counting_iterator{static_cast<cudf::size_type>(sub_map_indices.size())},
     sub_map_indices.begin(),
     copy_pieces_fn{*d_vocabulary},
-    stream);
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
   sub_map_indices.resize(cuda::std::distance(sub_map_indices.begin(), end), stream);
 
   // build a 2nd map with just the ## prefixed items
@@ -522,7 +524,9 @@ rmm::device_uvector<cudf::size_type> compute_all_tokens(
       if (idx == 0) { return d_input_chars[idx] == ' '; }
       return (d_input_chars[idx] != ' ' && d_input_chars[idx - 1] == ' ');
     },
-    stream);
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
 
   auto const edges_count =
     input.size() + 1 + static_cast<int64_t>(cuda::std::distance(d_edges.begin(), edges_end));

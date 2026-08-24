@@ -314,7 +314,9 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
           [parent_valid_map_base] __device__(auto idx) -> bool {
             return bit_is_set(parent_valid_map_base, idx);
           },
-          stream);
+          stream,
+          cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                 cudf::get_current_device_resource_ref()});
 
         auto merged_null_mask = cudf::detail::create_null_mask(
           parent_mask_len, mask_state::ALL_NULL, cuda::stream_ref(stream), mr);

@@ -70,6 +70,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
   // outgoing offsets.
   auto offsets = cudf::make_fixed_width_column(
     data_type{type_id::INT32}, input.num_rows() + 1, mask_state::UNALLOCATED, stream, mr);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
 
   auto keys =
     cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -107,7 +108,8 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     cuda::make_discard_iterator(),
                                     offsets->mutable_view().begin<int32_t>(),
                                     cuda::std::plus<size_type>(),
-                                    stream);
+                                    stream,
+                                    cudf::memory_resources{temp_mr, temp_mr});
 
   // convert to offsets
   auto total_size =
@@ -156,7 +158,8 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
 rmm::device_uvector<size_type> generate_null_counts(table_device_view const& input,
                                                     cuda::stream_ref stream)
 {
-  rmm::device_uvector<size_type> null_counts(input.num_rows(), stream);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  rmm::device_uvector<size_type> null_counts(input.num_rows(), stream, temp_mr);
 
   auto keys =
     cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -179,7 +182,8 @@ rmm::device_uvector<size_type> generate_null_counts(table_device_view const& inp
                                     cuda::make_discard_iterator(),
                                     null_counts.data(),
                                     cuda::std::plus<size_type>(),
-                                    stream);
+                                    stream,
+                                    cudf::memory_resources{temp_mr, temp_mr});
 
   return null_counts;
 }

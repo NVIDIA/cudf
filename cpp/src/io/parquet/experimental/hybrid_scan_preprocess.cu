@@ -405,7 +405,9 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{row_mask.size()},
     is_row_pruned_fn{row_mask.nullable(), row_mask.begin<bool>(), row_mask.null_mask()},
-    stream);
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
 }
 
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,

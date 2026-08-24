@@ -65,8 +65,12 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   };
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
-  auto const output_size = cudf::detail::reduce(
-    match_counts.begin(), match_counts.end(), cuda::std::int64_t{0}, cuda::std::plus<>{}, stream);
+  auto const output_size = cudf::detail::reduce(match_counts.begin(),
+                                                match_counts.end(),
+                                                cuda::std::int64_t{0},
+                                                cuda::std::plus<>{},
+                                                stream,
+                                                cudf::memory_resources{temp_mr, temp_mr});
   CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
   return static_cast<std::size_t>(output_size);
 }
@@ -115,8 +119,12 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
-  auto const left_output_size = cudf::detail::reduce(
-    match_counts.begin(), match_counts.end(), cuda::std::int64_t{0}, cuda::std::plus<>{}, stream);
+  auto const left_output_size   = cudf::detail::reduce(match_counts.begin(),
+                                                     match_counts.end(),
+                                                     cuda::std::int64_t{0},
+                                                     cuda::std::plus<>{},
+                                                     stream,
+                                                     cudf::memory_resources{temp_mr, temp_mr});
   auto const matched_right_rows = matched_build_rows.value(stream);
   CUDF_EXPECTS(left_output_size >= 0, "Join output size overflowed", std::overflow_error);
   auto const output_size = static_cast<cuda::std::uint64_t>(left_output_size) +

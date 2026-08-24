@@ -78,12 +78,13 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
     lhs_table, rhs_table, nulls_equal, nans_equal, stream, cudf::get_current_device_resource_ref());
 
   auto const num_rows = lhs.size();
+  auto const temp_mr  = cudf::get_current_device_resource_ref();
 
   // This stores the unique label values, used as scatter map.
-  auto list_indices = rmm::device_uvector<size_type>(num_rows, stream);
+  auto list_indices = rmm::device_uvector<size_type>(num_rows, stream, temp_mr);
 
   // Stores the result of checking overlap for non-empty lists.
-  auto overlap_results = rmm::device_uvector<bool>(num_rows, stream);
+  auto overlap_results = rmm::device_uvector<bool>(num_rows, stream, temp_mr);
 
   auto const labels_begin = rhs_labels->view().begin<size_type>();
   auto const end          = cudf::detail::reduce_by_key(labels_begin,  // keys
@@ -92,7 +93,8 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
                                                list_indices.begin(),  // out keys
                                                overlap_results.begin(),  // out values
                                                cuda::std::logical_or{},  // reduction op for values
-                                               stream);
+                                               stream,
+                                               cudf::memory_resources{temp_mr, temp_mr});
 
   auto const num_non_empty_segments = cuda::std::distance(overlap_results.begin(), end.second);
 
@@ -105,11 +107,8 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
   // `overlap_results` only stores the results of non-empty lists.
   // We need to initialize `false` for the entire output array then scatter these results over.
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    result_begin,
-    result_begin + num_rows,
-    false);
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr), result_begin, result_begin + num_rows, false);
+  thrust::scatter(rmm::exec_policy_nosync(stream, temp_mr),
                   overlap_results.begin(),
                   overlap_results.begin() + num_non_empty_segments,
                   list_indices.begin(),

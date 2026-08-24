@@ -602,11 +602,14 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
         CUDF_CUDA_TRY(cudaGetLastError());
       }
       auto positions = rmm::device_uvector<int64_t>(d_count.value(stream), stream);
-      cudf::detail::copy_if_async(cuda::counting_iterator<int64_t>{0},
-                                  cuda::counting_iterator<int64_t>{chars_bytes},
-                                  positions.begin(),
-                                  delimiter_fn,
-                                  stream);
+      cudf::detail::copy_if_async(
+        cuda::counting_iterator<int64_t>{0},
+        cuda::counting_iterator<int64_t>{chars_bytes},
+        positions.begin(),
+        delimiter_fn,
+        stream,
+        cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                               cudf::get_current_device_resource_ref()});
       return positions;
     }
   }();

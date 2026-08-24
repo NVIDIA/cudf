@@ -77,7 +77,9 @@ struct contains_scalar_dispatch {
                auto needle = get_scalar_value<Element>(d_needle);
                return val_pair.has_value() && (needle == *val_pair);
              },
-             stream) > 0;
+             stream,
+             cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                    cudf::get_current_device_resource_ref()}) > 0;
   }
 
   template <typename Element>

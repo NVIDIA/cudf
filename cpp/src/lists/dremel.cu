@@ -79,9 +79,10 @@ dremel_data get_encoding(column_view h_col,
   };
 
   auto get_empties = [&](column_view col, size_type start, size_type end) {
-    auto lcv = lists_column_view(get_list_level(col));
-    rmm::device_uvector<size_type> empties_idx(lcv.size(), stream);
-    rmm::device_uvector<size_type> empties(lcv.size(), stream);
+    auto lcv           = lists_column_view(get_list_level(col));
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    rmm::device_uvector<size_type> empties_idx(lcv.size(), stream, temp_mr);
+    rmm::device_uvector<size_type> empties(lcv.size(), stream, temp_mr);
     auto d_off = lcv.offsets().data<int32_t>();
 
     auto empties_idx_end = cudf::detail::copy_if(
@@ -89,13 +90,13 @@ dremel_data get_encoding(column_view h_col,
       cuda::counting_iterator<size_type>{end},
       empties_idx.begin(),
       [d_off] __device__(auto i) -> bool { return d_off[i] == d_off[i + 1]; },
-      stream);
-    auto empties_end =
-      thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     empties_idx.begin(),
-                     empties_idx_end,
-                     lcv.offsets().begin<int32_t>(),
-                     empties.begin());
+      stream,
+      cudf::memory_resources{temp_mr, temp_mr});
+    auto empties_end = thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+                                      empties_idx.begin(),
+                                      empties_idx_end,
+                                      lcv.offsets().begin<int32_t>(),
+                                      empties.begin());
 
     auto empties_size = empties_end - empties.begin();
     return std::make_tuple(std::move(empties), std::move(empties_idx), empties_size);

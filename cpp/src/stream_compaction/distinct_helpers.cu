@@ -48,7 +48,9 @@ size_type copy_reduction_results(size_type const* results,
         output,
         cuda::proclaim_return_type<bool>(
           [results] __device__(auto const idx) { return results[idx] == size_type{1}; }),
-        stream);
+        stream,
+        cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                               cudf::get_current_device_resource_ref()});
     }
 
     // KEEP_FIRST and KEEP_LAST store desired row indices or the mode's initial marker.
@@ -58,7 +60,9 @@ size_type copy_reduction_results(size_type const* results,
       output,
       cuda::proclaim_return_type<bool>([init_value = reduction_init_value(keep)] __device__(
                                          auto const idx) { return idx != init_value; }),
-      stream);
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
   }();
 
   return cuda::std::distance(output, output_end);

@@ -133,7 +133,7 @@ class BooleanFunction(Expr):
                 typ = child.dtype.polars_type
                 if not typ.is_numeric():
                     raise InvalidOperationError(
-                        f"is_close operation not supported for dtype `{dtype}`"
+                        f"is_close operation not supported for dtype `{typ}`"
                     )
 
     @staticmethod

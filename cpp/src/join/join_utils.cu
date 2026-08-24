@@ -14,7 +14,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
@@ -23,7 +22,7 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
+#include <cuda/stream>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -44,7 +43,7 @@ double checked_load_factor(double load_factor)
 }
 
 VectorPair get_trivial_left_join_indices(table_view const& left,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
@@ -87,7 +86,8 @@ struct to_no_match_pair {
 VectorPair finalize_full_join(VectorPair&& indices,
                               size_type left_table_num_rows,
                               size_type right_table_num_rows,
-                              rmm::cuda_stream_view stream,
+                              std::optional<cudf::device_span<size_type const>> right_matches,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   auto [left_out, right_out] = std::move(indices);
@@ -122,32 +122,38 @@ VectorPair finalize_full_join(VectorPair&& indices,
   left_out->resize(upper, stream);
   right_out->resize(upper, stream);
 
-  // Mark matched right rows in an int32 flag array (one word per right row). Redundant stores
-  // of the same value are idempotent, so no atomics are needed. Word-sized stores coalesce into
-  // full 128-byte transactions per warp; byte-sized flags cost ~2–3× here because partial-word
-  // stores from dense scatters serialize within each 32-bit sector.
-  auto flags = cudf::detail::make_zeroed_device_uvector_async<size_type>(
-    right_table_num_rows, stream, cudf::get_current_device_resource_ref());
+  CUDF_EXPECTS(
+    !right_matches || right_matches->size() == static_cast<std::size_t>(right_table_num_rows),
+    "right match flags must be absent or have one entry per right row",
+    std::invalid_argument);
 
-  thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     cuda::make_constant_iterator(size_type{1}),
-                     cuda::make_constant_iterator(size_type{1}) + match_total,
-                     right_out->begin(),
-                     right_out->begin(),
-                     flags.begin(),
-                     valid_range<size_type>{0, right_table_num_rows});
+  // Hash joins mark right rows as part of retrieval and pass those flags here, eliminating an
+  // output-sized scatter. Other join implementations use this fallback to derive the same flags
+  // from their materialized right indices.
+  auto computed_matches = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+    right_matches ? 0 : right_table_num_rows, stream, cudf::get_current_device_resource_ref());
+  if (!right_matches) {
+    thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::make_constant_iterator(size_type{1}),
+                       cuda::make_constant_iterator(size_type{1}) + match_total,
+                       right_out->begin(),
+                       right_out->begin(),
+                       computed_matches.begin(),
+                       valid_range<size_type>{0, right_table_num_rows});
+  }
+  auto const match_flags = right_matches ? right_matches->data() : computed_matches.data();
 
   // Fused compaction: for each unmatched right row, emit (JoinNoMatch, right_idx) into
   // (left_out_tail, right_out_tail) in a single CUB DeviceSelect pass.
   auto zip_tail =
-    thrust::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
+    cuda::make_zip_iterator(left_out->data() + match_total, right_out->data() + match_total);
   auto out_iter = cuda::make_transform_output_iterator(zip_tail, to_no_match_pair{});
 
   auto const new_end =
     cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                           cuda::counting_iterator<size_type>{right_table_num_rows},
                           out_iter,
-                          unmatched_flag{flags.data()},
+                          unmatched_flag{match_flags},
                           stream);
 
   auto const comp_size = cuda::std::distance(out_iter, new_end);
@@ -162,7 +168,7 @@ VectorPair finalize_full_join(
   cudf::host_span<cudf::device_span<size_type const> const> right_partials,
   size_type left_table_num_rows,
   size_type right_table_num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(left_partials.size() == right_partials.size(),
@@ -215,6 +221,7 @@ VectorPair finalize_full_join(
   return finalize_full_join(std::pair(std::move(left_out), std::move(right_out)),
                             left_table_num_rows,
                             right_table_num_rows,
+                            std::nullopt,
                             stream,
                             mr);
 }

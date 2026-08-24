@@ -9,8 +9,8 @@
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
@@ -20,6 +20,7 @@
 #include <cuco/pair.cuh>
 #include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -37,10 +38,10 @@ using cudf::detail::row::lhs_index_type;
 using cudf::detail::row::rhs_index_type;
 
 /**
- * @brief Base class providing common functionality for filtered join operations.
+ * @brief Implementation of filtered join using set hash tables.
  *
- * This abstract class implements the core components needed for hash-based semi
- * and anti join operations.
+ * Implements hash-based semi and anti joins using set semantics, where duplicate
+ * keys are not stored in the hash table.
  */
 class filtered_join {
  public:
@@ -88,7 +89,7 @@ class filtered_join {
   struct key_pair_fn {
     CUDF_HOST_DEVICE constexpr key_pair_fn(Hasher const& hasher) : _hasher{hasher} {}
 
-    __device__ __forceinline__ auto operator()(size_type i) const noexcept
+    __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
     {
       return cuco::pair{_hasher(i), T{i}};
     }
@@ -121,7 +122,7 @@ class filtered_join {
   };
 
   /**
-   * @brief Constructor for filtered_join base class
+   * @brief Constructor for filtered_join
    *
    * Initializes the hash table with the right table and prepares it for join operations.
    *
@@ -134,31 +135,54 @@ class filtered_join {
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 double load_factor,
-                rmm::cuda_stream_view stream,
+                cuda::stream_ref stream,
                 cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * Virtual semi join function overridden in derived classes
+   * @brief Returns indices of left table rows that have matching keys in the right table
    */
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
-    cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) = 0;
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
-   * Virtual anti join function overridden in derived classes
+   * @brief Returns indices of left table rows that do not have matching keys in the right table
    */
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+
+ private:
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_anti_join(
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) = 0;
+    join_kind kind,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr);
 
-  /**
-   * Virtual abstract base class destructor
-   */
-  virtual ~filtered_join() = default;
+  // Queries the hash table for every left row and writes the matches to contains_map.
+  template <int32_t CGSize, typename Iterator, typename Ref>
+  void query_right_table(cudf::table_view const& left,
+                         Iterator left_iter,
+                         Ref query_ref,
+                         cudf::device_span<bool> contains_map,
+                         cuda::stream_ref stream);
 
- protected:
+  void query_right_table_primitive(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    cuda::stream_ref stream);
+
+  void query_right_table_flat(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    cuda::stream_ref stream);
+
+  void query_right_table_nested(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    cuda::stream_ref stream);
+
   enum class row_operator_mode : uint8_t { PRIMITIVE, FLAT, NESTED };
 
   // Key type used in the hash table
@@ -188,15 +212,14 @@ class filtered_join {
 
   // Build and probe row operators must use matching nullate modes. Since probe nullability is
   // unknown at build time, primitive paths use DYNAMIC true and other paths use YES.
-  void insert_right_table_primitive(rmm::cuda_stream_view stream);
+  void insert_right_table_primitive(cuda::stream_ref stream);
   // Populates the hash table from the right-row iterator.
   template <int32_t CGSize, typename Iterator, typename Ref>
-  void insert_right_table(Iterator right_iter, Ref const& insert_ref, rmm::cuda_stream_view stream);
+  void insert_right_table(Iterator right_iter, Ref const& insert_ref, cuda::stream_ref stream);
 
-  void insert_right_table_flat(rmm::cuda_stream_view stream);
-  void insert_right_table_nested(rmm::cuda_stream_view stream);
+  void insert_right_table_flat(cuda::stream_ref stream);
+  void insert_right_table_nested(cuda::stream_ref stream);
 
- private:
   /**
    * @brief Calculates the required storage size for the hash table
    *

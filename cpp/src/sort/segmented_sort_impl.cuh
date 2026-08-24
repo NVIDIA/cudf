@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,10 +14,10 @@
 #include <cudf/detail/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cub/device/device_segmented_sort.cuh>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -57,7 +57,7 @@ struct column_fast_sort_fn {
                  column_view const& segment_offsets,
                  mutable_column_view& indices,
                  bool ascending,
-                 rmm::cuda_stream_view stream)
+                 cuda::stream_ref stream)
   {
     // CUB's segmented sort functions cannot accept iterators.
     // We create a temporary column here for it to use.
@@ -116,7 +116,7 @@ struct column_fast_sort_fn {
                    segment_offsets.size() - 1,
                    segment_offsets.begin<size_type>(),
                    segment_offsets.begin<size_type>() + 1,
-                   stream.value());
+                   stream.get());
   }
 
   template <typename T, CUDF_ENABLE_IF(is_fast_sort_supported<T>())>
@@ -124,14 +124,14 @@ struct column_fast_sort_fn {
                   column_view const& segment_offsets,
                   mutable_column_view& indices,
                   bool ascending,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
   {
     fast_sort<T>(input, segment_offsets, indices, ascending, stream);
   }
 
   template <typename T, CUDF_ENABLE_IF(!is_fast_sort_supported<T>())>
   void operator()(
-    column_view const&, column_view const&, mutable_column_view&, bool, rmm::cuda_stream_view)
+    column_view const&, column_view const&, mutable_column_view&, bool, cuda::stream_ref)
   {
     CUDF_FAIL("Column type cannot be used with fast-sort function");
   }
@@ -152,7 +152,7 @@ template <sort_method method>
 std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
                                                     column_view const& segment_offsets,
                                                     order const& column_order,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   // Unfortunately, CUB's segmented sort functions cannot accept iterators.
@@ -200,7 +200,7 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
  */
 rmm::device_uvector<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
-                                                   rmm::cuda_stream_view stream);
+                                                   cuda::stream_ref stream);
 
 /**
  * @brief Segmented sorted-order utility
@@ -222,7 +222,7 @@ std::unique_ptr<column> segmented_sorted_order_common(
   column_view const& segment_offsets,
   std::vector<order> const& column_order,
   std::vector<null_order> const& null_precedence,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (keys.num_rows() == 0 || keys.num_columns() == 0) {
@@ -299,7 +299,7 @@ std::unique_ptr<table> segmented_sort_by_key_common(table_view const& values,
                                                     column_view const& segment_offsets,
                                                     std::vector<order> const& column_order,
                                                     std::vector<null_order> const& null_precedence,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(values.num_rows() == keys.num_rows(),

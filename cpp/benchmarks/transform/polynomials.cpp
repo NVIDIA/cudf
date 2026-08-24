@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,6 +17,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
+#include <array>
 #include <random>
 
 template <typename key_type>
@@ -82,15 +83,16 @@ static void BM_transform_polynomials(nvbench::state& state)
 
     // clang-format on
 
-    cudf::transform_extended(inputs,
-                             udf,
-                             cudf::data_type{cudf::type_to_id<key_type>()},
-                             cudf::udf_source_type::CUDA,
-                             std::nullopt,
-                             cudf::null_aware::NO,
-                             std::nullopt,
-                             cudf::output_nullability::PRESERVE,
-                             launch.get_stream().get_stream());
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_to_id<key_type>()},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
+                    launch.get_stream().get_stream());
   });
 
   state.add_buffer_size(

@@ -87,7 +87,7 @@ def test_dataframescan_concat(request, df, streaming_engine_factory):
         # polars-CPU [A, B].
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/22376",
+                reason="https://github.com/NVIDIA/cudf/issues/22376",
                 strict=False,
             )
         )

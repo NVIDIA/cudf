@@ -8,7 +8,7 @@ You will need:
    preferred configuration. Or else, use
    [rustup](https://rust-lang.org/tools/install/)
 2. A [cudf development
-   environment](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
+   environment](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
    The combined devcontainer works, or whatever your favourite approach is.
 
 :::{note}
@@ -409,6 +409,23 @@ engine = pl.GPUEngine(
     executor_options={"target_partition_size": 2_000_000_000},
 )
 ```
+
+Each scan node may run up to `max_concurrent_io_tasks` reads concurrently. The
+limit applies independently to each scan node, each corresponding to a
+single `pl.scan_parquet` call in the query. Configure it through
+`executor_options` or
+`CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`:
+
+```python
+engine = pl.GPUEngine(
+    executor="streaming",
+    executor_options={"max_concurrent_io_tasks": 8},
+)
+```
+
+Before each read is submitted, it waits for a device-memory reservation.
+This makes aggregate read concurrency respond to memory pressure across all
+scan nodes on the rank.
 
 Internally, `collect_statistics` walks the IR graph, groups Parquet
 `Scan` nodes that share the same file paths (unioning projected columns

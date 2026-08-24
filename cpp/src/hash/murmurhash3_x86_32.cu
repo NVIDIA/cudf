@@ -4,16 +4,26 @@
  */
 #include "murmurhash3_x86_32.cuh"
 
+#include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/detail/row_operator/preprocessed_table.cuh>
+#include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_for.cuh>
+#include <cuda/stream>
+
+#include <cstdint>
+#include <memory>
 
 namespace cudf {
 namespace hashing {
@@ -27,7 +37,7 @@ std::unique_ptr<column> murmurhash3_x86_32_impl(
   size_type num_rows,
   uint32_t seed,
   Nullate nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto output = make_numeric_column(
@@ -45,7 +55,7 @@ std::unique_ptr<column> murmurhash3_x86_32_impl(
   CUDF_CUDA_TRY(cub::DeviceFor::Bulk(
     num_rows,
     [output_begin, hasher] __device__(size_type i) mutable { output_begin[i] = hasher(i); },
-    stream.value()));
+    stream.get()));
 
   return output;
 }
@@ -54,11 +64,11 @@ std::unique_ptr<column> murmurhash3_x86_32_impl(
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
-  auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+  auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(
+    input, stream, cudf::get_current_device_resource_ref());
   return murmurhash3_x86_32_impl(
     preprocessed_input, input.num_rows(), seed, nullate::DYNAMIC{has_nulls(input)}, stream, mr);
 }
@@ -67,7 +77,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& input,
   size_type num_rows,
   uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return murmurhash3_x86_32_impl(input, num_rows, seed, nullate::YES{}, stream, mr);
@@ -77,7 +87,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

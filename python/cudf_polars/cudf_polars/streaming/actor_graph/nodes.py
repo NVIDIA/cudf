@@ -18,7 +18,6 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
-from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, Empty
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -26,6 +25,8 @@ from cudf_polars.streaming.actor_graph.dispatch import (
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
+    _leading_order_keys,
+    chunk_to_frame,
     chunkwise_evaluate,
     empty_table_chunk,
     gather_in_task_group,
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
+    from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
@@ -95,6 +97,7 @@ async def default_node_single(
             ch_out,
             ch_in,
             metadata_out,
+            input_metadata=metadata_in,
             handle_empty_input=True,
             tracer=tracer,
         )
@@ -136,9 +139,13 @@ async def default_node_multi(
         local_count = 1
         duplicated = True
         partitioning = None
-        for idx, md_child in enumerate(
-            await gather_in_task_group(*(recv_metadata(ch, context) for ch in chs_in))
-        ):
+        child_metadatas = await gather_in_task_group(
+            *(recv_metadata(ch, context) for ch in chs_in)
+        )
+        child_ordering_metadatas = [
+            _leading_order_keys(md_child) for md_child in child_metadatas
+        ]
+        for idx, md_child in enumerate(child_metadatas):
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
             # Set "duplicated" to False as soon as we
@@ -209,13 +216,17 @@ async def default_node_multi(
                 net_memory_delta=0,
             )
             dfs = [
-                DataFrame.from_table(
-                    chunk.table_view(),  # type: ignore[union-attr]
-                    list(child.schema.keys()),
-                    list(child.schema.values()),
-                    chunk.stream,  # type: ignore[union-attr]
+                chunk_to_frame(
+                    cast("TableChunk", chunk),
+                    child,
+                    ordering_metadata=child_ordering_metadata,
                 )
-                for chunk, child in zip(ready_chunks, ir.children, strict=True)
+                for chunk, child, child_ordering_metadata in zip(
+                    ready_chunks,
+                    ir.children,
+                    child_ordering_metadatas,
+                    strict=True,
+                )
             ]
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(
@@ -730,7 +741,11 @@ async def metadata_drain_node(
         context, ch_in, ch_out, ir_context=ir_context, trace_ir=ir
     ):
         # Drain metadata channel (we don't need it after this point)
-        metadata = await recv_metadata(ch_in, context)
+        msg = await ch_in.recv_metadata(context)
+        if msg is None:
+            # An upstream actor failed/was cancelled and shut down the channel
+            return
+        metadata = ChannelMetadata.from_message(msg)
         if metadata_collector is not None:
             metadata_collector.append(metadata)
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,9 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
+
+#include <cstdint>
 
 namespace cudf::groupby::detail::hash {
 
@@ -35,5 +37,5 @@ void compute_shared_memory_aggs(size_type grid_size,
                                 table_device_view input_values,
                                 mutable_table_device_view output_values,
                                 aggregation::Kind const* d_agg_kinds,
-                                rmm::cuda_stream_view stream);
+                                cuda::stream_ref stream);
 }  // namespace cudf::groupby::detail::hash

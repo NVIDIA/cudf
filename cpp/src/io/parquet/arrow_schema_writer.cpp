@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -380,9 +380,9 @@ std::string construct_arrow_schema_ipc_message(cudf::detail::LinkedColVector con
 
   // populate field offsets (aka schema fields)
   std::transform(
-    thrust::make_zip_iterator(
+    cuda::make_zip_iterator(
       cuda::std::make_tuple(linked_columns.begin(), metadata.column_metadata.begin())),
-    thrust::make_zip_iterator(
+    cuda::make_zip_iterator(
       cuda::std::make_tuple(linked_columns.end(), metadata.column_metadata.end())),
     std::back_inserter(field_offsets),
     [&](auto const& elem) {

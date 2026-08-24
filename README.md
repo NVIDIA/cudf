@@ -131,7 +131,7 @@ lf.drop_nulls().group_by(["A", "B"]).mean().collect(engine="gpu")
 
 ## Questions and Discussion
 
-For bug reports or feature requests, please [file an issue](https://github.com/rapidsai/cudf/issues/new/choose) on the GitHub issue tracker.
+For bug reports or feature requests, please [file an issue](https://github.com/NVIDIA/cudf/issues/new/choose) on the GitHub issue tracker.
 
 For questions or discussion about cuDF and GPU data processing, feel free to post in the [RAPIDS Slack](https://rapids.ai/slack-invite) workspace.
 

@@ -13,7 +13,6 @@ from rapidsmpf.streaming.core.leaf_actor import pull_from_channel
 
 import cudf_polars.dsl.tracing
 from cudf_polars.dsl.ir import (
-    DataFrameScan,
     Join,
     Union,
 )
@@ -23,7 +22,6 @@ from cudf_polars.streaming.actor_graph.nodes import (
     generate_ir_sub_network_wrapper,
     metadata_drain_node,
 )
-from cudf_polars.streaming.io import StreamingScan
 from cudf_polars.streaming.over import Over
 from cudf_polars.utils.config import SPMDContext
 
@@ -250,21 +248,14 @@ def generate_network(
     -------
     The network nodes and output hook.
     """
-    # Count the number of IO nodes and the number of IR dependencies
-    num_io_nodes: int = 0
+    # Count the number of IR dependencies
     ir_dep_count: defaultdict[IR, int] = defaultdict(int)
     for node in traversal([ir]):
-        if isinstance(node, (DataFrameScan, StreamingScan)):
-            num_io_nodes += 1
         for child in node.children:
             ir_dep_count[child] += 1
 
     # Determine which nodes need fanout
     fanout_nodes = determine_fanout_nodes(ir, partition_info, ir_dep_count)
-
-    # Get max_io_threads from config (default: 2)
-    max_io_threads_global = config_options.executor.max_io_threads
-    max_io_threads_local = max(1, max_io_threads_global // max(1, num_io_nodes))
 
     # Generate the network
     state: GenState = {
@@ -274,7 +265,7 @@ def generate_network(
         "partition_info": partition_info,
         "fanout_nodes": fanout_nodes,
         "ir_context": ir_context,
-        "max_io_threads": max_io_threads_local,
+        "max_concurrent_io_tasks": config_options.executor.max_concurrent_io_tasks,
         "stats": stats,
         "collective_id_map": collective_id_map,
     }

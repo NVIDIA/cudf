@@ -1074,7 +1074,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             arbitrary = cp.ascontiguousarray(arbitrary)
 
         # TODO: Can remove once from_cuda_array_interface can handle masks
-        # https://github.com/rapidsai/cudf/issues/19122
+        # https://github.com/NVIDIA/cudf/issues/19122
         if (mask := cai.get("mask", None)) is not None:
             cai_copy = cai.copy()
             cai_copy.pop("mask")
@@ -1173,7 +1173,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             pandas_array = pandas_nullable_dtype.__from_arrow__(pa_array)
             return pd.Index(pandas_array, copy=False)
         else:
-            # xref https://github.com/rapidsai/cudf/issues/21120
+            # xref https://github.com/NVIDIA/cudf/issues/21120
             # TODO: Revisit using pa_array.to_pandas() once pandas 3.0 is supported
             np_array = pa_array.to_numpy(zero_copy_only=False, writable=True)
             return pd.Index(
@@ -2189,7 +2189,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             # nulls, these nulls should be replaced by whether or not the
             # haystack contains a null.
             # TODO: this is unnecessary if we resolve
-            # https://github.com/rapidsai/cudf/issues/14515 by
+            # https://github.com/NVIDIA/cudf/issues/14515 by
             # providing a mode in which cudf::contains does not mask
             # the result.
             result = result.fillna(rhs.null_count > 0)
@@ -3925,7 +3925,7 @@ def as_column(
             ):
                 # TODO: Need to re-visit this cast and fill_null
                 # calls while addressing the following issue:
-                # https://github.com/rapidsai/cudf/issues/14149
+                # https://github.com/NVIDIA/cudf/issues/14149
                 arbitrary = arbitrary.cast(pa.float64())
                 arbitrary = pc.fill_null(arbitrary, np.nan)
             if (

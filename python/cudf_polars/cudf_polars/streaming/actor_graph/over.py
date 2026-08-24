@@ -300,10 +300,15 @@ def _evaluate_window_with_stamps(
         columns = table.columns()
         table = plc.sorting.stable_sort_by_key(
             table,
-            # Sort by (rank, chunk_index)
-            plc.Table([columns[n_child + 2], columns[n_child]]),
-            [plc.types.Order.ASCENDING] * 2,
-            [plc.types.NullOrder.AFTER] * 2,
+            plc.Table(
+                [
+                    columns[n_child + 2],  # origin rank
+                    columns[n_child],  # origin chunk index (local)
+                    columns[n_child + 1],  # origin row index (in chunk)
+                ]
+            ),
+            [plc.types.Order.ASCENDING] * 3,
+            [plc.types.NullOrder.AFTER] * 3,
             stream=stream,
         )
     columns = table.columns()
@@ -745,7 +750,9 @@ async def over_actor(
             keys=ir.key_indices,
             allow_subset=True,
         )
-        if partitioning.is_strictly_partitioned():
+        if partitioning.is_strictly_partitioned(
+            level="local" if metadata_in.duplicated else "flat",
+        ):
             metadata_out = ChannelMetadata(
                 local_count=metadata_in.local_count,
                 partitioning=maybe_remap_partitioning(
@@ -760,6 +767,7 @@ async def over_actor(
                 ch_out,
                 ch_in,
                 metadata_out,
+                input_metadata=metadata_in,
                 tracer=tracer,
             )
             return

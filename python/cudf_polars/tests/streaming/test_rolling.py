@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
@@ -63,6 +66,7 @@ def test_rolling_datetime(engine):
         pl.col("x").rank(method="dense", descending=True).over("g"),
         pl.col("x").rank(method="min").over("g", "g2"),
         pl.col("x").cum_sum().over("g", order_by="s"),
+        pl.col("x").diff().over("g", order_by="s"),
         pl.col("x").shift(1).over("g", order_by="s"),
         pl.col("x").shift(-1, fill_value=0).over("g", order_by="s"),
         pl.when((pl.col("x") % 2) == 0)
@@ -80,6 +84,7 @@ def test_rolling_datetime(engine):
         "rank_dense",
         "rank_min_multi_key",
         "cum_sum_order_by",
+        "diff_order_by",
         "shift_order_by",
         "shift_fill_order_by",
         "fill_null_forward",
@@ -96,6 +101,102 @@ def test_over_select(engine, expr):
         }
     )
     assert_gpu_result_equal(df.select(expr), engine=engine, check_row_order=True)
+
+
+@pytest.mark.skipif(
+    not POLARS_VERSION_LT_136 and POLARS_VERSION_LT_139,
+    reason="Rolling window expressions are not accessible in polars 1.36-1.38",
+)
+def test_rolling_sum_over(engine):
+    df = (
+        pl.LazyFrame(
+            {
+                "ric": ["A", "A", "A", "B", "B", "B"],
+                "ts": [
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 1),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 2),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                ],
+                "price": [10.0, 11.0, 12.0, 20.0, 21.0, 22.0],
+                "volume": [100, 200, 300, 400, 500, 600],
+            }
+        )
+        .with_columns(notional=pl.col("price") * pl.col("volume"))
+        .sort("ric", "ts")
+    )
+    q = df.with_columns(
+        volume_before=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        notional_before=pl.col("notional")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        volume_after=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", closed="right")
+        .over("ric"),
+    ).select(
+        "ric",
+        "ts",
+        "volume_before",
+        "notional_before",
+        "volume_after",
+    )
+    expected = pl.DataFrame(
+        {
+            "ric": ["A", "A", "A", "B", "B", "B"],
+            "ts": [
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 1),
+                dt.datetime(2025, 1, 1, 9, 3),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 2),
+                dt.datetime(2025, 1, 1, 9, 3),
+            ],
+            "volume_before": [0, 100, 200, 0, 400, 500],
+            "notional_before": [0.0, 1000.0, 2200.0, 0.0, 8000.0, 10500.0],
+            "volume_after": [100, 300, 300, 400, 500, 1100],
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@pytest.mark.skipif(
+    not POLARS_VERSION_LT_136 and POLARS_VERSION_LT_139,
+    reason="Rolling window expressions are not accessible in polars 1.36-1.38",
+)
+def test_rolling_common_aggs_over(engine):
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A", "B", "B", "B"],
+            "ts": [1, 2, 4, 1, 3, 4],
+            "x": [100, 200, 300, 400, 500, 600],
+        }
+    ).sort("g", "ts")
+    q = df.select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g").alias("sum"),
+        pl.col("x").min().rolling("ts", period="2i").over("g").alias("min"),
+        pl.col("x").max().rolling("ts", period="2i").over("g").alias("max"),
+        pl.col("x").mean().rolling("ts", period="2i").over("g").alias("mean"),
+        pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
+        pl.len().rolling("ts", period="2i").over("g").alias("len"),
+    )
+    expected = pl.DataFrame(
+        {
+            "sum": [100, 300, 300, 400, 500, 1100],
+            "min": [100, 100, 300, 400, 500, 500],
+            "max": [100, 200, 300, 400, 500, 600],
+            "mean": [100.0, 150.0, 300.0, 400.0, 500.0, 550.0],
+            "count": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+            "len": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
 
 
 @pytest.mark.parametrize("strategy", ["forward", "backward"])
@@ -210,7 +311,7 @@ def test_over_noncol_key_fallback(request, streaming_engine_factory, expr) -> No
         # invisible to ``pytest.warns``.
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/22405",
+                reason="https://github.com/NVIDIA/cudf/issues/22405",
                 strict=False,
             )
         )
@@ -342,7 +443,7 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
         # doesn't preserve row order.
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/22405",
+                reason="https://github.com/NVIDIA/cudf/issues/22405",
                 strict=False,
             )
         )

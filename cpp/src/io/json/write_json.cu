@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,17 +35,16 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/tabulate.h>
 
@@ -160,7 +159,7 @@ struct escape_strings_fn {
   std::unique_ptr<column> make_strings_column(size_type size,
                                               size_type null_count,
                                               rmm::device_buffer null_mask,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
   {
     if (size == 0) {  // empty begets empty
@@ -182,7 +181,7 @@ std::unique_ptr<column> make_escaped_json_strings(column_device_view const& d_co
                                                   rmm::device_buffer null_mask,
                                                   bool append_colon,
                                                   bool escaped_utf8,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
 {
   return escape_strings_fn{d_column, append_colon, escaped_utf8}.make_strings_column(
@@ -270,7 +269,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
                                           string_view const value_separator,
                                           string_scalar const& narep,
                                           bool include_nulls,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -444,7 +443,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
                                              string_view const list_suffix,
                                              string_view const element_separator,
                                              string_view const element_narep,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -38,13 +38,17 @@ std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> bool
     // Nulls are considered false
     auto input_begin = make_null_replacement_iterator<bool>(input_device_view, false);
 
-    auto mask = detail::valid_if(input_begin, input_begin + input.size(), pred, stream, mr);
+    auto mask = detail::valid_if(
+      input_begin, input_begin + input.size(), pred, stream, cudf::memory_resources{mr, mr});
 
     return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(std::move(mask.first)),
                      mask.second);
   } else {
-    auto mask = detail::valid_if(
-      input_device_view.begin<bool>(), input_device_view.end<bool>(), pred, stream, mr);
+    auto mask = detail::valid_if(input_device_view.begin<bool>(),
+                                 input_device_view.end<bool>(),
+                                 pred,
+                                 stream,
+                                 cudf::memory_resources{mr, mr});
 
     return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(std::move(mask.first)),
                      mask.second);

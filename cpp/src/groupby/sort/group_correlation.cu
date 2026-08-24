@@ -160,8 +160,11 @@ std::unique_ptr<column> group_covariance(column_view const& values_0,
   auto is_null = [ddof, min_periods] __device__(size_type group_size) {
     return not(group_size == 0 or group_size - ddof <= 0 or group_size < min_periods);
   };
-  auto [new_nullmask, null_count] =
-    cudf::detail::valid_if(count.begin<size_type>(), count.end<size_type>(), is_null, stream, mr);
+  auto [new_nullmask, null_count] = cudf::detail::valid_if(count.begin<size_type>(),
+                                                           count.end<size_type>(),
+                                                           is_null,
+                                                           stream,
+                                                           cudf::memory_resources{mr, mr});
   if (null_count != 0) { result->set_null_mask(std::move(new_nullmask), null_count); }
   return result;
 }

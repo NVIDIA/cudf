@@ -146,7 +146,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
         thrust::seq, d_table.begin(), d_table.end(), [idx](auto col) { return col.is_null(idx); });
     },
     stream,
-    mr);
+    cudf::memory_resources{mr, mr});
 
   return make_strings_column(
     strings_count, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
@@ -239,7 +239,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
         thrust::seq, d_table.begin(), d_table.end(), [idx](auto col) { return col.is_null(idx); });
     },
     stream,
-    mr);
+    cudf::memory_resources{mr, mr});
 
   return make_strings_column(
     strings_count, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));

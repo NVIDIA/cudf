@@ -62,7 +62,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
       return filter_fn(idx) ? lhs_begin[idx].has_value() : rhs_begin[idx].has_value();
     },
     stream,
-    mr);
+    cudf::memory_resources{mr, mr});
   if (null_count == 0) { null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED); }
 
   // build vector of strings

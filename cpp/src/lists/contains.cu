@@ -226,7 +226,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
       output_it + num_rows,
       [] __device__(auto const idx) { return idx != NULL_SENTINEL; },
       stream,
-      mr);
+      cudf::memory_resources{mr, mr});
     out_positions->set_null_mask(std::move(null_mask), null_count);
   }
   return out_positions;

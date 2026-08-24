@@ -155,9 +155,9 @@ jobs:
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
-      docs-projects: cudf,libcudf
+      docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
-      version-map: '{"26.04": "legacy", "26.06": "stable"}'
+      version-map: ${{ vars.VERSION_MAP }}
   wheel-build-libcudf:
     needs: [telemetry-setup]
     permissions:

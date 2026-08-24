@@ -211,13 +211,8 @@ def _apply_ambiguous(
             return plc.copying.copy_if_else(
                 utc_earliest, utc_latest, is_ambiguous, stream=stream
             )
-        if ambiguous_scalar == "null":
-            return plc.copying.copy_if_else(
-                null_scalar, utc_latest, is_ambiguous, stream=stream
-            )
-        raise InvalidOperationError(
-            f"Invalid argument {ambiguous_scalar}, expected one of: "
-            '"earliest", "latest", "null", "raise"'
+        return plc.copying.copy_if_else(
+            null_scalar, utc_latest, is_ambiguous, stream=stream
         )
     string_type = plc.DataType(plc.TypeId.STRING)
     allowed = plc.Column.from_iterable_of_py(
@@ -225,9 +220,10 @@ def _apply_ambiguous(
         dtype=string_type,
         stream=stream,
     )
-    is_valid = plc.search.contains(allowed, ambiguous_column, stream=stream)
     is_invalid = plc.unary.unary_operation(
-        is_valid, plc.unary.UnaryOperator.NOT, stream=stream
+        plc.search.contains(allowed, ambiguous_column, stream=stream),
+        plc.unary.UnaryOperator.NOT,
+        stream=stream,
     )
     if bool(
         plc.reduce.reduce(

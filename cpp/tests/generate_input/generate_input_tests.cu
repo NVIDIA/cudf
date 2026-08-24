@@ -14,6 +14,7 @@
 
 #include <thrust/host_vector.h>
 
+#include <limits>
 #include <vector>
 
 // Tests for data_profile::set_distribution_params routing. A call that passes bounds whose type
@@ -143,4 +144,53 @@ TEST_F(GenerateInputTest, IntBoundsOnNumericGroup)
     EXPECT_GE(value, -50);
     EXPECT_LE(value, 50);
   }
+}
+
+TEST_F(GenerateInputTest, WideIntegralBoundsClampToTargetType)
+{
+  long long const big        = 4611686018427387904LL;  // 2^62
+  data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    type_group_id::INTEGRAL_SIGNED, distribution_id::UNIFORM, -big, big);
+
+  auto const narrow = profile.get_distribution_params<int32_t>();
+  EXPECT_EQ(narrow.id, distribution_id::UNIFORM);
+  EXPECT_EQ(narrow.lower_bound, std::numeric_limits<int32_t>::min());
+  EXPECT_EQ(narrow.upper_bound, std::numeric_limits<int32_t>::max());
+
+  auto const wide = profile.get_distribution_params<int64_t>();
+  EXPECT_EQ(wide.lower_bound, -big);
+  EXPECT_EQ(wide.upper_bound, big);
+}
+
+TEST_F(GenerateInputTest, HugeFloatBoundsClampToTargetType)
+{
+  data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<int32_t>(), distribution_id::UNIFORM, -1e100, 1e100);
+
+  auto const params = profile.get_distribution_params<int32_t>();
+  EXPECT_EQ(params.id, distribution_id::UNIFORM);
+  EXPECT_EQ(params.lower_bound, std::numeric_limits<int32_t>::min());
+  EXPECT_EQ(params.upper_bound, std::numeric_limits<int32_t>::max());
+}
+
+TEST_F(GenerateInputTest, OutOfRangeBoundsOnUnsignedTarget)
+{
+  data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<uint16_t>(), distribution_id::GEOMETRIC, -5, 70000);
+
+  auto const params = profile.get_distribution_params<uint16_t>();
+  EXPECT_EQ(params.id, distribution_id::GEOMETRIC);
+  EXPECT_EQ(params.lower_bound, 0);
+  EXPECT_EQ(params.upper_bound, std::numeric_limits<uint16_t>::max());
+}
+
+TEST_F(GenerateInputTest, NegativeStringLengthsSaturate)
+{
+  data_profile const profile = data_profile_builder().no_validity().distribution(
+    type_group_id::COMPOUND, distribution_id::GEOMETRIC, -5, 100);
+
+  auto const length_params = profile.get_distribution_params<cudf::string_view>().length_params;
+  EXPECT_EQ(length_params.id, distribution_id::GEOMETRIC);
+  EXPECT_EQ(length_params.lower_bound, 0);
+  EXPECT_EQ(length_params.upper_bound, 100);
 }

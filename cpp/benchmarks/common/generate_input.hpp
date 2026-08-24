@@ -232,6 +232,55 @@ inline uint32_t bounded_length_round(double value)
 }
 
 /**
+ * @brief Rounds an integral bound to an unsigned 32-bit length value, saturating out-of-range
+ * results to [0, UINT32_MAX].
+ */
+template <typename T>
+inline uint32_t saturated_length(T value)
+{
+  return static_cast<uint32_t>(
+    std::clamp<__int128_t>(static_cast<__int128_t>(value), 0, UINT32_MAX));
+}
+
+/**
+ * @brief Returns the representable range of the integer type identified by `tid`.
+ */
+inline std::pair<__int128_t, __int128_t> integer_type_range(cudf::type_id tid)
+{
+  switch (tid) {
+    case cudf::type_id::INT8: return {INT8_MIN, INT8_MAX};
+    case cudf::type_id::INT16: return {INT16_MIN, INT16_MAX};
+    case cudf::type_id::INT32: return {INT32_MIN, INT32_MAX};
+    case cudf::type_id::INT64: return {INT64_MIN, INT64_MAX};
+    case cudf::type_id::UINT8: return {0, UINT8_MAX};
+    case cudf::type_id::UINT16: return {0, UINT16_MAX};
+    case cudf::type_id::UINT32: return {0, UINT32_MAX};
+    case cudf::type_id::UINT64: return {0, static_cast<__int128_t>(UINT64_MAX)};
+    default: return {static_cast<__int128_t>(INT64_MIN), static_cast<__int128_t>(UINT64_MAX)};
+  }
+}
+
+/**
+ * @brief Saturates a bound to the representable range of the target integer type and returns the
+ * bit pattern of the result in that type. Storing saturated bounds keeps the later narrowing
+ * conversions in `get_distribution_params` within range so that lower and upper cannot invert.
+ */
+inline uint64_t saturate_to_integer_type(cudf::type_id tid, __int128_t value)
+{
+  auto const [lo, hi] = integer_type_range(tid);
+  auto const clamped  = std::clamp(value, lo, hi);
+  switch (tid) {
+    case cudf::type_id::INT8:
+    case cudf::type_id::UINT8: return static_cast<uint8_t>(clamped);
+    case cudf::type_id::INT16:
+    case cudf::type_id::UINT16: return static_cast<uint16_t>(clamped);
+    case cudf::type_id::INT32:
+    case cudf::type_id::UINT32: return static_cast<uint32_t>(clamped);
+    default: return static_cast<uint64_t>(clamped);
+  }
+}
+
+/**
  * @brief Contains data parameters for all types.
  *
  * This class exposes APIs to set and get distribution parameters for each supported type.
@@ -290,9 +339,10 @@ class data_profile {
   [[nodiscard]] auto get_cardinality() const { return cardinality; };
   [[nodiscard]] auto get_avg_run_length() const { return avg_run_length; };
 
-  // Bounds passed as integers are stored as-is for the discrete types (integers, chrono, strings,
-  // lists). Floating-point and fixed-point types in `type_or_group` receive the bounds converted
-  // to their own parameter type so that those calls take effect as well.
+  // Bounds passed as integers are saturated to each discrete type's own parameter range so that
+  // the later narrowing conversions stay within range (integers, chrono). Floating-point and
+  // fixed-point types in `type_or_group` receive the bounds converted to their own parameter type
+  // so that those calls take effect as well.
   template <typename T,
             typename Type_enum,
             std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
@@ -304,10 +354,10 @@ class data_profile {
     for (auto tid : get_type_or_group(static_cast<int32_t>(type_or_group))) {
       if (tid == cudf::type_id::STRING) {
         string_dist_desc.length_params = {
-          dist, static_cast<uint32_t>(lower_bound), static_cast<uint32_t>(upper_bound)};
+          dist, saturated_length(lower_bound), saturated_length(upper_bound)};
       } else if (tid == cudf::type_id::LIST) {
         list_dist_desc.length_params = {
-          dist, static_cast<uint32_t>(lower_bound), static_cast<uint32_t>(upper_bound)};
+          dist, saturated_length(lower_bound), saturated_length(upper_bound)};
       } else if (cudf::is_floating_point(cudf::data_type{tid})) {
         float_params[tid] = {
           dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
@@ -317,16 +367,18 @@ class data_profile {
                                static_cast<__int128_t>(upper_bound),
                                std::nullopt};
       } else {
-        int_params[tid] = {
-          dist, static_cast<uint64_t>(lower_bound), static_cast<uint64_t>(upper_bound)};
+        int_params[tid] = {dist,
+                           saturate_to_integer_type(tid, static_cast<__int128_t>(lower_bound)),
+                           saturate_to_integer_type(tid, static_cast<__int128_t>(upper_bound))};
       }
     }
   }
 
   // Bounds passed as floating point values are stored as-is for floating-point types. All other
   // types in `type_or_group` receive the bounds rounded to their own parameter type so that those
-  // calls take effect as well: integral and chrono bounds via int64 rounding, string and list
-  // lengths via uint32 rounding, fixed-point bounds via int64 rounding with an unspecified scale.
+  // calls take effect as well: integral and chrono bounds via int64 rounding saturated to each
+  // target's own range, string and list lengths via uint32 rounding, fixed-point bounds via int64
+  // rounding with an unspecified scale.
   // STRUCT and DICTIONARY32 targets have no range parameters and ignore the call.
   template <typename T,
             typename Type_enum,
@@ -353,8 +405,8 @@ class data_profile {
                                std::nullopt};
       } else {
         int_params[tid] = {dist,
-                           static_cast<uint64_t>(bounded_llround(lower_bound)),
-                           static_cast<uint64_t>(bounded_llround(upper_bound))};
+                           saturate_to_integer_type(tid, bounded_llround(lower_bound)),
+                           saturate_to_integer_type(tid, bounded_llround(upper_bound))};
       }
     }
   }

@@ -1274,3 +1274,10 @@ template distribution_params<cudf::string_view>
 data_profile::get_distribution_params<cudf::string_view>() const;
 template distribution_params<cudf::list_view>
 data_profile::get_distribution_params<cudf::list_view>() const;
+template distribution_params<int8_t> data_profile::get_distribution_params<int8_t>() const;
+template distribution_params<int16_t> data_profile::get_distribution_params<int16_t>() const;
+template distribution_params<int64_t> data_profile::get_distribution_params<int64_t>() const;
+template distribution_params<uint8_t> data_profile::get_distribution_params<uint8_t>() const;
+template distribution_params<uint16_t> data_profile::get_distribution_params<uint16_t>() const;
+template distribution_params<uint32_t> data_profile::get_distribution_params<uint32_t>() const;
+template distribution_params<uint64_t> data_profile::get_distribution_params<uint64_t>() const;

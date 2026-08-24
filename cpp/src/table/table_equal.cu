@@ -13,13 +13,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -29,7 +29,7 @@ template <bool has_nested_columns>
 [[nodiscard]] bool tables_equal(table_view const& left,
                                 table_view const& right,
                                 null_equality nulls_equal,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   auto const temp_mr    = cudf::get_current_device_resource_ref();
   auto const comparator = detail::row::equality::two_table_comparator{left, right, stream, temp_mr};
@@ -43,7 +43,7 @@ template <bool has_nested_columns>
     [rows_equal] __device__(size_type i) -> bool {
       return rows_equal(detail::row::lhs_index_type{i}, detail::row::rhs_index_type{i});
     },
-    stream.value()));
+    stream.get()));
   return cudf::detail::reduce(
     eq_rows.begin(), eq_rows.end(), true, cuda::std::logical_and<bool>{}, stream);
 }
@@ -53,7 +53,7 @@ template <bool has_nested_columns>
 [[nodiscard]] bool tables_equal(table_view const& left,
                                 table_view const& right,
                                 null_equality nulls_equal,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   if (left.num_rows() != right.num_rows() || left.num_columns() != right.num_columns() ||
       !have_same_types(left, right)) {
@@ -71,7 +71,7 @@ template <bool has_nested_columns>
 bool tables_equal(table_view const& left,
                   table_view const& right,
                   null_equality nulls_equal,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::tables_equal(left, right, nulls_equal, stream);

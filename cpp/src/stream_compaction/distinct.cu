@@ -21,13 +21,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuco/types.cuh>
+#include <cuda/stream>
 
 #include <memory>
 #include <type_traits>
@@ -77,7 +77,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                                 duplicate_keep_option keep,
                                                 null_equality nulls_equal,
                                                 nan_equality nans_equal,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   auto const num_rows = input.num_rows();
@@ -107,7 +107,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                         {},
                                         {},
                                         rmm::mr::polymorphic_allocator<char>{temp_mr},
-                                        stream.value()};
+                                        stream.get()};
     return reduce_func(set);
   };
 
@@ -147,7 +147,7 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 duplicate_keep_option keep,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0 or keys.empty()) {
@@ -175,7 +175,7 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 duplicate_keep_option keep,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -186,7 +186,7 @@ std::unique_ptr<column> distinct_indices(table_view const& input,
                                          duplicate_keep_option keep,
                                          null_equality nulls_equal,
                                          nan_equality nans_equal,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

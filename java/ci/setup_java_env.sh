@@ -9,7 +9,6 @@
 # (JAVA_ENV_READY short-circuits after the first load).
 
 TOOLSET_VERSION="${TOOLSET_VERSION:-14}"
-NINJA_VERSION="${NINJA_VERSION:-v1.13.1}"
 BOOST_VERSION="${BOOST_VERSION:-1.79.0}"
 BOOST_PREFIX="${BOOST_PREFIX:-/usr/local}"
 
@@ -26,34 +25,14 @@ fi
 # JDK 8 for javac; JDK 17 for the -Pjavadoc-jdk17 Maven profile.
 dnf install -y maven java-1.8.0-openjdk-devel java-17-openjdk-devel
 
-# ci-wheel images do not ship ninja; CMake uses it as the preferred generator.
-if ! command -V ninja >/dev/null 2>&1; then
-  case "$(uname -m)" in
-    x86_64)
-      wget --no-hsts -q -O /tmp/ninja-linux.zip \
-        "https://github.com/ninja-build/ninja/releases/download/${NINJA_VERSION}/ninja-linux.zip"
-      ;;
-    aarch64)
-      wget --no-hsts -q -O /tmp/ninja-linux.zip \
-        "https://github.com/ninja-build/ninja/releases/download/${NINJA_VERSION}/ninja-linux-aarch64.zip"
-      ;;
-    *)
-      echo "Unrecognized platform '$(uname -m)'" >&2
-      exit 1
-      ;;
-  esac
-  unzip -d /usr/bin /tmp/ninja-linux.zip
-  chmod +x /usr/bin/ninja
-  rm -f /tmp/ninja-linux.zip
-fi
-
+# ci-wheel images do not ship ninja or a modern cmake. Install both from PyPI.
 if command -v rapids-pip-retry >/dev/null 2>&1; then
-  rapids-pip-retry install cmake
+  rapids-pip-retry install cmake ninja
 else
-  pip install cmake
+  pip install cmake ninja
 fi
 
-# Refresh pyenv shims so the cmake we just installed is on PATH.
+# Refresh pyenv shims so the cmake/ninja we just installed are on PATH.
 if command -v pyenv >/dev/null 2>&1; then
   pyenv rehash || true
 fi

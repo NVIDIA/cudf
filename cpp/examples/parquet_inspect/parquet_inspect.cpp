@@ -88,7 +88,7 @@ int main(int argc, char const** argv)
     write_page_metadata(metadata, output_filepath, stream);
   }
 
-  stream.sync();
+  stream.synchronize();
 
   return 0;
 }

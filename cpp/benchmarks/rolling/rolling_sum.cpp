@@ -69,7 +69,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     });
     auto buf = rmm::device_buffer(
       data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
-    cudf::get_default_stream().sync();
+    cudf::get_default_stream().synchronize();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
@@ -85,7 +85,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     });
     auto buf = rmm::device_buffer(
       data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
-    cudf::get_default_stream().sync();
+    cudf::get_default_stream().synchronize();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),

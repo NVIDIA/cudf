@@ -29,7 +29,7 @@ void chunked_pack(cudf::table_view const& src_table, std::vector<cudf::size_type
   while (chunked_pack->has_next()) {
     (void)chunked_pack->next(user_buffer);
   }
-  stream.sync();
+  stream.synchronize();
 }
 
 template <typename ContigSplitImpl>

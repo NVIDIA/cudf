@@ -81,7 +81,7 @@ void bm_tdigest_merge(nvbench::state& state)
       ->release()
       .front());
 
-  stream.sync();
+  stream.synchronize();
 
   state.add_element_count(total_centroids);
 
@@ -133,7 +133,7 @@ void bm_tdigest_reduce(nvbench::state& state)
                 .front());
   auto group_valid_counts = cudf::sequence(num_groups, rpg_scalar, zero);
 
-  stream.sync();
+  stream.synchronize();
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();

@@ -157,7 +157,7 @@ int main(int argc, char const** argv)
   // Create filter expressions (one per thread; reused circularly if needed)
   auto const column_reference = cudf::ast::column_name_reference(column_name);
   auto scalar                 = cudf::string_scalar(literal_value, true, default_stream);
-  default_stream.sync();
+  default_stream.synchronize();
   auto literal = cudf::ast::literal(scalar);
 
   std::vector<cudf::ast::operation> filter_expressions;

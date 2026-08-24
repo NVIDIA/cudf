@@ -109,23 +109,23 @@ int main(int argc, char const** argv)
   std::chrono::duration<double> elapsed_cold{};
   {
     // warmup pass
-    stream.sync();
+    stream.synchronize();
     auto start_cold = std::chrono::steady_clock::now();
     nvtxRangePush("transform cold");
     auto [result_cold, input_indices_cold] = transform(table_view);
-    stream.sync();
+    stream.synchronize();
     nvtxRangePop();
     elapsed_cold = std::chrono::steady_clock::now() - start_cold;
   }
 
-  stream.sync();
+  stream.synchronize();
 
   auto start = std::chrono::steady_clock::now();
   nvtxRangePush("transform warm");
   auto [result, input_indices] = transform(table_view);
 
   // ensure transform operation completes and the wall-time is only for the transform computation
-  stream.sync();
+  stream.synchronize();
   nvtxRangePop();
 
   std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;

@@ -71,7 +71,7 @@ int main(int argc, char const** argv)
   //
   // result      = cudf::sort_by_key(result->view(), result->view().select({0}), {}, {}, stream);
 
-  stream.sync();
+  stream.synchronize();
 
   elapsed = std::chrono::steady_clock::now() - start;
   std::cout << "Number of keys: " << result->num_rows() << std::endl;

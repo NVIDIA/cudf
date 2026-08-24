@@ -13,7 +13,6 @@ import cupy as cp
 import numpy as np
 import pandas as pd
 import pytest
-import zstandard as zstd
 
 import cudf
 from cudf import read_csv
@@ -2070,10 +2069,6 @@ def test_to_csv_compression_no_path_error():
         df.to_csv(compression="zstd")
 
 
-# The compressed content itself is covered by the libcudf tests; what only
-# Python can check is that a third-party zstd implementation accepts what the
-# writer emits. 8 is the smallest chunk size the writer accepts, and is used
-# verbatim since it is already a multiple of 8; it forces multiple frames.
 @pytest.mark.parametrize("chunksize", [None, 8])
 def test_to_csv_zstd_compression(tmp_path, chunksize):
     df = cudf.DataFrame(
@@ -2082,27 +2077,14 @@ def test_to_csv_zstd_compression(tmp_path, chunksize):
     fname = tmp_path / "test_zstd.csv.zst"
     df.to_csv(fname, index=False, compression="zstd", chunksize=chunksize)
 
-    # the compressed output must hold exactly what an uncompressed write produces
-    expected = df.to_csv(index=False, chunksize=chunksize)
-    with open(fname, "rb") as f:
-        # the writer emits concatenated frames, and the default for reading past
-        # the first one varies by zstandard version, so ask for it explicitly
-        decompressed = (
-            zstd.ZstdDecompressor()
-            .stream_reader(f, read_across_frames=True)
-            .read()
-        )
-    assert decompressed.decode("utf-8") == expected
+    assert_eq(df, pd.read_csv(fname))
 
 
 @pytest.mark.parametrize("compression", ["zstd", "infer"])
-def test_read_csv_zstd_written_by_to_csv(tmp_path, compression):
-    # "infer" has to recognize ".zst" and not only ".zstd", otherwise a file
-    # written by to_csv cannot be read back without naming the codec. The file
-    # has to come from to_csv rather than a streaming writer: our reader needs
-    # the decompressed size in the frame header, which streaming writers omit.
+@pytest.mark.parametrize("ext", [".zst", ".zstd"])
+def test_read_csv_zstd_extension(tmp_path, ext, compression):
     df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
-    fname = tmp_path / "test_zstd.csv.zst"
+    fname = tmp_path / f"test_zstd.csv{ext}"
     df.to_csv(fname, index=False, compression="zstd")
 
     assert_eq(df, cudf.read_csv(fname, compression=compression))

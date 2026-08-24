@@ -730,8 +730,9 @@ chunksize : integer, default None
 compression : {'bz2', 'gzip', 'infer', 'snappy', 'zip', 'zstd'}, default 'infer'
     For on-the-fly decompression of on-disk data. If 'infer', then use
     bz2, gzip, snappy, zip, or zstd if path_or_buf is a string ending in
-    '.bz2', '.gz', '.sz', '.zip', or '.zstd', respectively. If using 'zip', the ZIP file must contain only one data
-    file to be read in. Set to None for no decompression.
+    '.bz2', '.gz', '.sz', '.zip', or '.zst'/'.zstd', respectively. If using
+    'zip', the ZIP file must contain only one data file to be read in. Set to
+    None for no decompression.
 byte_range : list or tuple, default None
 
     .. admonition:: GPU-accelerated
@@ -1312,10 +1313,6 @@ encoding : str, default 'utf-8'
     Only 'utf-8' is currently supported
 compression : {{'zstd', None}}, default None
     A string representing the compression scheme to use in the output file.
-    Only 'zstd' is currently supported. ZSTD compression uses nvCOMP for
-    GPU-accelerated compression with concatenated frames, enabling
-    progressive compression compatible with standard tools (zstd -d).
-    Not supported when the CSV output is returned as a string.
 quoting : int, optional
     Control field quoting behavior per ``csv.QUOTE_*`` constants.
     Use one of ``csv.QUOTE_MINIMAL`` (0) or ``csv.QUOTE_NONE`` (3).

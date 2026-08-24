@@ -28,8 +28,8 @@ __all__ = ["contains", "lower_bound", "upper_bound"]
 cpdef Column lower_bound(
     Table haystack,
     Table needles,
-    list column_order: list[Order],
-    list null_precedence: list[NullOrder],
+    object column_order: list[Order],
+    object null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -82,8 +82,8 @@ cpdef Column lower_bound(
 cpdef Column upper_bound(
     Table haystack,
     Table needles,
-    list column_order: list[Order],
-    list null_precedence: list[NullOrder],
+    object column_order: list[Order],
+    object null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):

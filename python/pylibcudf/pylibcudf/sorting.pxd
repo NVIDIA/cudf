@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
@@ -12,16 +12,16 @@ from .table cimport Table
 
 cpdef Column sorted_order(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
 
 cpdef Column stable_sorted_order(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
@@ -38,15 +38,15 @@ cpdef Column rank(
 )
 
 cpdef bool is_sorted(
-    Table table, list column_order, list null_precedence, object stream = *
+    Table table, object column_order, object null_precedence, object stream = *
 )
 
 cpdef Table segmented_sort_by_key(
     Table values,
     Table keys,
     Column segment_offsets,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
@@ -55,8 +55,8 @@ cpdef Table stable_segmented_sort_by_key(
     Table values,
     Table keys,
     Column segment_offsets,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
@@ -64,8 +64,8 @@ cpdef Table stable_segmented_sort_by_key(
 cpdef Table sort_by_key(
     Table values,
     Table keys,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
@@ -73,24 +73,24 @@ cpdef Table sort_by_key(
 cpdef Table stable_sort_by_key(
     Table values,
     Table keys,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
 
 cpdef Table sort(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
 
 cpdef Table stable_sort(
     Table source_table,
-    list column_order,
-    list null_precedence,
+    object column_order,
+    object null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*,
 )

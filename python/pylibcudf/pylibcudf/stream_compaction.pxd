@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.libcudf.stream_compaction cimport duplicate_keep_option
@@ -16,7 +16,7 @@ from .table cimport Table
 
 cpdef Table drop_nulls(
     Table source_table,
-    list keys,
+    object keys,
     size_type keep_threshold,
     object stream = *,
     DeviceMemoryResource mr = *,
@@ -24,7 +24,7 @@ cpdef Table drop_nulls(
 
 cpdef Table drop_nans(
     Table source_table,
-    list keys,
+    object keys,
     size_type keep_threshold,
     object stream = *,
     DeviceMemoryResource mr = *,
@@ -46,7 +46,7 @@ cpdef Table apply_deletion_mask(
 
 cpdef Table unique(
     Table input,
-    list keys,
+    object keys,
     duplicate_keep_option keep,
     null_equality nulls_equal,
     object stream = *,
@@ -55,7 +55,7 @@ cpdef Table unique(
 
 cpdef Table distinct(
     Table input,
-    list keys,
+    object keys,
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
@@ -74,7 +74,7 @@ cpdef Column distinct_indices(
 
 cpdef Table stable_distinct(
     Table input,
-    list keys,
+    object keys,
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,

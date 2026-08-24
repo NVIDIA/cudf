@@ -25,10 +25,10 @@ if TYPE_CHECKING:
 __all__ = ["merge"]
 
 cpdef Table merge (
-    list tables_to_merge: list[Table],
-    list key_cols: list[int],
-    list column_order: list[Order],
-    list null_precedence: list[NullOrder],
+    object tables_to_merge: list[Table],
+    object key_cols: list[int],
+    object column_order: list[Order],
+    object null_precedence: list[NullOrder],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):

@@ -84,7 +84,7 @@ struct unicode_normalizer {
    */
   unicode_normalizer(cudf::table_view const& unicode_data,
                      unicode_normalization_form form,
-                     rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
   ~unicode_normalizer();
 
@@ -106,7 +106,7 @@ struct unicode_normalizer {
 std::unique_ptr<unicode_normalizer> create_unicode_normalizer(
   cudf::table_view const& unicode_data,
   unicode_normalization_form form,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -137,7 +137,7 @@ std::unique_ptr<unicode_normalizer> create_unicode_normalizer(
 std::unique_ptr<cudf::column> normalize_unicode(
   cudf::strings_column_view const& input,
   unicode_normalizer const& normalizer,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

@@ -18,7 +18,7 @@ constexpr uint32_t MAX_CODEPOINT = 0x10'FFFFu;
 constexpr uint32_t CODEPOINT_TABLE_SIZE = MAX_CODEPOINT + 1u;  // 1,114,112
 
 // Size of decomp_offsets: one extra slot to hold the total count
-constexpr uint32_t DECOMP_OFFSETS_SIZE = MAX_CODEPOINT + 2u;  // 1,114,114
+constexpr uint32_t DECOMP_OFFSETS_SIZE = MAX_CODEPOINT + 2u;  // 1,114,113
 
 // Maximum transitive decomposition depth in Unicode (empirically ~4, bounded at 5)
 constexpr int32_t MAX_DECOMP_DEPTH = 5;

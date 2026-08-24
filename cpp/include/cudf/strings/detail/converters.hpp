@@ -40,7 +40,7 @@ std::unique_ptr<column> from_integers(column_view const& integers,
  */
 std::unique_ptr<column> hex_to_integers(strings_column_view const& input,
                                         data_type output_type,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr);
 
 /**

@@ -32,11 +32,11 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/span>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/remove.h>
 #include <thrust/scatter.h>
 #include <thrust/sort.h>
@@ -74,9 +74,9 @@ __device__ __constant__ cuda::std::array COMPOSITION_EXCLUSIONS{
 // clang-format on
 
 /**
- * Scatter CCC values from the CCC column into a codepoint-indexed table.
- * Codepoints are pre-converted from the hex column via hex_to_integers.
- * One invocation per UnicodeData.txt row.
+ * Scatter Canonical Combining Class (CCC) values from the CCC column into a codepoint-indexed
+ * table. Codepoints are pre-converted from the hex column via hex_to_integers. One invocation per
+ * UnicodeData.txt row.
  */
 struct scatter_ccc_fn {
   cudf::column_device_view ccc_col;              // INT32: CCC values
@@ -279,7 +279,7 @@ struct unicode_normalizer::unicode_normalizer_impl {
 
 unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
                                        unicode_normalization_form form,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(unicode_data.num_columns() == 3,
@@ -315,9 +315,9 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   bool const apply_compat =
     (form == unicode_normalization_form::NFKD || form == unicode_normalization_form::NFKC);
   auto const policy   = rmm::exec_policy_nosync(stream, temp_mr);
-  auto const row_iter = thrust::make_counting_iterator(cudf::size_type{0});
+  auto const row_iter = cuda::make_counting_iterator(cudf::size_type{0});
 
-  // Build CCC table
+  // Build Canonical Combining Class (CCC) table
   auto ccc_table = rmm::device_uvector<uint8_t>(detail::CODEPOINT_TABLE_SIZE, stream, mr);
   thrust::uninitialized_fill(policy, ccc_table.begin(), ccc_table.end(), uint8_t{0});
   thrust::for_each_n(
@@ -401,7 +401,7 @@ unicode_normalizer::~unicode_normalizer() {}
 
 std::unique_ptr<unicode_normalizer> create_unicode_normalizer(cudf::table_view const& unicode_data,
                                                               unicode_normalization_form form,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -448,16 +448,16 @@ __device__ void for_each_decomposed_cp(int64_t idx,
         if (start == end) {
           buf_b[count_b++] = cp;
         } else {
-          for (uint32_t j = start; j < end && count_b < MAX_DECOMP_EXPAND; ++j) {
-            buf_b[count_b++] = decomp_table[j];
-          }
+          auto copy_size =
+            cuda::std::min(end - start, static_cast<uint32_t>(MAX_DECOMP_EXPAND - count_b));
+          cuda::std::memcpy(
+            buf_b + count_b, decomp_table.data() + start, copy_size * sizeof(uint32_t));
+          count_b += copy_size;
           expanded = true;
         }
       }
     }
-    for (int32_t i = 0; i < count_b; ++i) {
-      buf_a[i] = buf_b[i];
-    }
+    cuda::std::memcpy(buf_a, buf_b, count_b * sizeof(uint32_t));
     count_a = count_b;
     if (!expanded) { break; }
   }
@@ -483,8 +483,9 @@ struct decompose_size_fn {
 };
 
 /**
- * Write decomposed codepoints and CCCs for the input byte at @p idx (fill pass).
- * Non-lead bytes are skipped. Writes to pre-scanned positions in d_out_cps / d_out_ccc.
+ * Write decomposed codepoints and Canonical Combining Class (CCC) values for the input byte at @p
+ * idx (fill pass). Non-lead bytes are skipped. Writes to pre-scanned positions in d_out_cps /
+ * d_out_ccc.
  */
 struct decompose_fill_fn {
   cuda::std::span<char const> d_input_chars;
@@ -671,7 +672,7 @@ struct output_fn {
 
 std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const& input,
                                                 unicode_normalizer const& normalizer,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING}); }
@@ -684,13 +685,14 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   auto const& p          = *normalizer._impl;
   auto const temp_mr     = cudf::get_current_device_resource_ref();
   auto const policy      = rmm::exec_policy_nosync(stream, temp_mr);
-  auto const byte_iter   = thrust::make_counting_iterator(int64_t{0});
+  auto const byte_iter   = cuda::make_counting_iterator(int64_t{0});
   auto const d_raw_chars = input.chars_begin(stream) + first_offset;
   auto const chars_span  = cuda::std::span<char const>(d_raw_chars, chars_size);
 
   // NFC/NFKC quick check: scan for any codepoint that is NFC_QC=No or NFC_QC=Maybe
-  // (non-zero CCC, Hangul V/T jamo, compat decomp, singleton canonical, script exclusion,
-  // or non-starter decomposition).  If none found the column is already normalized.
+  // (non-zero Canonical Combining Class (CCC), Hangul V/T jamo, compat decomp, singleton canonical,
+  // script exclusion, or non-starter decomposition).  If none found the column is already
+  // normalized.
   if (p.form == unicode_normalization_form::NFC || p.form == unicode_normalization_form::NFKC) {
     auto nfc_qc_fn = detail::nfc_quick_check_fn{chars_span, p.ccc_table, p.compat_decomp_flags};
     if (!cudf::detail::any_of(byte_iter, byte_iter + chars_size, nfc_qc_fn, stream)) {
@@ -739,11 +741,11 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   expanded_sizes.release();
   out_positions.release();
 
-  auto const row_iter = thrust::make_counting_iterator(cudf::size_type{0});
+  auto const row_iter = cuda::make_counting_iterator(cudf::size_type{0});
   auto const d_cps    = cps.data();
   auto const d_scp    = str_cp_offsets.data();
 
-  // Canonical Reorder
+  // Canonical Reorder using codepoints (cps) and Canonical Combining Class (ccc) values
   thrust::for_each_n(policy, row_iter, input.size(), detail::reorder_fn{cps, ccc, str_cp_offsets});
   // Canonical Composition (NFC/NFKC only)
   // Run composition for NFC/NFKC regardless of whether the table has entries:
@@ -768,7 +770,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
 
 std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const& input,
                                                 unicode_normalizer const& normalizer,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

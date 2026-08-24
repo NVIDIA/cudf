@@ -462,14 +462,6 @@ def _get_key_indices(
     )
 
 
-def _ordering_with_column_indices(
-    ordering: Ordering,
-    column_indices: tuple[int, ...],
-) -> Ordering:
-    """Return an ordering with the same semantics on different column indices."""
-    return _update_ordering_indices(ordering, column_indices)
-
-
 def _ordering_prefix_matches(
     ordering: Ordering,
     reference: Ordering,
@@ -540,11 +532,9 @@ def _make_ordered_strategy(
         right_keys=right_keys[:reference_key_count],
         left_input_ordering=left_ordering,
         right_input_ordering=right_ordering,
-        left_output_ordering=_ordering_with_column_indices(reference, left_key_indices),
-        right_output_ordering=_ordering_with_column_indices(
-            reference, right_key_indices
-        ),
-        output_ordering=_ordering_with_column_indices(reference, output_key_indices),
+        left_output_ordering=_update_ordering_indices(reference, left_key_indices),
+        right_output_ordering=_update_ordering_indices(reference, right_key_indices),
+        output_ordering=_update_ordering_indices(reference, output_key_indices),
     )
 
 

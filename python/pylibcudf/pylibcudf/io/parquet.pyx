@@ -142,7 +142,7 @@ cdef class ParquetReaderOptions:
         parquet_builder.source = source
         return parquet_builder
 
-    cpdef void set_row_groups(self, list row_groups: list[list[int]]):
+    cpdef void set_row_groups(self, object row_groups: list[list[int]]):
         """
         Sets list of individual row groups to read.
 
@@ -212,7 +212,7 @@ cdef class ParquetReaderOptions:
         """
         self.c_obj.set_skip_rows(skip_rows)
 
-    cpdef void set_columns(self, list col_names: list[str]):
+    cpdef void set_columns(self, object col_names: list[str]):
         """
         Sets names of the columns to be read. Deprecated and will be
         removed in a future version. Use set_column_names instead.
@@ -229,7 +229,7 @@ cdef class ParquetReaderOptions:
         _warn_deprecated("set_columns", "set_column_names")
         self.set_column_names(col_names)
 
-    cpdef void set_column_names(self, list col_names: list[str]):
+    cpdef void set_column_names(self, object col_names: list[str]):
         """
         Sets names of the columns to be read.
 
@@ -247,7 +247,7 @@ cdef class ParquetReaderOptions:
             vec.push_back(<string>str(name).encode())
         self.c_obj.set_column_names(vec)
 
-    cpdef void set_column_indices(self, list col_indices: list[int]):
+    cpdef void set_column_indices(self, object col_indices: list[int]):
         """
         Sets indices of the top-level columns to be read.
 
@@ -265,7 +265,7 @@ cdef class ParquetReaderOptions:
             vec.push_back(idx)
         self.c_obj.set_column_indices(vec)
 
-    cpdef void set_column_field_ids(self, list column_field_ids: list[int]):
+    cpdef void set_column_field_ids(self, object column_field_ids: list[int]):
         """
         Sets Parquet field IDs of the columns/fields to be read.
 
@@ -445,7 +445,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.filter(<expression &>dereference(filter.c_obj))
         return self
 
-    cpdef ParquetReaderOptionsBuilder columns(self, list col_names: list[str]):
+    cpdef ParquetReaderOptionsBuilder columns(self, object col_names: list[str]):
         """
         Sets names of the columns to be read. Deprecated and will be
         removed in a future version. Use column_names instead.
@@ -462,7 +462,7 @@ cdef class ParquetReaderOptionsBuilder:
         _warn_deprecated("columns", "column_names")
         return self.column_names(col_names)
 
-    cpdef ParquetReaderOptionsBuilder column_names(self, list col_names: list[str]):
+    cpdef ParquetReaderOptionsBuilder column_names(self, object col_names: list[str]):
         """
         Sets names of the columns to be read.
 
@@ -481,7 +481,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.column_names(vec)
         return self
 
-    cpdef ParquetReaderOptionsBuilder column_indices(self, list col_indices: list[int]):
+    cpdef ParquetReaderOptionsBuilder column_indices(self, object col_indices: list[int]):
         """
         Sets indices of the top-level columns to be read.
 
@@ -500,7 +500,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.column_indices(vec)
         return self
 
-    cpdef ParquetReaderOptionsBuilder column_field_ids(self, list column_field_ids: list[int]):
+    cpdef ParquetReaderOptionsBuilder column_field_ids(self, object column_field_ids: list[int]):
         """
         Sets Parquet field IDs of the columns/fields to be read.
 
@@ -1079,7 +1079,7 @@ cdef class ParquetWriterOptions:
         bldr.sink_ref = sink
         return bldr
 
-    cpdef void set_partitions(self, list partitions: list[PartitionInfo]):
+    cpdef void set_partitions(self, object partitions: list[PartitionInfo]):
         """
         Sets partitions.
 

@@ -61,7 +61,7 @@ cpdef Table grouped_range_rolling_window(
     null_order null_order,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
-    list requests,
+    object requests,
     object stream = *,
     DeviceMemoryResource mr = *,
 )

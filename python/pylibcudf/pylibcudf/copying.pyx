@@ -499,7 +499,7 @@ cpdef ColumnOrTable reverse(
 
 cpdef list[ColumnOrTable] slice(
     ColumnOrTable input,
-    list indices: list[int],
+    object indices: list[int],
     object stream: CudaStreamLike | None = None,
 ):
     """Slice input according to indices.
@@ -560,7 +560,7 @@ cpdef list[ColumnOrTable] slice(
 
 cpdef list[ColumnOrTable] split(
     ColumnOrTable input,
-    list splits: list[int],
+    object splits: list[int],
     object stream: CudaStreamLike | None = None,
 ):
     """Split input into multiple.

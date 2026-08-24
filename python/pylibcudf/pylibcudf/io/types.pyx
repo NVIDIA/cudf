@@ -332,7 +332,7 @@ cdef class TableWithMetadata:
 
     """
     def __init__(
-        self, Table tbl, list column_names: list[ColumnNameSpec]
+        self, Table tbl, object column_names: list[ColumnNameSpec]
     ):
         self.tbl = tbl
 
@@ -689,7 +689,7 @@ cdef class SinkInfo:
 
     def __init__(
         self,
-        list sinks: (
+        object sinks: (
             list[str]
             | list[os.PathLike[Any]]
             | list[io.IOBase]

@@ -57,7 +57,7 @@ cdef class GroupByRequest:
         The list of aggregations to perform.
     """
     def __init__(
-        self, Column values, list aggregations: list[Aggregation]
+        self, Column values, object aggregations: list[Aggregation]
     ):
         self._values = values
         self._aggregations = aggregations
@@ -173,7 +173,7 @@ cdef class GroupBy:
 
     cpdef tuple[Table, list[Table]] aggregate(
         self,
-        list requests: list[GroupByRequest],
+        object requests: list[GroupByRequest],
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
@@ -217,7 +217,7 @@ cdef class GroupBy:
 
     cpdef tuple[Table, list[Table]] scan(
         self,
-        list requests: list[GroupByRequest],
+        object requests: list[GroupByRequest],
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
@@ -261,8 +261,8 @@ cdef class GroupBy:
     cpdef tuple[Table, Table] shift(
         self,
         Table values,
-        list offset: list[int],
-        list fill_values: list[Scalar],
+        object offset: list[int],
+        object fill_values: list[Scalar],
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
@@ -314,7 +314,7 @@ cdef class GroupBy:
     cpdef tuple[Table, Table] replace_nulls(
         self,
         Table value,
-        list replace_policies: list[ReplacePolicy],
+        object replace_policies: list[ReplacePolicy],
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):

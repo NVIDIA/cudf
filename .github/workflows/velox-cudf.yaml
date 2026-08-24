@@ -71,6 +71,9 @@ jobs:
               exit 1
           fi
 
+          # Align RAPIDS dependencies with the selected cudf branch
+          scripts/update-cudf-deps.sh --branch "$(cat "${GITHUB_WORKSPACE}/cudf-local/RAPIDS_BRANCH")"
+
           # Build velox with local cudf override
           CUDA_ARCHITECTURES=90 \
           CUDA_FLAGS="-ccbin /opt/rh/gcc-toolset-14/root/usr/bin" \

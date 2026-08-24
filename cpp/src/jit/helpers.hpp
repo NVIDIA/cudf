@@ -38,7 +38,7 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 
 template <typename T>
 rmm::device_uvector<T> to_device_vector(std::vector<T> const& host,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<T> device{host.size(), stream, mr};
@@ -50,7 +50,7 @@ template <typename DeviceView, typename ColumnView>
 std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>>,
            rmm::device_uvector<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;

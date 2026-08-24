@@ -48,7 +48,7 @@ enum class replace_policy : bool { PRECEDING, FOLLOWING };
 std::unique_ptr<column> replace_nulls(
   column_view const& input,
   column_view const& replacement,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -67,7 +67,7 @@ std::unique_ptr<column> replace_nulls(
 std::unique_ptr<column> replace_nulls(
   column_view const& input,
   scalar const& replacement,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -86,7 +86,7 @@ std::unique_ptr<column> replace_nulls(
 std::unique_ptr<column> replace_nulls(
   column_view const& input,
   replace_policy const& replace_policy,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -114,7 +114,7 @@ std::unique_ptr<column> replace_nulls(
 std::unique_ptr<column> replace_nans(
   column_view const& input,
   column_view const& replacement,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -141,7 +141,7 @@ std::unique_ptr<column> replace_nans(
 std::unique_ptr<column> replace_nans(
   column_view const& input,
   scalar const& replacement,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -160,7 +160,7 @@ std::unique_ptr<column> find_and_replace_all(
   column_view const& input_col,
   column_view const& values_to_replace,
   column_view const& replacement_values,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -215,7 +215,7 @@ std::unique_ptr<column> clamp(
   scalar const& lo_replace,
   scalar const& hi,
   scalar const& hi_replace,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -261,7 +261,7 @@ std::unique_ptr<column> clamp(
   column_view const& input,
   scalar const& lo,
   scalar const& hi,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -281,7 +281,7 @@ std::unique_ptr<column> clamp(
  */
 std::unique_ptr<column> normalize_nans_and_zeros(
   column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -297,7 +297,7 @@ std::unique_ptr<column> normalize_nans_and_zeros(
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void normalize_nans_and_zeros(mutable_column_view& in_out,
-                              rmm::cuda_stream_view stream = cudf::get_default_stream());
+                              cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

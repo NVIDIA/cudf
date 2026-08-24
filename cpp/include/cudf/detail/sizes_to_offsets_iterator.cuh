@@ -11,11 +11,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/scan.h>
 
 #include <stdexcept>
@@ -256,7 +256,7 @@ auto sizes_to_offsets(SizesIterator begin,
                       SizesIterator end,
                       OffsetsIterator result,
                       int64_t initial_offset,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   using SizeType = cuda::std::iter_value_t<SizesIterator>;
   static_assert(std::is_integral_v<SizeType>,
@@ -302,7 +302,7 @@ template <typename InputIterator>
 std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   InputIterator begin,
   InputIterator end,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto count = static_cast<size_type>(std::distance(begin, end));

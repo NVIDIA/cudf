@@ -566,8 +566,12 @@ class UnaryFunction(Expr):
             )
         if self.name in ("max_by", "min_by"):
             val, by = (child.evaluate(df, context=context) for child in self.children)
-            if by.nan_count(stream=df.stream) > 0:
-                by = by.mask_nans(stream=df.stream)
+            if val.size != by.size:
+                raise pl.exceptions.ShapeError(
+                    f"'by' column in {self.name} expression has incorrect length: "
+                    f"expected {val.size}, got {by.size}"
+                )
+            by = by.mask_nans(stream=df.stream)
             agg = (
                 plc.aggregation.argmax()
                 if self.name == "max_by"
@@ -585,6 +589,8 @@ class UnaryFunction(Expr):
                     ),
                     dtype=self.dtype,
                 )
+            if val.is_scalar:
+                return val
             return Column(
                 plc.copying.gather(
                     plc.Table([val.obj]),

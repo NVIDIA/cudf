@@ -14,6 +14,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
     POLARS_VERSION_LT_137,
@@ -185,6 +186,46 @@ def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
     )
     q = df.select(getattr(pl.col("a"), expr)("b"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+)
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+@pytest.mark.parametrize(
+    "by",
+    [
+        pl.col("b").filter(pl.col("b") > 20),
+        pl.col("b").head(2),
+        pl.lit(1),
+    ],
+)
+def test_max_min_by_mismatched_length_raises(
+    engine: pl.GPUEngine, expr: str, by
+) -> None:
+    df = pl.LazyFrame({"a": [1, 2, 3, 4], "b": [10, 20, 30, 40]})
+    q = df.select(getattr(pl.col("a"), expr)(by))
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.ShapeError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ShapeError):
+            q.collect(engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+)
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
+    df = pl.LazyFrame({"b": [1, 5, 2]})
+    q = df.select(getattr(pl.lit(99), expr)("b"))
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.ShapeError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ShapeError):
+            q.collect(engine=engine)
 
 
 @pytest.mark.skipif(

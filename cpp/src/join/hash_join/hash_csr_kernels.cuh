@@ -114,14 +114,14 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
 }
 
 template <typename Equal, typename Hasher>
-void launch_hash_csr_build_count(size_type num_rows,
-                                 bitmask_type const* valid_rows,
-                                 build_position_type* build_positions,
-                                 size_type* slot_counts,
-                                 hash_table_ref map,
-                                 Equal equal,
-                                 Hasher hasher,
-                                 cuda::stream_ref stream)
+void launch_hash_csr_build_count_kernel(size_type num_rows,
+                                        bitmask_type const* valid_rows,
+                                        build_position_type* build_positions,
+                                        size_type* slot_counts,
+                                        hash_table_ref map,
+                                        Equal equal,
+                                        Hasher hasher,
+                                        cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
@@ -130,11 +130,11 @@ void launch_hash_csr_build_count(size_type num_rows,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-[[maybe_unused]] static void launch_hash_csr_build_fill(size_type num_rows,
-                                                        build_position_type const* build_positions,
-                                                        size_type const* cumulative_ends,
-                                                        size_type* values,
-                                                        cuda::stream_ref stream)
+inline void launch_hash_csr_build_fill_kernel(size_type num_rows,
+                                              build_position_type const* build_positions,
+                                              size_type const* cumulative_ends,
+                                              size_type* values,
+                                              cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
@@ -144,17 +144,17 @@ void launch_hash_csr_build_count(size_type num_rows,
 }
 
 template <bool IsOuter, typename Equal, typename Hasher>
-void launch_hash_csr_probe_count(size_type num_rows,
-                                 bitmask_type const* valid_rows,
-                                 size_type* probe_slots,
-                                 size_type* match_counts,
-                                 cuda::std::uint32_t* matched_slots,
-                                 cuda::std::uint64_t* matched_build_rows,
-                                 hash_table_ref map,
-                                 csr_ref csr,
-                                 Equal equal,
-                                 Hasher hasher,
-                                 cuda::stream_ref stream)
+void launch_hash_csr_probe_count_kernel(size_type num_rows,
+                                        bitmask_type const* valid_rows,
+                                        size_type* probe_slots,
+                                        size_type* match_counts,
+                                        cuda::std::uint32_t* matched_slots,
+                                        cuda::std::uint64_t* matched_build_rows,
+                                        hash_table_ref map,
+                                        csr_ref csr,
+                                        Equal equal,
+                                        Hasher hasher,
+                                        cuda::stream_ref stream)
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
@@ -228,15 +228,15 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
 }
 
 template <bool IsOuter>
-void launch_hash_csr_retrieve(cuda::std::int64_t output_size,
-                              size_type num_probe_rows,
-                              cuda::std::int64_t const* offsets,
-                              size_type const* probe_slots,
-                              csr_ref csr,
-                              size_type left_index_offset,
-                              size_type* left_indices,
-                              size_type* right_indices,
-                              cuda::stream_ref stream)
+void launch_hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
+                                     size_type num_probe_rows,
+                                     cuda::std::int64_t const* offsets,
+                                     size_type const* probe_slots,
+                                     csr_ref csr,
+                                     size_type left_index_offset,
+                                     size_type* left_indices,
+                                     size_type* right_indices,
+                                     cuda::stream_ref stream)
 {
   if (output_size == 0) { return; }
   auto const min_blocks = size_type{2} * cudf::detail::num_multiprocessors();

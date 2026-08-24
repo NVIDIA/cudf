@@ -110,13 +110,13 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
   if (_is_empty) { return; }
 
-  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->entries.data(),
+  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->_entries.data(),
                                 0xff,
-                                _impl->entries.size() * sizeof(hash_table_entry_type),
+                                _impl->_entries.size() * sizeof(hash_table_entry_type),
                                 stream.get()));
-  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->cumulative_ends.data(),
+  CUDF_CUDA_TRY(cudaMemsetAsync(_impl->_cumulative_ends.data(),
                                 0,
-                                _impl->cumulative_ends.size() * sizeof(size_type),
+                                _impl->_cumulative_ends.size() * sizeof(size_type),
                                 stream.get()));
 
   auto const temp_mr     = cudf::get_current_device_resource_ref();
@@ -126,36 +126,36 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                              : nullptr;
   rmm::device_uvector<build_position_type> build_positions(right.num_rows(), stream, temp_mr);
   auto build = [&](auto equality, auto hasher) {
-    launch_hash_csr_build_count(right.num_rows(),
-                                valid_rows,
-                                build_positions.data(),
-                                _impl->cumulative_ends.data(),
-                                _impl->hash_table(),
-                                equality,
-                                hasher,
-                                stream);
+    launch_hash_csr_build_count_kernel(right.num_rows(),
+                                       valid_rows,
+                                       build_positions.data(),
+                                       _impl->_cumulative_ends.data(),
+                                       _impl->hash_table(),
+                                       equality,
+                                       hasher,
+                                       stream);
   };
   dispatch_join_comparator(
     right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
   std::size_t temp_storage_bytes{};
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(nullptr,
                                               temp_storage_bytes,
-                                              _impl->cumulative_ends.data(),
-                                              _impl->cumulative_ends.data(),
-                                              _impl->capacity,
+                                              _impl->_cumulative_ends.data(),
+                                              _impl->_cumulative_ends.data(),
+                                              _impl->_capacity,
                                               stream.get()));
   rmm::device_buffer temp_storage(temp_storage_bytes, stream, temp_mr);
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(temp_storage.data(),
                                               temp_storage_bytes,
-                                              _impl->cumulative_ends.data(),
-                                              _impl->cumulative_ends.data(),
-                                              _impl->capacity,
+                                              _impl->_cumulative_ends.data(),
+                                              _impl->_cumulative_ends.data(),
+                                              _impl->_capacity,
                                               stream.get()));
-  launch_hash_csr_build_fill(right.num_rows(),
-                             build_positions.data(),
-                             _impl->cumulative_ends.data(),
-                             _impl->values.data(),
-                             stream);
+  launch_hash_csr_build_fill_kernel(right.num_rows(),
+                                    build_positions.data(),
+                                    _impl->_cumulative_ends.data(),
+                                    _impl->_values.data(),
+                                    stream);
 }
 
 template hash_join<hash_join_hasher>::hash_join(

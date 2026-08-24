@@ -106,29 +106,29 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                              : nullptr;
   auto save_slots        = [&](auto equality, auto hasher) {
     if (join == join_kind::INNER_JOIN) {
-      launch_hash_csr_probe_count<false>(partition_size,
-                                         valid_rows,
-                                         probe_slots.data(),
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         _impl->hash_table(),
-                                         _impl->csr(),
-                                         equality,
-                                         hasher,
-                                         stream);
+      launch_hash_csr_probe_count_kernel<false>(partition_size,
+                                                valid_rows,
+                                                probe_slots.data(),
+                                                nullptr,
+                                                nullptr,
+                                                nullptr,
+                                                _impl->hash_table(),
+                                                _impl->csr(),
+                                                equality,
+                                                hasher,
+                                                stream);
     } else {
-      launch_hash_csr_probe_count<true>(partition_size,
-                                        valid_rows,
-                                        probe_slots.data(),
-                                        nullptr,
-                                        nullptr,
-                                        nullptr,
-                                        _impl->hash_table(),
-                                        _impl->csr(),
-                                        equality,
-                                        hasher,
-                                        stream);
+      launch_hash_csr_probe_count_kernel<true>(partition_size,
+                                               valid_rows,
+                                               probe_slots.data(),
+                                               nullptr,
+                                               nullptr,
+                                               nullptr,
+                                               _impl->hash_table(),
+                                               _impl->csr(),
+                                               equality,
+                                               hasher,
+                                               stream);
     }
   };
   dispatch_join_comparator(_right,
@@ -147,25 +147,25 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   cudf::prefetch::detail::prefetch(*right_indices, stream);
 
   if (join == join_kind::INNER_JOIN) {
-    launch_hash_csr_retrieve<false>(output_size,
-                                    partition_size,
-                                    offsets.data(),
-                                    probe_slots.data(),
-                                    _impl->csr(),
-                                    left_start_idx,
-                                    left_indices->data(),
-                                    right_indices->data(),
-                                    stream);
+    launch_hash_csr_retrieve_kernel<false>(output_size,
+                                           partition_size,
+                                           offsets.data(),
+                                           probe_slots.data(),
+                                           _impl->csr(),
+                                           left_start_idx,
+                                           left_indices->data(),
+                                           right_indices->data(),
+                                           stream);
   } else {
-    launch_hash_csr_retrieve<true>(output_size,
-                                   partition_size,
-                                   offsets.data(),
-                                   probe_slots.data(),
-                                   _impl->csr(),
-                                   left_start_idx,
-                                   left_indices->data(),
-                                   right_indices->data(),
-                                   stream);
+    launch_hash_csr_retrieve_kernel<true>(output_size,
+                                          partition_size,
+                                          offsets.data(),
+                                          probe_slots.data(),
+                                          _impl->csr(),
+                                          left_start_idx,
+                                          left_indices->data(),
+                                          right_indices->data(),
+                                          stream);
   }
 
   return {std::move(left_indices), std::move(right_indices)};

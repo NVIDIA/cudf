@@ -49,17 +49,17 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                              : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {
-    launch_hash_csr_probe_count<Join == join_kind::LEFT_JOIN>(left.num_rows(),
-                                                              valid_rows,
-                                                              nullptr,
-                                                              match_counts.data(),
-                                                              nullptr,
-                                                              nullptr,
-                                                              _impl->hash_table(),
-                                                              _impl->csr(),
-                                                              equality,
-                                                              hasher,
-                                                              stream);
+    launch_hash_csr_probe_count_kernel<Join == join_kind::LEFT_JOIN>(left.num_rows(),
+                                                                     valid_rows,
+                                                                     nullptr,
+                                                                     match_counts.data(),
+                                                                     nullptr,
+                                                                     nullptr,
+                                                                     _impl->hash_table(),
+                                                                     _impl->csr(),
+                                                                     equality,
+                                                                     hasher,
+                                                                     stream);
   };
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
@@ -89,7 +89,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   auto match_counts =
     cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, mr);
   auto matched_slots = cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
-    _impl->capacity, stream, mr);
+    _impl->_capacity, stream, mr);
   auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr);
   auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, mr).first;
   auto const valid_rows   = _nulls_equal == null_equality::UNEQUAL
@@ -97,17 +97,17 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                               : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {
-    launch_hash_csr_probe_count<true>(left.num_rows(),
-                                      valid_rows,
-                                      nullptr,
-                                      match_counts.data(),
-                                      matched_slots.data(),
-                                      matched_build_rows.data(),
-                                      _impl->hash_table(),
-                                      _impl->csr(),
-                                      equality,
-                                      hasher,
-                                      stream);
+    launch_hash_csr_probe_count_kernel<true>(left.num_rows(),
+                                             valid_rows,
+                                             nullptr,
+                                             match_counts.data(),
+                                             matched_slots.data(),
+                                             matched_build_rows.data(),
+                                             _impl->hash_table(),
+                                             _impl->csr(),
+                                             equality,
+                                             hasher,
+                                             stream);
   };
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);

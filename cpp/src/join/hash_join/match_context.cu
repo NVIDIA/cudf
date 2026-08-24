@@ -48,29 +48,29 @@ std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_co
 
   auto count_matches = [&](auto equality, auto hasher) {
     if (join == join_kind::INNER_JOIN) {
-      launch_hash_csr_probe_count<false>(left.num_rows(),
-                                         valid_rows,
-                                         nullptr,
-                                         match_counts->data(),
-                                         nullptr,
-                                         nullptr,
-                                         _impl->hash_table(),
-                                         _impl->csr(),
-                                         equality,
-                                         hasher,
-                                         stream);
+      launch_hash_csr_probe_count_kernel<false>(left.num_rows(),
+                                                valid_rows,
+                                                nullptr,
+                                                match_counts->data(),
+                                                nullptr,
+                                                nullptr,
+                                                _impl->hash_table(),
+                                                _impl->csr(),
+                                                equality,
+                                                hasher,
+                                                stream);
     } else {
-      launch_hash_csr_probe_count<true>(left.num_rows(),
-                                        valid_rows,
-                                        nullptr,
-                                        match_counts->data(),
-                                        nullptr,
-                                        nullptr,
-                                        _impl->hash_table(),
-                                        _impl->csr(),
-                                        equality,
-                                        hasher,
-                                        stream);
+      launch_hash_csr_probe_count_kernel<true>(left.num_rows(),
+                                               valid_rows,
+                                               nullptr,
+                                               match_counts->data(),
+                                               nullptr,
+                                               nullptr,
+                                               _impl->hash_table(),
+                                               _impl->csr(),
+                                               equality,
+                                               hasher,
+                                               stream);
     }
   };
 

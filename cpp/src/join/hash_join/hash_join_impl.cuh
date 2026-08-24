@@ -24,26 +24,26 @@ struct hash_join<Hasher>::impl {
        size_type rows,
        cuda::stream_ref stream,
        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-    : _mr{std::move(mr)},
-      entries(capacity, stream, _mr),
-      cumulative_ends(capacity, stream, _mr),
-      values(rows, stream, _mr),
-      capacity{capacity}
+    : _mr(std::move(mr)),
+      _entries(capacity, stream, _mr),
+      _cumulative_ends(capacity, stream, _mr),
+      _values(rows, stream, _mr),
+      _capacity(capacity)
   {
   }
 
   hash_table_ref hash_table() const
   {
-    return {const_cast<hash_table_entry_type*>(entries.data()), capacity};
+    return {const_cast<hash_table_entry_type*>(_entries.data()), _capacity};
   }
 
-  csr_ref csr() const { return {cumulative_ends.data(), values.data()}; }
+  csr_ref csr() const { return {_cumulative_ends.data(), _values.data()}; }
 
   cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
-  rmm::device_uvector<hash_table_entry_type> entries;
-  rmm::device_uvector<size_type> cumulative_ends;
-  rmm::device_uvector<size_type> values;
-  cuda::std::uint32_t capacity;
+  rmm::device_uvector<hash_table_entry_type> _entries;
+  rmm::device_uvector<size_type> _cumulative_ends;
+  rmm::device_uvector<size_type> _values;
+  cuda::std::uint32_t _capacity;
 };
 
 }  // namespace cudf::detail

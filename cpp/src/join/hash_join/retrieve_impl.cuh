@@ -64,17 +64,17 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                              : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {
-    launch_hash_csr_probe_count<Join != join_kind::INNER_JOIN>(left.num_rows(),
-                                                               valid_rows,
-                                                               probe_slots.data(),
-                                                               match_counts.data(),
-                                                               nullptr,
-                                                               nullptr,
-                                                               _impl->hash_table(),
-                                                               _impl->csr(),
-                                                               equality,
-                                                               hasher,
-                                                               stream);
+    launch_hash_csr_probe_count_kernel<Join != join_kind::INNER_JOIN>(left.num_rows(),
+                                                                      valid_rows,
+                                                                      probe_slots.data(),
+                                                                      match_counts.data(),
+                                                                      nullptr,
+                                                                      nullptr,
+                                                                      _impl->hash_table(),
+                                                                      _impl->csr(),
+                                                                      equality,
+                                                                      hasher,
+                                                                      stream);
   };
   dispatch_join_comparator(
     _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
@@ -96,25 +96,25 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   cudf::prefetch::detail::prefetch(*right_indices, stream);
 
   if constexpr (Join == join_kind::INNER_JOIN) {
-    launch_hash_csr_retrieve<false>(actual_size,
-                                    left.num_rows(),
-                                    offsets.data(),
-                                    probe_slots.data(),
-                                    _impl->csr(),
-                                    0,
-                                    left_indices->data(),
-                                    right_indices->data(),
-                                    stream);
+    launch_hash_csr_retrieve_kernel<false>(actual_size,
+                                           left.num_rows(),
+                                           offsets.data(),
+                                           probe_slots.data(),
+                                           _impl->csr(),
+                                           0,
+                                           left_indices->data(),
+                                           right_indices->data(),
+                                           stream);
   } else {
-    launch_hash_csr_retrieve<true>(actual_size,
-                                   left.num_rows(),
-                                   offsets.data(),
-                                   probe_slots.data(),
-                                   _impl->csr(),
-                                   0,
-                                   left_indices->data(),
-                                   right_indices->data(),
-                                   stream);
+    launch_hash_csr_retrieve_kernel<true>(actual_size,
+                                          left.num_rows(),
+                                          offsets.data(),
+                                          probe_slots.data(),
+                                          _impl->csr(),
+                                          0,
+                                          left_indices->data(),
+                                          right_indices->data(),
+                                          stream);
   }
 
   auto join_indices = std::pair(std::move(left_indices), std::move(right_indices));

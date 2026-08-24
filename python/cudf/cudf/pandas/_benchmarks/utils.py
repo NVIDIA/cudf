@@ -429,15 +429,18 @@ class RunConfig:
                 ]
                 print(f"iterations: {self.iterations}")  # noqa: T201
                 print("---------------------------------------")  # noqa: T201
-                print(  # noqa: T201
-                    f"min time : {min(valid_durations):0.4f}"
-                )
-                print(  # noqa: T201
-                    f"max time : {max(valid_durations):0.4f}"
-                )
-                print(  # noqa: T201
-                    f"mean time: {statistics.mean(valid_durations):0.4f}"
-                )
+                if valid_durations:
+                    print(  # noqa: T201
+                        f"min time : {min(valid_durations):0.4f}"
+                    )
+                    print(  # noqa: T201
+                        f"max time : {max(valid_durations):0.4f}"
+                    )
+                    print(  # noqa: T201
+                        f"mean time: {statistics.mean(valid_durations):0.4f}"
+                    )
+                else:
+                    print("no successful iterations")  # noqa: T201
                 print("=======================================")  # noqa: T201
         total_mean_time = sum(
             statistics.mean(
@@ -446,7 +449,7 @@ class RunConfig:
                 if record.status == "success"
             )
             for records in self.records.values()
-            if records
+            if any(r.status == "success" for r in records)
         )
         print(  # noqa: T201
             f"Total mean time across all queries: {total_mean_time:.4f} seconds"
@@ -461,6 +464,64 @@ def get_data(
 ) -> pd.DataFrame:
     """Get table from dataset."""
     return pd.read_parquet(f"{path}/{table_name}{suffix}", columns=columns)
+
+
+def check_input_numeric_type(
+    run_config: RunConfig,
+) -> Literal["decimal", "float"]:
+    """Return whether PDS-H money columns are decimal or float."""
+    import decimal
+
+    sample = get_data(
+        run_config.dataset_path,
+        "customer",
+        run_config.suffix,
+        ["c_acctbal"],
+    )
+    col = sample["c_acctbal"]
+    dtype = col.dtype
+    if getattr(dtype, "kind", None) == "f":
+        return "float"
+    name = str(getattr(dtype, "name", dtype)).lower()
+    if "decimal" in name:
+        return "decimal"
+    try:
+        import pyarrow as pa
+
+        pa_dtype = getattr(dtype, "pyarrow_dtype", None)
+        if pa_dtype is not None and pa.types.is_decimal(pa_dtype):
+            return "decimal"
+    except Exception:
+        pass
+    if getattr(dtype, "kind", None) == "O" or name == "object":
+        for val in col.head(16):
+            if isinstance(val, decimal.Decimal):
+                return "decimal"
+    return "float"
+
+
+def apply_validation_casts(
+    frame: pd.DataFrame,
+    q_id: int,
+    benchmark: Any,
+    numeric_type: Literal["decimal", "float"],
+) -> pd.DataFrame:
+    """Apply per-query dtype casts before assert_frame_equal."""
+    casts: dict[str, str] = {}
+    expected_casts = getattr(benchmark, "EXPECTED_CASTS", None) or {}
+    casts.update(expected_casts.get(q_id, {}))
+    if numeric_type == "decimal":
+        decimal_casts = (
+            getattr(benchmark, "EXPECTED_CASTS_DECIMAL", None) or {}
+        )
+        casts.update(decimal_casts.get(q_id, {}))
+    if not casts:
+        return frame
+    out = frame.copy()
+    for col, dtype in casts.items():
+        if col in out.columns:
+            out[col] = out[col].astype(dtype)
+    return out
 
 
 def _make_duckdb_config(run_config: RunConfig | None) -> dict[str, Any]:
@@ -713,9 +774,16 @@ def run_pandas_query_iteration(
     run_config: RunConfig,
     args: argparse.Namespace,
     expected: pd.DataFrame | None,
+    result_casts: dict[str, str] | None = None,
 ) -> SuccessRecord:
     """Run a single query iteration. Caller must wrap in try/except."""
     result, duration = execute_query(q_id, iteration, q, run_config)
+
+    if expected is not None and result_casts:
+        result = result.copy()
+        for col, dtype in result_casts.items():
+            if col in result.columns:
+                result[col] = result[col].astype(dtype)
 
     if expected is not None:
         comparison_options = (
@@ -755,8 +823,10 @@ def run_pandas_query(
         raise NotImplementedError(f"Query {q_id} not implemented.") from err
 
     expected: pd.DataFrame | None = None
+    result_casts: dict[str, str] | None = None
     validation_method = run_config.validation_method
     if validation_method is not None:
+        numeric_type = check_input_numeric_type(run_config)
         match validation_method.expected_source:
             case "pandas":
                 cpu_run_config = dataclasses.replace(
@@ -789,6 +859,17 @@ def run_pandas_query(
             case baseline:
                 raise ValueError(f"Invalid baseline: {baseline}")
 
+        expected = apply_validation_casts(
+            expected, q_id, benchmark, numeric_type
+        )
+        casts: dict[str, str] = {}
+        casts.update(getattr(benchmark, "EXPECTED_CASTS", {}).get(q_id, {}))
+        if numeric_type == "decimal":
+            casts.update(
+                getattr(benchmark, "EXPECTED_CASTS_DECIMAL", {}).get(q_id, {})
+            )
+        result_casts = casts or None
+
     query_records: list[SuccessRecord | FailedRecord] = []
     iteration_failures: list[tuple[int, int]] = []
     validation_failed = False
@@ -797,7 +878,7 @@ def run_pandas_query(
     for i in range(args.iterations):
         try:
             record = run_pandas_query_iteration(
-                q_id, i, q, run_config, args, expected
+                q_id, i, q, run_config, args, expected, result_casts
             )
         except Exception:
             print(f"❌ query={q_id} iteration={i} failed!")  # noqa: T201

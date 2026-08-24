@@ -31,11 +31,48 @@ from cudf.pandas._benchmarks.utils import (  # noqa: E402
 if TYPE_CHECKING:
     from cudf.pandas._benchmarks.utils import RunConfig
 
+# DuckDB and cudf.pandas disagree on Decimal vs float for money columns.
+# These casts are applied to DuckDB expected (and result) before
+# assert_frame_equal when input money columns are decimal (tpchgen).
+# Mirrors cudf_polars streaming/benchmarks/pdsh.py EXPECTED_CASTS*.
+EXPECTED_CASTS: dict[int, dict[str, str]] = {
+    7: {"l_year": "int32"},
+    8: {"o_year": "int32"},
+    9: {"o_year": "int32"},
+}
+
+EXPECTED_CASTS_DECIMAL: dict[int, dict[str, str]] = {
+    1: {
+        "sum_qty": "float64",
+        "sum_base_price": "float64",
+        "sum_disc_price": "float64",
+        "sum_charge": "float64",
+        "avg_disc": "float64",
+        "avg_price": "float64",
+        "avg_qty": "float64",
+    },
+    2: {"s_acctbal": "float64"},
+    3: {"revenue": "float64"},
+    5: {"revenue": "float64"},
+    6: {"revenue": "float64"},
+    7: {"revenue": "float64"},
+    8: {"mkt_share": "float64"},
+    9: {"sum_profit": "float64"},
+    10: {"revenue": "float64", "c_acctbal": "float64"},
+    11: {"value": "float64"},
+    15: {"total_revenue": "float64"},
+    18: {"o_totalprice": "float64", "sum(l_quantity)": "float64"},
+    19: {"revenue": "float64"},
+    22: {"totacctbal": "float64"},
+}
+
 
 class PDSHQueries:
     """PDS-H query definitions."""
 
     name: str = "pdsh"
+    EXPECTED_CASTS = EXPECTED_CASTS
+    EXPECTED_CASTS_DECIMAL = EXPECTED_CASTS_DECIMAL
 
     @property
     def duckdb_queries(self) -> PDSHDuckDBQueries:
@@ -731,7 +768,7 @@ class PDSHQueries:
         )
 
         var1 = "GERMANY"
-        var2 = 0.0001 / run_config.scale_factor
+        var2 = float(f"{0.0001 / run_config.scale_factor:.12f}")
 
         nation = nation[nation["n_name"] == var1]
 
@@ -742,13 +779,17 @@ class PDSHQueries:
 
         jn2["value"] = jn2["ps_supplycost"] * jn2["ps_availqty"]
 
-        threshold = jn2["value"].sum() * var2
+        threshold = float(jn2["value"].sum()) * var2
 
         gb = jn2.groupby("ps_partkey", as_index=False)
         agg = gb.agg(value=pd.NamedAgg(column="value", aggfunc="sum"))
 
         result = agg[agg["value"] > threshold]
-        return result.sort_values("value", ascending=False, ignore_index=True)
+        return result.sort_values(
+            by=["value", "ps_partkey"],
+            ascending=[False, True],
+            ignore_index=True,
+        )
 
     @staticmethod
     def q12(run_config: RunConfig) -> pd.DataFrame:
@@ -890,9 +931,12 @@ class PDSHQueries:
             jn["p_type"].str.startswith("PROMO"), 0
         )
 
-        promo_revenue = (
-            100.0 * jn["promo_revenue"].sum() / jn["revenue"].sum()
-        ).round(2)
+        promo_revenue = round(
+            100.0
+            * float(jn["promo_revenue"].sum())
+            / float(jn["revenue"].sum()),
+            2,
+        )
 
         return pd.DataFrame({"promo_revenue": [promo_revenue]})
 
@@ -1039,7 +1083,7 @@ class PDSHQueries:
         jn2 = jn.merge(avg_qty, on="p_partkey")
         jn2 = jn2[jn2["l_quantity"] < jn2["avg_quantity"]]
 
-        avg_yearly = (jn2["l_extendedprice"].sum() / 7.0).round(2)
+        avg_yearly = round(float(jn2["l_extendedprice"].sum()) / 7.0, 2)
 
         return pd.DataFrame({"avg_yearly": [avg_yearly]})
 
@@ -1191,8 +1235,9 @@ class PDSHQueries:
 
         jn = jn[cond1 | cond2 | cond3]
 
-        revenue = (
-            (jn["l_extendedprice"] * (1 - jn["l_discount"])).sum().round(2)
+        revenue = round(
+            float((jn["l_extendedprice"] * (1 - jn["l_discount"])).sum()),
+            2,
         )
 
         return pd.DataFrame({"revenue": [revenue]})
@@ -1799,7 +1844,8 @@ class PDSHDuckDBQueries:
                         and n_name = 'GERMANY'
                 )
             order by
-                value desc
+                value desc,
+                ps_partkey
         """
 
     @staticmethod

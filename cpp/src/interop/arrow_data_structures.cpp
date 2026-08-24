@@ -9,8 +9,9 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
@@ -70,7 +71,7 @@ struct arrow_array_container {
   template <typename T>
   arrow_array_container(ArrowSchema&& schema_,
                         T input_,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
   {
     auto output = cudf::to_arrow_device(std::move(input_), stream, mr);
@@ -80,7 +81,7 @@ struct arrow_array_container {
 
   arrow_array_container(ArrowSchema&& schema_,
                         ArrowDeviceArray&& input_,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
   {
     CUDF_EXPECTS(!contains_fixed_size_list(schema_),
@@ -201,7 +202,7 @@ void arrow_obj_to_arrow(T& obj,
                         std::shared_ptr<arrow_array_container> container,
                         ArrowDeviceArray* output,
                         ArrowDeviceType device_type,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
   switch (device_type) {
@@ -234,7 +235,7 @@ void arrow_obj_to_arrow(T& obj,
 
 arrow_column::arrow_column(cudf::column&& input,
                            column_metadata const& metadata,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
   : container{[&] {
       auto table_meta = std::vector{metadata};
@@ -251,7 +252,7 @@ arrow_column::arrow_column(cudf::column&& input,
 
 arrow_column::arrow_column(ArrowSchema&& schema,
                            ArrowDeviceArray&& input,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   switch (input.device_type) {
@@ -275,7 +276,7 @@ arrow_column::arrow_column(ArrowSchema&& schema,
 
 arrow_column::arrow_column(ArrowSchema&& schema,
                            ArrowArray&& input,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   ArrowDeviceArray arr{.array = {}, .device_id = -1, .device_type = ARROW_DEVICE_CPU};
@@ -287,7 +288,7 @@ arrow_column::arrow_column(ArrowSchema&& schema,
 }
 
 arrow_column::arrow_column(ArrowArrayStream&& input,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   auto col     = from_arrow_stream_column(&input, stream, mr);
@@ -298,7 +299,7 @@ arrow_column::arrow_column(ArrowArrayStream&& input,
 }
 
 void arrow_column::to_arrow_schema(ArrowSchema* output,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr) const
 {
   NANOARROW_THROW_NOT_OK(ArrowSchemaDeepCopy(&container->schema, output));
@@ -306,7 +307,7 @@ void arrow_column::to_arrow_schema(ArrowSchema* output,
 
 void arrow_column::to_arrow(ArrowDeviceArray* output,
                             ArrowDeviceType device_type,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr) const
 {
   arrow_obj_to_arrow(*this, container, output, device_type, stream, mr);
@@ -316,7 +317,7 @@ column_view arrow_column::view() const { return cached_view; }
 
 arrow_table::arrow_table(cudf::table&& input,
                          std::span<column_metadata const> metadata,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
   : container{[&]() {
       auto schema = cudf::to_arrow_schema(input.view(), metadata);
@@ -331,7 +332,7 @@ arrow_table::arrow_table(cudf::table&& input,
 
 arrow_table::arrow_table(ArrowSchema&& schema,
                          ArrowDeviceArray&& input,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
 {
   switch (input.device_type) {
@@ -357,7 +358,7 @@ arrow_table::arrow_table(ArrowSchema&& schema,
 
 arrow_table::arrow_table(ArrowSchema&& schema,
                          ArrowArray&& input,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
 {
   ArrowDeviceArray arr{.array = {}, .device_id = -1, .device_type = ARROW_DEVICE_CPU};
@@ -369,7 +370,7 @@ arrow_table::arrow_table(ArrowSchema&& schema,
 }
 
 arrow_table::arrow_table(ArrowArrayStream&& input,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
 {
   auto tbl     = from_arrow_stream(&input, stream, mr);
@@ -380,7 +381,7 @@ arrow_table::arrow_table(ArrowArrayStream&& input,
 }
 
 void arrow_table::to_arrow_schema(ArrowSchema* output,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr) const
 {
   NANOARROW_THROW_NOT_OK(ArrowSchemaDeepCopy(&container->schema, output));
@@ -388,7 +389,7 @@ void arrow_table::to_arrow_schema(ArrowSchema* output,
 
 void arrow_table::to_arrow(ArrowDeviceArray* output,
                            ArrowDeviceType device_type,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr) const
 {
   arrow_obj_to_arrow(*this, container, output, device_type, stream, mr);

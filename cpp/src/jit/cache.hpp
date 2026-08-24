@@ -6,7 +6,7 @@
 #pragma once
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <rtcx/rtcx.hpp>
 
@@ -53,17 +53,17 @@ struct [[nodiscard]] kernel {
   void launch(rtcx::cuda_dim3 grid_dim,
               rtcx::cuda_dim3 block_dim,
               uint32_t shared_mem_bytes,
-              rmm::cuda_stream_view stream,
+              cuda::stream_ref stream,
               void** kernel_params) const
   {
-    return _kernel.launch(grid_dim, block_dim, shared_mem_bytes, stream.value(), kernel_params);
+    return _kernel.launch(grid_dim, block_dim, shared_mem_bytes, stream.get(), kernel_params);
   }
 
   template <typename... Args>
   void launch_with(rtcx::cuda_dim3 grid_dim,
                    rtcx::cuda_dim3 block_dim,
                    uint32_t shared_mem_bytes,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    Args&&... args)
     requires(sizeof...(Args) > 0)
   {

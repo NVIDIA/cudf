@@ -418,6 +418,10 @@ class RankActor:
 
         Raises `ray.exceptions.RayActorError`.
         """
+        # First, so that a failure below cannot leave it counting.
+        if self._kvikio_monitor is not None:
+            self._kvikio_monitor.stop()
+            self._kvikio_monitor = None
         self._py_executor.shutdown(wait=True, cancel_futures=True)
         # Release resources in dependency order before exit_actor() terminates
         # the process. Shut down the Context explicitly on the same thread
@@ -428,9 +432,6 @@ class RankActor:
             if self._ctx is not None:
                 self._ctx.shutdown()
         finally:
-            if self._kvikio_monitor is not None:
-                self._kvikio_monitor.stop()
-                self._kvikio_monitor = None
             self._ctx = None
             self._comm = None
             self._mr = None

@@ -469,6 +469,11 @@ def _teardown_worker(
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
     traces = []
     if mp_ctx is not None:
+        # First, so that a failure below cannot leave it counting. The monitor is
+        # process-global and the worker outlives this teardown.
+        if mp_ctx.kvikio_monitor is not None:
+            mp_ctx.kvikio_monitor.stop()
+            mp_ctx.kvikio_monitor = None
         if mp_ctx.quent_worker is not None and mp_ctx.quent_logger is not None:
             mp_ctx.quent_logger.emit(mp_ctx.quent_worker._exit())
             traces = mp_ctx.quent_logger.drain()
@@ -484,9 +489,6 @@ def _teardown_worker(
             if mp_ctx.ctx is not None:
                 mp_ctx.ctx.shutdown()
         finally:
-            if mp_ctx.kvikio_monitor is not None:
-                mp_ctx.kvikio_monitor.stop()
-                mp_ctx.kvikio_monitor = None
             mp_ctx.ctx = None
             mp_ctx.comm = None
             mp_ctx.base_mr = None

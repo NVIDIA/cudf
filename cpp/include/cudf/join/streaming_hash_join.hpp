@@ -12,8 +12,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream_ref>
 
 #include <memory>
 #include <optional>
@@ -93,8 +94,8 @@ class streaming_hash_join {
                       size_type max_num_batches,
                       nullable_join has_nulls,
                       null_equality compare_nulls,
-                      double load_factor           = 0.5,
-                      rmm::cuda_stream_view stream = cudf::get_default_stream(),
+                      double load_factor      = 0.5,
+                      cuda::stream_ref stream = cudf::get_default_stream(),
                       cuda::mr::any_resource<cuda::mr::device_accessible> mr =
                         cudf::get_current_device_resource_ref());
 
@@ -119,7 +120,7 @@ class streaming_hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches.
    */
   void insert(cudf::table_view const& right_partition,
-              rmm::cuda_stream_view stream = cudf::get_default_stream());
+              cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Returns the row indices that can be used to construct the result of an inner join
@@ -142,7 +143,7 @@ class streaming_hash_join {
                                     std::unique_ptr<rmm::device_uvector<size_type>>>>
   inner_join(cudf::table_view const& left,
              std::optional<std::size_t> output_size = {},
-             rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+             cuda::stream_ref stream                = cudf::get_default_stream(),
              rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:

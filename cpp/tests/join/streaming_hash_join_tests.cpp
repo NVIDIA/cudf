@@ -17,8 +17,9 @@
 
 #include <rmm/cuda_device.hpp>
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
+
+#include <cuda/stream_ref>
 
 #include <algorithm>
 #include <atomic>
@@ -41,7 +42,7 @@ using join_match = std::tuple<size_type, size_type, size_type>;
 std::vector<join_match> to_sorted_host_matches(cudf::device_span<size_type const> left_indices,
                                                cudf::device_span<size_type const> batch_indices,
                                                cudf::device_span<size_type const> row_indices,
-                                               rmm::cuda_stream_view stream)
+                                               cuda::stream_ref stream)
 {
   auto const h_left  = cudf::detail::make_host_vector(left_indices, stream);
   auto const h_batch = cudf::detail::make_host_vector(batch_indices, stream);

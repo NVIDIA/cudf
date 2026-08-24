@@ -31,6 +31,7 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
+#include <cuda/stream_ref>
 
 #include <algorithm>
 #include <atomic>
@@ -54,7 +55,7 @@ template <typename Equality, typename Factory>
 auto make_device_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   Factory factory,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   using allocator_type  = cudf::detail::rmm_host_allocator<Equality>;
   auto host_comparators = std::vector<Equality, allocator_type>{
@@ -77,7 +78,7 @@ auto make_device_row_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   using equality_type =
     row::equality::device_row_comparator<has_nested,
@@ -98,7 +99,7 @@ auto make_device_primitive_row_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   using equality_type = row::primitive::row_equality_comparator;
 
@@ -290,7 +291,7 @@ struct streaming_hash_join::impl {
        nullable_join nullable,
        null_equality nulls_equal,
        double load_factor,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        cuda::mr::any_resource<cuda::mr::device_accessible> resource)
     : right_schema{schema.begin(), schema.end()},
       right_key_indices{key_indices.begin(), key_indices.end()},
@@ -309,7 +310,7 @@ struct streaming_hash_join::impl {
         {},
         {},
         rmm::mr::polymorphic_allocator<char>{mr},
-        stream.value()},
+        stream.get()},
       preprocessed_right(static_cast<std::size_t>(max_num_batches))
   {
     CUDF_EXPECTS(!right_schema.empty(),
@@ -326,7 +327,7 @@ struct streaming_hash_join::impl {
     }
   }
 
-  void insert(table_view const& right_partition, rmm::cuda_stream_view stream)
+  void insert(table_view const& right_partition, cuda::stream_ref stream)
   {
     CUDF_EXPECTS(right_partition.num_columns() == static_cast<size_type>(right_schema.size()),
                  "streaming_hash_join: inserted partition column count does not match schema.",
@@ -349,7 +350,8 @@ struct streaming_hash_join::impl {
       }
     }
 
-    auto preprocessed     = row::equality::preprocessed_table::create(keys, stream);
+    auto preprocessed = row::equality::preprocessed_table::create(
+      keys, stream, cudf::get_current_device_resource_ref());
     auto const batch_rows = keys.num_rows();
     auto row_bitmask      = [&]() -> std::optional<rmm::device_buffer> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
@@ -386,14 +388,14 @@ struct streaming_hash_join::impl {
           0, build_pair_fn{row_hasher, layout, batch_id});
 
         if (compare_nulls == null_equality::EQUAL || !nullable(keys)) {
-          hash_table.insert_async(input_begin, input_begin + batch_rows, stream.value());
+          hash_table.insert_async(input_begin, input_begin + batch_rows, stream.get());
         } else {
           hash_table.insert_if_async(
             input_begin,
             input_begin + batch_rows,
             cuda::counting_iterator<size_type>{0},
             row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask->data())},
-            stream.value());
+            stream.get());
         }
       };
 
@@ -408,10 +410,11 @@ struct streaming_hash_join::impl {
   template <bool has_nested, bool use_primitive>
   auto probe(table_view const& left,
              std::optional<std::size_t> output_size,
-             rmm::cuda_stream_view stream,
+             cuda::stream_ref stream,
              rmm::device_async_resource_ref output_mr) const
   {
-    auto preprocessed_left = row::equality::preprocessed_table::create(left, stream);
+    auto preprocessed_left = row::equality::preprocessed_table::create(
+      left, stream, cudf::get_current_device_resource_ref());
     auto const num_batches = inserted_batches.load(std::memory_order_relaxed);
     auto const right_comparators =
       std::span{preprocessed_right}.first(static_cast<std::size_t>(num_batches));
@@ -440,7 +443,7 @@ struct streaming_hash_join::impl {
                                                           input_begin + left.num_rows(),
                                                           equality,
                                                           hash_table.hash_function(),
-                                                          stream.value());
+                                                          stream.get());
 
     auto left_indices =
       std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, output_mr);
@@ -463,7 +466,7 @@ struct streaming_hash_join::impl {
                           hash_table.hash_function(),
                           probe_output,
                           build_output,
-                          stream.value());
+                          stream.get());
     }
 
     return std::pair{std::move(left_indices),
@@ -472,7 +475,7 @@ struct streaming_hash_join::impl {
 
   auto inner_join(table_view const& left,
                   std::optional<std::size_t> output_size,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref output_mr) const
   {
     CUDF_EXPECTS(inserted_batches.load(std::memory_order_relaxed) > 0,
@@ -501,7 +504,7 @@ streaming_hash_join::streaming_hash_join(std::span<data_type const> right_schema
                                          nullable_join has_nulls,
                                          null_equality compare_nulls,
                                          double load_factor,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<impl>(right_schema,
                                  right_key_indices,
@@ -519,7 +522,7 @@ streaming_hash_join::~streaming_hash_join()                                     
 streaming_hash_join::streaming_hash_join(streaming_hash_join&&) noexcept            = default;
 streaming_hash_join& streaming_hash_join::operator=(streaming_hash_join&&) noexcept = default;
 
-void streaming_hash_join::insert(table_view const& right_partition, rmm::cuda_stream_view stream)
+void streaming_hash_join::insert(table_view const& right_partition, cuda::stream_ref stream)
 {
   _impl->insert(right_partition, stream);
 }
@@ -529,7 +532,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                     std::unique_ptr<rmm::device_uvector<size_type>>>>
 streaming_hash_join::inner_join(table_view const& left,
                                 std::optional<std::size_t> output_size,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr) const
 {
   return _impl->inner_join(left, output_size, stream, mr);
@@ -546,7 +549,7 @@ streaming_hash_join::streaming_hash_join(std::span<data_type const> right_schema
                                          nullable_join has_nulls,
                                          null_equality compare_nulls,
                                          double load_factor,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<cudf::detail::streaming_hash_join>(right_schema,
                                                               right_key_indices,
@@ -564,7 +567,7 @@ streaming_hash_join::~streaming_hash_join()                                     
 streaming_hash_join::streaming_hash_join(streaming_hash_join&&) noexcept            = default;
 streaming_hash_join& streaming_hash_join::operator=(streaming_hash_join&&) noexcept = default;
 
-void streaming_hash_join::insert(table_view const& right_partition, rmm::cuda_stream_view stream)
+void streaming_hash_join::insert(table_view const& right_partition, cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   _impl->insert(right_partition, stream);
@@ -575,7 +578,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                     std::unique_ptr<rmm::device_uvector<size_type>>>>
 streaming_hash_join::inner_join(table_view const& left,
                                 std::optional<std::size_t> output_size,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();

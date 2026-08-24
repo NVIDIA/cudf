@@ -9,8 +9,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream_ref>
 
 #include <memory>
 #include <optional>
@@ -34,7 +35,7 @@ class streaming_hash_join {
                       nullable_join has_nulls,
                       null_equality compare_nulls,
                       double load_factor,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   ~streaming_hash_join();
@@ -43,14 +44,14 @@ class streaming_hash_join {
   streaming_hash_join(streaming_hash_join&&) noexcept;
   streaming_hash_join& operator=(streaming_hash_join&&) noexcept;
 
-  void insert(cudf::table_view const& right_partition, rmm::cuda_stream_view stream);
+  void insert(cudf::table_view const& right_partition, cuda::stream_ref stream);
 
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                                     std::unique_ptr<rmm::device_uvector<size_type>>>>
   inner_join(cudf::table_view const& left,
              std::optional<std::size_t> output_size,
-             rmm::cuda_stream_view stream,
+             cuda::stream_ref stream,
              rmm::device_async_resource_ref mr) const;
 
  private:

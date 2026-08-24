@@ -1764,9 +1764,11 @@ TEST_F(ParquetReaderTest, VarintDecodingBoundaries)
 {
   using cudf::io::parquet::detail::CompactProtocolReader;
 
-  // longest valid encoding of a uint64: nine continuation bytes plus terminator
+  // longest valid encoding of a uint64: nine continuation bytes plus terminator; each
+  // continuation byte deposits zero and the terminator sets bit 63, so the value is exactly
+  // 1 << 63 rather than the all-ones pattern that nine 0xFF bytes would produce
   std::array<uint8_t, 10> max_varint{};
-  max_varint.fill(0xFF);
+  max_varint.fill(0x80);
   max_varint[9] = 0x01;
   CompactProtocolReader reader(max_varint.data(), max_varint.size());
   EXPECT_EQ(reader.get_varint<uint64_t>(), uint64_t{1} << 63);

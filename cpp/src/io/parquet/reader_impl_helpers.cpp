@@ -2011,10 +2011,11 @@ aggregate_reader_metadata::select_columns(
 
       cudf::io::detail::inline_column_buffer output_col(
         dtype, schema_elem.repetition_type == FieldRepetitionType::OPTIONAL);
-      // A required element under an optional or repeated ancestor can be null by inheritance
-      // even though it has no validity of its own.
+      // A required leaf under an optional or repeated ancestor can be null by inheritance even
+      // though it has no validity of its own. Non-leaf buffers either hold no data (structs) or
+      // have their offsets fully written during decode (lists), so only leaves need the fill.
       if (schema_elem.repetition_type != FieldRepetitionType::OPTIONAL and
-          schema_elem.max_definition_level > 0) {
+          schema_elem.max_definition_level > 0 and schema_elem.num_children == 0) {
         output_col.set_may_have_inherited_nulls();
       }
       if (has_list_parent) { output_col.user_data |= PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT; }

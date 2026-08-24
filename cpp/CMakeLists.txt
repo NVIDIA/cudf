@@ -68,14 +68,7 @@ set(CUDF_BUILD_STATIC_DEPS
 )
 set_property(CACHE CUDF_BUILD_STATIC_DEPS PROPERTY STRINGS "ON" "OFF" "FORCE")
 
-# cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic linking
-option(CUDA_STATIC_RUNTIME "Statically link the CUDA runtime" OFF)
-# FORCE mode implies static CUDA runtime
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
-  set(CUDA_STATIC_RUNTIME
-      ON
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       ON
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -85,10 +78,6 @@ if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
       CACHE BOOL "Use static linking for nvJitLink" FORCE
   )
 else()
-  set(CUDA_STATIC_RUNTIME
-      OFF
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       OFF
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -811,6 +800,7 @@ add_library(
   src/io/parquet/reader_impl.cpp
   src/io/parquet/reader_impl_chunking.cu
   src/io/parquet/reader_impl_chunking_utils.cu
+  src/io/parquet/reader_impl_dict_transcode.cu
   src/io/parquet/reader_impl_helpers.cpp
   src/io/parquet/reader_impl_preprocess.cu
   src/io/parquet/reader_impl_preprocess_utils.cu
@@ -953,18 +943,16 @@ add_library(
   src/reductions/segmented/nunique.cu
   src/reductions/segmented/product.cu
   src/reductions/segmented/reductions.cpp
-  src/reductions/segmented/std.cu
+  src/reductions/segmented/std_var.cu
   src/reductions/segmented/sum.cu
   src/reductions/segmented/sum_of_squares.cu
   src/reductions/segmented/update_validity.cu
-  src/reductions/segmented/var.cu
-  src/reductions/std.cu
+  src/reductions/std_var.cu
   src/reductions/sum.cu
   src/reductions/sum_of_squares.cu
   src/reductions/sum_overflow.cu
   src/reductions/unique_count.cu
   src/reductions/unique_count_column.cu
-  src/reductions/var.cu
   src/replace/clamp.cu
   src/replace/nans.cu
   src/replace/nulls.cu
@@ -980,6 +968,11 @@ add_library(
   src/rolling/detail/rolling_variable_window.cu
   src/rolling/grouped_rolling.cu
   src/rolling/range_rolling.cu
+  src/rolling/range_rolling_bounded_closed.cu
+  src/rolling/range_rolling_bounded_open.cu
+  src/rolling/range_rolling_current_row.cu
+  src/rolling/range_rolling_multi_column.cu
+  src/rolling/range_rolling_unbounded.cu
   src/rolling/range_window_bounds.cpp
   src/rolling/rolling.cpp
   src/round/round.cu

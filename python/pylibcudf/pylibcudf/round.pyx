@@ -20,6 +20,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["RoundingMethod", "round"]
@@ -28,7 +32,7 @@ cpdef Column round(
     Column source,
     int32_t decimal_places = 0,
     rounding_method round_method = rounding_method.HALF_UP,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Rounds all the values in a column to the specified number of decimal places.
@@ -81,7 +85,7 @@ cpdef Column round_decimal(
     Column source,
     int32_t decimal_places = 0,
     rounding_method round_method = rounding_method.HALF_UP,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Rounds all the values in a column to the specified number of decimal places.

@@ -17,11 +17,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <iterator>
@@ -274,7 +274,7 @@ inline bool md5_leaf_type_check(data_type dt)
 }  // namespace
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   if (input.num_columns() == 0 || input.num_rows() == 0) {
@@ -323,8 +323,8 @@ std::unique_ptr<column> md5(table_view const& input,
             if (data_col.type().id() == type_id::LIST) {
               CUDF_UNREACHABLE("Nested list unsupported");
             }
-            auto const offset_begin = offsets.element<size_type>(row_index);
-            auto const offset_end   = offsets.element<size_type>(row_index + 1);
+            auto const offset_begin = offsets.element<int32_t>(row_index + col.offset());
+            auto const offset_end   = offsets.element<int32_t>(row_index + 1 + col.offset());
             cudf::type_dispatcher<dispatch_storage_type>(
               data_col.type(), ListHasherDispatcher(&hasher, data_col), offset_begin, offset_end);
           } else {
@@ -341,7 +341,7 @@ std::unique_ptr<column> md5(table_view const& input,
 }  // namespace detail
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

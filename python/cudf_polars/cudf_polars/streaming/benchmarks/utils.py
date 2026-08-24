@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import importlib
 import io
@@ -76,7 +77,11 @@ try:
         ValidationError,
         assert_tpch_result_equal,
     )
-    from cudf_polars.streaming.explain import explain_query
+    from cudf_polars.streaming.explain import (
+        SerializablePlan,
+        explain_query,
+        serialize_query,
+    )
     from cudf_polars.streaming.parallel import evaluate_streaming
     from cudf_polars.utils.config import ConfigOptions
 
@@ -129,7 +134,7 @@ class NightlyRole:
 
     type: Literal["nightly"] = dataclasses.field(default="nightly", init=False)
     date: str = dataclasses.field(
-        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
+        default_factory=lambda: datetime.now(UTC).date().isoformat()
     )
 
 
@@ -355,7 +360,7 @@ class GPUInfo:
         except pynvml.NVMLError_NotSupported:
             # Happens on systems without traditional GPU memory (e.g., Grace Hopper),
             # where nvmlDeviceGetMemoryInfo is not supported.
-            # See: https://github.com/rapidsai/cudf/issues/19427
+            # See: https://github.com/NVIDIA/cudf/issues/19427
             return cls(
                 name=pynvml.nvmlDeviceGetName(handle),
                 index=index,
@@ -480,8 +485,6 @@ class RunConfig:
     iterations: int
     io_mode: Literal["cold", "lukewarm", "hot"] = "lukewarm"
     collect_traces: bool = False
-    native_parquet: bool = True
-    max_io_threads: int = 2
     # All streaming/rapidsmpf/engine knobs
     streaming_options: StreamingOptions = dataclasses.field(
         default_factory=lambda: __import__(
@@ -629,8 +632,6 @@ class RunConfig:
             iterations=args.iterations,
             io_mode=args.io_mode,
             collect_traces=args.collect_traces,
-            native_parquet=args.native_parquet,
-            max_io_threads=args.max_io_threads,
             streaming_options=streaming_options,
             connect=args.connect,
             num_gpus=args.num_gpus,
@@ -662,8 +663,6 @@ class RunConfig:
             "iterations": self.iterations,
             "io_mode": self.io_mode,
             "collect_traces": self.collect_traces,
-            "native_parquet": self.native_parquet,
-            "max_io_threads": self.max_io_threads,
             "n_workers": self.n_workers,
             "extra_info": self.extra_info,
             "run_id": str(self.run_id),
@@ -690,7 +689,9 @@ class RunConfig:
             config_options = config_options.drop_unserializable()
             rapidsmpf_options = engine.rapidsmpf_options.get_strings()
             result["config_options"] = {
-                "config_options": dataclasses.asdict(config_options),
+                "config_options": dataclasses.asdict(
+                    config_options, dict_factory=ConfigOptions.dict_factory
+                ),
                 "rapidsmpf_options": rapidsmpf_options,
             }
             # discard unserializable / unnecessary UUIDs
@@ -713,7 +714,6 @@ class RunConfig:
             print(f"frontend: {self.frontend}")
             if self.frontend in _STREAMING_FRONTENDS:
                 opts = self.streaming_options.to_executor_options()
-                print(f"native_parquet: {self.native_parquet}")
                 print(f"n_workers: {self.n_workers}")
                 print(f"target_partition_size: {opts.get('target_partition_size')}")
                 print(f"broadcast_limit: {opts.get('broadcast_limit')}")
@@ -744,7 +744,6 @@ def get_executor_options(
     executor_options: dict[str, Any] = (
         run_config.streaming_options.to_executor_options()
     )
-    executor_options["max_io_threads"] = run_config.max_io_threads
     executor_options["quent_context"] = cudf_polars.quent.QuentContext(
         engine=cudf_polars.quent.Engine(id=run_config.run_id)
     )
@@ -996,6 +995,7 @@ def run_polars_query_iteration(
 
 def run_polars_query(
     q_id: int,
+    query_result: QueryResult,
     benchmark: Any,
     run_config: RunConfig,
     args: argparse.Namespace,
@@ -1003,17 +1003,12 @@ def run_polars_query(
     numeric_type: str,
     date_type: str,
     prepare_validation_result: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
+    plan: SerializablePlan | None = None,
 ) -> QueryRunResult:
     """Run all iterations for a single query. Caller must wrap in try/except."""
-    query_result: QueryResult = getattr(benchmark, f"q{q_id}")(run_config)
     q = query_result.frame
 
     print_query_plan(q_id, q, args, run_config, engine, print_plans=args.print_plans)
-    plan = None
-    if (args.explain or args.explain_logical) and engine is not None:
-        from cudf_polars.streaming.explain import serialize_query
-
-        plan = serialize_query(q, engine)
 
     part_plan_rows = []
     if (
@@ -1168,9 +1163,20 @@ def _run_query_loop(
                     )
                 )
 
+        plan = None
+
         try:
+            query_result: QueryResult = getattr(benchmark, f"q{q_id}")(run_config)
+            if (args.explain or args.explain_logical) and engine is not None:
+                # If this fails during serialization, we have issues. But we'd
+                # rather see what the issues are with execution than query serialization,
+                # so ignore exceptions here.
+                with contextlib.suppress(Exception):
+                    plan = serialize_query(query_result.frame, engine)
+
             result = run_polars_query(
                 q_id=q_id,
+                query_result=query_result,
                 benchmark=benchmark,
                 run_config=run_config,
                 args=args,
@@ -1178,6 +1184,7 @@ def _run_query_loop(
                 numeric_type=numeric_type,
                 date_type=date_type,
                 prepare_validation_result=prepare_validation_result,
+                plan=plan,
             )
         except Exception:
             print(f"❌ query={q_id} failed (setup or execution)!")
@@ -1190,7 +1197,7 @@ def _run_query_loop(
             )
             result = QueryRunResult(
                 query_records=[record],
-                plan=None,
+                plan=plan,
                 iteration_failures=[],
                 validation_failed=False,
             )
@@ -1232,7 +1239,12 @@ def _finalize_benchmark_run(
                 f"{len(validation_failures)} queries failed validation: "
                 f"{sorted(set(validation_failures))}"
             )
-        else:
+        if query_failures:
+            print(
+                "⚠️  Validation was skipped for queries that failed to run: "
+                f"{sorted({q_id for q_id, _ in query_failures})}"
+            )
+        if not validation_failures and not query_failures:
             print("✅ All validated queries passed.")
     args.output.write(json.dumps(serializable_engine_config))
     args.output.write("\n")
@@ -2041,18 +2053,6 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
         help="Debug run.",
     )
     parser.add_argument(
-        "--max-io-threads",
-        default=4,
-        type=int,
-        help="Sets cudf_polars.utils.config.StreamingExecutor.max_io_threads.",
-    )
-    parser.add_argument(
-        "--native-parquet",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Sets cudf_polars.utils.config.ParquetOptions.use_rapidsmpf_native.",
-    )
-    parser.add_argument(
         "-o",
         "--output",
         type=argparse.FileType("at"),
@@ -2278,7 +2278,7 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
                 "Unset CUDA_VISIBLE_DEVICES or use it directly to control GPU visibility."
             )
 
-    parquet_options = {"use_rapidsmpf_native": run_config.native_parquet}
+    parquet_options: dict[str, Any] = {}
     numeric_type, date_type = check_input_data_type(run_config)
     match args.frontend:
         case "dask":

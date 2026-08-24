@@ -420,7 +420,7 @@ def test_df_sr_binop(psr, colnames, binary_op):
         operator.mod,
         operator.pow,
         # comparison ops will temporarily XFAIL
-        # see PR  https://github.com/rapidsai/cudf/pull/7491
+        # see PR  https://github.com/NVIDIA/cudf/pull/7491
         pytest.param(operator.eq, marks=pytest.mark.xfail),
         pytest.param(operator.lt, marks=pytest.mark.xfail),
         pytest.param(operator.le, marks=pytest.mark.xfail),

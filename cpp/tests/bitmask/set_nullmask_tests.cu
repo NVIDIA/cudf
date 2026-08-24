@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -9,11 +9,11 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 #include <thrust/transform.h>
 
@@ -34,7 +34,7 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
   void expect_bitmask_equal(cudf::bitmask_type const* bitmask,  // Device Ptr
                             cudf::size_type start_bit,
                             thrust::host_vector<bool> const& expect,
-                            rmm::cuda_stream_view stream = cudf::get_default_stream())
+                            cuda::stream_ref stream = cudf::get_default_stream())
   {
     rmm::device_uvector<bool> result(expect.size(), stream);
     auto counting_iter = cuda::counting_iterator<cudf::size_type>{0};

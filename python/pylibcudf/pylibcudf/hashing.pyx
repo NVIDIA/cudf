@@ -25,6 +25,10 @@ from rmm.pylibrmm.stream cimport Stream
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -46,7 +50,7 @@ LIBCUDF_DEFAULT_HASH_SEED = DEFAULT_HASH_SEED
 cpdef Column murmurhash3_x86_32(
     Table input,
     uint32_t seed=DEFAULT_HASH_SEED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the MurmurHash3 32-bit hash value of each row in the given table.
@@ -86,7 +90,7 @@ cpdef Column murmurhash3_x86_32(
 cpdef Table murmurhash3_x64_128(
     Table input,
     uint64_t seed=DEFAULT_HASH_SEED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the MurmurHash3 64-bit hash value of each row in the given table.
@@ -126,7 +130,7 @@ cpdef Table murmurhash3_x64_128(
 cpdef Column xxhash_32(
     Table input,
     uint32_t seed=DEFAULT_HASH_SEED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the xxHash 32-bit hash value of each row in the given table.
@@ -167,7 +171,7 @@ cpdef Column xxhash_32(
 cpdef Column xxhash_64(
     Table input,
     uint64_t seed=DEFAULT_HASH_SEED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the xxHash 64-bit hash value of each row in the given table.
@@ -207,7 +211,7 @@ cpdef Column xxhash_64(
 
 cpdef Column md5(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the MD5 hash value of each row in the given table.
@@ -241,7 +245,7 @@ cpdef Column md5(
 
 cpdef Column sha1(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the SHA-1 hash value of each row in the given table.
@@ -274,7 +278,7 @@ cpdef Column sha1(
 
 cpdef Column sha224(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the SHA-224 hash value of each row in the given table.
@@ -307,7 +311,7 @@ cpdef Column sha224(
 
 cpdef Column sha256(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the SHA-256 hash value of each row in the given table.
@@ -340,7 +344,7 @@ cpdef Column sha256(
 
 cpdef Column sha384(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the SHA-384 hash value of each row in the given table.
@@ -373,7 +377,7 @@ cpdef Column sha384(
 
 cpdef Column sha512(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Computes the SHA-512 hash value of each row in the given table.

@@ -23,7 +23,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
@@ -40,7 +39,7 @@ rmm::device_uvector<unbound_list_view> list_vector_from_column(
   cudf::lists_column_device_view const& lists_column,
   IndexIterator index_begin,
   IndexIterator index_end,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto n_rows = cuda::std::distance(index_begin, index_end);
@@ -85,7 +84,7 @@ std::unique_ptr<column> scatter_impl(rmm::device_uvector<unbound_list_view> cons
                                      MapIterator scatter_map_end,
                                      column_view const& source,
                                      column_view const& target,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(have_same_types(source, target), "Mismatched column types.");
@@ -104,7 +103,7 @@ std::unique_ptr<column> scatter_impl(rmm::device_uvector<unbound_list_view> cons
   auto const target_lists_column_view =
     lists_column_view(target);  // Checks that target is a list column.
 
-  auto list_size_begin = thrust::make_transform_iterator(
+  auto list_size_begin = cuda::transform_iterator(
     target_vector.begin(),
     cuda::proclaim_return_type<size_type>([] __device__(unbound_list_view l) { return l.size(); }));
   auto offsets_column = std::get<0>(cudf::detail::make_offsets_child_column(
@@ -164,7 +163,7 @@ std::unique_ptr<column> scatter(column_view const& source,
                                 MapIterator scatter_map_begin,
                                 MapIterator scatter_map_end,
                                 column_view const& target,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   auto const num_rows = target.size();
@@ -219,7 +218,7 @@ std::unique_ptr<column> scatter(scalar const& slr,
                                 MapIterator scatter_map_begin,
                                 MapIterator scatter_map_end,
                                 column_view const& target,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   auto const num_rows = target.size();
@@ -231,12 +230,12 @@ std::unique_ptr<column> scatter(scalar const& slr,
                                    ? cudf::create_null_mask(1, mask_state::UNALLOCATED, stream, mr)
                                    : cudf::create_null_mask(1, mask_state::ALL_NULL, stream, mr);
   auto offset_column =
-    make_numeric_column(data_type{type_to_id<size_type>()}, 2, mask_state::UNALLOCATED, stream, mr);
+    make_numeric_column(data_type{type_id::INT32}, 2, mask_state::UNALLOCATED, stream, mr);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   offset_column->mutable_view().begin<size_type>(),
-                   offset_column->mutable_view().end<size_type>(),
-                   0,
-                   lv->view().size());
+                   offset_column->mutable_view().begin<int32_t>(),
+                   offset_column->mutable_view().end<int32_t>(),
+                   int32_t{0},
+                   static_cast<int32_t>(lv->view().size()));
   auto wrapped = column_view(data_type{type_id::LIST},
                              1,
                              nullptr,

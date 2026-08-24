@@ -80,7 +80,8 @@ public class NativeDepsLoader {
    * stages where all the dependencies in a stage are not interdependent and
    * therefore can be loaded in parallel. All dependencies within an earlier
    * stage are guaranteed to have finished loading before any dependencies in
-   * subsequent stages are loaded.
+   * subsequent stages are loaded. nvcomp is skipped if its resource is absent
+   * because static libcudf builds include it.
    */
   private static final String[][] loadOrder = new String[][]{
       new String[]{
@@ -103,12 +104,33 @@ public class NativeDepsLoader {
   public static synchronized void loadNativeDeps() {
     if (!loaded) {
       try {
-        loadNativeDeps(loadOrder, preserveDepsAfterLoad);
+        String[][] deps = loadOrder;
+        if (!hasNativeResource("nvcomp")) {
+          log.info("Skipping optional native dependency {}", System.mapLibraryName("nvcomp"));
+          deps = Arrays.stream(loadOrder)
+              .filter(stage -> Arrays.stream(stage).noneMatch("nvcomp"::equals))
+              .toArray(String[][]::new);
+        }
+        loadNativeDeps(deps, preserveDepsAfterLoad);
         loaded = true;
       } catch (Throwable t) {
         log.error("Could not load cudf jni library...", t);
       }
     }
+  }
+
+  private static boolean hasNativeResource(String baseName) {
+    String mapped = System.mapLibraryName(baseName);
+    if (libNativeDir != null) {
+      return new File(libNativeDir, mapped).isFile();
+    }
+    String os = System.getProperty("os.name");
+    String arch = System.getProperty("os.arch");
+    String path = arch + "/" + os + "/" + mapped;
+    if (loader.getResource(path + CHUNK_MANIFEST_SUFFIX) != null) {
+      return true;
+    }
+    return loader.getResource(path) != null;
   }
 
   /**

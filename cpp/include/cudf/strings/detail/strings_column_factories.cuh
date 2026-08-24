@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,13 +12,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -44,7 +44,7 @@ using string_index_pair = cuda::std::pair<char const*, size_type>;
 template <typename IndexPairIterator>
 std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
                                             IndexPairIterator end,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -56,7 +56,7 @@ std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
     cuda::proclaim_return_type<size_type>([] __device__(string_index_pair item) -> size_type {
       return (item.first != nullptr ? static_cast<size_type>(item.second) : size_type{0});
     });
-  auto offsets_transformer_itr = thrust::make_transform_iterator(begin, offsets_transformer);
+  auto offsets_transformer_itr = cuda::transform_iterator(begin, offsets_transformer);
   auto [offsets_column, bytes] = cudf::strings::detail::make_offsets_child_column(
     offsets_transformer_itr, offsets_transformer_itr + strings_count, stream, mr);
 

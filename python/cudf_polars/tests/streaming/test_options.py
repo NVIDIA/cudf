@@ -17,7 +17,7 @@ from cudf_polars.engine.options import (
     Unspecified,
     _parse_memory_resource_config,
 )
-from cudf_polars.utils.config import MemoryResourceConfig
+from cudf_polars.utils.config import DynamicPlanningOptions, MemoryResourceConfig
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -312,9 +312,15 @@ def test_from_argparse_renames() -> None:
 def test_from_argparse_dynamic_planning() -> None:
     assert isinstance(
         StreamingOptions._from_argparse(
-            argparse.Namespace(dynamic_planning=True)
+            argparse.Namespace(dynamic_planning=None)
         ).dynamic_planning,
         Unspecified,
+    )
+    assert (
+        StreamingOptions._from_argparse(
+            argparse.Namespace(dynamic_planning=True)
+        ).dynamic_planning
+        == DynamicPlanningOptions()
     )
     assert (
         StreamingOptions._from_argparse(
@@ -356,6 +362,22 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert opts.max_concurrent_io_tasks == 6
     # Unprovided args default to None → UNSPECIFIED
     assert isinstance(opts.fallback_mode, Unspecified)
+
+
+def test_from_argparse_omitted_flag_still_picks_up_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", "16")
+    monkeypatch.setenv("RAPIDSMPF_NUM_STREAMING_THREADS", "16")
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    args = parser.parse_args([])
+    opts = StreamingOptions._from_argparse(args)
+
+    assert opts.num_py_executors == 16
+    assert opts.to_executor_options()["num_py_executors"] == 16
+    assert opts.num_streaming_threads == 16
 
 
 # ---------------------------------------------------------------------------

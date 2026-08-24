@@ -87,19 +87,19 @@ class OrderSchemePartitioningResult:
     """The consumed non-empty chunks, stored in replay order."""
 
 
-def _extract_boundaries(
-    min_max_key_table: plc.Table,
+def _extract_boundaries_from_endpoint_rows(
+    endpoint_key_rows: plc.Table,
     num_partitions: int,
     stream: Stream,
 ) -> tuple[plc.Table, bool]:
     """
-    Extract boundaries from alternating partition minima and maxima.
+    Extract boundaries from alternating partition endpoint rows.
 
     Parameters
     ----------
-    min_max_key_table
+    endpoint_key_rows
         The table containing key-column rows ordered as
-        ``[min0, max0, min1, max1, ...]``.
+        ``[start0, end0, start1, end1, ...]``.
     num_partitions
         The number of partitions.
     stream
@@ -109,25 +109,25 @@ def _extract_boundaries(
     -------
     The boundaries table and whether they are strict.
     """
-    # Boundaries are the minima of all partitions except the first. Strictness
-    # compares each partition maximum with the following partition minimum.
-    partition_ends = plc.concatenate.concatenate(
+    # Boundaries are the first endpoint of all partitions except the first.
+    # Strictness compares each partition end with the following partition start.
+    previous_partition_ends = plc.concatenate.concatenate(
         plc.copying.slice(
-            min_max_key_table, list(range(1, 2 * num_partitions - 1)), stream=stream
+            endpoint_key_rows, list(range(1, 2 * num_partitions - 1)), stream=stream
         ),
         stream=stream,
     )
-    partition_starts = plc.concatenate.concatenate(
+    next_partition_starts = plc.concatenate.concatenate(
         plc.copying.slice(
-            min_max_key_table, list(range(2, 2 * num_partitions)), stream=stream
+            endpoint_key_rows, list(range(2, 2 * num_partitions)), stream=stream
         ),
         stream=stream,
     )
 
     # Single-kernel row-equality check across all key columns using AST
-    num_cols = partition_ends.num_columns()
+    num_cols = previous_partition_ends.num_columns()
     combined = plc.Table(
-        list(partition_ends.columns()) + list(partition_starts.columns())
+        list(previous_partition_ends.columns()) + list(next_partition_starts.columns())
     )
     eq_exprs = [
         plc.expressions.Operation(
@@ -151,7 +151,7 @@ def _extract_boundaries(
         ).num_rows()
         == 0
     )
-    return partition_starts, strict
+    return next_partition_starts, strict
 
 
 async def extract_orderscheme_partitioning(
@@ -201,8 +201,8 @@ async def extract_orderscheme_partitioning(
     should be dropped from the channel that the returned
     partitioning is ultimately attached to.
     """
-    # Collect local min/max values table for each rank
-    min_max_rows: list[plc.Table] = []
+    # Collect the first and last row from each non-empty sorted chunk.
+    endpoint_rows: list[plc.Table] = []
     chunks = ChunkStore(context)
     stream = ir_context.get_cuda_stream()
     while (msg := await ch_in.recv(context)) is not None:
@@ -218,7 +218,7 @@ async def extract_orderscheme_partitioning(
                 plc.DataType(plc.TypeId.INT32),
                 stream=stream,
             )
-            min_max_rows.append(
+            endpoint_rows.append(
                 plc.copying.gather(
                     tbl,
                     row_indices,
@@ -227,50 +227,52 @@ async def extract_orderscheme_partitioning(
                 )
             )
         chunks.insert(Message(msg.sequence_number, chunk))
-    min_max_table: plc.Table | None = (
-        plc.concatenate.concatenate(min_max_rows, stream=stream)
-        if min_max_rows
+    endpoint_table: plc.Table | None = (
+        plc.concatenate.concatenate(endpoint_rows, stream=stream)
+        if endpoint_rows
         else None
     )
-    del min_max_rows
+    del endpoint_rows
 
-    # Allgather min/max values across all ranks
+    # Allgather endpoint rows across all ranks.
     if comm.nranks > 1:
         local_chunk = (
             TableChunk.from_pylibcudf_table(
-                min_max_table, stream, exclusive_view=True, br=context.br()
+                endpoint_table, stream, exclusive_view=True, br=context.br()
             )
-            if min_max_table is not None
+            if endpoint_table is not None
             else empty_table_chunk(schema_ir, context, stream)
         )
         allgather = AllGatherManager(context, comm, collective_id)
         with allgather.inserting() as inserter:
             inserter.insert(comm.rank, local_chunk)
-        min_max_table = await allgather.extract_concatenated(
+        endpoint_table = await allgather.extract_concatenated(
             stream, ordered=True, ir_context=ir_context
         )
 
-    # Return None if there are insufficient min/max values to process
-    if min_max_table is None or (num_partitions := min_max_table.num_rows() // 2) < 2:
+    # Return None if there are insufficient endpoints to process.
+    if endpoint_table is None or (num_partitions := endpoint_table.num_rows() // 2) < 2:
         return OrderSchemePartitioningResult(None, chunks)
 
     key_indices = [key.column_index for key in order_keys]
-    min_max_key_table = plc.Table(
-        [min_max_table.columns()[index] for index in key_indices]
+    endpoint_key_rows = plc.Table(
+        [endpoint_table.columns()[index] for index in key_indices]
     )
-    del min_max_table
+    del endpoint_table
 
-    # Return None if the min/max values are not sorted
+    # Return None if chunk endpoints are not globally sorted.
     column_order = [key.order for key in order_keys]
     null_order = [key.null_order for key in order_keys]
     if not plc.sorting.is_sorted(
-        min_max_key_table, column_order, null_order, stream=stream
+        endpoint_key_rows, column_order, null_order, stream=stream
     ):
         return OrderSchemePartitioningResult(None, chunks)
 
     # Extract boundaries and construct the Partitioning
-    boundaries, strict = _extract_boundaries(min_max_key_table, num_partitions, stream)
-    del min_max_key_table
+    boundaries, strict = _extract_boundaries_from_endpoint_rows(
+        endpoint_key_rows, num_partitions, stream
+    )
+    del endpoint_key_rows
     boundaries_chunk = TableChunk.from_pylibcudf_table(
         boundaries, stream, exclusive_view=True, br=context.br()
     )

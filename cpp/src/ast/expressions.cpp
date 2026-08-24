@@ -109,7 +109,7 @@ auto operation::accept(detail::expression_transformer& visitor) const
 
 bool operation::may_evaluate_null(table_view const& left,
                                   table_view const& right,
-                                  rmm::cuda_stream_view stream) const
+                                  cuda::stream_ref stream) const
 {
   return std::any_of(operands.cbegin(),
                      operands.cend(),
@@ -135,7 +135,7 @@ std::reference_wrapper<expression const> detail::predicate::accept(
 
 bool detail::predicate::may_evaluate_null(table_view const& left,
                                           table_view const& right,
-                                          rmm::cuda_stream_view stream) const
+                                          cuda::stream_ref stream) const
 {
   return false;
 }

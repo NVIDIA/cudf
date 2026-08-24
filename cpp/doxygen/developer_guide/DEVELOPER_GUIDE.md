@@ -765,7 +765,7 @@ transfers.
 cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
 
 // scalar.data() returns pointer to value in device memory
-kernel<<<..., stream>>>(int_scalar.data(),...);
+kernel<<<..., stream>>>(int_scalar.data(), ...);
 
 // value() copies the device value to the host on the specified stream
 int host_value = int_scalar.value(stream);

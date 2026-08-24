@@ -14,6 +14,7 @@ jobs:
     container:
       image: ghcr.io/facebookincubator/velox-dev:adapters
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -41,6 +42,8 @@ jobs:
           role-duration-seconds: 43200 # 12h
       - name: "Build velox-cudf"
         env:
+          # Used by update-cudf-deps.sh to query dependency revisions via the GitHub API.
+          GH_TOKEN: ${{ github.token }}
           SCCACHE_S3_KEY_PREFIX: velox-cudf
           SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX: velox-cudf/preprocessor
           SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE: true
@@ -74,7 +77,9 @@ jobs:
           # Align RAPIDS dependencies with the selected cudf branch
           scripts/update-cudf-deps.sh --branch "$(cat "${GITHUB_WORKSPACE}/cudf-local/RAPIDS_BRANCH")"
 
-          # Build velox with local cudf override
+          # The adapters image defaults CC and CXX to GCC 12; override them after enabling GCC 14.
+          CC=gcc \
+          CXX=g++ \
           CUDA_ARCHITECTURES=90 \
           CUDA_FLAGS="-ccbin /opt/rh/gcc-toolset-14/root/usr/bin" \
           EXTRA_CMAKE_FLAGS="-DFETCHCONTENT_SOURCE_DIR_CUDF=$GITHUB_WORKSPACE/cudf-local" \

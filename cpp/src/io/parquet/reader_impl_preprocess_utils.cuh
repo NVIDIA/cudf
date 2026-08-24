@@ -14,6 +14,7 @@
 #include <thrust/logical.h>
 
 #include <future>
+#include <span>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -147,7 +148,7 @@ void decode_page_headers(pass_intermediate_data& pass,
  */
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
-                         host_span<cudf::device_span<uint8_t const> const> page_data,
+                         std::span<cudf::device_span<uint8_t const> const> page_data,
                          cuda::stream_ref stream);
 
 /**
@@ -224,10 +225,15 @@ struct set_str_dict_index_ptr {
   string_index_pair* const base;
   device_span<size_t const> str_dict_index_offsets;
   device_span<ColumnChunkDesc> chunks;
+  bool const sparse_page_io;
 
   __device__ constexpr inline void operator()(size_t i)
   {
     auto& chunk = chunks[i];
+    // In Sparse I/O case, the dictionary page may be null if all data pages were pruned.
+    if (sparse_page_io and (chunk.dict_page == nullptr or chunk.dict_page->page_data == nullptr)) {
+      return;
+    }
     if (chunk.num_dict_pages > 0 and is_string_chunk(chunk)) {
       chunk.str_dict_index = base + str_dict_index_offsets[i];
     }

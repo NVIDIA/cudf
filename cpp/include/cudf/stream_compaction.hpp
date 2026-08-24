@@ -74,7 +74,7 @@ std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -107,7 +107,7 @@ std::unique_ptr<table> drop_nulls(
 std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -152,7 +152,7 @@ std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -186,7 +186,7 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -214,7 +214,7 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> apply_boolean_mask(
   table_view const& input,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -242,7 +242,7 @@ std::unique_ptr<table> apply_boolean_mask(
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -291,7 +291,7 @@ std::unique_ptr<table> unique(
   std::vector<size_type> const& keys,
   duplicate_keep_option keep,
   null_equality nulls_equal         = null_equality::EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -324,7 +324,7 @@ std::unique_ptr<table> distinct(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -350,7 +350,7 @@ std::unique_ptr<column> distinct_indices(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -386,7 +386,7 @@ std::unique_ptr<table> stable_distinct(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -431,7 +431,7 @@ std::unique_ptr<table> stable_distinct(
   std::optional<void*> user_data           = std::nullopt,
   null_aware is_null_aware                 = null_aware::NO,
   output_nullability predicate_nullability = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
+  cuda::stream_ref stream                  = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
@@ -482,7 +482,7 @@ std::vector<std::unique_ptr<column>> filter_extended(
   std::optional<void*> user_data           = std::nullopt,
   null_aware is_null_aware                 = null_aware::NO,
   output_nullability predicate_nullability = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
+  cuda::stream_ref stream                  = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
@@ -509,7 +509,7 @@ std::unique_ptr<table> filter(
   table_view const& predicate_table,
   ast::expression const& predicate_expr,
   table_view const& filter_table,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */

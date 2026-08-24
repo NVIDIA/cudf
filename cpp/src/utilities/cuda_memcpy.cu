@@ -28,7 +28,7 @@ CUDF_KERNEL void copy_kernel(char const* __restrict__ src, char* __restrict__ ds
   if (idx < n) { dst[idx] = src[idx]; }
 }
 
-void copy_pinned(void* dst, void const* src, std::size_t size, rmm::cuda_stream_view stream)
+void copy_pinned(void* dst, void const* src, std::size_t size, cuda::stream_ref stream)
 {
   if (size == 0) return;
 
@@ -37,19 +37,28 @@ void copy_pinned(void* dst, void const* src, std::size_t size, rmm::cuda_stream_
     auto const grid_size = cudf::util::div_rounding_up_safe<size_t>(size, block_size);
     // We are explicitly launching the kernel here instead of calling a thrust function because the
     // thrust function can potentially call cudaMemcpyAsync instead of using a kernel
-    copy_kernel<<<grid_size, block_size, 0, stream.value()>>>(
+    copy_kernel<<<grid_size, block_size, 0, stream.get()>>>(
       static_cast<char const*>(src), static_cast<char*>(dst), size);
   } else {
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(dst, src, size, stream));
   }
 }
 
-void copy_pageable(void* dst, void const* src, std::size_t size, rmm::cuda_stream_view stream)
+void copy_pageable(void* dst, void const* src, std::size_t size, cuda::stream_ref stream)
 {
   if (size == 0) return;
 
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(dst, src, size, stream));
 }
+
+#if CUDART_VERSION >= 13000
+bool is_default_stream(cuda::stream_ref stream)
+{
+  auto const cstream = stream.get();
+  return cstream == cudaStreamDefault || cstream == cudaStreamLegacy ||
+         cstream == cudaStreamPerThread;
+}
+#endif  // CUDART_VERSION >= 13000
 
 };  // namespace
 
@@ -57,12 +66,14 @@ cudaError_t memcpy_batch_async(void* const* dsts,
                                void const* const* srcs,
                                std::size_t const* sizes,
                                std::size_t count,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
 // Uses cudaMemcpyBatchAsync for CUDA 13.0+ to avoid driver-side locking overhead.
 // cudaMemcpyBatchAsync does not support the default stream.
 #if CUDART_VERSION >= 13000
-  if (!stream.is_default()) {
+  if (!is_default_stream(stream)) {
+    constexpr std::size_t prefer_overlap_threshold = 128 * 1024;
+
     // Filter out invalid copies (nullptr dst/src or size==0);
     // cudaMemcpyBatchAsync does not support these inputs
     auto is_invalid = [&](auto i) {
@@ -90,21 +101,24 @@ cudaError_t memcpy_batch_async(void* const* dsts,
       count = valid_dsts.size();
     }
 
-    cudaMemcpyAttributes attrs = {.srcAccessOrder = cudaMemcpySrcAccessOrderStream,
-                                  .flags          = cudaMemcpyFlagPreferOverlapWithCompute};
-    std::size_t attrs_idxs     = 0;
-    return cudaMemcpyBatchAsync(dsts, srcs, sizes, count, &attrs, &attrs_idxs, 1, stream.value());
+    unsigned int const flags =
+      std::any_of(sizes, sizes + count, [&](auto size) { return size > prefer_overlap_threshold; })
+        ? cudaMemcpyFlagDefault
+        : cudaMemcpyFlagPreferOverlapWithCompute;
+    cudaMemcpyAttributes attrs = {.srcAccessOrder = cudaMemcpySrcAccessOrderStream, .flags = flags};
+    std::size_t attrs_idx      = 0;
+    return cudaMemcpyBatchAsync(dsts, srcs, sizes, count, &attrs, &attrs_idx, 1, stream.get());
   }
 #endif  // CUDART_VERSION >= 13000
   for (std::size_t i = 0; i < count; ++i) {
     cudaError_t status =
-      cudaMemcpyAsync(dsts[i], srcs[i], sizes[i], cudaMemcpyDefault, stream.value());
+      cudaMemcpyAsync(dsts[i], srcs[i], sizes[i], cudaMemcpyDefault, stream.get());
     if (status != cudaSuccess) { return status; }
   }
   return cudaSuccess;
 }
 
-cudaError_t memcpy_async(void* dst, void const* src, size_t count, rmm::cuda_stream_view stream)
+cudaError_t memcpy_async(void* dst, void const* src, size_t count, cuda::stream_ref stream)
 {
   if (count == 0) { return cudaSuccess; }
 
@@ -114,7 +128,7 @@ cudaError_t memcpy_async(void* dst, void const* src, size_t count, rmm::cuda_str
 }
 
 void cuda_memcpy_async_impl(
-  void* dst, void const* src, size_t size, host_memory_kind kind, rmm::cuda_stream_view stream)
+  void* dst, void const* src, size_t size, host_memory_kind kind, cuda::stream_ref stream)
 {
   if (kind == host_memory_kind::PINNED) {
     copy_pinned(dst, src, size, stream);

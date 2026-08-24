@@ -185,6 +185,10 @@ DOCKER_ARGS=(
   --env REPO_ROOT=/repo
 )
 
+if [[ -n ${GITHUB_REF:-} ]]; then
+  DOCKER_ARGS+=(--env GITHUB_REF="${GITHUB_REF}")
+fi
+
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then
   DOCKER_ARGS+=(--env CMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}")
 fi

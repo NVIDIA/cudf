@@ -19,11 +19,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/limits>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
@@ -495,7 +495,7 @@ bool inline sha_leaf_type_check(data_type dt)
  */
 template <typename Hasher>
 std::unique_ptr<column> sha_hash(table_view const& input,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (input.num_rows() == 0) { return cudf::make_empty_column(cudf::type_id::STRING); }

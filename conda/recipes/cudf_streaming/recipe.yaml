@@ -69,7 +69,7 @@ requirements:
     - cuda-version =${{ cuda_version }}
     - ${{ stdlib("c") }}
   host:
-    - cython >=3.2.2
+    - cython >=3.2.2,<3.3.0a0
     - pip
     - python =${{ py_abi_min }}
     - python-abi3 ${{ py_abi_min }}.*

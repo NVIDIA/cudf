@@ -347,6 +347,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask_vector(begin, end);
       auto d_mask                  = rmm::device_buffer{
         null_mask.data(), cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)), stream};
+      stream.sync();
       return std::pair{std::move(d_mask), null_count};
     };
 
@@ -419,6 +420,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
   INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, true)
 
 INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 4, true, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(int32_t, 2, true, false);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::timestamp_ms, 2, true, false);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::duration_ms, 2, true, false);
 

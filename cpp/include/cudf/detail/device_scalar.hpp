@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,9 +9,10 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
@@ -33,7 +34,7 @@ class device_scalar : public rmm::device_scalar<T> {
   device_scalar() = delete;
 
   explicit device_scalar(
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
     : rmm::device_scalar<T>(stream, mr), bounce_buffer{make_pinned_vector<T>(1, stream)}
   {
@@ -41,7 +42,7 @@ class device_scalar : public rmm::device_scalar<T> {
 
   explicit device_scalar(
     T const& initial_value,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
     : rmm::device_scalar<T>(stream, mr), bounce_buffer{make_pinned_vector<T>(1, stream)}
   {
@@ -50,31 +51,31 @@ class device_scalar : public rmm::device_scalar<T> {
   }
 
   device_scalar(device_scalar const& other,
-                rmm::cuda_stream_view stream,
+                cuda::stream_ref stream,
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
     : rmm::device_scalar<T>(other, stream, mr), bounce_buffer{make_pinned_vector<T>(1, stream)}
   {
   }
 
-  [[nodiscard]] T value(rmm::cuda_stream_view stream) const
+  [[nodiscard]] T value(cuda::stream_ref stream) const
   {
     cuda_memcpy<T>(bounce_buffer, device_span<T const>(this->data(), 1), stream);
     return std::move(bounce_buffer[0]);
   }
 
-  void set_value_async(T const& value, rmm::cuda_stream_view stream)
+  void set_value_async(T const& value, cuda::stream_ref stream)
   {
     bounce_buffer[0] = value;
     cuda_memcpy_async<T>(device_span<T>(this->data(), 1), bounce_buffer, stream);
   }
 
-  void set_value_async(T&& value, rmm::cuda_stream_view stream)
+  void set_value_async(T&& value, cuda::stream_ref stream)
   {
     bounce_buffer[0] = std::move(value);
     cuda_memcpy_async<T>(device_span<T>{this->data(), 1}, bounce_buffer, stream);
   }
 
-  void set_value_to_zero_async(rmm::cuda_stream_view stream) { set_value_async(T{}, stream); }
+  void set_value_to_zero_async(cuda::stream_ref stream) { set_value_async(T{}, stream); }
 
  private:
   mutable cudf::detail::host_vector<T> bounce_buffer;

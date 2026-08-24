@@ -68,7 +68,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
                     indices.begin(),
                     fn);
 
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

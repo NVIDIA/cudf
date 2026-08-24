@@ -20,11 +20,11 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -45,7 +45,7 @@ struct interleave_columns_functor {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(table_view const& input,
                                            bool create_mask,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     return interleave_columns_impl<T>{}(input, create_mask, stream, mr);
@@ -56,7 +56,7 @@ template <typename T>
 struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>> {
   std::unique_ptr<column> operator()(table_view const& lists_columns,
                                      bool create_mask,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return lists::detail::interleave_columns(lists_columns, create_mask, stream, mr);
@@ -67,7 +67,7 @@ template <typename T>
 struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>> {
   std::unique_ptr<cudf::column> operator()(table_view const& structs_columns,
                                            bool create_mask,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     // We can safely call `column(0)` as the number of columns is known to be non zero.
@@ -152,7 +152,7 @@ template <typename T>
 struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
   std::unique_ptr<cudf::column> operator()(table_view const& strings_columns,
                                            bool,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     auto num_columns = strings_columns.num_columns();
@@ -176,7 +176,7 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::strin
                       indices.begin(),
                       interleave_strings_fn{*d_table});
 
-    return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+    return cudf::make_strings_column(indices, stream, mr);
   }
 };
 
@@ -184,7 +184,7 @@ template <typename T>
 struct interleave_columns_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
   std::unique_ptr<cudf::column> operator()(table_view const& input,
                                            bool create_mask,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     auto arch_column = input.column(0);
@@ -234,7 +234,7 @@ struct interleave_columns_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
 }  // anonymous namespace
 
 std::unique_ptr<column> interleave_columns(table_view const& input,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.num_columns() > 0, "input must have at least one column to determine dtype.");
@@ -255,7 +255,7 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
 }  // namespace detail
 
 std::unique_ptr<column> interleave_columns(table_view const& input,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

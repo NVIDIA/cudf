@@ -226,6 +226,7 @@ def test_groupby_namedagg_mean_decimal128_keeps_columns():
             "avg_price": [20.0, 60.0],
         }
     )
+    assert out["sum_qty"].dtype == expected["sum_qty"].dtype
     assert_eq(out, expected, check_dtype=False)
 
 

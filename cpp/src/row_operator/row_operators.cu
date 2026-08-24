@@ -306,7 +306,9 @@ auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
     cudf::detail::make_empty_host_vector<detail::dremel_device_view>(num_list_columns, stream);
   for (auto const& col : table) {
     if (col.type().id() == type_id::LIST) {
-      dremel_data.push_back(detail::get_comparator_data(col, {}, false, stream));
+      auto const current_mr = cudf::get_current_device_resource_ref();
+      dremel_data.push_back(
+        detail::get_comparator_data(col, {}, false, stream, {current_mr, current_mr}));
       dremel_device_views.push_back(dremel_data.back());
     }
   }

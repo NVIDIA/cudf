@@ -340,9 +340,6 @@ class stats_columns_collector : public ast::detail::expression_transformer {
   std::pair<thrust::host_vector<bool>, bool> get_stats_columns_mask() &&;
 
  protected:
-  std::vector<std::reference_wrapper<ast::expression const>> visit_operands(
-    cudf::host_span<std::reference_wrapper<ast::expression const> const> operands);
-
   size_type _num_columns;
 
  private:

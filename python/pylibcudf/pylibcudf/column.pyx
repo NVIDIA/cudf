@@ -188,10 +188,12 @@ cdef gpumemoryview _copy_array_to_device(object buf, object stream: CudaStreamLi
     cdef size_t nbytes = len(mv) * mv.itemsize
     cdef Stream _stream = _get_stream(stream)
 
-    return gpumemoryview(DeviceBuffer.to_device(
+    cdef DeviceBuffer dbuf = DeviceBuffer.to_device(
         <const unsigned char[:nbytes:1]><const unsigned char*>ptr,
         _stream
-    ))
+    )
+    _stream.synchronize()
+    return gpumemoryview(dbuf)
 
 
 def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
@@ -205,6 +207,9 @@ def _infer_list_depth_and_dtype(obj: list) -> tuple[int, type]:
 
     if not current and depth == 0:
         raise ValueError("Cannot infer dtype from empty input")
+
+    if isinstance(current, list):
+        raise ValueError("Inconsistent inner list shapes")
 
     if not isinstance(current, (int, float, bool, str)):
         raise TypeError(f"Unsupported scalar type: {type(current).__name__}")
@@ -222,24 +227,23 @@ def _flatten_nested_list(obj: list, depth: int) -> tuple[list, tuple[int, ...]]:
 
 
 def _infer_shape(obj: list, depth: int) -> tuple[int, ...]:
-    shape = []
-    current = obj
+    if not obj:
+        raise ValueError("Inconsistent inner list shapes")
 
-    for i in range(depth):
-        if not current:
-            raise ValueError("Cannot infer shape from empty list")
+    shape = (len(obj),)
+    if depth == 1:
+        if any(isinstance(value, list) for value in obj):
+            raise ValueError("Inconsistent inner list shapes")
+        return shape
 
-        shape.append(len(current))
+    if not isinstance(obj[0], list):
+        raise ValueError("Inconsistent inner list shapes")
+    first_shape = _infer_shape(obj[0], depth - 1)
+    for sub in obj[1:]:
+        if not isinstance(sub, list) or _infer_shape(sub, depth - 1) != first_shape:
+            raise ValueError("Inconsistent inner list shapes")
 
-        if i < depth - 1:
-            first = current[0]
-            if not all(
-                isinstance(sub, list) and len(sub) == len(first) for sub in current
-            ):
-                raise ValueError("Inconsistent inner list shapes")
-            current = first
-
-    return tuple(shape)
+    return shape + first_shape
 
 
 def _flatten(obj: list, out: list, offset: int) -> int:
@@ -1034,6 +1038,7 @@ cdef class Column:
             ptr = <const unsigned char*><uintptr_t>data_ptr
             view = (<const unsigned char[:nbytes]> ptr)[:nbytes]
             dbuf = DeviceBuffer.to_device(view, _stream)
+            _stream.synchronize()
         else:
             dbuf = DeviceBuffer(size=0, stream=_stream)
 

@@ -126,7 +126,7 @@ struct hybrid_scan_fn {
       reader
         ->materialize_all_columns(row_groups_indices, all_column_chunk_data, options, stream, mr)
         .tbl);
-    stream.synchronize_no_throw();
+    stream.sync();
   }
 };
 

@@ -82,7 +82,7 @@ struct chunk_fn {
         cudf::sort_by_key(result->view(), result->view().select({0}), {}, {}, stream));
     }
     // done with this stream
-    stream.synchronize_no_throw();
+    stream.sync();
   }
 };
 

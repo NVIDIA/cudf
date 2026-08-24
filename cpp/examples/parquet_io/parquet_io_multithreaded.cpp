@@ -82,11 +82,11 @@ struct read_fn {
     // Concatenate the tables read by this thread if not NO_CONCATENATE read_mode.
     if constexpr (read_mode != read_mode::NO_CONCATENATE) {
       auto table = concatenate_tables(std::move(tables_this_thread), stream);
-      stream.synchronize_no_throw();
+      stream.sync();
       tables[thread_id] = std::move(table);
     } else {
       // Just synchronize this stream and exit
-      stream.synchronize_no_throw();
+      stream.sync();
     }
   }
 };
@@ -170,7 +170,7 @@ struct write_fn {
     cudf::io::write_parquet(options, stream);
 
     // Done with this stream
-    stream.synchronize_no_throw();
+    stream.sync();
   }
 };
 

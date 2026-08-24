@@ -373,7 +373,7 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       enable_check_generated_files: false
-      ignored_pr_jobs: "telemetry-summarize spark-rapids-jni cuml-compat-tests velox-cudf"
+      ignored_pr_jobs: "telemetry-summarize spark-rapids-jni cuml-compat-tests"
   conda-cpp-build:
     needs: [build-details, checks]
     permissions:
@@ -983,16 +983,6 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/spark-rapids-jni.yaml
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
-  velox-cudf:
-    needs: changed-files
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      packages: read
-      pull-requests: read
-    uses: ./.github/workflows/velox-cudf.yaml
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp
   telemetry-summarize:
     # This job must use a self-hosted runner to record telemetry traces.
     runs-on: linux-amd64-cpu4

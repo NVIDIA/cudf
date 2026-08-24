@@ -2,9 +2,14 @@ name: velox-cudf
 
 on:
   workflow_call:
+    inputs:
+      cudf-ref:
+        required: true
+        type: string
 
 jobs:
   velox-cudf-build:
+    continue-on-error: true
     runs-on: linux-amd64-cpu8
     container:
       image: ghcr.io/facebookincubator/velox-dev:adapters
@@ -23,6 +28,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.cudf-ref }}
           path: cudf-local
       - uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
         with:

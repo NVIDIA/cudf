@@ -8,6 +8,8 @@
 
 #include <cudf/ast/expressions.hpp>
 
+#include <cuda/stream>
+
 namespace cudf {
 namespace ast {
 namespace jit {
@@ -31,7 +33,7 @@ std::reference_wrapper<expression const> operation::accept(
 
 bool operation::may_evaluate_null(table_view const& left,
                                   table_view const& right,
-                                  rmm::cuda_stream_view stream) const
+                                  cuda::stream_ref stream) const
 {
   CUDF_FAIL("JIT operation is an internal expression and should not be evaluated directly",
             std::invalid_argument);

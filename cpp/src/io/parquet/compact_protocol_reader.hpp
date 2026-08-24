@@ -56,9 +56,12 @@ class CompactProtocolReader {
   {
     static_assert(std::is_unsigned_v<T>, "varints are decoded into unsigned types");
     T v = 0;
-    for (uint32_t l = 0;; l += 7) {
+    for (uint32_t l = 0;;) {
       T c = getb();
-      if (l < sizeof(T) * 8) { v |= (c & 0x7f) << l; }
+      if (l < sizeof(T) * 8) {
+        v |= (c & 0x7f) << l;
+        l += 7;
+      }
       if (c < 0x80) { break; }
     }
     return v;

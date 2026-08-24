@@ -38,6 +38,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -1825,6 +1826,61 @@ TEST_F(ParquetReaderTest, RequiredBinaryUnderNullStruct)
     static_cast<cudf::bitmask_type*>(expected_mask.data()), null_row, null_row + 1, false);
   std::vector<std::unique_ptr<cudf::column>> expected_children;
   expected_children.push_back(expected_strings.release());
+  auto expected_struct = cudf::create_structs_hierarchy(
+    num_rows, std::move(expected_children), 1, std::move(expected_mask));
+  auto const expected = table_view{{expected_struct->view()}};
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, RequiredIntUnderNullStruct)
+{
+  // same shape as RequiredBinaryUnderNullStruct with a fixed-width leaf: the value slot of an
+  // inherited-null row is never written by decode, so the buffer must come up zeroed
+  constexpr auto num_rows = 10;
+  constexpr auto null_row = 5;
+
+  auto const value_iter = cudf::detail::make_counting_transform_iterator(
+    0, [](cudf::size_type i) { return static_cast<int32_t>(i + 1); });
+  auto values = cudf::test::fixed_width_column_wrapper<int32_t>(value_iter, value_iter + num_rows);
+
+  auto struct_mask = cudf::create_null_mask(num_rows, cudf::mask_state::ALL_VALID);
+  cudf::set_null_mask(
+    static_cast<cudf::bitmask_type*>(struct_mask.data()), null_row, null_row + 1, false);
+  std::vector<std::unique_ptr<cudf::column>> write_children;
+  write_children.push_back(values.release());
+  auto write_struct =
+    cudf::create_structs_hierarchy(num_rows, std::move(write_children), 1, std::move(struct_mask));
+  auto const write_table = table_view{{write_struct->view()}};
+
+  cudf::io::table_input_metadata output_metadata(write_table);
+  output_metadata.column_metadata[0].set_name("s").child(0).set_name("n").set_nullability(false);
+
+  auto filepath = temp_env->get_temp_filepath("RequiredIntUnderNullStruct.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, write_table)
+      .metadata(std::move(output_metadata))
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .compression(cudf::io::compression_type::NONE);
+  cudf::io::write_parquet(out_opts);
+
+  // the leaf is required so the read-back child carries no validity; its slot at the
+  // inherited-null row is zero
+  std::vector<int32_t> expected_values(num_rows);
+  std::iota(expected_values.begin(), expected_values.end(), 1);
+  expected_values[null_row] = 0;
+  auto expected_values_col =
+    cudf::test::fixed_width_column_wrapper<int32_t>(expected_values.begin(), expected_values.end());
+
+  auto expected_mask = cudf::create_null_mask(num_rows, cudf::mask_state::ALL_VALID);
+  cudf::set_null_mask(
+    static_cast<cudf::bitmask_type*>(expected_mask.data()), null_row, null_row + 1, false);
+  std::vector<std::unique_ptr<cudf::column>> expected_children;
+  expected_children.push_back(expected_values_col.release());
   auto expected_struct = cudf::create_structs_hierarchy(
     num_rows, std::move(expected_children), 1, std::move(expected_mask));
   auto const expected = table_view{{expected_struct->view()}};

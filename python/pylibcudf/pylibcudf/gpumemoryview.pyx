@@ -1,11 +1,26 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
+from libc.stdint cimport uintptr_t, uint64_t
+from collections.abc import Mapping
+import cython
 import functools
 import operator
+from typing import Any
 
 from .types cimport DataType, size_of, type_id
+
+
+cdef gpumemoryview _slice(gpumemoryview parent, uintptr_t ptr, uint64_t nbytes):
+    cdef gpumemoryview v = gpumemoryview.__new__(gpumemoryview)
+    v.ptr = ptr
+    v.nbytes = nbytes
+    v.obj = parent
+    # always returns a raw byte view regardless of the source dtype.
+    # TODO: Need to propagate stream from parent.cai if present
+    v.cai = {"data": (ptr, parent.cai["data"][1]), "shape": (nbytes,), "typestr": "|u1", "version": 3}
+    return v
 
 
 __all__ = ["gpumemoryview"]
@@ -59,6 +74,7 @@ cdef class gpumemoryview:
         self.obj = obj
         self.cai = cai
         # TODO: Need to respect readonly
+        # TODO: Need to synchronize on stream if present in cai
         self.ptr = cai["data"][0]
 
         # Compute the buffer size.
@@ -70,7 +86,7 @@ cdef class gpumemoryview:
         self.nbytes = functools.reduce(operator.mul, cai["shape"]) * itemsize
 
     @property
-    def __cuda_array_interface__(self):
+    def __cuda_array_interface__(self) -> Mapping[str, Any]:
         return self.cai
 
     @property
@@ -82,7 +98,42 @@ cdef class gpumemoryview:
         """
         return self.nbytes
 
-    def __len__(self):
-        return self.obj.__cuda_array_interface__["shape"][0]
+    def __len__(self) -> int:
+        return self.cai["shape"][0]
+
+    @cython.annotation_typing(False)
+    def byte_slice(self, s: slice) -> gpumemoryview:
+        """Return a byte-range sub-view of this buffer.
+
+        Parameters
+        ----------
+        s : slice
+            Byte-based slice.
+
+        Returns
+        -------
+        gpumemoryview
+            A ``|u1`` view of the requested byte range. The returned view
+            holds a reference to the parent buffer, keeping it alive.
+
+        Raises
+        ------
+        TypeError
+            If ``s`` is not a slice.
+        ValueError
+            If the slice step is not 1. Out-of-range or reversed ranges
+            return a zero-length view rather than raising.
+        """
+        if not isinstance(s, slice):
+            raise TypeError(
+                f"byte_slice requires a slice, not {type(s).__name__}"
+            )
+        start, stop, step = s.indices(self.nbytes)
+        if step != 1:
+            raise ValueError("byte_slice only supports step=1 slices")
+        length = stop - start
+        if length <= 0:
+            return _slice(self, self.ptr + start, 0)
+        return _slice(self, self.ptr + start, length)
 
     __hash__ = None

@@ -7,6 +7,8 @@ from libcpp.string cimport string
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
+from typing import TypeAlias
+
 from rmm.pylibrmm.stream cimport Stream
 
 from pylibcudf.concatenate cimport concatenate
@@ -46,6 +48,10 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.types cimport DataType
 
 from pylibcudf.utils cimport _get_stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from cython.operator import dereference
 
@@ -62,6 +68,8 @@ __all__ = [
     "JsonWriterOptions",
     "JsonWriterOptionsBuilder"
 ]
+
+NameAndType: TypeAlias = tuple[str, DataType, list["NameAndType"]]
 
 cdef map[string, schema_element] _generate_schema_map(list dtypes):
     cdef map[string, schema_element] schema_map
@@ -154,7 +162,7 @@ cdef class JsonReaderOptions:
     For details, see `:cpp:class:`cudf::io::json_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> JsonReaderOptionsBuilder:
         """
         Create a JsonReaderOptionsBuilder object
 
@@ -177,7 +185,7 @@ cdef class JsonReaderOptions:
         json_builder.source = source
         return json_builder
 
-    cpdef void set_dtypes(self, list types):
+    cpdef void set_dtypes(self, list types: list[DataType] | list[NameAndType]):
         """
         Set data types for columns to be read.
 
@@ -330,7 +338,7 @@ cdef class JsonReaderOptions:
     cpdef void allow_nonnumeric_numbers(self, bool val):
         self.c_obj.allow_nonnumeric_numbers(val)
 
-    cpdef void set_na_values(self, list vals):
+    cpdef void set_na_values(self, list vals: list[str]):
         cdef vector[string] vec
         for val in vals:
             if isinstance(val, str):
@@ -354,6 +362,8 @@ cdef class JsonReaderOptions:
 
 
 cdef class JsonReaderOptionsBuilder:
+    """Builder to build options for ``read_json``."""
+
     cpdef JsonReaderOptionsBuilder byte_range_offset(self, size_t byte_range_offset):
         """
         Set number of bytes to skip from source start.
@@ -693,7 +703,7 @@ cdef class JsonReaderOptionsBuilder:
         self.c_obj.unquoted_control_chars(val)
         return self
 
-    cpdef build(self):
+    cpdef JsonReaderOptions build(self):
         """Create a JsonReaderOptions object"""
         cdef JsonReaderOptions json_options = JsonReaderOptions.__new__(
             JsonReaderOptions
@@ -706,7 +716,7 @@ cdef class JsonReaderOptionsBuilder:
 cpdef tuple chunked_read_json(
     JsonReaderOptions options,
     int chunk_size=100_000_000,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None,
 ):
     """
@@ -775,7 +785,7 @@ cpdef tuple chunked_read_json(
 
 cpdef TableWithMetadata read_json(
     JsonReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None
 ):
     """
@@ -814,7 +824,7 @@ cpdef TableWithMetadata read_json_from_string_column(
     list dtypes = None,
     compression_type compression = compression_type.NONE,
     json_recovery_mode_t recovery_mode = json_recovery_mode_t.RECOVER_WITH_NULL,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr = None
 ):
     """
@@ -903,7 +913,7 @@ cdef class JsonWriterOptions:
     For details, see :cpp:class:`cudf::io::json_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> JsonWriterOptionsBuilder:
         """
         Create a JsonWriterOptionsBuilder object
 
@@ -988,6 +998,8 @@ cdef class JsonWriterOptions:
         self.c_obj.set_compression(comptype)
 
 cdef class JsonWriterOptionsBuilder:
+    """Builder to build options for ``write_json``."""
+
     cpdef JsonWriterOptionsBuilder metadata(self, TableWithMetadata tbl_w_meta):
         """
         Sets optional metadata (with column names).
@@ -1096,7 +1108,7 @@ cdef class JsonWriterOptionsBuilder:
         return json_options
 
 
-cpdef void write_json(JsonWriterOptions options, object stream = None):
+cpdef void write_json(JsonWriterOptions options, object stream: CudaStreamLike | None = None):
     """
     Writes a set of columns to JSON format.
 

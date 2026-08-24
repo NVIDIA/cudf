@@ -96,6 +96,14 @@ class NativeDepsLoaderTest {
   }
 
   @Test
+  void singleLoad_throws_whenDirIsEmpty() {
+    IOException ex = assertThrows(IOException.class,
+        () -> NativeDepsLoader.loadNativeDep("cudf", false));
+    assertTrue(ex.getMessage().contains("libcudf.so"),
+        "expected message to mention libcudf.so, got: " + ex.getMessage());
+  }
+
+  @Test
   void flatLoad_throws_whenLibIsMissing() throws IOException {
     Files.createFile(libDir.resolve("libnvcomp.so"));
     IOException ex = assertThrows(IOException.class,

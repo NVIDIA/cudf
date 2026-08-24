@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -32,7 +32,7 @@ namespace detail {
  * @return Value from the `col_view[element_index]`
  */
 template <typename T>
-T get_value(column_view const& col_view, size_type element_index, rmm::cuda_stream_view stream)
+T get_value(column_view const& col_view, size_type element_index, cuda::stream_ref stream)
 {
   CUDF_EXPECTS(cudf::is_fixed_width(col_view.type()), "get_value supports only fixed-width types");
   CUDF_EXPECTS(data_type(type_to_id<T>()) == col_view.type(), "get_value data type mismatch");

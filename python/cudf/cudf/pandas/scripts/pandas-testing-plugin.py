@@ -226,8 +226,8 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/sparse/test_array.py::TestSparseArrayAnalytics::test_ufunc_args": "TODO: Add a reason for failure",
     "tests/arrays/sparse/test_array.py::test_array_interface": "TODO: Add a reason for failure",
     "tests/arrays/sparse/test_constructors.py::TestConstructors::test_constructor_copy": "TODO: Add a reason for failure",
-    "tests/arrays/string_/test_string_arrow.py::test_pickle_roundtrip[na_value0]": "https://github.com/rapidsai/cudf/issues/18659#issuecomment-3710985854",
-    "tests/arrays/string_/test_string_arrow.py::test_pickle_roundtrip[nan]": "https://github.com/rapidsai/cudf/issues/18659#issuecomment-3710985854",
+    "tests/arrays/string_/test_string_arrow.py::test_pickle_roundtrip[na_value0]": "https://github.com/NVIDIA/cudf/issues/18659#issuecomment-3710985854",
+    "tests/arrays/string_/test_string_arrow.py::test_pickle_roundtrip[nan]": "https://github.com/NVIDIA/cudf/issues/18659#issuecomment-3710985854",
     "tests/arrays/test_datetimelike.py::TestDatetimeArray::test_array_interface[B]": "TODO: Add a reason for failure",
     "tests/arrays/test_datetimelike.py::TestDatetimeArray::test_array_interface[D]": "TODO: Add a reason for failure",
     "tests/arrays/test_datetimelike.py::TestDatetimeArray::test_array_interface[ME]": "TODO: Add a reason for failure",
@@ -797,7 +797,7 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::test_interpolate_not_numeric[bool]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_mul_numpy_nullable_with_pyarrow_float": "AssertionError: Attributes of Series are different",
     "tests/extension/test_arrow.py::test_ops_with_nan_is_na[False]": "assert not np.True_",
-    "tests/extension/test_arrow.py::test_pickle_roundtrip[string]": "https://github.com/rapidsai/cudf/issues/18659#issuecomment-3710985854",
+    "tests/extension/test_arrow.py::test_pickle_roundtrip[string]": "https://github.com/NVIDIA/cudf/issues/18659#issuecomment-3710985854",
     "tests/extension/test_arrow.py::test_pow_missing_operand": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_round": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_setitem_float_nan_is_na[False]": "Failed: DID NOT RAISE <class 'pyarrow.lib.ArrowInvalid'>",
@@ -1259,15 +1259,7 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/methods/test_replace.py::TestDataFrameReplaceRegex::test_regex_replace_scalar[True-True-True-\\\\s*(\\\\.)\\\\s*-\\\\1\\\\1\\\\1-data1]": "assert      a  b\\n0    a  0\\n1    b  1\\n2  ...  2\\n3  ...  3 is      a  b\\n0    a  0\\n1    b  1\\n2  ...  2\\n3  ...  3",
     "tests/frame/methods/test_replace.py::TestDataFrameReplaceRegex::test_regex_replace_scalar[True-True-True-\\\\s*\\\\.\\\\s*-nan-data0]": "assert      a  b\\n0    a  e\\n1    b  f\\n2  NaN  g\\n3  NaN  h is      a  b\\n0    a  e\\n1    b  f\\n2  NaN  g\\n3  NaN  h",
     "tests/frame/methods/test_replace.py::TestDataFrameReplaceRegex::test_regex_replace_scalar[True-True-True-\\\\s*\\\\.\\\\s*-nan-data1]": "assert      a  b\\n0    a  0\\n1    b  1\\n2  NaN  2\\n3  NaN  3 is      a  b\\n0    a  0\\n1    b  1\\n2  NaN  2\\n3  NaN  3",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_duplicate_columns_allow[False-False]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_duplicate_columns_allow[False-True]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_duplicate_columns_default[False]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_duplicate_columns_default[True]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_empty_rangeindex": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_level_missing[idx_lev0]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_level_missing[idx_lev1]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_multiindex_columns": "TODO: Add a reason for failure",
+    "tests/frame/methods/test_reset_index.py::TestResetIndex::test_reset_index_empty_rangeindex": "cudf MultiIndex stores levels as int64 columns, losing RangeIndex type info; empty level cannot be reconstructed as RangeIndex",
     "tests/frame/methods/test_sample.py::TestSample::test_sample_random_state[DataFrame-np.array-arg0]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_sample.py::TestSample::test_sample_random_state[Series-np.array-arg0]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_set_axis.py::TestDataFrameSetAxis::test_set_axis_copy": "TODO: Add a reason for failure",
@@ -1814,8 +1806,6 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_missing.py::test_groupby_column_index_name_lost_fill_funcs[bfill]": "AssertionError: Index are different",
     "tests/groupby/test_missing.py::test_groupby_column_index_name_lost_fill_funcs[ffill]": "AssertionError: Index are different",
     "tests/groupby/test_missing.py::test_indices_with_missing": "TODO: Add a reason for failure",
-    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[max]": "Failed: DID NOT RAISE <class 'TypeError'>",
-    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[min]": "Failed: DID NOT RAISE <class 'TypeError'>",
     "tests/groupby/test_reductions.py::test_basic_aggregations[float32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_basic_aggregations[int32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_groupby_mean_no_overflow": "TODO: Add a reason for failure",
@@ -3334,10 +3324,6 @@ NODEIDS_THAT_FAIL = {
     "tests/series/methods/test_replace.py::TestSeriesReplace::test_replace_with_dictlike_and_string_dtype[string[pyarrow]]": "TODO: Add a reason for failure",
     "tests/series/methods/test_replace.py::TestSeriesReplace::test_replace_with_dictlike_and_string_dtype[string[python]]": "TODO: Add a reason for failure",
     "tests/series/methods/test_replace.py::test_replace_from_index": "AssertionError: Series are different",
-    "tests/series/methods/test_reset_index.py::TestResetIndex::test_reset_index_drop_errors": "TODO: Add a reason for failure",
-    "tests/series/methods/test_reset_index.py::TestResetIndex::test_reset_index_level": "TODO: Add a reason for failure",
-    "tests/series/methods/test_reset_index.py::test_column_name_duplicates[False-names0-expected_names0]": "Failed: DID NOT RAISE <class 'ValueError'>",
-    "tests/series/methods/test_reset_index.py::test_column_name_duplicates[False-names1-expected_names1]": "Failed: DID NOT RAISE <class 'ValueError'>",
     "tests/series/methods/test_round.py::TestSeriesRound::test_round_builtin[Float32]": "TODO: Add a reason for failure",
     "tests/series/methods/test_round.py::TestSeriesRound::test_round_builtin[Float64]": "TODO: Add a reason for failure",
     "tests/series/methods/test_round.py::TestSeriesRound::test_round_numpy_with_nan[Float32]": "TODO: Add a reason for failure",
@@ -4176,7 +4162,7 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/generic/test_finalize.py::test_categorical_accessor[method4]": "pandas xfails (reason: not implemented), but xpasses with cudf.pandas",
     "tests/generic/test_finalize.py::test_categorical_accessor[method7]": "pandas xfails (reason: not implemented), but xpasses with cudf.pandas",
     "tests/generic/test_finalize.py::test_categorical_accessor[method8]": "pandas xfails (reason: not implemented), but xpasses with cudf.pandas",
-    "tests/groupby/test_groupby.py::test_groupby_all_nan_groups_drop": "Flaky: intermittent AssertionError (https://github.com/rapidsai/cudf/issues/22681)",
+    "tests/groupby/test_groupby.py::test_groupby_all_nan_groups_drop": "Flaky: intermittent AssertionError (https://github.com/NVIDIA/cudf/issues/22681)",
     "tests/groupby/test_groupby.py::test_ops_not_as_index[idxmin]": "pandas xfails, but xpasses with cudf.pandas",
     "tests/groupby/test_groupby.py::test_single_element_list_grouping[selection2]": "Flaky xfails (TODO: Validate with pandas 3)",
     "tests/groupby/test_numba.py::TestEngine::test_as_index_false_unsupported[max-min_count]": "cuDF computes reductions on GPU without numba; pandas-specific limitation does not apply",
@@ -5243,6 +5229,13 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/window/moments/test_moments_consistency_rolling.py::test_rolling_apply_consistency_sum[all_data7-rolling_consistency_cases0-False-sum]": "pandas xfails, but xpasses with cudf.pandas",
 }
 
+# Keep keys in alphabetical order
+NODEIDS_THAT_MAY_FAIL = {
+    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[max]": "Environment-sensitive TypeError expectation",
+    "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[min]": "Environment-sensitive TypeError expectation",
+    "tests/io/test_spss.py::test_spss_metadata": "pandas 3.0.3 metadata expectation is incompatible with pyreadstat 1.3.6",
+}
+
 
 def pytest_configure(config):
     config.addinivalue_line(
@@ -5272,5 +5265,9 @@ def pytest_collection_modifyitems(session, config, items):
             )
         ) is not None:
             item.add_marker(pytest.mark.skip(reason=reason))
+        elif (
+            reason := NODEIDS_THAT_MAY_FAIL.get(item.nodeid, None)
+        ) is not None:
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=False))
         elif (reason := NODEIDS_THAT_FAIL.get(item.nodeid, None)) is not None:
             item.add_marker(pytest.mark.xfail(reason=reason))

@@ -19,7 +19,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <utility>
 
@@ -38,14 +38,14 @@ struct reduction_parameters {
   column_view const& col;
   data_type const output_dtype;
   std::optional<std::reference_wrapper<scalar const>> init;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   reduction_parameters(reduce_aggregation const& agg,
                        column_view const& col,
                        data_type const output_dtype,
                        std::optional<std::reference_wrapper<scalar const>> init,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
     : agg(agg), col(col), output_dtype(output_dtype), init(init), stream(stream), mr(std::move(mr))
   {
@@ -140,7 +140,7 @@ struct reduction_function<Source, cudf::aggregation::ARGMIN> : public base_reduc
     CUDF_EXPECTS(params.output_dtype.id() == type_to_id<size_type>(),
                  "ARGMIN aggregation expects output type to be cudf::size_type",
                  cudf::data_type_error);
-    return argmin(params.col, params.stream, params.mr);
+    return argmin(params.col, data_type{type_to_id<Source>()}, params.stream, params.mr);
   }
 };
 
@@ -151,7 +151,7 @@ struct reduction_function<Source, cudf::aggregation::ARGMAX> : public base_reduc
     CUDF_EXPECTS(params.output_dtype.id() == type_to_id<size_type>(),
                  "ARGMAX aggregation expects output type to be cudf::size_type",
                  cudf::data_type_error);
-    return argmax(params.col, params.stream, params.mr);
+    return argmax(params.col, data_type{type_to_id<Source>()}, params.stream, params.mr);
   }
 };
 
@@ -475,7 +475,7 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                reduce_aggregation const& agg,
                                data_type output_dtype,
                                std::optional<std::reference_wrapper<scalar const>> init,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!init.has_value() || cudf::have_same_types(col, init.value().get()),
@@ -517,7 +517,7 @@ bool is_valid_aggregation(data_type source, aggregation::Kind kind)
 std::unique_ptr<scalar> reduce(column_view const& col,
                                reduce_aggregation const& agg,
                                data_type output_dtype,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -528,7 +528,7 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                reduce_aggregation const& agg,
                                data_type output_dtype,
                                std::optional<std::reference_wrapper<scalar const>> init,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

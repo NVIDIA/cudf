@@ -459,7 +459,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/velox-cudf.yaml
     with:
-      cudf-ref: ${{ inputs.sha || github.sha }}
+      cudf-ref: ${{ inputs.sha }}
   trigger-pandas-tests:
     if: inputs.build_type == 'nightly'
     needs: wheel-build-cudf

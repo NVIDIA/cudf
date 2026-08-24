@@ -30,16 +30,18 @@ jobs:
       - name: Install gha-tools
         run: |
           dnf -y install jq
-          curl -fsSL https://github.com/rapidsai/gha-tools/releases/download/v0.0.211/tools.tar.gz -o /tmp/gha-tools.tar.gz
-          echo "e015ee3de514eaabf98834202e6d885ec702b4b062f099b7bc3cab486565f1c6  /tmp/gha-tools.tar.gz" | sha256sum --check
-          tar -xzf /tmp/gha-tools.tar.gz -C /usr/local/bin
-      - name: Setup sccache-dist
-        uses: rapidsai/shared-actions/setup-sccache-dist@fe4a4d1798db2cdf1723feee49bf2986ed8a0254 # main
-      - uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
+          wget https://github.com/rapidsai/gha-tools/releases/latest/download/tools.tar.gz -O - | tar -xz -C /usr/local/bin
+      - uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-duration-seconds: 43200 # 12h
+      - name: Setup sccache-dist
+        uses: rapidsai/shared-actions/setup-sccache-dist@main
+        env:
+          AWS_REGION: "${{ env.AWS_REGION }}"
+          AWS_ACCESS_KEY_ID: "${{ env.AWS_ACCESS_KEY_ID }}"
+          AWS_SECRET_ACCESS_KEY: "${{ env.AWS_SECRET_ACCESS_KEY }}"
       - name: "Build velox-cudf"
         env:
           # Used by update-cudf-deps.sh to query dependency revisions via the GitHub API.

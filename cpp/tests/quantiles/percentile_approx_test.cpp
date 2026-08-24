@@ -22,6 +22,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
@@ -35,7 +36,7 @@ std::unique_ptr<cudf::column> arrow_percentile_approx(cudf::column_view const& _
   static auto const _arrow_init_status = arrow::compute::Initialize();
   EXPECT_TRUE(_arrow_init_status.ok());
 
-  auto stream = cudf::get_default_stream();
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // sort the incoming values using the same settings that groupby does.
   // this is a little weak because null_order::AFTER is hardcoded internally to groupby.
@@ -241,8 +242,8 @@ void percentile_approx_test(cudf::column_view const& _keys,
 
 void simple_test(cudf::data_type input_type, std::vector<std::pair<int, int>> params)
 {
-  auto stream = cudf::get_default_stream();
-  auto values = cudf::test::generate_standardized_percentile_distribution(input_type);
+  cuda::stream_ref stream = cudf::get_default_stream();
+  auto values             = cudf::test::generate_standardized_percentile_distribution(input_type);
   // all in the same group
   auto keys = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT32}, values->size(), cudf::mask_state::UNALLOCATED);
@@ -262,8 +263,8 @@ struct group_index {
 
 void grouped_test(cudf::data_type input_type, std::vector<std::pair<int, int>> params)
 {
-  auto stream = cudf::get_default_stream();
-  auto values = cudf::test::generate_standardized_percentile_distribution(input_type);
+  cuda::stream_ref stream = cudf::get_default_stream();
+  auto values             = cudf::test::generate_standardized_percentile_distribution(input_type);
   // all in the same group
   auto keys = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT32}, values->size(), cudf::mask_state::UNALLOCATED);
@@ -309,8 +310,8 @@ void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<in
 
 void grouped_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<int, int>> params)
 {
-  auto stream = cudf::get_default_stream();
-  auto values = cudf::test::generate_standardized_percentile_distribution(input_type);
+  cuda::stream_ref stream = cudf::get_default_stream();
+  auto values             = cudf::test::generate_standardized_percentile_distribution(input_type);
   // all in the same group
   auto keys = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT32}, values->size(), cudf::mask_state::UNALLOCATED);

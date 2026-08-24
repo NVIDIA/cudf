@@ -25,6 +25,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream_ref>
 
 #include <limits>
 #include <numeric>
@@ -791,9 +792,9 @@ TEST_F(FromArrowDeviceTest, StringViewType)
   NANOARROW_THROW_NOT_OK(ArrowArrayViewInitFromSchema(&view, &schema, nullptr));
   NANOARROW_THROW_NOT_OK(ArrowArrayViewSetArray(&view, &input, nullptr));
 
-  auto stream  = cudf::get_default_stream();
-  auto items   = view.buffer_views[1].data.as_binary_view;
-  auto d_items = rmm::device_uvector<ArrowBinaryView>(input.length, stream);
+  cuda::stream_ref stream = cudf::get_default_stream();
+  auto items              = view.buffer_views[1].data.as_binary_view;
+  auto d_items            = rmm::device_uvector<ArrowBinaryView>(input.length, stream);
   CUDF_CUDA_TRY(cudaMemcpyAsync(d_items.data(),
                                 items,
                                 input.length * sizeof(ArrowBinaryView),
@@ -893,9 +894,9 @@ TEST_F(FromArrowDeviceTest, StringViewTypeWithProducerOwnedPrivateData)
   NANOARROW_THROW_NOT_OK(ArrowArrayViewSetArray(&view, input.get(), nullptr));
   ASSERT_GT(view.n_variadic_buffers, 0);
 
-  auto stream  = cudf::get_default_stream();
-  auto items   = view.buffer_views[1].data.as_binary_view;
-  auto d_items = rmm::device_uvector<ArrowBinaryView>(input->length, stream);
+  cuda::stream_ref stream = cudf::get_default_stream();
+  auto items              = view.buffer_views[1].data.as_binary_view;
+  auto d_items            = rmm::device_uvector<ArrowBinaryView>(input->length, stream);
   CUDF_CUDA_TRY(cudaMemcpyAsync(d_items.data(),
                                 items,
                                 input->length * sizeof(ArrowBinaryView),

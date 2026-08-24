@@ -12,6 +12,8 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
+#include <cuda/stream_ref>
+
 #include <vector>
 
 template <typename T>
@@ -45,8 +47,8 @@ TYPED_TEST(RoaringBitmapTest, Basics)
     }
   }();
 
-  auto const stream = cudf::get_default_stream();
-  auto const mr     = cudf::get_current_device_resource_ref();
+  cuda::stream_ref const stream = cudf::get_default_stream();
+  auto const mr                 = cudf::get_current_device_resource_ref();
 
   auto bitmap = cudf::roaring_bitmap(bitmap_type, serialized_bitmap_data);
 

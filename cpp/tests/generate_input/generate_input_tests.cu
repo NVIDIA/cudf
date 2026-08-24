@@ -187,6 +187,35 @@ TEST_F(GenerateInputTest, FullRangeFloatBoundsOnInt64)
   EXPECT_GT(params.upper_bound, 9000000000000000000LL);
 }
 
+TEST_F(GenerateInputTest, UnsignedBoundsOnChronoTargetSaturate)
+{
+  // chrono bounds are int64; unsigned bounds beyond int64 max must not wrap to negative
+  data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<cudf::timestamp_s>(),
+    distribution_id::GEOMETRIC,
+    static_cast<uint64_t>(0),
+    ~uint64_t{0});
+
+  auto const params = profile.get_distribution_params<cudf::timestamp_s>();
+  EXPECT_EQ(params.id, distribution_id::GEOMETRIC);
+  EXPECT_EQ(params.lower_bound, 0);
+  EXPECT_EQ(params.upper_bound, std::numeric_limits<int64_t>::max());
+}
+
+TEST_F(GenerateInputTest, WideBoundsOnDecimal32ClampToRep)
+{
+  data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<numeric::decimal32>(),
+    distribution_id::UNIFORM,
+    static_cast<int64_t>(-1) << 40,
+    static_cast<int64_t>(1) << 40);
+
+  auto const params = profile.get_distribution_params<numeric::decimal32>();
+  EXPECT_EQ(params.id, distribution_id::UNIFORM);
+  EXPECT_EQ(params.lower_bound, std::numeric_limits<int32_t>::min());
+  EXPECT_EQ(params.upper_bound, std::numeric_limits<int32_t>::max());
+}
+
 TEST_F(GenerateInputTest, OutOfRangeBoundsOnUnsignedTarget)
 {
   data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(

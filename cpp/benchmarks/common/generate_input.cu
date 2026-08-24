@@ -1268,6 +1268,8 @@ template distribution_params<float> data_profile::get_distribution_params<float>
 template distribution_params<int32_t> data_profile::get_distribution_params<int32_t>() const;
 template distribution_params<numeric::decimal64>
 data_profile::get_distribution_params<numeric::decimal64>() const;
+template distribution_params<numeric::decimal32>
+data_profile::get_distribution_params<numeric::decimal32>() const;
 template distribution_params<cudf::timestamp_s>
 data_profile::get_distribution_params<cudf::timestamp_s>() const;
 template distribution_params<cudf::string_view>

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 
@@ -245,10 +246,15 @@ inline uint32_t saturated_length(T value)
 }
 
 /**
- * @brief Returns the representable range of the integer type identified by `tid`.
+ * @brief Returns the representable range of the integer type identified by `tid`. Chrono types
+ * parameterize with int64 bounds and fixed-point types with their own rep width.
  */
 inline std::pair<__int128_t, __int128_t> integer_type_range(cudf::type_id tid)
 {
+  auto const dtype = cudf::data_type{tid};
+  if (cudf::is_timestamp(dtype) or cudf::is_duration(dtype)) { return {INT64_MIN, INT64_MAX}; }
+  if (tid == cudf::type_id::DECIMAL32) { return {INT32_MIN, INT32_MAX}; }
+  if (tid == cudf::type_id::DECIMAL64) { return {INT64_MIN, INT64_MAX}; }
   switch (tid) {
     case cudf::type_id::INT8: return {INT8_MIN, INT8_MAX};
     case cudf::type_id::INT16: return {INT16_MIN, INT16_MAX};
@@ -258,8 +264,17 @@ inline std::pair<__int128_t, __int128_t> integer_type_range(cudf::type_id tid)
     case cudf::type_id::UINT16: return {0, UINT16_MAX};
     case cudf::type_id::UINT32: return {0, UINT32_MAX};
     case cudf::type_id::UINT64: return {0, static_cast<__int128_t>(UINT64_MAX)};
-    default: return {static_cast<__int128_t>(INT64_MIN), static_cast<__int128_t>(UINT64_MAX)};
+    default:
+      return {std::numeric_limits<__int128_t>::min(), std::numeric_limits<__int128_t>::max()};
   }
+}
+
+/**
+ * @brief Saturates a bound to the range returned by `integer_type_range`.
+ */
+inline __int128_t saturate_to_range(std::pair<__int128_t, __int128_t> range, __int128_t value)
+{
+  return std::clamp(value, range.first, range.second);
 }
 
 /**
@@ -342,9 +357,9 @@ class data_profile {
   [[nodiscard]] auto get_avg_run_length() const { return avg_run_length; };
 
   // Bounds passed as integers are saturated to each discrete type's own parameter range so that
-  // the later narrowing conversions stay within range (integers, chrono). Floating-point and
-  // fixed-point types in `type_or_group` receive the bounds converted to their own parameter type
-  // so that those calls take effect as well.
+  // the later narrowing conversions stay within range (integers, chrono, fixed-point reps).
+  // Floating-point types in `type_or_group` receive the bounds converted to their own parameter
+  // type so that those calls take effect as well.
   template <typename T,
             typename Type_enum,
             std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
@@ -364,11 +379,12 @@ class data_profile {
         float_params[tid] = {
           dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
       } else if (cudf::is_fixed_point(cudf::data_type{tid})) {
+        auto const range    = integer_type_range(tid);
         decimal_params[tid] = {dist,
-                               static_cast<__int128_t>(lower_bound),
-                               static_cast<__int128_t>(upper_bound),
+                               saturate_to_range(range, static_cast<__int128_t>(lower_bound)),
+                               saturate_to_range(range, static_cast<__int128_t>(upper_bound)),
                                std::nullopt};
-      } else {
+      } else if (tid != cudf::type_id::STRUCT and tid != cudf::type_id::DICTIONARY32) {
         int_params[tid] = {dist,
                            saturate_to_integer_type(tid, static_cast<__int128_t>(lower_bound)),
                            saturate_to_integer_type(tid, static_cast<__int128_t>(upper_bound))};
@@ -380,8 +396,7 @@ class data_profile {
   // types in `type_or_group` receive the bounds rounded to their own parameter type so that those
   // calls take effect as well: integral and chrono bounds via int64 rounding saturated to each
   // target's own range, string and list lengths via uint32 rounding, fixed-point bounds via int64
-  // rounding with an unspecified scale.
-  // STRUCT and DICTIONARY32 targets have no range parameters and ignore the call.
+  // rounding saturated to the rep's own width with an unspecified scale.
   template <typename T,
             typename Type_enum,
             std::enable_if_t<std::is_floating_point_v<T>, T>* = nullptr>
@@ -401,11 +416,13 @@ class data_profile {
         list_dist_desc.length_params = {
           dist, bounded_length_round(lower_bound), bounded_length_round(upper_bound)};
       } else if (cudf::is_fixed_point(cudf::data_type{tid})) {
-        decimal_params[tid] = {dist,
-                               static_cast<__int128_t>(bounded_llround(lower_bound)),
-                               static_cast<__int128_t>(bounded_llround(upper_bound)),
-                               std::nullopt};
-      } else {
+        auto const range    = integer_type_range(tid);
+        decimal_params[tid] = {
+          dist,
+          saturate_to_range(range, static_cast<__int128_t>(bounded_llround(lower_bound))),
+          saturate_to_range(range, static_cast<__int128_t>(bounded_llround(upper_bound))),
+          std::nullopt};
+      } else if (tid != cudf::type_id::STRUCT and tid != cudf::type_id::DICTIONARY32) {
         int_params[tid] = {dist,
                            saturate_to_integer_type(tid, bounded_llround(lower_bound)),
                            saturate_to_integer_type(tid, bounded_llround(upper_bound))};

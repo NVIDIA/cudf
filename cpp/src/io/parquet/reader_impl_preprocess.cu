@@ -970,8 +970,11 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
         CUDF_EXPECTS(out_buf_size <= std::numeric_limits<cudf::size_type>::max(),
                      "Number of rows exceeds cudf's column size limit",
                      std::overflow_error);
-        out_buf.create_with_mask(
-          out_buf_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr);
+        out_buf.create_with_mask(out_buf_size,
+                                 cudf::mask_state::UNINITIALIZED,
+                                 out_buf.may_have_inherited_nulls(),
+                                 _stream,
+                                 _mr);
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
           cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
@@ -1089,8 +1092,11 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                        std::overflow_error);
           // allocate
           // we're going to start null mask as all valid and then turn bits off if necessary
-          out_buf.create_with_mask(
-            buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr);
+          out_buf.create_with_mask(buffer_size,
+                                   cudf::mask_state::UNINITIALIZED,
+                                   out_buf.may_have_inherited_nulls(),
+                                   _stream,
+                                   _mr);
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
             cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /

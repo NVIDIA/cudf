@@ -67,8 +67,8 @@ void cudf::io::detail::inline_column_buffer::create_string_data(size_t num_bytes
 namespace {
 
 /**
- * @brief Recursively copy `name`, `user_data`, and `string_as_binary` fields of one buffer to
- * another.
+ * @brief Recursively copy `name`, `user_data`, `string_as_binary`, and the inherited-nulls flag
+ * of one buffer to another.
  *
  * @param buff The old output buffer
  * @param new_buff The new output buffer
@@ -79,6 +79,7 @@ void copy_buffer_data(string_policy const& buff, string_policy& new_buff)
   new_buff.name             = buff.name;
   new_buff.user_data        = buff.user_data;
   new_buff.string_as_binary = buff.string_as_binary;
+  if (buff.may_have_inherited_nulls()) { new_buff.set_may_have_inherited_nulls(); }
   for (auto const& child : buff.children) {
     auto& new_child = new_buff.children.emplace_back(string_policy(child.type, child.is_nullable));
     copy_buffer_data(child, new_child);

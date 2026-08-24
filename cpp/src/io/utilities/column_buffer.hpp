@@ -125,10 +125,16 @@ class column_buffer_base {
                         rmm::device_async_resource_ref mr);
 
   // Create a new column_buffer that has empty data but with the same basic information as the
-  // input column, including same type, nullability, name, and user_data.
+  // input column, including same type, nullability, name, user_data, and inherited-nulls flag.
   static string_policy empty_like(string_policy const& input);
 
   void set_null_mask(rmm::device_buffer&& mask) { _null_mask = std::move(mask); }
+
+  // A non-nullable buffer whose ancestors are nullable can still hold rows that are null via
+  // inheritance. Decode only writes the slots of present values, so the data array of such a
+  // buffer is zeroed at allocation to keep unwritten slots from exposing stale memory.
+  void set_may_have_inherited_nulls() { _may_have_inherited_nulls = true; }
+  [[nodiscard]] bool may_have_inherited_nulls() const { return _may_have_inherited_nulls; }
 
   template <typename T = uint32_t>
   auto null_mask()
@@ -154,6 +160,7 @@ class column_buffer_base {
   rmm::device_buffer _data{};
   rmm::device_buffer _null_mask{};
   size_type _null_count{0};
+  bool _may_have_inherited_nulls{false};
   rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
 
  public:

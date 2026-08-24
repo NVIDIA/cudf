@@ -33,6 +33,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm>
 #include <cuda/std/span>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
@@ -526,24 +527,24 @@ struct reorder_fn {
     auto run_start      = cp_start;
     for (int64_t i = cp_start; i <= cp_end; ++i) {
       bool const is_combining = (i < cp_end) && (d_ccc[i] > 0);
-      if (!is_combining) {
-        auto const run_len = i - run_start;
-        if (run_len > 1) {
-          for (int64_t j = run_start + 1; j < i; ++j) {
-            auto const cp_j  = d_cps[j];
-            auto const ccc_j = d_ccc[j];
-            int64_t k        = j - 1;
-            while (k >= run_start && d_ccc[k] > ccc_j) {
-              d_cps[k + 1] = d_cps[k];
-              d_ccc[k + 1] = d_ccc[k];
-              --k;
-            }
-            d_cps[k + 1] = cp_j;
-            d_ccc[k + 1] = ccc_j;
+      if (is_combining) { continue; }
+      auto const run_len = i - run_start;
+      if (run_len > 1) {
+        // upper_bound locates the insertion point in O(log n)
+        for (int64_t j = run_start + 1; j < i; ++j) {
+          auto const ccc_j = d_ccc[j];
+          auto const ins =
+            thrust::upper_bound(thrust::seq, d_ccc.begin() + run_start, d_ccc.begin() + j, ccc_j) -
+            d_ccc.begin();
+          if (ins < j) {
+            auto const cps_begin = d_cps.begin() + j;
+            cuda::std::rotate(d_cps.begin() + ins, cps_begin, cps_begin + 1);
+            auto const ccc_begin = d_ccc.begin() + j;
+            cuda::std::rotate(d_ccc.begin() + ins, ccc_begin, ccc_begin + 1);
           }
         }
-        run_start = i + 1;
       }
+      run_start = i + 1;
     }
   }
 };
@@ -571,12 +572,15 @@ struct compose_fn {
     for (int64_t i = cp_start; i < cp_end; ++i) {
       if (d_cps[i] == 0) { continue; }  // already consumed
       uint8_t const ccc = d_ccc[i];
+      if (last_starter < 0) {
+        last_starter = ccc == 0 ? i : last_starter;
+        last_class   = ccc;
+        continue;
+      }
       if (ccc == 0) {
-        // New starter — try Hangul algorithmic composition only if unblocked.
-        // last_class > 0 means an unconsumed non-starter sits between last_starter
-        // and here; UAX #15 D2' requires that to block composition.
-        if (last_starter >= 0 && last_class == 0) {
-          uint32_t const composed_hangul = hangul_compose(d_cps[last_starter], d_cps[i]);
+        // Consume hangul if composed value is found.  Otherwise, treat as a new starter.
+        if (last_class == 0) {
+          auto const composed_hangul = hangul_compose(d_cps[last_starter], d_cps[i]);
           if (composed_hangul != 0) {
             d_cps[last_starter] = composed_hangul;
             d_cps[i]            = 0;
@@ -585,10 +589,9 @@ struct compose_fn {
           }
         }
         last_starter = i;
-        last_class   = 0;
       } else {
-        // Combining mark — compose with last starter if not blocked
-        if (last_starter >= 0 && last_class < ccc) {
+        // Combining mark: compose with last_starter
+        if (last_class < ccc) {
           auto const key = (static_cast<uint64_t>(d_cps[last_starter]) << 32) | d_cps[i];
           auto const it = thrust::lower_bound(thrust::seq, comp_keys.begin(), comp_keys.end(), key);
           if (it != comp_keys.end() && *it == key) {
@@ -598,8 +601,8 @@ struct compose_fn {
             continue;
           }
         }
-        last_class = ccc;
       }
+      last_class = ccc;
     }
   }
 };

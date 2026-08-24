@@ -37,7 +37,8 @@ writes it to a directory on the host. Always builds for the host architecture
 REQUIRED:
     -o, --output-dir     Host directory to receive the static install tree
                          (libcudf.a and its static dependencies).
-    -c, --cuda-version   CUDA version to build for (e.g. "12.9" or "12.9.2").
+    -c, --cuda-version   CUDA toolkit version to build for (e.g. "12.9.2").
+                         Must match a rapidsai/ci-wheel image tag.
 
 OPTIONS:
     -A, --cmake-cuda-architectures
@@ -52,8 +53,8 @@ OPTIONS:
     -h, --help           Show this help message.
 
 EXAMPLES:
-    build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version "12.9"
-    build_static_libcudf.sh -o /tmp/libcudf-cuda13 -c 13.3 -A "80"
+    build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version "12.9.2"
+    build_static_libcudf.sh -o /tmp/libcudf-cuda13 -c 13.3.0 -A "80"
 
 EOF
 }
@@ -100,14 +101,13 @@ require_arg --output-dir   "${OUTPUT_DIR}"
 require_arg --cuda-version "${CUDA_VERSION}"
 
 IMAGE="$(cudf_java_ci_wheel_image "${CUDA_VERSION}")"
-CUDA_VERSION_FULL="$(cudf_java_normalize_cuda_version "${CUDA_VERSION}")"
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
 
 echo "Building static libcudf"
 echo "  image:        ${IMAGE}"
-echo "  cuda version: ${CUDA_VERSION_FULL}"
+echo "  cuda version: ${CUDA_VERSION}"
 echo "  parallel:     ${PARALLEL_LEVEL}"
 echo "  output dir:   ${OUTPUT_DIR}"
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then
@@ -119,7 +119,7 @@ DOCKER_ARGS=(
   --volume "${REPO_ROOT}:/repo"
   --volume "${OUTPUT_DIR}:/output"
   --workdir /repo
-  --env RAPIDS_CUDA_VERSION="${CUDA_VERSION_FULL}"
+  --env RAPIDS_CUDA_VERSION="${CUDA_VERSION}"
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"
   --env HOST_GID="$(id -g)"

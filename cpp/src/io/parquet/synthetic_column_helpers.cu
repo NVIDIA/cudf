@@ -3,41 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "error.hpp"
-#include "io/comp/common.hpp"
-#include "page_decode.cuh"
-#include "reader_impl_chunking_utils.cuh"
 #include "reader_impl_helpers.hpp"
-#include "reader_impl_preprocess_utils.cuh"
 #include "synthetic_column_helpers.hpp"
 
 #include <cudf/column/column_factories.hpp>
-#include <cudf/column/column_view.hpp>
-#include <cudf/detail/algorithms/reduce.cuh>
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/labeling/label_segments.cuh>
-#include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/batched_memset.hpp>
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <rmm/device_buffer.hpp>
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <thrust/binary_search.h>
-#include <thrust/execution_policy.h>
-#include <thrust/fill.h>
 #include <thrust/scan.h>
-#include <thrust/transform.h>
 
-#include <algorithm>
-#include <limits>
 #include <numeric>
+#include <stdexcept>
 #include <utility>
-#include <vector>
 
 namespace cudf::io::parquet::detail {
 
@@ -65,10 +52,11 @@ struct map_global_to_local_row_index {
 
 }  // namespace
 
-std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info const> row_groups,
-                                                    row_range const& read_info,
-                                                    cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+std::unique_ptr<cudf::column> synthesize_row_index_column(
+  std::span<row_group_info const> row_groups,
+  row_range const& read_info,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   using column_type = size_t;
 
@@ -77,7 +65,7 @@ std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info con
   }
 
   // Allocate column data vector
-  auto col_data = rmm::device_uvector<column_type>(read_info.num_rows, stream, mr);
+  auto col_data = rmm::device_uvector<column_type>(read_info.num_rows, stream, mr.get_output_mr());
 
   // Map global row indices in the current row-range to corresponding source-local row indices
   {
@@ -93,9 +81,9 @@ std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info con
 
     // Copy to device
     auto const rg_global_offsets = cudf::detail::make_device_uvector_async(
-      host_rg_global_offsets, stream, cudf::get_current_device_resource_ref());
-    auto const rg_local_offsets = cudf::detail::make_device_uvector_async(
-      host_rg_local_offsets, stream, cudf::get_current_device_resource_ref());
+      host_rg_global_offsets, stream, mr.get_temporary_mr());
+    auto const rg_local_offsets =
+      cudf::detail::make_device_uvector_async(host_rg_local_offsets, stream, mr.get_temporary_mr());
 
     // For each output row, binary search its row group and compute the (file-local) row index
     CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
@@ -108,13 +96,14 @@ std::unique_ptr<column> synthesize_row_index_column(std::span<row_group_info con
     stream.sync();
   }
 
-  return std::make_unique<cudf::column>(std::move(col_data), rmm::device_buffer{0, stream, mr}, 0);
+  return std::make_unique<cudf::column>(
+    std::move(col_data), rmm::device_buffer{0, stream, mr.get_output_mr()}, 0);
 }
 
-std::unique_ptr<column> synthesize_source_index_column(
+std::unique_ptr<cudf::column> synthesize_source_index_column(
   std::span<std::size_t const> num_rows_per_source,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   using column_type = cudf::size_type;
 
@@ -128,13 +117,12 @@ std::unique_ptr<column> synthesize_source_index_column(
 
   // Single source
   if (num_sources == 1) {
-    auto const scalar =
-      cudf::numeric_scalar<column_type>(0, true, stream, cudf::get_current_device_resource_ref());
-    return cudf::make_column_from_scalar(scalar, num_rows, stream, mr);
+    auto const scalar = cudf::numeric_scalar<column_type>(0, true, stream, mr.get_temporary_mr());
+    return cudf::make_column_from_scalar(scalar, num_rows, stream, mr.get_output_mr());
   }
 
   // Allocate column data vector
-  auto col_data = rmm::device_uvector<column_type>(num_rows, stream, mr);
+  auto col_data = rmm::device_uvector<column_type>(num_rows, stream, mr.get_output_mr());
 
   // Label each output row with its source index via segment boundaries.
   {
@@ -145,19 +133,19 @@ std::unique_ptr<column> synthesize_source_index_column(
     host_row_offsets.front() = cudf::size_type{0};
     std::inclusive_scan(
       num_rows_per_source.begin(), num_rows_per_source.end(), host_row_offsets.begin() + 1);
-    auto const row_offsets = cudf::detail::make_device_uvector_async(
-      host_row_offsets, stream, cudf::get_current_device_resource_ref());
+    auto const row_offsets =
+      cudf::detail::make_device_uvector_async(host_row_offsets, stream, mr.get_temporary_mr());
     cudf::detail::label_segments(
       row_offsets.begin(), row_offsets.end(), col_data.begin(), col_data.end(), stream);
     stream.sync();
   }
 
-  return std::make_unique<cudf::column>(std::move(col_data), rmm::device_buffer{0, stream, mr}, 0);
+  return std::make_unique<cudf::column>(
+    std::move(col_data), rmm::device_buffer{0, stream, mr.get_output_mr()}, 0);
 }
 
-std::unique_ptr<column> synthesize_row_group_index_column(column_view const& source_indices,
-                                                          cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr)
+std::unique_ptr<cudf::column> synthesize_row_group_index_column(
+  cudf::column_view const& source_indices, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   using column_type = cudf::size_type;
 
@@ -174,15 +162,14 @@ std::unique_ptr<column> synthesize_row_group_index_column(column_view const& sou
 
   auto const output_type = data_type{cudf::type_to_id<column_type>()};
   auto output            = cudf::make_fixed_width_column(
-    output_type, source_indices.size(), mask_state::UNALLOCATED, stream, mr);
+    output_type, source_indices.size(), mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto output_view = output->mutable_view();
-  thrust::exclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    source_indices.begin<column_type>(),
-    source_indices.end<column_type>(),
-    cuda::make_constant_iterator(column_type{1}),
-    output_view.begin<column_type>(),
-    column_type{0});
+  thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                source_indices.begin<column_type>(),
+                                source_indices.end<column_type>(),
+                                cuda::make_constant_iterator(column_type{1}),
+                                output_view.begin<column_type>(),
+                                column_type{0});
   return output;
 }
 

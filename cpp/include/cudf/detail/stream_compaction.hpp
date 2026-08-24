@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,29 +11,30 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::drop_nulls(table_view const&, std::vector<size_type> const&,
- *                           cudf::size_type, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ *                           cudf::size_type, cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> drop_nulls(table_view const& input,
                                   std::vector<size_type> const& keys,
                                   cudf::size_type keep_threshold,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::drop_nans(table_view const&, std::vector<size_type> const&,
- *                          cudf::size_type, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ *                          cudf::size_type, cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
@@ -52,7 +53,7 @@ enum class mask_type : bool {
 std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
                                   mask_type mask_kind,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr);
 
 /**
@@ -62,7 +63,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               std::vector<size_type> const& keys,
                               duplicate_keep_option keep,
                               null_equality nulls_equal,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 /**
@@ -73,7 +74,7 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 duplicate_keep_option keep,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr);
 
 /**
@@ -84,7 +85,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        duplicate_keep_option keep,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -96,7 +97,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                                 duplicate_keep_option keep,
                                                 null_equality nulls_equal,
                                                 nan_equality nans_equal,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr);
 
 }  // namespace detail

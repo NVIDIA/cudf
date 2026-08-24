@@ -41,6 +41,9 @@ cdef extern from "<cudf_streaming/channel_metadata.hpp>" \
         cpp_Ordering(
             vector[cpp_OrderKey], unique_ptr[cpp_TableChunk], bool_t
         ) except +ex_handler
+        cpp_Ordering(
+            vector[cpp_OrderKey], shared_ptr[cpp_TableChunk], bool_t
+        ) except +ex_handler
         vector[cpp_OrderKey] keys
         shared_ptr[cpp_TableChunk] boundaries
         bool_t strict_boundaries

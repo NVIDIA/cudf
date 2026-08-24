@@ -34,6 +34,20 @@ if [[ -z ${RAPIDS_CUDA_VERSION:-} ]]; then
   exit 1
 fi
 
+if [[ -z ${HOST_UID} || -z ${HOST_GID} ]]; then
+  echo "Error: HOST_UID and HOST_GID must both be set" >&2
+  exit 1
+fi
+
+_cleanup_on_exit() {
+  local prior_status=$?
+  if ! chown -R "${HOST_UID}:${HOST_GID}" "${INSTALL_PREFIX}"; then
+    echo "Warning: chown -R ${HOST_UID}:${HOST_GID} on ${INSTALL_PREFIX} failed. Outputs may remain owned by root." >&2
+  fi
+  return "${prior_status}"
+}
+trap _cleanup_on_exit EXIT
+
 CMAKE_ARGS=(
   -S "${REPO_ROOT}/cpp"
   -B "${BUILD_DIR}"
@@ -75,10 +89,7 @@ cudf_java_scl cmake "${CMAKE_ARGS[@]}"
 cmake --build "${BUILD_DIR}" --parallel "${PARALLEL_LEVEL}"
 cmake --install "${BUILD_DIR}"
 
-# Hand the install tree back to the host user (host wrapper passes HOST_UID/GID).
-if [[ -n ${HOST_UID:-} && -n ${HOST_GID:-} ]]; then
-  chown -R "${HOST_UID}:${HOST_GID}" "${INSTALL_PREFIX}"
-fi
+rapids-logger "Emitted static libcudf install tree to ${INSTALL_PREFIX}"
 if command -v sccache >/dev/null 2>&1; then
   sccache --show-adv-stats || true
 fi

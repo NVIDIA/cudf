@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -7,10 +7,9 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/stream_compaction.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -68,7 +67,7 @@ OutputIterator unique_copy(InputIterator first,
                            OutputIterator output,
                            BinaryPredicate comp,
                            duplicate_keep_option const keep,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   size_type const last_index = cuda::std::distance(first, last) - 1;
   return cudf::detail::copy_if(

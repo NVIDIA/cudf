@@ -325,9 +325,15 @@ class csv_reader_options {
   /**
    * @brief Whether to treat `\r\n` as line terminator.
    *
+   * @deprecated The option is not consulted by the reader and will be removed.
+   *
    * @return `true` if `\r\n` is treated as line terminator
    */
-  [[nodiscard]] bool is_enabled_windowslinetermination() const { return _windowslinetermination; }
+  [[deprecated("The option has no effect and will be removed.")]] [[nodiscard]] bool
+  is_enabled_windowslinetermination() const
+  {
+    return _windowslinetermination;
+  }
 
   /**
    * @brief Whether to treat whitespace as field delimiter.
@@ -657,9 +663,15 @@ class csv_reader_options {
   /**
    * @brief Sets whether to treat `\r\n` as line terminator.
    *
+   * @deprecated The option is not consulted by the reader and will be removed.
+   *
    * @param val Boolean value to enable/disable
    */
-  void enable_windowslinetermination(bool val) { _windowslinetermination = val; }
+  [[deprecated("The option has no effect and will be removed.")]] void
+  enable_windowslinetermination(bool val)
+  {
+    _windowslinetermination = val;
+  }
 
   /**
    * @brief Sets whether to treat whitespace as field delimiter.
@@ -1065,10 +1077,13 @@ class csv_reader_options_builder {
   /**
    * @brief Sets whether to treat `\r\n` as line terminator.
    *
+   * @deprecated The option is not consulted by the reader and will be removed.
+   *
    * @param val Boolean value to enable/disable
    * @return this for chaining
    */
-  csv_reader_options_builder& windowslinetermination(bool val)
+  [[deprecated("The option has no effect and will be removed.")]] csv_reader_options_builder&
+  windowslinetermination(bool val)
   {
     options.enable_windowslinetermination(val);
     return *this;

@@ -51,7 +51,6 @@ void BM_csv_read_varying_options(
       .compression(cudf::io::compression_type::NONE)
       .use_cols_indexes(cols_to_read)
       .thousands('\'')
-      .windowslinetermination(true)
       .comment('#')
       .prefix("BM_");
 

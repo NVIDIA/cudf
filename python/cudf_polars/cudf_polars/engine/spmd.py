@@ -602,17 +602,17 @@ class SPMDEngine(StreamingEngine):
             executor_options=executor_options,
             engine_options=engine_options,
         )
-        executor_options = executor_options or {}
         existing_executor_options = self.config.get("executor_options", {})
         if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
-            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
-            if existing_kvikio_nthreads is not None:
-                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
+            merged_executor_options = {**existing_executor_options, **(executor_options or {})}
+        else:
+            merged_executor_options = dict(executor_options or {})
+        executor_options = merged_executor_options
+
+        existing_engine_options = {k: v for k, v in self.config.items() if k not in ("executor", "executor_options")}
+        engine_options = {**existing_engine_options, **(engine_options or {})}
+
         kvikio.defaults.set("num_threads", executor_options["kvikio_nthreads"])
-        engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"
         )

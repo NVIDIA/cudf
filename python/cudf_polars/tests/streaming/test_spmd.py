@@ -459,6 +459,19 @@ def test_reset_rejects_construction_time_engine_options(
             engine._reset(engine_options={"memory_resource_config": None})
 
 
+def test_reset_preserves_unrelated_options(comm: Communicator) -> None:
+    """``_reset`` preserves previously configured options not specified in the reset call."""
+    with SPMDEngine(
+        comm=comm,
+        executor_options={"max_rows_per_partition": 500},
+        engine_options={"raise_on_fail": True},
+    ) as engine:
+        engine._reset(executor_options={"fallback_mode": "raise"})
+        assert engine.config["executor_options"]["max_rows_per_partition"] == 500
+        assert engine.config["executor_options"]["fallback_mode"] == "raise"
+        assert engine.config["raise_on_fail"] is True
+
+
 def test_quent_context_user_provided(spmd_engine: SPMDEngine) -> None:
     # Ensure that the user-provided quent context is used if provided
     quent_context = cudf_polars.quent.QuentContext(

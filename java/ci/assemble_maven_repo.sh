@@ -166,12 +166,24 @@ if [[ -z "${FIRST_VERSION}" ]]; then
   exit 1
 fi
 
+DEST_DIR="${OUTPUT_DIR}/${GROUP_PATH}/${ARTIFACT_ID}/${FIRST_VERSION}"
+
+# Seed the unclassified primary from cuda12. Maven Central serves this to
+# consumers depending on ai.rapids:cudf without a <classifier>.
+PRIMARY_SOURCE="${DEST_DIR}/cudf-${FIRST_VERSION}-cuda12.jar"
+if [[ ! -f "${PRIMARY_SOURCE}" ]]; then
+  echo "Error: ${PRIMARY_SOURCE} missing." >&2
+  exit 1
+fi
+UNCLASSIFIED="${DEST_DIR}/cudf-${FIRST_VERSION}.jar"
+cp -f "${PRIMARY_SOURCE}" "${UNCLASSIFIED}"
+echo "  + cudf-${FIRST_VERSION}.jar (unclassified primary, copy of cuda12)"
+
 # Sources and javadoc jars are classifier-independent (pure Java, no arch or
 # cuda variation). Every classifier subdir produces byte-equivalent copies;
 # pick the lexicographically first subdir's copy as canonical. Fail fast if
 # any subdir is missing either file - that indicates -Prelease or
 # -Pjavadoc-jdk17 did not activate for that classifier's build.
-DEST_DIR="${OUTPUT_DIR}/${GROUP_PATH}/${ARTIFACT_ID}/${FIRST_VERSION}"
 FIRST_CLASSIFIER_SUBDIR=""
 for subdir in "${JARS_DIR}"/*/; do
   if [[ -z ${FIRST_CLASSIFIER_SUBDIR} ]]; then

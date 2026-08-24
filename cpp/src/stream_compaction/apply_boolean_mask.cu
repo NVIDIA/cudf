@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <algorithm>
 
@@ -64,7 +64,7 @@ namespace detail {
 std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
                                   mask_type mask_kind,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   if (boolean_mask.is_empty()) { return empty_like(input); }
@@ -98,7 +98,7 @@ std::unique_ptr<table> apply_mask(table_view const& input,
  */
 std::unique_ptr<table> apply_boolean_mask(table_view const& input,
                                           column_view const& boolean_mask,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -107,7 +107,7 @@ std::unique_ptr<table> apply_boolean_mask(table_view const& input,
 
 std::unique_ptr<table> apply_deletion_mask(table_view const& input,
                                            column_view const& deletion_mask,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

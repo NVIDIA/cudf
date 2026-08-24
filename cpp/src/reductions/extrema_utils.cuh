@@ -109,7 +109,7 @@ class arg_minmax_dispatcher {
     auto const null_orders =
       std::vector<null_order>{K == aggregation::ARGMIN ? null_order::AFTER : null_order::BEFORE};
     auto const comparator = cudf::detail::row::lexicographic::self_comparator{
-      table_view{{input}}, {}, null_orders, stream};
+      table_view{{input}}, {}, null_orders, stream, cudf::get_current_device_resource_ref()};
     auto d_comp =
       comparator.less<false /* has_nested_columns */>(nullate::DYNAMIC{input.has_nulls()});
     return find_extremum_idx(cuda::counting_iterator<cudf::size_type>{0},

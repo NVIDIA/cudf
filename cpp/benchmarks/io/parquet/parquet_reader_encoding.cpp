@@ -38,10 +38,10 @@ cudf::io::column_encoding retrieve_column_encoding_enum(std::string_view encodin
   CUDF_FAIL("Unsupported column encoding: " + std::string(encoding_string));
 }
 
-// The writer only honours an encoding request on the schema node whose physical type matches, and
-// for a LIST the encoded values live on the element node, not the top-level column (it skips nodes
-// named "list", and walks lists_column_view::child_column_index for the element). So push the
-// request down to the leaves rather than setting it only on the outermost column.
+// The writer only honours an encoding request on the schema node whose
+// physical type matches, and for a LIST the encoded values live on the element
+// node, not the top-level column, so this function pushes the request down to
+// the leaves.
 void set_encoding_recursive(cudf::io::column_in_metadata& col_meta,
                             cudf::io::column_encoding encoding)
 {
@@ -61,9 +61,7 @@ void bench_read_encoding(nvbench::state& state, std::vector<cudf::type_id> const
   auto const data_size   = static_cast<size_t>(state.get_int64("data_size"));
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
   auto const run_length  = static_cast<cudf::size_type>(state.get_int64("run_length"));
-  // 0 keeps the flat columns this benchmark has always used; >0 wraps the leaf type in that many
-  // levels of LIST, which is what puts the decoder on its nested (repetition) path.
-  auto const nesting = static_cast<cudf::size_type>(state.get_int64("nesting"));
+  auto const nesting     = static_cast<cudf::size_type>(state.get_int64("nesting"));
   cuio_source_sink_pair source_sink(source_type);
 
   auto const num_rows_written = [&]() {

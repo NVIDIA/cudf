@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
 
@@ -44,7 +44,7 @@ struct byte_list_conversion_dispatcher {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      flip_endianness configuration,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     return byte_list_conversion_fn<T>::invoke(input, configuration, stream, mr);
@@ -55,7 +55,7 @@ template <typename T>
 struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness configuration,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
@@ -111,7 +111,7 @@ template <typename T>
 struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
@@ -152,7 +152,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
 
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   return type_dispatcher(
@@ -163,7 +163,7 @@ std::unique_ptr<column> byte_cast(column_view const& input,
 
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

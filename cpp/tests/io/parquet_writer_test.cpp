@@ -2327,6 +2327,9 @@ TEST_F(ParquetWriterTest, DeltaBinaryStartsWithNulls)
 
 TEST_F(ParquetWriterTest, DeltaBinaryNzIdxTailIteration33)
 {
+  // Exercise a non-null DELTA_BINARY_PACKED column whose row count crosses one 32-value
+  // non-null index word. This guards the writer tail path from dropping or corrupting the
+  // final value after the last full word.
   constexpr int num_rows = 33;
 
   auto const values = cuda::counting_iterator<int32_t>{0};

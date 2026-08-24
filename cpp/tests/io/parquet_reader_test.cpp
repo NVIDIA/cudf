@@ -3262,6 +3262,9 @@ TEST_F(ParquetReaderTest, DeltaSkipRowsWithNulls)
 
 TEST_F(ParquetReaderTest, DeltaBinaryBoundaryWordMerge)
 {
+  // Write two 33-row nullable DELTA_BINARY_PACKED pages so each page ends just past a
+  // 32-bit validity-mask word. Reading the file back verifies that page-local validity
+  // masks are merged into the output mask without shifting bits at word boundaries.
   using cudf::io::column_encoding;
   constexpr cudf::size_type page_rows = 33;
   constexpr cudf::size_type num_rows  = 2 * page_rows;

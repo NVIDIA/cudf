@@ -25,7 +25,8 @@
 
 namespace {
 
-using policy_type = cudf::arrow_filter_policy<cuco::identity_hash<std::uint64_t>>;
+using policy_type =
+  cudf::arrow_bloom_filter_policy<std::uint64_t, cuco::identity_hash<std::uint64_t>>;
 
 __global__ void block_index_kernel(std::uint32_t upper_hash,
                                    std::size_t num_blocks,

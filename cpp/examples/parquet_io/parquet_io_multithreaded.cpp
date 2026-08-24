@@ -316,7 +316,7 @@ std::vector<io_source> extract_input_sources(std::string const& paths,
     parquet_files.end(),
     std::back_inserter(input_sources),
     [&](auto const& file_name) { return io_source{file_name, io_source_type, stream}; });
-  stream.synchronize();
+  stream.sync();
   return input_sources;
 }
 

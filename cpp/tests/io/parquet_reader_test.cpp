@@ -28,6 +28,7 @@
 
 #include <cuda/iterator>
 
+#include <src/io/parquet/compact_protocol_reader.hpp>
 #include <src/io/parquet/parquet_gpu.hpp>
 #include <src/io/parquet/stats_filter_helpers.hpp>
 
@@ -1757,6 +1758,34 @@ TEST_F(ParquetReaderTest, StructByteArray)
   auto result = cudf::io::read_parquet(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, VarintDecodingBoundaries)
+{
+  using cudf::io::parquet::detail::CompactProtocolReader;
+
+  // longest valid encoding of a uint64: nine continuation bytes plus terminator
+  std::array<uint8_t, 10> max_varint{};
+  max_varint.fill(0xFF);
+  max_varint[9] = 0x01;
+  CompactProtocolReader reader(max_varint.data(), max_varint.size());
+  EXPECT_EQ(reader.get_varint<uint64_t>(), uint64_t{1} << 63);
+  EXPECT_EQ(reader.bytecount(), 10);
+
+  // overlong encodings keep consuming bytes until a terminator but stop shifting into the value
+  std::array<uint8_t, 13> overlong64{};
+  overlong64.fill(0xFF);
+  overlong64[12] = 0x00;
+  CompactProtocolReader overlong_reader(overlong64.data(), overlong64.size());
+  EXPECT_EQ(overlong_reader.get_varint<uint64_t>(), std::numeric_limits<uint64_t>::max());
+  EXPECT_EQ(overlong_reader.bytecount(), 13);
+
+  std::array<uint8_t, 7> overlong32{};
+  overlong32.fill(0xFF);
+  overlong32[6] = 0x7F;
+  CompactProtocolReader reader32(overlong32.data(), overlong32.size());
+  EXPECT_EQ(reader32.get_varint<uint32_t>(), std::numeric_limits<uint32_t>::max());
+  EXPECT_EQ(reader32.bytecount(), 7);
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)

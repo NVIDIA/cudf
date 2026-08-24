@@ -472,6 +472,21 @@ TEST_F(CsvWriterTest, QuotingDisabled)
   test_quoting_disabled_with_delimiter('\u0001');
 }
 
+TEST_F(CsvReaderTest, DeprecatedWindowsLineTerminationRoundTrip)
+{
+  // The option is deprecated because the reader never consults it, but it must keep storing
+  // its value until the planned removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  auto options = cudf::io::csv_reader_options::builder(cudf::io::source_info{"unused.csv"})
+                   .windowslinetermination(true)
+                   .build();
+  EXPECT_TRUE(options.is_enabled_windowslinetermination());
+  options.enable_windowslinetermination(false);
+  EXPECT_FALSE(options.is_enabled_windowslinetermination());
+#pragma GCC diagnostic pop
+}
+
 TEST_F(CsvReaderTest, MultiColumn)
 {
   constexpr auto num_rows = 10;

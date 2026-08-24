@@ -93,12 +93,13 @@ def _extract_boundaries(
     stream: Stream,
 ) -> tuple[plc.Table, bool]:
     """
-    Extract boundaries from the maxima of each partition.
+    Extract boundaries from alternating partition minima and maxima.
 
     Parameters
     ----------
     min_max_key_table
-        The table containing min and max key values.
+        The table containing key-column rows ordered as
+        ``[min0, max0, min1, max1, ...]``.
     num_partitions
         The number of partitions.
     stream
@@ -108,6 +109,8 @@ def _extract_boundaries(
     -------
     The boundaries table and whether they are strict.
     """
+    # Boundaries are the minima of all partitions except the first. Strictness
+    # compares each partition maximum with the following partition minimum.
     partition_ends = plc.concatenate.concatenate(
         plc.copying.slice(
             min_max_key_table, list(range(1, 2 * num_partitions - 1)), stream=stream
@@ -208,8 +211,6 @@ async def extract_orderscheme_partitioning(
         )
         tbl = chunk.table_view()
         if (n := tbl.num_rows()) == 0:
-            # The corresponding empty chunk must be dropped
-            # from the data channel.
             continue
         with stream_ordered_after(lambda: stream, upstreams=(chunk.stream,)):
             row_indices = plc.Column.from_iterable_of_py(

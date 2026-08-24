@@ -57,23 +57,6 @@ jobs:
           . rapids-install-sccache
           . rapids-configure-sccache
 
-          export CPP_PARALLEL_LEVEL="$PARALLEL_LEVEL"
-
-          # Start the sccache daemon
-          sccache --start-server
-
-          # Verify sccache version and distributed compilation
-          sccache --show-stats
-
-          if sccache --dist-status 2>/dev/null | jq -er '.SchedulerStatus? != null' >/dev/null 2>&1; then
-              echo "Distributed compilation is available:"
-              sccache --dist-status | jq -r '["scheduler URL: " + .SchedulerStatus[0], "server count: " + (.SchedulerStatus[1].servers | length | tostring)][]';
-          else
-              echo "Error: Distributed compilation not available, check connectivity"
-              cat "$SCCACHE_ERROR_LOG";
-              exit 1
-          fi
-
           # Align RAPIDS dependencies with the selected cudf branch
           scripts/update-cudf-deps.sh --branch "$(cat "${GITHUB_WORKSPACE}/cudf-local/RAPIDS_BRANCH")"
 

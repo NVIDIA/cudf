@@ -1830,11 +1830,13 @@ TEST_F(ParquetReaderTest, RequiredBinaryUnderNullStruct)
     num_rows, std::move(expected_children), 1, std::move(expected_mask));
   auto const expected = table_view{{expected_struct->view()}};
 
+  // read twice so the second pass reuses dirty pool memory and cannot pass on zeroed pages alone
   cudf::io::parquet_reader_options in_opts =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
-  auto result = cudf::io::read_parquet(in_opts);
-
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  for (int read = 0; read < 2; ++read) {
+    auto result = cudf::io::read_parquet(in_opts);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  }
 }
 
 TEST_F(ParquetReaderTest, RequiredIntUnderNullStruct)
@@ -1885,11 +1887,13 @@ TEST_F(ParquetReaderTest, RequiredIntUnderNullStruct)
     num_rows, std::move(expected_children), 1, std::move(expected_mask));
   auto const expected = table_view{{expected_struct->view()}};
 
+  // read twice so the second pass reuses dirty pool memory and cannot pass on zeroed pages alone
   cudf::io::parquet_reader_options in_opts =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
-  auto result = cudf::io::read_parquet(in_opts);
-
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  for (int read = 0; read < 2; ++read) {
+    auto result = cudf::io::read_parquet(in_opts);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  }
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)

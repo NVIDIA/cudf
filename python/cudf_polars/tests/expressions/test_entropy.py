@@ -51,13 +51,28 @@ def test_entropy_default(engine, df):
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
-@pytest.mark.parametrize("data", [[5.0], [None], [], [None, None]])
+@pytest.mark.parametrize("data", [[None], [], [None, None]])
 @pytest.mark.parametrize("normalize", [True, False])
 def test_entropy_edge_cases(engine, data, normalize):
     q = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Float64)}).select(
         pl.col("a").entropy(normalize=normalize)
     )
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+def test_entropy_single_value_normalize_true(engine):
+    q = pl.LazyFrame({"a": pl.Series([5.0], dtype=pl.Float64)}).select(
+        pl.col("a").entropy(normalize=True)
+    )
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+def test_entropy_single_value_normalize_false(engine):
+    q = pl.LazyFrame({"a": pl.Series([5.0], dtype=pl.Float64)}).select(
+        pl.col("a").entropy(normalize=False)
+    )
+    got = q.collect(engine=engine)
+    assert got.item() == pytest.approx(-5.0 * math.log(5.0))
 
 
 @pytest.mark.parametrize(

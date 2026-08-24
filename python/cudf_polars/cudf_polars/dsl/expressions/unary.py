@@ -570,7 +570,11 @@ class UnaryFunction(Expr):
         if self.name == "entropy":
             base, normalize = self.options
             column = self.children[0].evaluate(df, context=context)
-            if column.size in {0, 1} or column.null_count == column.size:
+            if (
+                column.size == 0
+                or column.null_count == column.size
+                or (column.size == 1 and normalize)
+            ):
                 return Column(
                     plc.Column.from_scalar(
                         plc.Scalar.from_py(0.0, self.dtype.plc_type, stream=df.stream),

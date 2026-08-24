@@ -211,12 +211,14 @@ std::vector<cudf::type_id> get_type_or_group(int32_t id);
 std::vector<cudf::type_id> get_type_or_group(std::vector<int32_t> const& ids);
 
 /**
- * @brief Rounds a floating point bound to an integer value, clamping to +/-2^62 before rounding
- * and mapping NaN to zero so that the conversion is always defined.
+ * @brief Rounds a floating point bound to an integer value, clamping to the largest double that
+ * still rounds into a long long and mapping NaN to zero so that the conversion is always defined.
+ * Bounds beyond this are unreachable through floating point for unsigned 64-bit targets only;
+ * every signed target's full range is representable.
  */
 inline long long bounded_llround(double value)
 {
-  constexpr double kInt64ClampBound = 4611686018427387904.0;  // 2^62
+  constexpr double kInt64ClampBound = 9223372036854774784.0;  // 2^63 - 1024
   if (std::isnan(value)) { return 0; }
   return std::llround(std::clamp(value, -kInt64ClampBound, kInt64ClampBound));
 }

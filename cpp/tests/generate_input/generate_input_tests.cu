@@ -173,6 +173,20 @@ TEST_F(GenerateInputTest, HugeFloatBoundsClampToTargetType)
   EXPECT_EQ(params.upper_bound, std::numeric_limits<int32_t>::max());
 }
 
+TEST_F(GenerateInputTest, FullRangeFloatBoundsOnInt64)
+{
+  data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<int64_t>(), distribution_id::UNIFORM, -1e19, 1e19);
+
+  auto const params = profile.get_distribution_params<int64_t>();
+  EXPECT_EQ(params.id, distribution_id::UNIFORM);
+  EXPECT_GE(params.lower_bound, std::numeric_limits<int64_t>::min());
+  EXPECT_LE(params.upper_bound, std::numeric_limits<int64_t>::max());
+  // the full signed 64-bit range is reachable, not just up to the old 2^62 conversion clamp
+  EXPECT_LT(params.lower_bound, -9000000000000000000LL);
+  EXPECT_GT(params.upper_bound, 9000000000000000000LL);
+}
+
 TEST_F(GenerateInputTest, OutOfRangeBoundsOnUnsignedTarget)
 {
   data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(

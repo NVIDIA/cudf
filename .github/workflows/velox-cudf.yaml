@@ -13,10 +13,6 @@ jobs:
     runs-on: linux-amd64-cpu8
     container:
       image: ghcr.io/facebookincubator/velox-dev:adapters
-    env:
-      CC: /opt/rh/gcc-toolset-14/root/bin/gcc
-      CXX: /opt/rh/gcc-toolset-14/root/bin/g++
-      CUDAHOSTCXX: /opt/rh/gcc-toolset-14/root/bin/g++
     permissions:
       id-token: write
     steps:
@@ -51,6 +47,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          source /opt/rh/gcc-toolset-14/enable
+          g++ --version
+
           # Install and configure the sccache client
           . rapids-install-sccache
           . rapids-configure-sccache
@@ -74,6 +73,7 @@ jobs:
 
           # Build velox with local cudf override
           CUDA_ARCHITECTURES=90 \
+          CUDA_FLAGS="-ccbin /opt/rh/gcc-toolset-14/root/usr/bin" \
           EXTRA_CMAKE_FLAGS="-DFETCHCONTENT_SOURCE_DIR_CUDF=$GITHUB_WORKSPACE/cudf-local" \
           make cudf
 

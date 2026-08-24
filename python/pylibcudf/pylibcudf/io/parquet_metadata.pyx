@@ -188,10 +188,10 @@ cdef class ParquetSchema:
             Dictionary mapping column names to DataType objects
         """
         cdef ParquetColumnSchema root_schema = self.root()
-        return {
-            root_schema.child(i).name(): root_schema.child(i).cudf_type()
-            for i in range(root_schema.num_children())
-        }
+        result = {}
+        for i in range(root_schema.num_children()):
+            result[root_schema.child(i).name()] = root_schema.child(i).cudf_type()
+        return result
 
 
 cdef class ParquetMetadata:
@@ -260,7 +260,10 @@ cdef class ParquetMetadata:
         dict[str, str]
             Key value metadata as a map.
         """
-        return {key.decode(): val.decode() for key, val in self.meta.metadata()}
+        result = {}
+        for key, val in self.meta.metadata():
+            result[key.decode()] = val.decode()
+        return result
 
     cpdef list[dict[str, int]] rowgroup_metadata(self):
         """
@@ -271,10 +274,13 @@ cdef class ParquetMetadata:
         list[dict[str, int]]
             Vector of row group metadata as maps.
         """
-        return [
-            {key.decode(): val for key, val in metadata}
-            for metadata in self.meta.rowgroup_metadata()
-        ]
+        result = []
+        for metadata in self.meta.rowgroup_metadata():
+            decoded_metadata = {}
+            for key, val in metadata:
+                decoded_metadata[key.decode()] = val
+            result.append(decoded_metadata)
+        return result
 
     cpdef dict[str, list[int]] columnchunk_metadata(self):
         """

@@ -976,7 +976,7 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
   int s_idx = 0;
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
     dim3 dim_delta(delta_preproc_block_size, 1);
-    compute_delta_page_string_sizes_kernel<<<dim_grid, dim_delta, 0, streams[s_idx++].value()>>>(
+    compute_delta_page_string_sizes_kernel<<<dim_grid, dim_delta, 0, streams[s_idx++].get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -985,12 +985,12 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
     compute_delta_length_page_string_sizes_kernel<<<dim_grid,
                                                     dim_delta,
                                                     0,
-                                                    streams[s_idx++].value()>>>(
+                                                    streams[s_idx++].get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
   if (BitAnd(kernel_mask, STRINGS_MASK_NON_DELTA) != 0) {
-    compute_page_string_sizes_kernel<<<dim_grid, dim_block, 0, streams[s_idx++].value()>>>(
+    compute_page_string_sizes_kernel<<<dim_grid, dim_block, 0, streams[s_idx++].get()>>>(
       pages.device_ptr(), chunks, page_mask, page_string_offset_indices, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }

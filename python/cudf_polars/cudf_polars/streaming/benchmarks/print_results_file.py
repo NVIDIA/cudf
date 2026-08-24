@@ -129,7 +129,9 @@ def _io_summaries(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
     The summaries, empty if the iteration recorded none.
     """
     raw = record.get("io_summaries")
-    if not raw:
+    if not isinstance(raw, dict):
+        # Absent, or written by a version that shaped it differently. The file
+        # comes from disk, so an unexpected shape is skipped rather than raised.
         return {}
     return {int(rank): s for rank, s in raw.items()}
 

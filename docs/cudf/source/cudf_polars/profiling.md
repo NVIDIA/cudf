@@ -86,7 +86,7 @@ counting and did no I/O.
 
 Printing a summary gives KvikIO's own report:
 
-```
+```text
 KvikIO I/O summary
   wall time            122.55 ms
   busy time            18.40 ms (15.02 % of the wall time)

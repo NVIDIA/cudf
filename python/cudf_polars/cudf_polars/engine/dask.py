@@ -1103,9 +1103,8 @@ class DaskEngine(StreamingEngine):
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
         engine_options = engine_options or {}
 
-        rapidsmpf_options_as_bytes = resolve_rapidsmpf_options(
-            rapidsmpf_options
-        ).serialize()
+        self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
+        rapidsmpf_options_as_bytes = self.rapidsmpf_options.serialize()
 
         ctx = self._dask_context
         # Reset all worker Contexts collectively. ``client.run`` blocks

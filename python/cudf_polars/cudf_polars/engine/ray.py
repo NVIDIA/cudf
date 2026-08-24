@@ -918,9 +918,8 @@ class RayEngine(StreamingEngine):
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
         engine_options = engine_options or {}
-        rapidsmpf_options_as_bytes = resolve_rapidsmpf_options(
-            rapidsmpf_options
-        ).serialize()
+        self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
+        rapidsmpf_options_as_bytes = self.rapidsmpf_options.serialize()
 
         # Reset all actor Contexts collectively. ``ray.get`` blocks until
         # every actor's reset returns; the per-actor barrier inside

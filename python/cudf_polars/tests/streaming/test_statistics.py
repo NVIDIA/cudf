@@ -125,11 +125,16 @@ def test_io_summary_is_off_without_statistics(
     # a zeroed summary meaning "this rank did no I/O".
     assert engine.gather_io_summary() == {}
 
+    # A reset leaves `rapidsmpf_options` describing the reset, which is what
+    # callers read to decide whether anything is being counted.
+    assert not Statistics.from_options(engine.rapidsmpf_options).enabled
+
     # Turning statistics back on has to build a fresh monitor, the previous one
     # having been stopped rather than paused.
     engine = streaming_engine_factory(
         StreamingOptions(statistics=True, max_rows_per_partition=10)
     )
+    assert Statistics.from_options(engine.rapidsmpf_options).enabled
     scan_query.collect(engine=engine)
     summaries = engine.gather_io_summary()
     assert sorted(summaries) == list(range(engine.nranks))

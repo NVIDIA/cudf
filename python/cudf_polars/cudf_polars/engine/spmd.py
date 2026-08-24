@@ -629,6 +629,7 @@ class SPMDEngine(StreamingEngine):
             "quent_context"
         )
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
+        self.rapidsmpf_options = rapidsmpf_options
 
         # Collective: synchronize all ranks before tearing down the Context.
         if self._comm.nranks > 1:

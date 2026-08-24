@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/groupby.hpp>
 
@@ -45,7 +46,7 @@ void bench_groupby_nunique(nvbench::state& state, nvbench::type_list<Type>)
       data_profile_builder()
         .cardinality(cardinality)
         .distribution(cudf::type_to_id<Type>(), distribution_id::UNIFORM, 0, size);
-    if (const auto null_freq = state.get_float64("null_probability"); null_freq > 0) {
+    if (auto const null_freq = state.get_float64("null_probability"); null_freq > 0) {
       profile.set_null_probability(null_freq);
     } else {
       profile.set_null_probability(std::nullopt);
@@ -57,11 +58,14 @@ void bench_groupby_nunique(nvbench::state& state, nvbench::type_list<Type>)
     *vals, cudf::make_nunique_aggregation<cudf::groupby_aggregation>());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto gb_obj =
       cudf::groupby::groupby(cudf::table_view({keys->view(), keys->view(), keys->view()}));
     auto const result = gb_obj.aggregate(requests);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH_TYPES(bench_groupby_nunique, NVBENCH_TYPE_AXES(nvbench::type_list<int32_t, int64_t>))

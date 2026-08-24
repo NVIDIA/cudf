@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -152,15 +152,25 @@ class Aggregation:
         )
 
     @classmethod
-    def first(cls) -> Self:
+    def first(cls, skipna: bool = True) -> Self:
         return cls(
-            plc.aggregation.nth_element(0, plc.types.NullPolicy.EXCLUDE)
+            plc.aggregation.nth_element(
+                0,
+                plc.types.NullPolicy.EXCLUDE
+                if skipna
+                else plc.types.NullPolicy.INCLUDE,
+            )
         )
 
     @classmethod
-    def last(cls) -> Self:
+    def last(cls, skipna: bool = True) -> Self:
         return cls(
-            plc.aggregation.nth_element(-1, plc.types.NullPolicy.EXCLUDE)
+            plc.aggregation.nth_element(
+                -1,
+                plc.types.NullPolicy.EXCLUDE
+                if skipna
+                else plc.types.NullPolicy.INCLUDE,
+            )
         )
 
     @classmethod

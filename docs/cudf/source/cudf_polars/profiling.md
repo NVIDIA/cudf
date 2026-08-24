@@ -185,6 +185,6 @@ shape: (2, 3)
 [nsight]: https://developer.nvidia.com/nsight-systems
 [nvtx]: https://nvidia.github.io/NVTX/
 [rapidsmpf-stats]: https://docs.rapids.ai/api/rapidsmpf/nightly/statistics/
-[structlog]: https://www.structlog.org/
+[structlog]: https://www.structlog.org/en/stable/
 [structlog-configure]: https://www.structlog.org/en/stable/configuration.html
 [structlog-context]: https://www.structlog.org/en/stable/contextvars.html

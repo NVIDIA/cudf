@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,15 +10,21 @@
 #include <cudf/types.hpp>
 
 #include <cuda/numeric>
+#include <cuda/std/cassert>
+#include <cuda/std/cmath>
 #include <cuda/std/functional>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 
+#ifndef __CUDACC_RTC__
 #include <algorithm>
-#include <cassert>
-#include <cmath>
-#include <string>
+#endif
+
+/**
+ * @file
+ * @brief Class definition for fixed point data type
+ */
 
 /// `fixed_point` and supporting types
 namespace CUDF_EXPORT numeric {
@@ -26,8 +32,6 @@ namespace CUDF_EXPORT numeric {
 /**
  * @addtogroup fixed_point_classes
  * @{
- * @file
- * @brief Class definition for fixed point data type
  */
 
 /// The scale type for fixed_point
@@ -85,7 +89,7 @@ CUDF_HOST_DEVICE inline constexpr Rep ipow(T exponent)
   // Note: Including an array here introduces too much register pressure
   // https://simple.wikipedia.org/wiki/Exponentiation_by_squaring
   // This is the iterative equivalent of the recursive definition (faster)
-  // Quick-bench for squaring: http://quick-bench.com/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
+  // Quick-bench for squaring: https://quick-bench.com:443/q/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
   if (exponent == 0) { return static_cast<Rep>(1); }
   auto extra  = static_cast<Rep>(1);
   auto square = static_cast<Rep>(Base);
@@ -157,8 +161,6 @@ CUDF_HOST_DEVICE inline constexpr T shift(T const& val, scale_type const& scale)
 /**
  * @addtogroup fixed_point_classes
  * @{
- * @file
- * @brief Class definition for fixed point data type
  */
 
 /**
@@ -571,6 +573,8 @@ class fixed_point {
     return fixed_point<Rep, Rad>{scaled_integer<Rep>{value, scale}};
   }
 
+#ifndef __CUDACC_RTC__
+
   /**
    * @brief Returns a string representation of the fixed_point value.
    */
@@ -590,6 +594,8 @@ class fixed_point {
     auto const zeros = std::string(_scale, '0');
     return detail::to_string(_value) + zeros;
   }
+
+#endif
 };
 
 /**
@@ -779,6 +785,9 @@ CUDF_HOST_DEVICE inline fixed_point<Rep1, Rad1> operator%(fixed_point<Rep1, Rad1
   return fixed_point<Rep1, Rad1>{scaled_integer<Rep1>{remainder, scale}};
 }
 
+template <typename Rep>
+using decimal =
+  fixed_point<Rep, Radix::BASE_10>;  ///< decimal fixed point with user defined representation type
 using decimal32  = fixed_point<int32_t, Radix::BASE_10>;     ///<  32-bit decimal fixed point
 using decimal64  = fixed_point<int64_t, Radix::BASE_10>;     ///<  64-bit decimal fixed point
 using decimal128 = fixed_point<__int128_t, Radix::BASE_10>;  ///< 128-bit decimal fixed point

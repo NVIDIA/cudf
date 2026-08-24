@@ -6,7 +6,7 @@ The most common use for cuStreamz is accelerated data ingestion to a cudf datafr
 
 For example, the following snippet consumes CSV data from a Kafka topic named `custreamz_tips` and generates a cudf dataframe.
 
-Users can visit [Apache Kafka Quickstart](https://kafka.apache.org/quickstart) to learn how to install, create `custreamz_tips` topic, and insert the [tips](https://github.com/plotly/datasets/raw/master/tips.csv) data into Kafka.
+Users can visit [Apache Kafka Quickstart](https://kafka.apache.org/quickstart/) to learn how to install, create `custreamz_tips` topic, and insert the [tips](https://github.com/plotly/datasets/raw/master/tips.csv) data into Kafka.
 
 
 ```python
@@ -65,4 +65,4 @@ Nightly:
 conda install -c rapidsai-nightly cudf_kafka custreamz
 ```
 
-See the [Get RAPIDS version picker](https://rapids.ai/start.html) for more OS and version info.
+See the [Get RAPIDS version picker](https://docs.rapids.ai/install/) for more OS and version info.

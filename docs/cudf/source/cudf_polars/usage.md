@@ -167,4 +167,4 @@ with RayEngine() as engine:
 # rank 1: hostname=node-0, pid=12346, cuda_visible_devices=1, gpu_uuid=GPU-def456...
 ```
 
-[ray-docs]: https://docs.ray.io/
+[ray-docs]: https://docs.ray.io/en/latest/

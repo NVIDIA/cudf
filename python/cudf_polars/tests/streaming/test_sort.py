@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ def test_sort_slice(df, engine, offset):
     q = df.sort(by=["y", "z"]).slice(offset, 2)
     with pytest.raises(
         NotImplementedError,
-        match="This slice not supported for multiple partitions.",
+        match=r"This slice not supported for multiple partitions.",
     ):
         assert_gpu_result_equal(q, engine=engine)
 
@@ -131,4 +131,21 @@ def test_sort_after_sparse_join(streaming_engine_factory):
     left = pl.LazyFrame({"foo": list(range(5)), "bar": list(range(5))})
     right = pl.LazyFrame({"foo": list(range(1))})
     q = left.join(right, on="foo", how="inner").sort(by=["foo"])
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sort_by_renamed_join_column(streaming_engine_factory):
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, raise_on_fail=True),
+    )
+    df1 = pl.LazyFrame({"k1": [1, 2], "text": ["A", "B"]})
+    df2 = pl.LazyFrame({"k2": [1, 2], "text": ["y", "x"]})
+    ctx = pl.SQLContext()
+    ctx.register("df1", df1)
+    ctx.register("df2", df2)
+    q = ctx.execute(
+        "SELECT df1.text AS t1, df2.text AS t2 "
+        "FROM df1 INNER JOIN df2 ON df1.k1 = df2.k2 "
+        "ORDER BY df2.text"
+    )
     assert_gpu_result_equal(q, engine=engine)

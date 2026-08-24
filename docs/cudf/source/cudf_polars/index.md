@@ -9,7 +9,7 @@ and runs on the CPU.
 
 ## Install
 
-Follow the [RAPIDS installation guide](https://docs.rapids.ai/install) and pick the
+Follow the [RAPIDS installation guide](https://docs.rapids.ai/install/) and pick the
 `cudf-polars` package for your CUDA and Python versions. For example, with conda:
 
 ```bash
@@ -45,37 +45,56 @@ with RayEngine() as engine:
 
 See {doc}`usage` for the full tutorial, {doc}`engines` for a conceptual overview of the
 available engines, {doc}`options` for the
-{class}`~cudf_polars.engine.options.StreamingOptions` configuration, and
+{class}`~cudf_polars.engine.options.StreamingOptions` configuration,
+{doc}`execute` for keeping query results GPU-resident across chained queries, and
 {doc}`memory_errors` for guidance on out-of-memory errors and memory tuning.
 
 ## Benchmark
 
-```{note}
-The following benchmarks were performed with the `POLARS_GPU_ENABLE_CUDA_MANAGED_MEMORY`
-environment variable set to `"0"`. Using managed memory (the default) imposes a performance cost
-in order to avoid out of memory errors. Peak performance can still be attained by setting the
-environment variable to `0`.
+Polars delivers high performance across a wide range of data scales through multiple execution engines. The default CPU engine is highly optimized for interactive and medium-scale analytics on a single node. The Polars GPU engine lets you move seamlessly to GPU nodes, providing meaningful acceleration when your dataset grows to hundreds of gigabytes or more.
+
+We ran the Polars Decision Support (PDS) benchmarks to compare the Polars GPU engine with the CPU engine at larger scale factors to show how the GPU engine delivers meaningful speedups as dataset size grows:
+
+```{eval-rst}
+.. list-table::
+   :widths: 50 50
+   :align: center
+
+   * - .. figure:: ../_static/polars_pdsh_sf1k.png
+          :width: 100%
+          :alt: PDS-H benchmark at scale factor 1K
+
+          PDS-H (SF1K)
+
+     - .. figure:: ../_static/polars_pdsds_sf1k.png
+          :width: 100%
+          :alt: PDS-DS benchmark at scale factor 1K
+
+          PDS-DS (SF1K)
 ```
 
-We reproduced the [Polars Decision Support (PDS)](https://github.com/pola-rs/polars-benchmark)
-benchmark to compare Polars GPU engine with the default CPU settings across several dataset sizes.
-Here are the results:
+On a single GPU, you can run TB-scale workloads with significant speedups compared to running on CPU. You can also scale up to run on multiple GPUs for processing even larger workloads:
 
-```{figure} ../_static/pds_benchmark_polars.png
-:width: 600px
+```{eval-rst}
+.. list-table::
+   :widths: 50 50
+   :align: center
+
+   * - .. figure:: ../_static/polars_pdsh_sf3k.png
+          :width: 100%
+          :alt: PDS-H benchmark at scale factor 3K
+
+          PDS-H (SF3K)
+
+     - .. figure:: ../_static/polars_pdsds_sf3k.png
+          :width: 100%
+          :alt: PDS-DS benchmark at scale factor 3K
+
+          PDS-DS (SF3K)
 ```
 
-You can see up to 13x speedup using the GPU engine on the compute-heavy PDS queries involving
-complex aggregation and join operations. Below are the speedups for the top performing queries:
-
-```{figure} ../_static/compute_heavy_queries_polars.png
-:width: 1000px
-```
-
-*PDS-H benchmark | GPU: NVIDIA H100 PCIe | CPU: Intel Xeon W9-3495X (Sapphire Rapids) | Storage:
-Local NVMe*
-
-You can reproduce the results by visiting the [Polars Decision Support (PDS) GitHub repository](https://github.com/pola-rs/polars-benchmark).
+<!-- TODO: replace this link with {doc}`benchmarks` once the published results are reproducible using those instructions -->
+For more information on the benchmarks being run, see the PDS queries in the [cuDF GitHub repository](https://github.com/NVIDIA/cudf/tree/main/python/cudf_polars/cudf_polars/streaming/benchmarks).
 
 ## Learn More
 
@@ -89,9 +108,12 @@ To learn more, visit the [GPU Support page](https://docs.pola.rs/user-guide/gpu-
 usage
 engines
 options
+execute
+io_plugins
 profiling
 other_engines
 memory_errors
+benchmarks
 api
 developer_docs
 ```

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import json
@@ -8,6 +8,7 @@ from contextlib import nullcontext as does_not_raise
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
@@ -393,7 +394,7 @@ def test_str_join_lists_error():
     sr = cudf.Series([["a", "a"], ["b"], ["c"]])
 
     with pytest.raises(
-        ValueError, match="sep_na_rep cannot be defined when `sep` is scalar."
+        ValueError, match=r"sep_na_rep cannot be defined when `sep` is scalar."
     ):
         sr.str.join(sep="-", sep_na_rep="-")
 
@@ -1498,6 +1499,17 @@ def test_string_findall(pat, flags):
     assert_eq(expected, actual)
 
 
+def test_string_findall_one_capture():
+    test_data = ["1 One", "12 Twelve", "3 Three 4 Four 5 Five", "Six 6"]
+    ps = pd.Series(test_data)
+    gs = cudf.Series(test_data)
+
+    pat = r"(\d+) \w+"
+    expected = ps.str.findall(pat)
+    actual = gs.str.findall(pat)
+    assert_eq(expected, actual)
+
+
 @pytest.mark.parametrize(
     "pat, flags, pos",
     [
@@ -2519,6 +2531,19 @@ def test_string_extract(ps_gs, pat, expand, flags, flags_raise):
         assert_eq(expect, got)
 
 
+@pytest.mark.parametrize("pat", [r"(\D)(\d)?", r"(\D)(\d*)"])
+def test_string_extract_nonparticipating_group(pat):
+    # An optional group that does not participate in the match results in
+    # null, while a group that participates with an empty match remains "".
+    s = ["A1", "B2", "C"]
+    gs = cudf.Series(s)
+    ps = pd.Series(s)
+
+    expect = ps.str.extract(pat, expand=True)
+    got = gs.str.extract(pat, expand=True)
+    assert_eq(expect, got)
+
+
 def test_string_extract_named_groups():
     s = ["hello-123", "world-456", "goodbye-789"]
     gs = cudf.Series(s)
@@ -2594,7 +2619,7 @@ def _cat_convert_seq_to_cudf(others):
                 np.array(["f", "g", "h", "i", "j"]),
             ],
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/5862"
+                reason="https://github.com/NVIDIA/cudf/issues/5862"
             ),
         ),
         pytest.param(
@@ -2658,7 +2683,7 @@ def test_string_index_duplicate_str_cat(data, others, sep, na_rep, name):
 
     # TODO: Remove got.sort_values call once we have `join` param support
     # in `.str.cat`
-    # https://github.com/rapidsai/cudf/issues/5862
+    # https://github.com/NVIDIA/cudf/issues/5862
 
     assert_eq(
         expect.sort_values() if not isinstance(expect, str) else expect,
@@ -2785,7 +2810,7 @@ def test_string_cat(ps_gs, others, sep, na_rep, index, request):
     request.applymarker(
         pytest.mark.xfail(
             is_any_others_series_with_string_index,
-            reason="https://github.com/rapidsai/cudf/issues/21123",
+            reason="https://github.com/NVIDIA/cudf/issues/21123",
         )
     )
     pd_others = others
@@ -2976,3 +3001,33 @@ def test_string_list_get_access():
     got = got.str.get(1)
 
     assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "data,dtype,inferred",
+    [
+        ([1, 2, 3], "int64", "integer"),
+        ([1, 2, 3], "uint32", "integer"),
+        ([1, 2, 3], pd.ArrowDtype(pa.int64()), "integer"),
+        ([1, 2, 3], pd.Int64Dtype(), "integer"),
+        ([1.0, 2.0, 3.0], "float64", "floating"),
+        ([True, False, True], "bool", "boolean"),
+        (pd.to_datetime(["2020-01-01", "2021-06-15"]), None, "datetime64"),
+        (pd.to_timedelta([1, 2, 3], unit="s"), None, "timedelta64"),
+    ],
+)
+def test_str_accessor_invalid_dtype_message(data, dtype, inferred):
+    # The .str accessor mirrors pandas' inferred-type naming in its error
+    # message (integer/floating/boolean/datetime64/timedelta64) across numpy,
+    # pandas-nullable and arrow-backed dtypes.
+    if dtype is not None:
+        gs = cudf.Series(data, dtype=dtype)
+    else:
+        gs = cudf.Series(data)
+    with pytest.raises(
+        AttributeError,
+        match=re.escape(
+            f"Can only use .str accessor with string values, not {inferred}"
+        ),
+    ):
+        gs.str

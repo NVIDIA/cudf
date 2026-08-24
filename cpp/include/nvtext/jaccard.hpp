@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -14,6 +14,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_jaccard
  * @{
  * @file
+ * @brief APIs for computing the Jaccard similarity between strings in two columns.
  */
 
 /**
@@ -63,7 +64,7 @@ std::unique_ptr<cudf::column> jaccard_index(
   cudf::strings_column_view const& input1,
   cudf::strings_column_view const& input2,
   cudf::size_type width,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

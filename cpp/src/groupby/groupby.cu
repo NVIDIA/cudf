@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,9 +27,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -52,8 +51,8 @@ groupby::groupby(table_view const& keys,
 
 // Select hash vs. sort groupby implementation
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::dispatch_aggregation(
-  host_span<aggregation_request const> requests,
-  rmm::cuda_stream_view stream,
+  std::span<aggregation_request const> requests,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // If sort groupby has been called once on this groupby object, then
@@ -88,7 +87,7 @@ namespace {
 struct empty_column_constructor {
   column_view values;
   aggregation const& agg;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename ValuesType, aggregation::Kind k>
@@ -104,15 +103,15 @@ struct empty_column_constructor {
 
     if constexpr (k == aggregation::Kind::HISTOGRAM) {
       return make_lists_column(0,
-                               make_empty_column(type_to_id<size_type>()),
+                               make_empty_column(type_id::INT32),
                                cudf::reduction::detail::make_empty_histogram_like(values),
                                0,
                                {});
     }
     if constexpr (k == aggregation::Kind::MERGE_HISTOGRAM) { return empty_like(values); }
 
-    if constexpr (k == aggregation::Kind::SUM_WITH_OVERFLOW) {
-      // SUM_WITH_OVERFLOW returns a struct with sum (same type as input) and overflow (bool)
+    if constexpr (k == aggregation::Kind::SUM_OVERFLOW) {
+      // SUM_OVERFLOW returns a struct with sum (same type as input) and overflow (bool)
       // children
       std::vector<std::unique_ptr<cudf::column>> children;
       children.push_back(make_empty_column(values.type()));
@@ -154,8 +153,8 @@ struct empty_column_constructor {
 
 /// Make an empty table with appropriate types for requested aggs
 template <typename RequestType>
-auto empty_results(host_span<RequestType const> requests,
-                   rmm::cuda_stream_view stream,
+auto empty_results(std::span<RequestType const> requests,
+                   cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
 {
   std::vector<aggregation_result> empty_results;
@@ -184,7 +183,7 @@ auto empty_results(host_span<RequestType const> requests,
 
 /// Verifies the agg requested on the request's values is valid
 template <typename RequestType>
-void verify_valid_requests(host_span<RequestType const> requests)
+void verify_valid_requests(std::span<RequestType const> requests)
 {
   CUDF_EXPECTS(
     std::all_of(
@@ -201,13 +200,13 @@ void verify_valid_requests(host_span<RequestType const> requests)
       }),
     "Invalid type/aggregation combination.");
 
-  // Additional validation for SUM_WITH_OVERFLOW: only signed integers and decimals are supported
+  // Additional validation for SUM_OVERFLOW: only signed integers and decimals are supported
   for (auto const& request : requests) {
     for (auto const& agg : request.aggregations) {
-      if (agg->kind == aggregation::SUM_WITH_OVERFLOW) {
+      if (agg->kind == aggregation::SUM_OVERFLOW) {
         CUDF_EXPECTS(
-          cudf::detail::is_valid_aggregation(request.values.type(), aggregation::SUM_WITH_OVERFLOW),
-          "SUM_WITH_OVERFLOW aggregation only supports signed integer types and decimal types. "
+          cudf::detail::is_valid_aggregation(request.values.type(), aggregation::SUM_OVERFLOW),
+          "SUM_OVERFLOW aggregation only supports signed integer types and decimal types. "
           "Unsigned integers, bool, dictionary columns, and other types are not supported.");
       }
     }
@@ -218,8 +217,8 @@ void verify_valid_requests(host_span<RequestType const> requests)
 
 // Compute aggregation requests
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggregate(
-  host_span<aggregation_request const> requests,
-  rmm::cuda_stream_view stream,
+  std::span<aggregation_request const> requests,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -238,8 +237,8 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 
 // Compute scan requests
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan(
-  host_span<scan_request const> requests,
-  rmm::cuda_stream_view stream,
+  std::span<scan_request const> requests,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -259,7 +258,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
 }
 
 groupby::groups groupby::get_groups(table_view values,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -284,8 +283,8 @@ groupby::groups groupby::get_groups(table_view values,
 
 std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::replace_nulls(
   table_view const& values,
-  host_span<cudf::replace_policy const> replace_policies,
-  rmm::cuda_stream_view stream,
+  std::span<cudf::replace_policy const> replace_policies,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -327,9 +326,9 @@ detail::sort::sort_groupby_helper& groupby::helper()
 
 std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
   table_view const& values,
-  host_span<size_type const> offsets,
+  std::span<size_type const> offsets,
   std::vector<std::reference_wrapper<scalar const>> const& fill_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

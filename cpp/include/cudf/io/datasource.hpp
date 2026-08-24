@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,17 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <future>
 #include <memory>
+#include <optional>
+
+/**
+ * @file
+ * @brief Interface classes for providing input data to the readers from files, host memory, or
+ * device memory.
+ */
 
 namespace CUDF_EXPORT cudf {
 //! IO interfaces
@@ -22,7 +29,6 @@ namespace io {
 /**
  * @addtogroup io_datasources
  * @{
- * @file
  */
 
 /**
@@ -98,11 +104,14 @@ class datasource {
    * @param[in] offset Starting byte offset from which data will be read (the default is zero)
    * @param[in] max_size_estimate Upper estimate of the data range that will be read (the default is
    * zero, which means the whole file after `offset`)
+   * @param[in] known_size Optional known file size in bytes. When set for remote URLs, the IO
+   * backend may skip querying the remote server for file size at open time.
    * @return Constructed datasource object
    */
   static std::unique_ptr<datasource> create(std::string const& filepath,
-                                            size_t offset            = 0,
-                                            size_t max_size_estimate = 0);
+                                            size_t offset                         = 0,
+                                            size_t max_size_estimate              = 0,
+                                            std::optional<std::size_t> known_size = std::nullopt);
 
   /**
    * @brief Creates a source from a host memory buffer.
@@ -245,7 +254,7 @@ class datasource {
    */
   virtual std::unique_ptr<datasource::buffer> device_read(size_t offset,
                                                           size_t size,
-                                                          rmm::cuda_stream_view stream)
+                                                          cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read must override it.");
   }
@@ -267,7 +276,7 @@ class datasource {
    *
    * @return The number of bytes read (can be smaller than size)
    */
-  virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, rmm::cuda_stream_view stream)
+  virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read must override it.");
   }
@@ -290,7 +299,7 @@ class datasource {
    * @param dst Address of the existing device memory
    *            It must not be used asynchronously before the returned future is completed,
    *            because the implementation is not guaranteed to follow stream-ordering.
-   *            See https://github.com/rapidsai/cudf/pull/18279#issuecomment-2727726886
+   *            See https://github.com/NVIDIA/cudf/pull/18279#issuecomment-2727726886
    * @param stream CUDA stream to use
    *
    * @return The number of bytes read as a future value (can be smaller than size)
@@ -298,7 +307,7 @@ class datasource {
   virtual std::future<size_t> device_read_async(size_t offset,
                                                 size_t size,
                                                 uint8_t* dst,
-                                                rmm::cuda_stream_view stream)
+                                                cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read_async must override it.");
   }

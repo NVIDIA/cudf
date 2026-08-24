@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Multi-partition Distinct logic."""
 
@@ -28,14 +28,22 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 
-def lower_distinct(
+def _distinct_keys(ir: Distinct) -> tuple[NamedExpr, ...]:
+    subset: frozenset[str] = ir.subset or frozenset(ir.schema)
+    return tuple(
+        NamedExpr(name, Col(ir.schema[name], name))
+        for name in ir.schema
+        if name in subset
+    )
+
+
+def _lower_distinct_static(
     ir: Distinct,
     child: IR,
     partition_info: MutableMapping[IR, PartitionInfo],
-    config_options: ConfigOptions[StreamingExecutor],
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
     """
-    Lower a Distinct IR into partition-wise stages.
+    Lower a Distinct IR into partition-wise stages with static planning.
 
     Note: Edge cases (KEEP_NONE + ordering, complex slice, pre-shuffle)
     must be handled by the caller before calling this function.
@@ -50,8 +58,6 @@ def lower_distinct(
     partition_info
         A mapping from all unique IR nodes to the
         associated partitioning information.
-    config_options
-        GPUEngine configuration options.
 
     Returns
     -------
@@ -83,6 +89,34 @@ def lower_distinct(
     return new_node, partition_info
 
 
+def lower_distinct(
+    ir: Distinct,
+    child: IR,
+    partition_info: MutableMapping[IR, PartitionInfo],
+    config_options: ConfigOptions[StreamingExecutor],
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    """
+    Lower a Distinct IR with an already-lowered child.
+
+    Note: Edge cases (KEEP_NONE + ordering, complex slice, pre-shuffle)
+    must be handled by the caller before calling this function.
+    """
+    if _dynamic_planning_on(
+        config_options
+    ):  # pragma: no cover; Requires rapidsmpf runtime
+        # Dynamic planning: Reconstruct the Distinct.
+        # The runtime distinct_node will handle strategy selection,
+        # respecting ir.stable, ir.keep, and ir.zlice attributes.
+        dynamic_node = ir.reconstruct([child])
+        partition_info[dynamic_node] = PartitionInfo(
+            count=partition_info[child].count,
+            partitioned_on=_distinct_keys(ir),
+        )
+        return dynamic_node, partition_info
+
+    return _lower_distinct_static(ir, child, partition_info)
+
+
 @lower_ir_node.register(Distinct)
 def _(
     ir: Distinct, rec: LowerIRTransformer
@@ -90,12 +124,7 @@ def _(
     # Extract child partitioning
     child, partition_info = rec(ir.children[0])
     child_count = partition_info[child].count
-    subset: frozenset[str] = ir.subset or frozenset(ir.schema)
-    distinct_keys = tuple(
-        NamedExpr(name, Col(ir.schema[name], name))
-        for name in ir.schema
-        if name in subset
-    )
+    distinct_keys = _distinct_keys(ir)
 
     config_options = rec.state["config_options"]
 
@@ -134,20 +163,6 @@ def _(
             rec,
             msg="Complex slice not supported for multiple partitions.",
         )
-
-    # Branch based on dynamic planning
-    if _dynamic_planning_on(
-        config_options
-    ):  # pragma: no cover; Requires rapidsmpf runtime
-        # Dynamic planning: Reconstruct the Distinct.
-        # The runtime distinct_node will handle strategy selection,
-        # respecting ir.stable, ir.keep, and ir.zlice attributes.
-        dynamic_node = ir.reconstruct([child])
-        partition_info[dynamic_node] = PartitionInfo(
-            count=child_count,
-            partitioned_on=distinct_keys,
-        )
-        return dynamic_node, partition_info
 
     return lower_distinct(
         ir,

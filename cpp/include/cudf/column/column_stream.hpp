@@ -1,21 +1,24 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/column/column.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
+
+/**
+ * @file
+ * @brief Column device-buffer stream (deallocation) helpers
+ */
 
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_stream
  * @{
- * @file
- * @brief Column device-buffer stream (deallocation) helpers
  */
 
 /**
@@ -37,7 +40,7 @@ namespace CUDF_EXPORT cudf {
  * @param stream Stream used for future asynchronous deallocation of the buffers
  * @return Column with equivalent contents and rebinding applied
  */
-[[nodiscard]] std::unique_ptr<column> rebind_stream(column&& col, rmm::cuda_stream_view stream);
+[[nodiscard]] std::unique_ptr<column> rebind_stream(column&& col, cuda::stream_ref stream);
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

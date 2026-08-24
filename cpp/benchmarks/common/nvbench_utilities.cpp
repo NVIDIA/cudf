@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@ void set_throughputs(nvbench::state& state)
 {
   double avg_cuda_time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
 
-  if (const auto items = state.get_element_count(); items != 0) {
+  if (auto const items = state.get_element_count(); items != 0) {
     auto& summ = state.add_summary("nv/cold/bw/item_rate");
     summ.set_string("name", "Elem/s");
     summ.set_string("hint", "item_rate");
@@ -21,8 +21,8 @@ void set_throughputs(nvbench::state& state)
     summ.set_float64("value", static_cast<double>(items) / avg_cuda_time);
   }
 
-  if (const auto bytes = state.get_global_memory_rw_bytes(); bytes != 0) {
-    const auto avg_used_gmem_bw = static_cast<double>(bytes) / avg_cuda_time;
+  if (auto const bytes = state.get_global_memory_rw_bytes(); bytes != 0) {
+    auto const avg_used_gmem_bw = static_cast<double>(bytes) / avg_cuda_time;
     {
       auto& summ = state.add_summary("nv/cold/bw/global/bytes_per_second");
       summ.set_string("name", "GlobalMem BW");
@@ -34,7 +34,7 @@ void set_throughputs(nvbench::state& state)
     }
 
     {
-      const auto peak_gmem_bw =
+      auto const peak_gmem_bw =
         static_cast<double>(state.get_device()->get_global_memory_bus_bandwidth());
 
       auto& summ = state.add_summary("nv/cold/bw/global/utilization");

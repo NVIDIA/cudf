@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
@@ -55,9 +56,12 @@ void nvbench_unique(nvbench::state& state, nvbench::type_list<Type, nvbench::enu
 
   auto const run_bench = [&](auto const& input) {
     state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       auto result = cudf::unique(input, {0}, Keep, cudf::null_equality::EQUAL);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   };
 
   if (sorting) {
@@ -112,9 +116,12 @@ void nvbench_unique_list(nvbench::state& state, nvbench::type_list<Type, nvbench
 
   auto const run_bench = [&](auto const& input) {
     state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       auto result = cudf::unique(input, {0}, Keep, cudf::null_equality::EQUAL);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   };
 
   if (sorting) {

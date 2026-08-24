@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,8 +32,11 @@
 #include <BS_thread_pool.hpp>
 #include <BS_thread_pool_utils.hpp>
 
+#include <algorithm>
 #include <functional>
+#include <map>
 #include <numeric>
+#include <unordered_set>
 
 namespace cudf::io::json::detail {
 
@@ -50,6 +53,70 @@ BS::thread_pool& tpool()
 }
 
 }  // namespace pools
+
+struct read_json_diagnostics {
+  std::vector<std::string> mismatched_columns;
+  std::vector<cudf::io::json_reader_row_diagnostics::schema_mismatch_rows> mismatched_rows;
+  size_type row_offset{0};
+  bool collect_schema_mismatch_rows{false};
+};
+
+void append_diagnostics(read_json_diagnostics& diagnostics, device_parse_nested_json_result& result)
+{
+  diagnostics.mismatched_columns.insert(diagnostics.mismatched_columns.end(),
+                                        result.top_level_columns_with_schema_mismatch.begin(),
+                                        result.top_level_columns_with_schema_mismatch.end());
+
+  if (diagnostics.collect_schema_mismatch_rows) {
+    for (auto& row_info : result.top_level_columns_with_schema_mismatch_rows) {
+      auto& out       = diagnostics.mismatched_rows.emplace_back();
+      out.column_name = std::move(row_info.column_name);
+      out.row_indices.reserve(row_info.row_indices.size());
+      std::transform(row_info.row_indices.begin(),
+                     row_info.row_indices.end(),
+                     std::back_inserter(out.row_indices),
+                     [&diagnostics](auto row) { return row + diagnostics.row_offset; });
+    }
+  }
+
+  diagnostics.row_offset += result.data.tbl->num_rows();
+}
+
+std::vector<std::string> deduplicate_schema_mismatch_columns(std::vector<std::string>& columns)
+{
+  // In multi-batch reads the same top-level column may appear in more than one batch's
+  // mismatch list; deduplicate while preserving first-occurrence order.
+  std::unordered_set<std::string> seen;
+  std::vector<std::string> deduped;
+  deduped.reserve(columns.size());
+  for (auto& name : columns) {
+    if (seen.insert(name).second) { deduped.emplace_back(std::move(name)); }
+  }
+  return deduped;
+}
+
+std::vector<json_reader_row_diagnostics::schema_mismatch_rows> deduplicate_schema_mismatch_rows(
+  read_json_diagnostics& diagnostics, std::vector<std::string> const& column_order)
+{
+  std::map<std::string, std::vector<size_type>> rows_by_column;
+  for (auto& row_info : diagnostics.mismatched_rows) {
+    auto& rows = rows_by_column[row_info.column_name];
+    rows.insert(rows.end(), row_info.row_indices.begin(), row_info.row_indices.end());
+  }
+
+  std::vector<json_reader_row_diagnostics::schema_mismatch_rows> deduped_rows;
+  deduped_rows.reserve(rows_by_column.size());
+  for (auto const& column_name : column_order) {
+    auto it = rows_by_column.find(column_name);
+    if (it == rows_by_column.end()) { continue; }
+    auto& rows = it->second;
+    std::ranges::sort(rows);
+    auto const to_erase = std::ranges::unique(rows);
+    rows.erase(to_erase.begin(), to_erase.end());
+    deduped_rows.push_back({column_name, std::move(rows)});
+  }
+  return deduped_rows;
+}
 
 class compressed_host_buffer_source final : public datasource {
  public:
@@ -107,13 +174,13 @@ class compressed_host_buffer_source final : public datasource {
   std::future<std::size_t> device_read_async(std::size_t offset,
                                              std::size_t size,
                                              uint8_t* dst,
-                                             rmm::cuda_stream_view stream) override
+                                             cuda::stream_ref stream) override
   {
     auto& thread_pool = pools::tpool();
     return thread_pool.submit_task([this, offset, size, dst, stream] {
       auto hbuf = host_read(offset, size);
       CUDF_CUDA_TRY(cudf::detail::memcpy_async(dst, hbuf->data(), hbuf->size(), stream));
-      stream.synchronize();
+      stream.sync();
       return hbuf->size();
     });
   }
@@ -188,7 +255,7 @@ std::size_t get_batch_size(std::size_t chunk_size)
  */
 size_type find_first_delimiter(device_span<char const> d_data,
                                char const delimiter,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   auto const first_delimiter_position =
     thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -227,7 +294,7 @@ std::pair<datasource::owning_buffer<rmm::device_buffer>,
           std::optional<datasource::owning_buffer<rmm::device_buffer>>>
 get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                            json_reader_options const& reader_opts,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -408,8 +475,9 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
 std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr,
+  read_json_diagnostics* diagnostics_out = nullptr)
 {
   CUDF_FUNC_RANGE();
   // The second owning buffer in the pair returned by get_record_range_raw_input may not be
@@ -424,12 +492,24 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
                             reader_opts.get_delimiter(),
                             stream,
                             cudf::get_current_device_resource_ref());
-    stream.synchronize();
+    stream.sync();
   }
+
+  // Helper: parse one buffer, optionally appending schema-mismatch diagnostics. The two call sites
+  // below would otherwise duplicate this branching.
+  auto parse_buffer = [&](cudf::device_span<char const> buf) {
+    if (diagnostics_out != nullptr) {
+      auto result = device_parse_nested_json_with_diagnostics(
+        buf, reader_opts, diagnostics_out->collect_schema_mismatch_rows, stream, mr);
+      append_diagnostics(*diagnostics_out, result);
+      return std::move(result.data);
+    }
+    return device_parse_nested_json(buf, reader_opts, stream, mr);
+  };
 
   auto buffer = cudf::device_span<char const>(
     reinterpret_cast<char const*>(owning_buffers.first.data()), owning_buffers.first.size());
-  auto first_partial_table = device_parse_nested_json(buffer, reader_opts, stream, mr);
+  auto first_partial_table = parse_buffer(buffer);
   if (!owning_buffers.second.has_value())
     return std::make_pair(std::move(first_partial_table), std::nullopt);
 
@@ -439,12 +519,12 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
                             reader_opts.get_delimiter(),
                             stream,
                             cudf::get_current_device_resource_ref());
-    stream.synchronize();
+    stream.sync();
   }
   buffer = cudf::device_span<char const>(
     reinterpret_cast<char const*>(owning_buffers.second.value().data()),
     owning_buffers.second.value().size());
-  auto second_partial_table = device_parse_nested_json(buffer, reader_opts, stream, mr);
+  auto second_partial_table = parse_buffer(buffer);
   return std::make_pair(std::move(first_partial_table), std::move(second_partial_table));
 }
 
@@ -460,8 +540,9 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
  */
 table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> sources,
                                    json_reader_options const& reader_opts,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   rmm::device_async_resource_ref mr,
+                                   read_json_diagnostics* diagnostics_out = nullptr)
 {
   std::size_t const total_source_size = sources_size(sources, 0, 0);
 
@@ -589,8 +670,11 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
 
   if (batch_offsets.size() <= 2) {
     // single batch
-    auto has_inserted = insert_partial_tables(
-      read_batch(sources, batched_reader_opts, stream, cudf::get_current_device_resource_ref()));
+    auto has_inserted = insert_partial_tables(read_batch(sources,
+                                                         batched_reader_opts,
+                                                         stream,
+                                                         cudf::get_current_device_resource_ref(),
+                                                         diagnostics_out));
     if (!has_inserted) {
       return table_with_metadata{std::make_unique<table>(std::vector<std::unique_ptr<column>>{}),
                                  {std::vector<column_name_info>{}}};
@@ -599,8 +683,11 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
     // multiple batches
     batched_reader_opts.set_byte_range_offset(batch_offsets[0]);
     batched_reader_opts.set_byte_range_size(batch_offsets[1] - batch_offsets[0]);
-    insert_partial_tables(
-      read_batch(sources, batched_reader_opts, stream, cudf::get_current_device_resource_ref()));
+    insert_partial_tables(read_batch(sources,
+                                     batched_reader_opts,
+                                     stream,
+                                     cudf::get_current_device_resource_ref(),
+                                     diagnostics_out));
 
     auto& tbl = partial_tables.back().tbl;
     std::vector<column_view> children;
@@ -619,8 +706,11 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
       batched_reader_opts.set_byte_range_offset(batch_offsets[batch_offset_pos]);
       batched_reader_opts.set_byte_range_size(batch_offsets[batch_offset_pos + 1] -
                                               batch_offsets[batch_offset_pos]);
-      auto has_inserted = insert_partial_tables(
-        read_batch(sources, batched_reader_opts, stream, cudf::get_current_device_resource_ref()));
+      auto has_inserted = insert_partial_tables(read_batch(sources,
+                                                           batched_reader_opts,
+                                                           stream,
+                                                           cudf::get_current_device_resource_ref(),
+                                                           diagnostics_out));
 
       if (!has_inserted) {
         CUDF_EXPECTS(batch_offset_pos == batch_offsets.size() - 2,
@@ -657,7 +747,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
                                    std::size_t range_offset,
                                    std::size_t range_size,
                                    char delimiter,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   // We append a line delimiter between two files to make sure the last line of file i and the first
@@ -731,7 +821,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
                     d_delimiter_map.data(),
                     buffer.data());
   }
-  stream.synchronize();
+  stream.sync();
 
   if (thread_tasks.size()) {
     auto const bytes_read = std::accumulate(
@@ -745,13 +835,18 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
   return buffer.first(bytes_read + (delimiter_map.size() * num_delimiter_chars));
 }
 
-table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
-                              json_reader_options const& reader_opts,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
+namespace {
 
+// Shared body of detail::read_json (no diagnostics) and detail::read_json_with_diagnostics. When
+// `mismatched_cols_out` is non-null, the names of top-level output columns whose JSON value tree
+// contained a schema-mismatch (against the user-supplied schema) are appended to it; in multi-
+// batch reads, entries are accumulated across batches and deduplicated below.
+table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> sources,
+                                       json_reader_options const& reader_opts,
+                                       cuda::stream_ref stream,
+                                       rmm::device_async_resource_ref mr,
+                                       read_json_diagnostics* diagnostics_out)
+{
   if (reader_opts.get_byte_range_offset() != 0 or reader_opts.get_byte_range_size() != 0) {
     CUDF_EXPECTS(reader_opts.is_enabled_lines(),
                  "Specifying a byte range is supported only for JSON Lines");
@@ -763,7 +858,7 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
   }
 
   if (reader_opts.get_compression() == compression_type::NONE)
-    return read_json_impl(sources, reader_opts, stream, mr);
+    return read_json_impl(sources, reader_opts, stream, mr, diagnostics_out);
 
   std::vector<std::unique_ptr<datasource>> compressed_sources;
   std::vector<std::future<std::unique_ptr<compressed_host_buffer_source>>> thread_tasks;
@@ -779,7 +874,49 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                  [](auto& task) { return task.get(); });
   // in read_json_impl, we need the compressed source size to actually be the
   // uncompressed source size for correct batching
-  return read_json_impl(compressed_sources, reader_opts, stream, mr);
+  return read_json_impl(compressed_sources, reader_opts, stream, mr, diagnostics_out);
+}
+
+}  // namespace
+
+table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
+                              json_reader_options const& reader_opts,
+                              cuda::stream_ref stream,
+                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return read_json_dispatch(sources, reader_opts, stream, mr, /*diagnostics_out=*/nullptr);
+}
+
+json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasource>> sources,
+                                              json_reader_options const& reader_opts,
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  read_json_diagnostics diagnostics;
+  auto data    = read_json_dispatch(sources, reader_opts, stream, mr, &diagnostics);
+  auto deduped = deduplicate_schema_mismatch_columns(diagnostics.mismatched_columns);
+
+  return json_reader_result{std::move(data), json_reader_diagnostics{std::move(deduped)}};
+}
+
+json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
+  host_span<std::unique_ptr<datasource>> sources,
+  json_reader_options const& reader_opts,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  read_json_diagnostics diagnostics;
+  diagnostics.collect_schema_mismatch_rows = true;
+  auto data            = read_json_dispatch(sources, reader_opts, stream, mr, &diagnostics);
+  auto deduped_columns = deduplicate_schema_mismatch_columns(diagnostics.mismatched_columns);
+  auto deduped_rows    = deduplicate_schema_mismatch_rows(diagnostics, deduped_columns);
+
+  return json_reader_result_with_row_diagnostics{
+    std::move(data),
+    json_reader_row_diagnostics{std::move(deduped_columns), std::move(deduped_rows)}};
 }
 
 }  // namespace cudf::io::json::detail

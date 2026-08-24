@@ -490,6 +490,44 @@ TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOpNullEqualsSimple)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
 }
 
+TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOpNullMaxColumnScalar)
+{
+  using namespace numeric;
+  using decimalXX = TypeParam;
+  using RepType   = cudf::device_storage_type_t<decimalXX>;
+
+  // DECIMAL scale -2: column {1.00, 5.00, 3.00}, scalar 5.00 -> greatest is 5.00.
+  // NULL_MAX always produces a nullable output, so the expected column is nullable (all valid).
+  auto const col      = fp_wrapper<RepType>{{100, 500, 300}, scale_type{-2}};
+  auto const scalar   = cudf::make_fixed_point_scalar<decimalXX>(500, scale_type{-2});
+  auto const expected = fp_wrapper<RepType>{{500, 500, 500}, {1, 1, 1}, scale_type{-2}};
+
+  auto const type = cudf::binary_operation_fixed_point_output_type(
+    cudf::binary_operator::NULL_MAX, static_cast<cudf::column_view>(col).type(), scalar->type());
+  auto const result = cudf::binary_operation(col, *scalar, cudf::binary_operator::NULL_MAX, type);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOpNullEqualsNullColumnScalar)
+{
+  using namespace numeric;
+  using decimalXX = TypeParam;
+  using RepType   = cudf::device_storage_type_t<decimalXX>;
+
+  auto const col = fp_wrapper<RepType>{{100, 500, 300}, {1, 0, 1}, scale_type{-2}};
+
+  // A null scalar compared with NULL_EQUALS yields true only where the column value is also null.
+  auto scalar = cudf::make_fixed_point_scalar<decimalXX>(500, scale_type{-2});
+  scalar->set_valid_async(false);
+  auto const expected = wrapper<bool>{{0, 1, 0}, {true, true, true}};
+
+  auto const result = cudf::binary_operation(
+    col, *scalar, cudf::binary_operator::NULL_EQUALS, cudf::data_type{cudf::type_id::BOOL8});
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
 TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOp_Div)
 {
   using namespace numeric;

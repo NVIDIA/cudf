@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -298,7 +298,7 @@ def test_timedelta_series_ops_with_scalars(
                 reason=(
                     "timedelta modulo by zero is dubiously defined in "
                     "both pandas and cuDF "
-                    "(see https://github.com/rapidsai/cudf/issues/5938)"
+                    "(see https://github.com/NVIDIA/cudf/issues/5938)"
                 ),
             ),
         ),
@@ -1525,7 +1525,7 @@ def test_binop_bool_uint(request, binary_op_method, rhs):
     if binary_op_method in {"rmod", "rfloordiv"}:
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/12162"
+                reason="https://github.com/NVIDIA/cudf/issues/12162"
             ),
         )
     psr = pd.Series([True, False, False])
@@ -1554,7 +1554,7 @@ def test_floordiv_zero_float64(
 
 
 @pytest.mark.parametrize("scalar_divisor", [False, True])
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12162")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12162")
 def test_floordiv_zero_bool(scalar_divisor):
     sr = pd.Series([True, True, False], dtype=np.bool_)
     cr = cudf.from_pandas(sr)
@@ -3039,7 +3039,6 @@ def test_binop_index_series(arithmetic_op):
     assert_eq(expected, actual)
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 @pytest.mark.parametrize("name1", [None, "name1"])
 @pytest.mark.parametrize("name2", [None, "name2"])
 def test_binop_index_dt_td_series_with_names(name1, name2):
@@ -3244,3 +3243,30 @@ def test_decimal_arrow_backed_comparisons_pandas_compat(comparison_op):
         expect = comparison_op(s, s)
         got = comparison_op(gs, gs)
         assert_eq(expect, got)
+
+
+def test_arrow_backed_unsigned_subtract_python_int():
+    # An unsigned ArrowDtype minus a Python int is promoted to signed
+    # int64[pyarrow] by pandas, so it must not raise a spurious unsigned
+    # overflow even when elements are smaller than the subtrahend.
+    s = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([0, 1, 2, 5], type=pa.uint8()))
+    )
+    gs = cudf.from_pandas(s)
+    assert_eq(s - 3, gs - 3)
+    assert_eq(3 - s, 3 - gs)
+
+
+def test_arrow_backed_unsigned_subtract_overflow():
+    # Subtraction of two unsigned ArrowDtype operands that underflows raises,
+    # mirroring pyarrow.compute.subtract_checked.
+    s = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([0, 1], type=pa.uint8()))
+    )
+    other = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([1, 0], type=pa.uint8()))
+    )
+    gs = cudf.from_pandas(s)
+    gother = cudf.from_pandas(other)
+    with pytest.raises(pa.ArrowInvalid):
+        gs - gother

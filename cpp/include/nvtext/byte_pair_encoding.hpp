@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -18,6 +18,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_tokenize
  * @{
  * @file
+ * @brief APIs for byte pair encoding (BPE) tokenization of strings columns.
  */
 
 /**
@@ -38,7 +39,7 @@ struct bpe_merge_pairs {
    * @param mr Device memory resource used to allocate the device memory
    */
   bpe_merge_pairs(std::unique_ptr<cudf::column>&& input,
-                  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                  cuda::stream_ref stream           = cudf::get_default_stream(),
                   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -49,7 +50,7 @@ struct bpe_merge_pairs {
    * @param mr Device memory resource used to allocate the device memory
    */
   bpe_merge_pairs(cudf::strings_column_view const& input,
-                  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                  cuda::stream_ref stream           = cudf::get_default_stream(),
                   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   ~bpe_merge_pairs();
@@ -87,7 +88,7 @@ struct bpe_merge_pairs {
  */
 std::unique_ptr<bpe_merge_pairs> load_merge_pairs(
   cudf::strings_column_view const& merge_pairs,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -121,7 +122,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(
   cudf::strings_column_view const& input,
   bpe_merge_pairs const& merges_pairs,
   cudf::string_scalar const& separator = cudf::string_scalar(" "),
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

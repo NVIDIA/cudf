@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ struct column_accessor {
     return reinterpret_cast<column_type const&>(cols[index]);
   }
 
-  static __device__ element_type element(auto const* __restrict__ cols, size_type row)
+  static __device__ auto element(auto const* __restrict__ cols, size_type row)
   {
     return column(cols).template element<element_type>(map_index(row));
   }
@@ -60,8 +60,7 @@ struct column_accessor {
     return column(cols).is_valid(map_index(row));
   }
 
-  static __device__ optional_element_type nullable_element(auto const* __restrict__ cols,
-                                                           size_type row)
+  static __device__ auto nullable_element(auto const* __restrict__ cols, size_type row)
   {
     return column(cols).template nullable_element<element_type>(map_index(row));
   }

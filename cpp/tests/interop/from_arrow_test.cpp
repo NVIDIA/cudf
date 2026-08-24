@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -143,7 +143,7 @@ TEST_F(FromArrowTest, DateTimeTable)
   auto data = std::vector<int64_t>{1, 2, 3, 4, 5, 6};
 
   auto col = cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>(
-    data.begin(), data.end());
+    data.begin(), data.end(), cuda::constant_iterator<bool>(true));
 
   cudf::table_view expected_table_view({col});
 
@@ -169,7 +169,7 @@ TYPED_TEST(FromArrowTestDurationsTest, DurationTable)
   using T = TypeParam;
 
   auto data = {T{1}, T{2}, T{3}, T{4}, T{5}, T{6}};
-  auto col  = cudf::test::fixed_width_column_wrapper<T>(data);
+  auto col  = cudf::test::fixed_width_column_wrapper<T>(data, cuda::constant_iterator<bool>(true));
 
   std::shared_ptr<arrow::Array> arr;
   cudf::table_view expected_table_view({col});
@@ -222,7 +222,7 @@ TEST_F(FromArrowTest, NestedList)
 
   auto got_cudf_table = export_table(arrow_table);
   ASSERT_TRUE(got_cudf_table.has_value());
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table_view, got_cudf_table.value()->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_table_view, got_cudf_table.value()->view());
 }
 
 TEST_F(FromArrowTest, StructColumn)
@@ -313,7 +313,7 @@ TEST_F(FromArrowTest, StructColumn)
   auto got_cudf_table = export_table(input);
   ASSERT_TRUE(got_cudf_table.has_value());
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_cudf_table, got_cudf_table.value()->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_cudf_table, got_cudf_table.value()->view());
 }
 
 TEST_F(FromArrowTest, DictionaryIndicesType)
@@ -416,7 +416,7 @@ TEST_F(FromArrowTest, ChunkedArray)
   auto got_cudf_table = export_table(arrow_table);
   ASSERT_TRUE(got_cudf_table.has_value());
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_cudf_table->view(), got_cudf_table.value()->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_cudf_table->view(), got_cudf_table.value()->view());
 }
 
 struct FromArrowTestSlice
@@ -454,8 +454,9 @@ TYPED_TEST(FromArrowTestDecimalsTest, FixedPointTable)
 
   auto const precision = get_decimal_precision<T>();
   for (auto const scale : {3, 2, 1, 0, -1, -2, -3}) {
-    auto const data     = std::vector<T>{1, 2, 3, 4, 5, 6};
-    auto const col      = fp_wrapper<T>(data.cbegin(), data.cend(), scale_type{scale});
+    auto const data = std::vector<T>{1, 2, 3, 4, 5, 6};
+    auto const col  = fp_wrapper<T>(
+      data.cbegin(), data.cend(), cuda::constant_iterator<bool>(true), scale_type{scale});
     auto const expected = cudf::table_view({col});
 
     auto const arr = get_decimal_arrow_array(data, std::nullopt, precision, scale);
@@ -481,9 +482,10 @@ TYPED_TEST(FromArrowTestDecimalsTest, FixedPointTableLarge)
   auto constexpr NUM_ELEMENTS = 1000;
 
   for (auto const scale : {3, 2, 1, 0, -1, -2, -3}) {
-    auto iota       = cudf::detail::make_counting_transform_iterator(1, [](int i) { return T{i}; });
-    auto const data = std::vector<T>(iota, iota + NUM_ELEMENTS);
-    auto const col  = fp_wrapper<T>(iota, iota + NUM_ELEMENTS, scale_type{scale});
+    auto data = std::vector<T>(NUM_ELEMENTS);
+    std::iota(data.begin(), data.end(), T{1});
+    auto const col = fp_wrapper<T>(
+      data.begin(), data.end(), cuda::constant_iterator<bool>(true), scale_type{scale});
     auto const expected = cudf::table_view({col});
 
     auto const arr = get_decimal_arrow_array(data, std::nullopt, precision, scale);
@@ -593,7 +595,7 @@ TYPED_TEST(FromArrowNumericScalarTest, Basic)
 struct FromArrowDecimalScalarTest : public cudf::test::BaseFixture {};
 
 template <typename ScalarType, typename DecimalType>
-void check_decimal_scalar(const int value, ScalarType const& arrow_scalar)
+void check_decimal_scalar(int const value, ScalarType const& arrow_scalar)
 {
   auto const scale{4};
   auto const cudf_scalar = export_scalar(arrow_scalar);
@@ -673,7 +675,7 @@ TEST_F(FromArrowStructScalarTest, Basic)
   auto const cudf_struct_scalar = dynamic_cast<cudf::struct_scalar*>(cudf_scalar.value().get());
   EXPECT_EQ(cudf_struct_scalar->type(), cudf::data_type(cudf::type_id::STRUCT));
 
-  cudf::test::fixed_width_column_wrapper<int64_t> const col({value});
+  cudf::test::fixed_width_column_wrapper<int64_t> const col({value}, {true});
   cudf::table_view const lhs({col});
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(lhs, cudf_struct_scalar->view());

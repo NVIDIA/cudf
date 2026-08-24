@@ -1,11 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf.column.column cimport column
-from pylibcudf.libcudf.column.column_view cimport mutable_column_view
+from pylibcudf.libcudf.column.column_view cimport (
+    column_view,
+    mutable_column_view,
+)
 from pylibcudf.libcudf.filling cimport (
     fill as cpp_fill,
     fill_in_place as cpp_fill_in_place,
@@ -14,6 +17,7 @@ from pylibcudf.libcudf.filling cimport (
     calendrical_month_sequence as cpp_calendrical_month_sequence
 )
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -22,6 +26,10 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -38,7 +46,7 @@ cpdef Column fill(
     size_type begin,
     size_type end,
     Scalar value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -73,9 +81,10 @@ cpdef Column fill(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_destination = destination.view()
     with nogil:
         result = cpp_fill(
-            destination.view(),
+            c_destination,
             begin,
             end,
             dereference((<Scalar> value).c_obj),
@@ -89,7 +98,7 @@ cpdef void fill_in_place(
     size_type begin,
     size_type end,
     Scalar value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
 ):
 
     """Fill destination column in place from begin to end with value.
@@ -132,7 +141,7 @@ cpdef Column sequence(
     size_type size,
     Scalar init,
     Scalar step,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a sequence column of size ``size`` with initial value ``init`` and step
@@ -178,7 +187,7 @@ cpdef Column sequence(
 cpdef Table repeat(
     Table input_table,
     ColumnOrSize count,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Repeat rows of a Table.
@@ -209,20 +218,26 @@ cpdef Table repeat(
 
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
+    cdef table_view c_input_table
+    cdef column_view c_count_column
+
     mr = _get_memory_resource(mr)
 
     if ColumnOrSize is Column:
+        c_input_table = input_table.view()
+        c_count_column = count.view()
         with nogil:
             result = cpp_repeat(
-                input_table.view(),
-                count.view(),
+                c_input_table,
+                c_count_column,
                 _cs,
                 mr.get_mr()
             )
     if ColumnOrSize is size_type:
+        c_input_table = input_table.view()
         with nogil:
             result = cpp_repeat(
-                input_table.view(),
+                c_input_table,
                 count,
                 _cs,
                 mr.get_mr()
@@ -234,7 +249,7 @@ cpdef Column calendrical_month_sequence(
     size_type n,
     Scalar init,
     size_type months,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 

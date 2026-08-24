@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_nested_types.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/merge.hpp>
 #include <cudf/sorting.hpp>
@@ -25,6 +26,8 @@ void nvbench_merge_struct(nvbench::state& state)
 
   stream.synchronize();
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     rmm::cuda_stream_view stream_view{launch.get_stream()};
 
@@ -35,6 +38,9 @@ void nvbench_merge_struct(nvbench::state& state)
                 stream_view,
                 cudf::get_current_device_resource_ref());
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(nvbench_merge_struct)

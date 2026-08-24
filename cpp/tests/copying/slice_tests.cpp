@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,6 +24,46 @@ template <typename T>
 struct SliceTest : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(SliceTest, cudf::test::NumericTypes);
+
+struct SliceZeroColumnTest : public cudf::test::BaseFixture {};
+
+TEST_F(SliceZeroColumnTest, PreservesRowCount)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 10};
+  std::vector<cudf::size_type> indices{1, 4, 5, 9};
+  auto const result = cudf::slice(input, indices);
+  ASSERT_EQ(result.size(), 2);
+  EXPECT_EQ(result[0].num_columns(), 0);
+  EXPECT_EQ(result[0].num_rows(), 3);
+  EXPECT_EQ(result[1].num_columns(), 0);
+  EXPECT_EQ(result[1].num_rows(), 4);
+}
+
+TEST_F(SliceZeroColumnTest, OutOfBoundsThrows)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 10};
+  // end exceeds the row count
+  EXPECT_THROW(cudf::slice(input, std::vector<cudf::size_type>{8, 12}), std::out_of_range);
+  // end < begin
+  EXPECT_THROW(cudf::slice(input, std::vector<cudf::size_type>{5, 3}), std::invalid_argument);
+  // negative begin
+  EXPECT_THROW(cudf::slice(input, std::vector<cudf::size_type>{-1, 4}), std::out_of_range);
+}
+
+TEST_F(SliceZeroColumnTest, EmptyTable)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 0};
+
+  auto const result = cudf::slice(input, std::vector<cudf::size_type>{1, 4, 5, 9});
+  ASSERT_EQ(result.size(), 2);
+  for (auto const& t : result) {
+    EXPECT_EQ(t.num_columns(), 0);
+    EXPECT_EQ(t.num_rows(), 0);
+  }
+
+  // Unlike a zero-column table with rows, an empty table does not reject out-of-range indices.
+  EXPECT_NO_THROW(cudf::slice(input, std::vector<cudf::size_type>{8, 12}));
+}
 
 TYPED_TEST(SliceTest, NumericColumnsWithNulls)
 {

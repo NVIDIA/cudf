@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -15,7 +15,7 @@ rapids-dependency-file-generator \
   --output requirements \
   --file-key "py_build_${package_name}" \
   --file-key "py_rapids_build_${package_name}" \
-  --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};cuda_suffixed=true" \
+  --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};cuda_suffixed=true;use_cuda_wheels=true" \
 | tee /tmp/requirements-build.txt
 
 rapids-logger "Installing build requirements"
@@ -31,12 +31,16 @@ export PIP_NO_BUILD_ISOLATION=0
 export SKBUILD_CMAKE_ARGS="-DUSE_NVCOMP_RUNTIME_WHEEL=ON"
 ./ci/build_wheel.sh "${package_name}" "${package_dir}"
 
+RAPIDS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+
 # repair wheels and write to the location that artifact-uploading code expects to find them
 python -m auditwheel repair \
     --exclude libkvikio.so \
     --exclude libnvcomp.so.5 \
     --exclude librapids_logger.so \
     --exclude librmm.so \
+    --exclude libnvrtc.so.${RAPIDS_CUDA_MAJOR} \
+    --exclude libnvJitLink.so.${RAPIDS_CUDA_MAJOR} \
     -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
     ${package_dir}/dist/*
 
@@ -46,3 +50,6 @@ LIBCUDF_LIBRARY=$(find "${WHEEL_EXPORT_DIR}" -type f -name 'libcudf.so')
 ./ci/check_symbols.sh "${LIBCUDF_LIBRARY}"
 
 ./ci/validate_wheel.sh "${package_dir}" "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}"
+
+RAPIDS_PACKAGE_NAME="$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")"
+export RAPIDS_PACKAGE_NAME

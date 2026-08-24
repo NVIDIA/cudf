@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/strings/convert/convert_durations.hpp>
@@ -41,16 +42,24 @@ void bench_convert_duration(nvbench::state& state, nvbench::type_list<DataType>)
   if (from_dur) {
     state.add_global_memory_reads<DataType>(num_rows);
     state.add_global_memory_writes<int8_t>(format.size() * num_rows);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::from_durations(input, format); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto source = cudf::strings::from_durations(input, format);
     auto view   = cudf::strings_column_view(source->view());
     state.add_global_memory_reads<int8_t>(source->alloc_size());
     state.add_global_memory_writes<DataType>(num_rows);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
+
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::strings::to_durations(view, data_type, format);
     });
+
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 

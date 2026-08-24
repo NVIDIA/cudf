@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -337,6 +337,8 @@ public final class Table implements AutoCloseable {
    * @param compression       native compression codec ID
    * @param rowGroupSizeRows  max #rows in a row group
    * @param rowGroupSizeBytes max #bytes in a row group
+   * @param maxDictionarySize maximum dictionary size in bytes (cuDF default 1 MiB)
+   * @param dictionaryPolicy  native dictionary policy ID
    * @param statsFreq         native statistics frequency ID
    * @param isInt96           true if timestamp type is int96
    * @param precisions        precision list containing all the precisions of the decimal types in
@@ -355,6 +357,8 @@ public final class Table implements AutoCloseable {
                                                    int compression,
                                                    int rowGroupSizeRows,
                                                    long rowGroupSizeBytes,
+                                                   long maxDictionarySize,
+                                                   int dictionaryPolicy,
                                                    int statsFreq,
                                                    boolean[] isInt96,
                                                    int[] precisions,
@@ -375,6 +379,8 @@ public final class Table implements AutoCloseable {
    * @param compression       native compression codec ID
    * @param rowGroupSizeRows  max #rows in a row group
    * @param rowGroupSizeBytes max #bytes in a row group
+   * @param maxDictionarySize maximum dictionary size in bytes (cuDF default 1 MiB)
+   * @param dictionaryPolicy  native dictionary policy ID
    * @param statsFreq         native statistics frequency ID
    * @param isInt96           true if timestamp type is int96
    * @param precisions        precision list containing all the precisions of the decimal types in
@@ -393,6 +399,8 @@ public final class Table implements AutoCloseable {
                                                      int compression,
                                                      int rowGroupSizeRows,
                                                      long rowGroupSizeBytes,
+                                                     long maxDictionarySize,
+                                                     int dictionaryPolicy,
                                                      int statsFreq,
                                                      boolean[] isInt96,
                                                      int[] precisions,
@@ -628,10 +636,21 @@ public final class Table implements AutoCloseable {
       boolean[] unboundedFollowing,
       boolean ignoreNullKeys) throws CudfException;
 
-  private static native long[] rangeRollingWindowAggregate(long inputTable, int[] keyIndices, int[] orderByIndices, boolean[] isOrderByAscending,
-                                                           int[] aggColumnsIndices, long[] aggInstances, int[] minPeriods,
-                                                           long[] preceding, long[] following, int[] precedingRangeExtent, int[] followingRangeExtent,
-                                                           boolean ignoreNullKeys) throws CudfException;
+  private static native long[] rangeRollingWindowAggregate(
+      long inputTable,
+      int[] keyIndices,
+      int[] orderByIndices,
+      boolean[] isOrderByAscending,
+      boolean[] isOrderByNullsFirst,
+      int[] orderByOffsets,
+      int[] aggColumnsIndices,
+      long[] aggInstances,
+      int[] minPeriods,
+      long[] preceding,
+      long[] following,
+      int[] precedingRangeExtent,
+      int[] followingRangeExtent,
+      boolean ignoreNullKeys) throws CudfException;
 
   private static native long sortOrder(long inputTable, long[] sortKeys, boolean[] isDescending,
       boolean[] areNullsSmallest) throws CudfException;
@@ -1672,6 +1691,8 @@ public final class Table implements AutoCloseable {
           options.getCompressionType().nativeId,
           options.getRowGroupSizeRows(),
           options.getRowGroupSizeBytes(),
+          options.getMaxDictionarySize(),
+          options.getDictionaryPolicy().nativeId,
           options.getStatisticsFrequency().nativeId,
           options.getFlatIsTimeTypeInt96(),
           options.getFlatPrecision(),
@@ -1694,6 +1715,8 @@ public final class Table implements AutoCloseable {
           options.getCompressionType().nativeId,
           options.getRowGroupSizeRows(),
           options.getRowGroupSizeBytes(),
+          options.getMaxDictionarySize(),
+          options.getDictionaryPolicy().nativeId,
           options.getStatisticsFrequency().nativeId,
           options.getFlatIsTimeTypeInt96(),
           options.getFlatPrecision(),
@@ -4250,31 +4273,40 @@ public final class Table implements AutoCloseable {
               + agg.getWindowOptions().getFrameType());
         }
 
-        DType orderByType = operation.table.getColumn(agg.getWindowOptions().getOrderByColumnIndex()).getType();
-        switch (orderByType.getTypeId()) {
-          case INT8:
-          case INT16:
-          case INT32:
-          case INT64:
-          case UINT8:
-          case UINT16:
-          case UINT32:
-          case UINT64:
-          case FLOAT32:
-          case FLOAT64:
-          case TIMESTAMP_MILLISECONDS:
-          case TIMESTAMP_SECONDS:
-          case TIMESTAMP_DAYS:
-          case TIMESTAMP_NANOSECONDS:
-          case TIMESTAMP_MICROSECONDS:
-          case DECIMAL32:
-          case DECIMAL64:
-          case DECIMAL128:
-          case STRING:
-            break;
-          default:
-            throw new IllegalArgumentException("Expected range-based window orderBy's " +
-                "type: integral (Boolean-exclusive), decimal, timestamp, and string");
+        // Validate the type of every order-by column (one for single-column RANGE, more for
+        // multi-column RANGE).
+        int columnCount = operation.table.getNumberOfColumns();
+        for (int orderByIndex : agg.getWindowOptions().getOrderByColumnIndices()) {
+          if (orderByIndex < 0 || orderByIndex >= columnCount) {
+            throw new IllegalArgumentException("Range window order-by column index is out of " +
+                "range: " + orderByIndex + " (column count: " + columnCount + ")");
+          }
+          DType orderByType = operation.table.getColumn(orderByIndex).getType();
+          switch (orderByType.getTypeId()) {
+            case INT8:
+            case INT16:
+            case INT32:
+            case INT64:
+            case UINT8:
+            case UINT16:
+            case UINT32:
+            case UINT64:
+            case FLOAT32:
+            case FLOAT64:
+            case TIMESTAMP_MILLISECONDS:
+            case TIMESTAMP_SECONDS:
+            case TIMESTAMP_DAYS:
+            case TIMESTAMP_NANOSECONDS:
+            case TIMESTAMP_MICROSECONDS:
+            case DECIMAL32:
+            case DECIMAL64:
+            case DECIMAL128:
+            case STRING:
+              break;
+            default:
+              throw new IllegalArgumentException("Expected range-based window orderBy's " +
+                  "type: integral (Boolean-exclusive), decimal, timestamp, and string");
+          }
         }
 
         ColumnWindowOps ops = groupedOps.computeIfAbsent(agg.getColumnIndex(), (idx) -> new ColumnWindowOps());
@@ -4282,8 +4314,12 @@ public final class Table implements AutoCloseable {
       }
 
       int[] aggColumnIndexes = new int[totalOps];
-      int[] orderByColumnIndexes = new int[totalOps];
-      boolean[] isOrderByOrderAscending = new boolean[totalOps];
+      // Per-operation order-by metadata is flattened across operations: op k owns the slice
+      // [orderByOffsets[k], orderByOffsets[k+1]) of the index/ascending/nulls-first arrays.
+      int[] orderByOffsets = new int[totalOps + 1];
+      ArrayList<Integer> orderByColumnIndexesList = new ArrayList<>();
+      ArrayList<Boolean> isOrderByOrderAscendingList = new ArrayList<>();
+      ArrayList<Boolean> isOrderByNullsFirstList = new ArrayList<>();
       long[] aggInstances = new long[totalOps];
       long[] aggPrecedingWindows = new long[totalOps];
       long[] aggFollowingWindows = new long[totalOps];
@@ -4312,8 +4348,25 @@ public final class Table implements AutoCloseable {
             aggFollowingWindowsExtent[opIndex] = windowOptions.getFollowingBoundsExtent().nominalValue;
             aggMinPeriods[opIndex] = op.getWindowOptions().getMinPeriods();
             assert (op.getWindowOptions().getFrameType() == WindowOptions.FrameType.RANGE);
-            orderByColumnIndexes[opIndex] = op.getWindowOptions().getOrderByColumnIndex();
-            isOrderByOrderAscending[opIndex] = op.getWindowOptions().isOrderByOrderAscending();
+
+            // Flatten this operation's order-by columns.
+            int[] obIndices = windowOptions.getOrderByColumnIndices();
+            boolean[] obAscending = windowOptions.getOrderByAscending();
+            boolean[] obNullsFirst = windowOptions.getOrderByNullsFirst();
+            // Multi-column RANGE supports only peer-frame bounds; reject bounded scalar ranges.
+            if (obIndices.length > 1 &&
+                (windowOptions.getPrecedingBoundsExtent() == WindowOptions.RangeExtentType.BOUNDED ||
+                 windowOptions.getFollowingBoundsExtent() == WindowOptions.RangeExtentType.BOUNDED)) {
+              throw new IllegalArgumentException("Multi-column RANGE windows support only " +
+                  "UNBOUNDED and CURRENT ROW bounds, not bounded scalar ranges");
+            }
+            orderByOffsets[opIndex] = orderByColumnIndexesList.size();
+            for (int j = 0; j < obIndices.length; j++) {
+              orderByColumnIndexesList.add(obIndices[j]);
+              isOrderByOrderAscendingList.add(obAscending[j]);
+              isOrderByNullsFirstList.add(obNullsFirst[j]);
+            }
+
             if (op.getDefaultOutput() != 0) {
               throw new IllegalArgumentException("Operations with a default output are not " +
                   "supported on time based rolling windows");
@@ -4323,12 +4376,24 @@ public final class Table implements AutoCloseable {
           }
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
+        orderByOffsets[totalOps] = orderByColumnIndexesList.size();
+
+        int[] orderByColumnIndexes = new int[orderByColumnIndexesList.size()];
+        boolean[] isOrderByOrderAscending = new boolean[isOrderByOrderAscendingList.size()];
+        boolean[] isOrderByNullsFirst = new boolean[isOrderByNullsFirstList.size()];
+        for (int j = 0; j < orderByColumnIndexes.length; j++) {
+          orderByColumnIndexes[j] = orderByColumnIndexesList.get(j);
+          isOrderByOrderAscending[j] = isOrderByOrderAscendingList.get(j);
+          isOrderByNullsFirst[j] = isOrderByNullsFirstList.get(j);
+        }
 
         try (Table aggregate = new Table(rangeRollingWindowAggregate(
             operation.table.nativeHandle,
             operation.indices,
             orderByColumnIndexes,
             isOrderByOrderAscending,
+            isOrderByNullsFirst,
+            orderByOffsets,
             aggColumnIndexes,
             aggInstances, aggMinPeriods, aggPrecedingWindows, aggFollowingWindows,
             aggPrecedingWindowsExtent, aggFollowingWindowsExtent,

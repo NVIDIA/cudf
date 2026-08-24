@@ -4,11 +4,6 @@
 import pytest
 
 
-@pytest.mark.pandas_incompatible
-def bench_values_host(benchmark, rangeindex):
-    benchmark(lambda: rangeindex.to_numpy())
-
-
 def bench_to_numpy(benchmark, rangeindex):
     benchmark(rangeindex.to_numpy)
 

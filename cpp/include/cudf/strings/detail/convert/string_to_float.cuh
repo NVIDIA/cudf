@@ -35,13 +35,8 @@ __device__ inline double stod(string_view const& d_str)
     ++in_ptr;
   }
 
-#ifndef CUDF_RUNTIME_JIT
   constexpr double infinity      = cuda::std::numeric_limits<double>::infinity();
   constexpr uint64_t max_holding = (cuda::std::numeric_limits<uint64_t>::max() - 9L) / 10L;
-#else
-  constexpr double infinity      = (1.0 / 0.0);
-  constexpr uint64_t max_holding = (18446744073709551615UL - 9UL) / 10UL;
-#endif
 
   // special strings: NaN, Inf
   if ((in_ptr < end) && *in_ptr > '9') {

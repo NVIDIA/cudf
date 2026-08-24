@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from contextlib import nullcontext as does_not_raise
@@ -189,7 +189,7 @@ def test_categorical_compare_unordered(data):
     with pytest.raises(
         (TypeError, ValueError),
         match=(
-            "The only binary operations supported by unordered categorical "
+            r"The only binary operations supported by unordered categorical "
             "columns are equality and inequality."
         ),
     ):

@@ -83,6 +83,8 @@ void BM_orc_read_data(nvbench::state& state, nvbench::type_list<nvbench::enum_ty
   cudf::size_type const cardinality = state.get_int64("cardinality");
   cudf::size_type const run_length  = state.get_int64("run_length");
   auto const source_type            = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const stripe_size_bytes      = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows       = state.get_int64("stripe_size_rows");
   cuio_source_sink_pair source_sink(source_type);
 
   auto const num_rows_written = [&]() {
@@ -94,6 +96,9 @@ void BM_orc_read_data(nvbench::state& state, nvbench::type_list<nvbench::enum_ty
 
     cudf::io::orc_writer_options opts =
       cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view);
+    // Sentinel 0 == use cuDF default.
+    if (stripe_size_bytes > 0) opts.set_stripe_size_bytes(stripe_size_bytes);
+    if (stripe_size_rows > 0) opts.set_stripe_size_rows(stripe_size_rows);
     cudf::io::write_orc(opts);
     return view.num_rows();
   }();
@@ -122,6 +127,8 @@ void orc_read_io_compression(nvbench::state& state)
               static_cast<cudf::size_type>(state.get_int64("run_length"))};
     }
   }();
+  auto const stripe_size_bytes = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows  = state.get_int64("stripe_size_rows");
   cuio_source_sink_pair source_sink(source_type);
 
   auto const num_rows_written = [&]() {
@@ -134,6 +141,8 @@ void orc_read_io_compression(nvbench::state& state)
     cudf::io::orc_writer_options opts =
       cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view)
         .compression(compression);
+    if (stripe_size_bytes > 0) opts.set_stripe_size_bytes(stripe_size_bytes);
+    if (stripe_size_rows > 0) opts.set_stripe_size_rows(stripe_size_rows);
     cudf::io::write_orc(opts);
     return view.num_rows();
   }();
@@ -165,23 +174,29 @@ NVBENCH_BENCH_TYPES(BM_orc_read_data, NVBENCH_TYPE_AXES(d_type_list))
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
-  .add_int64_axis("run_length", {1, 32});
+  .add_int64_axis("run_length", {1, 32})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_read_io_compression)
   .set_name("orc_read_io_compression")
   .add_string_axis("io_type", {"FILEPATH", "HOST_BUFFER", "DEVICE_BUFFER"})
-  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "NONE"})
+  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "LZ4", "NONE"})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
-  .add_int64_axis("run_length", {1, 32});
+  .add_int64_axis("run_length", {1, 32})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 // Should have the same parameters as `BM_orc_read_io_compression` for comparison.
 NVBENCH_BENCH(BM_orc_chunked_read_io_compression)
   .set_name("orc_chunked_read_io_compression")
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
-  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "NONE"})
+  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "LZ4", "NONE"})
   .set_min_samples(4)
   // The input has approximately 520MB and 127K rows.
   // The limits below are given in MBs.
   .add_int64_axis("chunk_read_limit_MB", {50, 250, 700})
-  .add_int64_axis("pass_read_limit_MB", {50, 250, 700});
+  .add_int64_axis("pass_read_limit_MB", {50, 250, 700})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});

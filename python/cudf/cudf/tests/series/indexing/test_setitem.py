@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
+import operator
 
 import cupy as cp
 import numpy as np
@@ -222,7 +223,7 @@ def test_series_set_item_range_index(ps, arg):
     assert_eq(psr, gsr, check_index_type=True)
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/7448")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/7448")
 def test_iloc_setitem_7448():
     index = pd.MultiIndex.from_product([(1, 2), (3, 4)])
     expect = cudf.Series([1, 2, 3, 4], index=index)
@@ -990,3 +991,27 @@ def test_int_setitem_lossy_float_array_pandas_compat(dtype):
                 {},
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        np.datetime64("NaT", "ns"),
+        np.timedelta64("NaT", "ns"),
+        [np.timedelta64("NaT", "ns"), np.timedelta64("NaT", "ns")],
+        [np.datetime64("2020-01-01", "ns")] * 2,
+    ],
+)
+def test_series_setitem_temporal_into_numeric_raises(value):
+    # Assigning a datetime64/timedelta64 scalar or array into a numeric
+    # Series is invalid (exercises both the scalar and array branches of
+    # NumericalColumn._cast_setitem_value).
+    key = slice(0, 2) if isinstance(value, list) else 0
+    ps = pd.Series([1, 2, 3])
+    gs = cudf.from_pandas(ps)
+    assert_exceptions_equal(
+        lfunc=operator.setitem,
+        rfunc=operator.setitem,
+        lfunc_args_and_kwargs=([ps, key, value],),
+        rfunc_args_and_kwargs=([gs, key, value],),
+    )

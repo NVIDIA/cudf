@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -21,9 +21,9 @@ rapids-logger "PR number: ${RAPIDS_REF_NAME:-"unknown"}"
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 
 # Download the cudf, libcudf, and pylibcudf built in the previous step
-CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-LIBCUDF_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="libcudf_${RAPIDS_PY_CUDA_SUFFIX}" rapids-download-wheels-from-github cpp)
-PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" pylibcudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
+PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # echo to expand wildcard before adding `[extra]` requires for pip
 rapids-pip-retry install \
@@ -39,8 +39,6 @@ timeout 90m bash python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
   --durations=10 \
   --numprocesses 8 \
   --tb=line \
-  --disable-warnings \
-  -m "not slow and not single_cpu and not db and not network" \
   --max-worker-restart=3 \
   --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas.xml" \
   --dist worksteal \
@@ -61,7 +59,7 @@ MAIN_RUN_ID=$(
     gh run list                       \
         -w "Pandas Test Job"          \
         -b "$(<./RAPIDS_BRANCH)"      \
-        --repo 'rapidsai/cudf'        \
+        --repo 'NVIDIA/cudf'          \
         --status success              \
         --limit 7                     \
         --json 'createdAt,databaseId' \
@@ -75,7 +73,7 @@ fi
 
 rapids-logger "Fetching latest available results from nightly: ${MAIN_RUN_ID}"
 gh run download                  \
-    --repo 'rapidsai/cudf'        \
+    --repo 'NVIDIA/cudf'          \
     --name main-results.json \
     $MAIN_RUN_ID
 

@@ -38,7 +38,6 @@ Properties
    Index.transpose
    Index.T
    Index.values
-   Index.values_host
 
 Modifying and computations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -305,6 +304,7 @@ Time-specific operations
    DatetimeIndex.floor
    DatetimeIndex.tz_convert
    DatetimeIndex.tz_localize
+   DatetimeIndex.indexer_between_time
 
 Conversion
 ~~~~~~~~~~

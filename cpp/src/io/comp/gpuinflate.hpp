@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 
@@ -37,18 +37,7 @@ void gpuinflate(device_span<device_span<uint8_t const> const> inputs,
                 device_span<device_span<uint8_t> const> outputs,
                 device_span<codec_exec_result> results,
                 gzip_header_included parse_hdr,
-                rmm::cuda_stream_view stream);
-
-/**
- * @brief Interface for copying uncompressed byte blocks
- *
- * @param[in] inputs List of input buffers
- * @param[out] outputs List of output buffers
- * @param[in] stream CUDA stream to use
- */
-void gpu_copy_uncompressed_blocks(device_span<device_span<uint8_t const> const> inputs,
-                                  device_span<device_span<uint8_t> const> outputs,
-                                  rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
 /**
  * @brief Interface for decompressing Snappy-compressed data
@@ -65,7 +54,7 @@ CUDF_EXPORT
 void gpu_unsnap(device_span<device_span<uint8_t const> const> inputs,
                 device_span<device_span<uint8_t> const> outputs,
                 device_span<codec_exec_result> results,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
 /**
  * @brief Computes the size of temporary memory for Brotli decompression
@@ -92,7 +81,7 @@ CUDF_EXPORT
 void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
                   device_span<device_span<uint8_t> const> outputs,
                   device_span<codec_exec_result> results,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
 /**
  * @brief Interface for compressing data with Snappy
@@ -108,6 +97,6 @@ void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
 void gpu_snap(device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              rmm::cuda_stream_view stream);
+              cuda::stream_ref stream);
 
 }  // namespace cudf::io::detail

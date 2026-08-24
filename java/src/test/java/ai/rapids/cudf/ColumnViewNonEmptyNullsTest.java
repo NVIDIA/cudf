@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -16,6 +16,7 @@ import java.util.Optional;
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -61,6 +62,15 @@ public class ColumnViewNonEmptyNullsTest extends CudfTestBase {
       assertColumnsAreEqual(v2, intResultv0v1v2);
       assertColumnsAreEqual(stringExpected, stringResult);
       assertColumnsAreEqual(v3, noMaskResult);
+    }
+  }
+
+  @Test
+  void testMergeWithNoColumnsIsNoOp() {
+    try (ColumnVector v0 = ColumnVector.fromBoxedInts(0, 100, null, null, Integer.MIN_VALUE, null);
+         ColumnVector result = v0.mergeAndSetValidity(BinaryOp.BITWISE_AND)) {
+      assertSame(v0, result);
+      assertEquals(3, result.getNullCount());
     }
   }
 
@@ -122,6 +132,143 @@ public class ColumnViewNonEmptyNullsTest extends CudfTestBase {
          ColumnView offsetsCvAfterPurge = newListChild.getListOffsetsView()) {
       assertColumnsAreEqual(expectedOffsetsAfterPurge, offsetsCvAfterPurge);
       assertFalse(newListChild.hasNonEmptyNulls());
+    }
+  }
+
+  @Test
+  void testMergeAndSetValidityStructPropagatesToChildren() {
+    try (ColumnVector c0 = ColumnVector.fromInts(1, 2, 3, 4, 5);
+         ColumnVector c1 = ColumnVector.fromInts(10, 20, 30, 40, 50);
+         ColumnVector struct = ColumnVector.makeStruct(c0, c1);
+         ColumnVector mask = ColumnVector.fromBoxedInts(0, 0, null, null, 0);
+         ColumnVector merged = struct.mergeAndSetValidity(BinaryOp.BITWISE_AND, mask);
+         HostColumnVector hostMerged = merged.copyToHost()) {
+      assertEquals(2, hostMerged.getNullCount(), "parent null count");
+      assertFalse(hostMerged.isNull(0));
+      assertFalse(hostMerged.isNull(1));
+      assertTrue(hostMerged.isNull(2));
+      assertTrue(hostMerged.isNull(3));
+      assertFalse(hostMerged.isNull(4));
+
+      // Each child should have the same null mask as the parent.
+      assertEquals(2, hostMerged.getNumChildren());
+      for (int i = 0; i < hostMerged.getNumChildren(); i++) {
+        HostColumnVectorCore child = hostMerged.getChildColumnView(i);
+        assertEquals(2, child.getNullCount(), "child " + i + " null count");
+        assertFalse(child.isNull(0), "child " + i + " row 0");
+        assertFalse(child.isNull(1), "child " + i + " row 1");
+        assertTrue(child.isNull(2),  "child " + i + " row 2");
+        assertTrue(child.isNull(3),  "child " + i + " row 3");
+        assertFalse(child.isNull(4), "child " + i + " row 4");
+      }
+    }
+  }
+
+  @Test
+  void testMergeAndSetValidityStructOfListPropagatesAndPurges() {
+    HostColumnVector.DataType intType  = new HostColumnVector.BasicType(true, DType.INT32);
+    HostColumnVector.DataType listType = new HostColumnVector.ListType(true, intType);
+    // Inner INT has 11 elements grouped into 5 lists.
+    try (ColumnVector listChild = ColumnVector.fromLists(listType,
+             Arrays.asList(1, 2),
+             Arrays.asList(3, 4, 5),
+             Arrays.asList(6),  // will be masked null.
+             Arrays.asList(7, 8, 9, 10),  // will be masked null.
+             Arrays.asList(11));
+         ColumnVector struct = ColumnVector.makeStruct(listChild);
+         ColumnVector mask = ColumnVector.fromBoxedInts(0, 0, null, null, 0);
+         ColumnVector merged = struct.mergeAndSetValidity(BinaryOp.BITWISE_AND, mask);
+         HostColumnVector hostMerged = merged.copyToHost()) {
+      assertEquals(2, hostMerged.getNullCount(), "parent null count");
+      assertFalse(hostMerged.isNull(0));
+      assertFalse(hostMerged.isNull(1));
+      assertTrue(hostMerged.isNull(2));
+      assertTrue(hostMerged.isNull(3));
+      assertFalse(hostMerged.isNull(4));
+
+      // The LIST child should have the same null mask as the parent.
+      assertEquals(1, hostMerged.getNumChildren());
+      HostColumnVectorCore listView = hostMerged.getChildColumnView(0);
+      assertEquals(2, listView.getNullCount(), "list child null count");
+      assertFalse(listView.isNull(0));
+      assertFalse(listView.isNull(1));
+      assertTrue(listView.isNull(2));
+      assertTrue(listView.isNull(3));
+      assertFalse(listView.isNull(4));
+
+      // The LIST's offsets should be purged. Rows 2 and 3 collapse
+      // so the inner INT should have only 6 elements.
+      assertEquals(1, listView.getNumChildren());
+      HostColumnVectorCore intGrandchild = listView.getChildColumnView(0);
+      assertEquals(6, intGrandchild.getRowCount(), "purged inner row count");
+      int[] expectedInner = {1, 2, 3, 4, 5, 11};
+      for (int i = 0; i < expectedInner.length; i++) {
+        assertFalse(intGrandchild.isNull(i), "inner " + i);
+        assertEquals(expectedInner[i], intGrandchild.getInt(i), "inner " + i);
+      }
+      HostMemoryBuffer listOffsets = listView.getOffsets();
+      int[] expectedOffsets = {0, 2, 5, 5, 5, 6};
+      for (int i = 0; i < expectedOffsets.length; i++) {
+        assertEquals(expectedOffsets[i], listOffsets.getInt(i * 4L), "offset " + i);
+      }
+    }
+  }
+
+  @Test
+  void testMergeAndSetValidityStructAndWithAllValidMask() {
+    try (ColumnVector child = ColumnVector.fromInts(1, 2, 3, 4, 5);
+         ColumnVector base = ColumnVector.makeStruct(child);
+         ColumnVector baseMask = ColumnVector.fromBoxedInts(1, 1, null, 1, 1);
+         ColumnVector nullableBase = base.mergeAndSetValidity(BinaryOp.BITWISE_AND, baseMask);
+         ColumnVector allValidMask0 = ColumnVector.fromInts(1, 1, 1, 1, 1);
+         ColumnVector allValidMask1 = ColumnVector.fromInts(2, 2, 2, 2, 2);
+         ColumnVector merged = nullableBase.mergeAndSetValidity(
+             BinaryOp.BITWISE_AND, allValidMask0, allValidMask1);
+         HostColumnVector hostMerged = merged.copyToHost()) {
+      assertEquals(1, hostMerged.getNullCount(), "parent null count");
+      assertFalse(hostMerged.isNull(0));
+      assertFalse(hostMerged.isNull(1));
+      assertTrue(hostMerged.isNull(2));
+      assertFalse(hostMerged.isNull(3));
+      assertFalse(hostMerged.isNull(4));
+
+      assertEquals(1, hostMerged.getNumChildren());
+      HostColumnVectorCore childView = hostMerged.getChildColumnView(0);
+      assertEquals(1, childView.getNullCount(), "child null count");
+      assertFalse(childView.isNull(0));
+      assertFalse(childView.isNull(1));
+      assertTrue(childView.isNull(2));
+      assertFalse(childView.isNull(3));
+      assertFalse(childView.isNull(4));
+    }
+  }
+
+  @Test
+  void testMergeAndSetValidityStructOrWithAllValidMask() {
+    try (ColumnVector child = ColumnVector.fromInts(1, 2, 3, 4, 5);
+         ColumnVector base = ColumnVector.makeStruct(child);
+         ColumnVector baseMask = ColumnVector.fromBoxedInts(1, 1, null, 1, 1);
+         ColumnVector nullableBase = base.mergeAndSetValidity(BinaryOp.BITWISE_AND, baseMask);
+         ColumnVector nullableMask = ColumnVector.fromBoxedInts(1, null, 1, 1, 1);
+         ColumnVector allValidMask = ColumnVector.fromInts(1, 1, 1, 1, 1);
+         ColumnVector merged = nullableBase.mergeAndSetValidity(
+             BinaryOp.BITWISE_OR, nullableMask, allValidMask);
+         HostColumnVector hostMerged = merged.copyToHost()) {
+      assertEquals(1, hostMerged.getNullCount(), "parent null count");
+      assertFalse(hostMerged.isNull(0));
+      assertFalse(hostMerged.isNull(1));
+      assertTrue(hostMerged.isNull(2));
+      assertFalse(hostMerged.isNull(3));
+      assertFalse(hostMerged.isNull(4));
+
+      assertEquals(1, hostMerged.getNumChildren());
+      HostColumnVectorCore childView = hostMerged.getChildColumnView(0);
+      assertEquals(1, childView.getNullCount(), "child null count");
+      assertFalse(childView.isNull(0));
+      assertFalse(childView.isNull(1));
+      assertTrue(childView.isNull(2));
+      assertFalse(childView.isNull(3));
+      assertFalse(childView.isNull(4));
     }
   }
 }

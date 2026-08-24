@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,9 +17,10 @@
 #include <cudf/types.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <cstdlib>
 #include <vector>
@@ -122,7 +123,7 @@ TEST_F(FstTest, GroundTruth)
 
   // Prepare cuda stream for data transfers & kernels
   rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  cuda::stream_ref stream_view{stream.value()};
 
   // Test input
   std::string input = R"(  {)"
@@ -143,10 +144,10 @@ TEST_F(FstTest, GroundTruth)
   size_t string_size                 = input.size() * (1 << 10);
   auto d_input_scalar                = cudf::make_string_scalar(input);
   auto& d_string_scalar              = static_cast<cudf::string_scalar&>(*d_input_scalar);
-  const cudf::size_type repeat_times = string_size / input.size();
+  cudf::size_type const repeat_times = string_size / input.size();
   auto d_input_string                = cudf::strings::repeat_string(d_string_scalar, repeat_times);
   auto& d_input = static_cast<cudf::scalar_type_t<std::string>&>(*d_input_string);
-  input         = d_input.to_string(stream);
+  input         = d_input.to_string(stream_view);
 
   // Prepare input & output buffers
   constexpr std::size_t single_item = 1;
@@ -173,9 +174,9 @@ TEST_F(FstTest, GroundTruth)
                    stream.value());
 
   // Async copy results from device to host
-  output_gpu.device_to_host_async(stream.view());
-  out_indexes_gpu.device_to_host_async(stream.view());
-  output_gpu_size.device_to_host_async(stream.view());
+  output_gpu.device_to_host_async(stream_view);
+  out_indexes_gpu.device_to_host_async(stream_view);
+  output_gpu_size.device_to_host_async(stream_view);
 
   // Prepare CPU-side results for verification
   std::string output_cpu{};

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,18 +30,19 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/gather.h>
 
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <span>
 
 namespace cudf::io::parquet::experimental::detail {
 
@@ -58,7 +59,7 @@ namespace {
 struct page_stats_caster : public stats_caster_base {
   cudf::size_type total_rows;
   cudf::host_span<metadata_base const> per_file_metadata;
-  cudf::host_span<std::vector<size_type> const> row_group_indices;
+  std::span<std::vector<size_type> const> row_group_indices;
   bool const has_is_null_operator;
 
   /**
@@ -82,7 +83,7 @@ struct page_stats_caster : public stats_caster_base {
     cudf::device_span<size_type const> page_indices,
     cudf::host_span<size_type const> page_row_offsets,
     cudf::data_type dtype,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
     requires(not cudf::is_compound<T>())
   {
@@ -137,7 +138,7 @@ struct page_stats_caster : public stats_caster_base {
     host_column<bool> const& is_null,
     cudf::device_span<size_type const> page_indices,
     cudf::host_span<size_type const> page_row_offsets,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     CUDF_EXPECTS(
@@ -184,7 +185,7 @@ struct page_stats_caster : public stats_caster_base {
                                    size_type host_null_count,
                                    cudf::device_span<size_type const> page_indices,
                                    cudf::host_span<size_type const> page_row_offsets,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr) const
   {
     // Total number of pages in the column
@@ -249,30 +250,22 @@ struct page_stats_caster : public stats_caster_base {
     auto row_str_chars = rmm::device_buffer(total_bytes, stream, mr);
 
     // Iterator for input (page-level) string chars
-    auto src_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
+    auto const page_offsets =
+      cuda::make_permutation_iterator(page_str_offsets.begin(), page_indices.begin());
+    auto src_iter = cuda::transform_iterator(
+      page_offsets,
       cuda::proclaim_return_type<char*>(
-        [chars        = page_str_chars.begin(),
-         offsets      = page_str_offsets.begin(),
-         page_indices = page_indices.begin()] __device__(std::size_t index) {
-          auto const page_index = page_indices[index];
-          return chars + offsets[page_index];
-        }));
+        [chars = page_str_chars.begin()] __device__(auto offset) { return chars + offset; }));
 
     // Iterator for output (row-level) string chars
-    auto dst_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<char*>(
-        [chars   = reinterpret_cast<char*>(row_str_chars.data()),
-         offsets = row_str_offsets.begin()] __device__(std::size_t index) {
-          return chars + offsets[index];
-        }));
+    auto dst_iter =
+      cuda::transform_iterator(row_str_offsets.begin(),
+                               cuda::proclaim_return_type<char*>(
+                                 [chars = reinterpret_cast<char*>(row_str_chars.data())] __device__(
+                                   auto offset) { return chars + offset; }));
 
     // Iterator for string sizes
-    auto size_iter = thrust::make_transform_iterator(
-      cuda::counting_iterator<std::size_t>{0},
-      cuda::proclaim_return_type<std::size_t>(
-        [sizes = row_str_sizes.begin()] __device__(std::size_t index) { return sizes[index]; }));
+    auto size_iter = row_str_sizes.begin();
 
     // Gather page-level string chars to row-level string chars
     cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, total_rows, stream);
@@ -283,24 +276,24 @@ struct page_stats_caster : public stats_caster_base {
   }
 
   /**
-   * @brief Computes host side data including page row counts, row offsets, column chunk page
-   * offsets, and host columns containing page-level min, max and (optional) is_null statistics for
-   * a column
+   * @brief Computes host side data including page row offsets, column chunk page offsets, and host
+   * columns containing page-level min, max and (optional) is_null statistics for a column
    *
    * @param schema_idx Column schema index
    * @param dtype Column data type
    * @param stream CUDA stream
-   * @return A tuple of page row counts, row offsets, column chunk page offsets, and host columns
-   * containing page-level min, max and (optional) is_null statistics
+   * @return A tuple of page row offsets, column chunk page offsets, and host columns containing
+   * page-level min, max and (optional) is_null statistics
    */
   template <typename T>
   [[nodiscard]] auto compute_host_data(cudf::size_type schema_idx,
                                        cudf::data_type dtype,
-                                       rmm::cuda_stream_view stream) const
+                                       cuda::stream_ref stream) const
   {
-    // Compute column chunk level page count offsets, and page level row counts and row offsets.
-    auto const [page_row_counts, page_row_offsets, col_chunk_page_offsets] =
-      compute_page_row_counts_and_offsets(per_file_metadata, row_group_indices, schema_idx, stream);
+    // Compute column chunk level page count offsets and page level row offsets.
+    auto const [page_row_offsets, col_chunk_page_offsets] =
+      compute_page_row_offsets_and_colchunk_page_offsets(
+        per_file_metadata, row_group_indices, schema_idx, stream);
 
     CUDF_EXPECTS(page_row_offsets.back() == total_rows,
                  "The number of rows must be equal across row groups and pages within row groups");
@@ -335,7 +328,7 @@ struct page_stats_caster : public stats_caster_base {
         std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
           auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
           // Find colchunk_iter in row_group.columns. Guaranteed to be found as already verified
-          // in compute_page_row_counts_and_offsets()
+          // in compute_page_row_offsets_and_colchunk_page_offsets()
           auto colchunk_iter = std::find_if(
             row_group.columns.begin(),
             row_group.columns.end(),
@@ -384,8 +377,7 @@ struct page_stats_caster : public stats_caster_base {
         });
       });
 
-    return std::tuple{std::move(page_row_counts),
-                      std::move(page_row_offsets),
+    return std::tuple{std::move(page_row_offsets),
                       std::move(col_chunk_page_offsets),
                       std::move(min),
                       std::move(max),
@@ -410,24 +402,22 @@ struct page_stats_caster : public stats_caster_base {
     tuple<std::unique_ptr<column>, std::unique_ptr<column>, std::optional<std::unique_ptr<column>>>
     operator()(cudf::size_type schema_idx,
                cudf::data_type dtype,
-               rmm::cuda_stream_view stream,
+               cuda::stream_ref stream,
                rmm::device_async_resource_ref mr) const
   {
     // List, Struct, Dictionary types are not supported
     if constexpr (cudf::is_compound<T>() and not cuda::std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types other than strings do not have statistics");
     } else {
-      // Compute page row counts, row offsets, column chunk page offsets, min, max and optional
-      // is_null stats host columns
-      auto [page_row_counts, page_row_offsets, col_chunk_page_offsets, min, max, is_null] =
+      // Compute page row offsets, column chunk page offsets, min, max and optional is_null stats
+      // host columns.
+      auto [page_row_offsets, col_chunk_page_offsets, min, max, is_null] =
         compute_host_data<T>(schema_idx, dtype, stream);
 
-      // Construct a row indices mapping based on page row counts and offsets
-      auto const page_indices = compute_page_indices_async(page_row_counts,
-                                                           page_row_offsets,
-                                                           total_rows,
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref());
+      // Construct a row indices mapping based on page row offsets.
+      auto const page_indices = compute_page_indices_async(
+        page_row_offsets, total_rows, stream, cudf::get_current_device_resource_ref());
+      stream.sync();
 
       // For non-strings columns, directly gather the page-level column data and bitmask to the
       // row-level.
@@ -536,7 +526,7 @@ struct page_stats_caster : public stats_caster_base {
 struct page_stats_to_row_mask_converter : public page_stats_caster {
   page_stats_to_row_mask_converter(cudf::size_type total_rows,
                                    cudf::host_span<metadata_base const> per_file_metadata,
-                                   cudf::host_span<std::vector<size_type> const> row_group_indices,
+                                   std::span<std::vector<size_type> const> row_group_indices,
                                    bool has_is_null_operator)
     : page_stats_caster{.total_rows           = total_rows,
                         .per_file_metadata    = per_file_metadata,
@@ -550,16 +540,16 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
     cudf::size_type schema_idx,
     cudf::data_type dtype,
     std::reference_wrapper<ast::expression const> filter,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
     // List, Struct, Dictionary types are not supported
     if constexpr (cudf::is_compound<T>() and not cuda::std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types other than strings do not have statistics");
     } else {
-      // Compute page row counts, row offsets, column chunk page offsets, min, max and optional
-      // is_null stats host columns
-      auto [page_row_counts, page_row_offsets, col_chunk_page_offsets, min, max, is_null] =
+      // Compute page row offsets, column chunk page offsets, min, max and optional is_null stats
+      // host columns.
+      auto [page_row_offsets, col_chunk_page_offsets, min, max, is_null] =
         compute_host_data<T>(schema_idx, dtype, stream);
 
       std::vector<std::unique_ptr<column>> columns;
@@ -582,11 +572,8 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
                                                           stream,
                                                           cudf::get_current_device_resource_ref());
 
-      auto const page_indices = compute_page_indices_async(page_row_counts,
-                                                           page_row_offsets,
-                                                           total_rows,
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref());
+      auto const page_indices = compute_page_indices_async(
+        page_row_offsets, total_rows, stream, cudf::get_current_device_resource_ref());
 
       auto const page_mask_nullmask =
         page_mask->null_count()
@@ -597,6 +584,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
               stream)
           : cudf::detail::make_empty_host_vector<bitmask_type>(0, stream);
 
+      stream.sync();
       auto [row_mask_data, row_mask_bitmask] =
         build_data_and_nullmask<bool>(page_mask->mutable_view(),
                                       page_mask_nullmask.data(),
@@ -849,11 +837,11 @@ struct search_fenwick_tree_functor {
 }  // namespace
 
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_page_index_stats(
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
-  cudf::host_span<cudf::data_type const> output_dtypes,
-  cudf::host_span<cudf::size_type const> output_column_schemas,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::span<cudf::data_type const> output_dtypes,
+  std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -861,29 +849,18 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
   // Return if empty row group indices
   if (row_group_indices.empty()) { return cudf::make_empty_column(cudf::type_id::BOOL8); }
 
-  // Check if we have page index for all columns in all row groups
-  auto const has_page_index = compute_has_page_index(per_file_metadata, row_group_indices);
-
-  // Return if page index is not present
-  CUDF_EXPECTS(has_page_index,
-               "Page pruning requires the Parquet page index for all output columns",
-               std::runtime_error);
+  // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
+  // reuses one source's schema index for every source, so it is correct only when schemas match.
+  CUDF_EXPECTS(schema_idx_maps.empty(),
+               "Page index statistics filtering does not support mismatched Parquet schemas yet",
+               std::invalid_argument);
 
   // Total number of rows
-  auto const total_rows = std::accumulate(
-    cuda::counting_iterator<std::size_t>{0},
-    cuda::counting_iterator{row_group_indices.size()},
-    std::size_t{0},
-    [&](auto sum, auto const src_index) {
-      auto const& rg_indices = row_group_indices[src_index];
-      return std::accumulate(
-        rg_indices.begin(), rg_indices.end(), sum, [&](auto subsum, auto const rg_index) {
-          CUDF_EXPECTS(subsum + per_file_metadata[src_index].row_groups[rg_index].num_rows <=
-                         std::numeric_limits<size_type>::max(),
-                       "Total rows exceed the maximum value");
-          return subsum + per_file_metadata[src_index].row_groups[rg_index].num_rows;
-        });
-    });
+  auto const total_rows = total_rows_in_row_groups(row_group_indices);
+  CUDF_EXPECTS(std::cmp_less_equal(total_rows, std::numeric_limits<size_type>::max()),
+               "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
+               "set of row groups",
+               std::invalid_argument);
 
   auto const num_columns = output_dtypes.size();
 
@@ -894,11 +871,32 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
       .get_stats_columns_mask();
 
   // Return early if no columns will participate in stats based page filtering
-  if (stats_columns_mask.empty()) {
-    auto const scalar_true =
-      cudf::numeric_scalar<bool>(true, true, stream, cudf::get_current_device_resource_ref());
-    return cudf::make_column_from_scalar(scalar_true, total_rows, stream, mr);
+  if (stats_columns_mask.empty()) { return build_all_true_row_mask(row_group_indices, stream, mr); }
+
+  // Check if we have page index available for all participating columns
+  std::vector<size_type> stats_column_schemas;
+  stats_column_schemas.reserve(num_columns);
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator{num_columns},
+                [&](auto const col_idx) {
+                  auto const& dtype = output_dtypes[col_idx];
+                  if (stats_columns_mask[col_idx] and
+                      (not cudf::is_compound(dtype) or dtype.id() == cudf::type_id::STRING)) {
+                    stats_column_schemas.push_back(output_column_schemas[col_idx]);
+                  }
+                });
+  // Return early if no participating columns
+  if (stats_column_schemas.empty()) {
+    return build_all_true_row_mask(row_group_indices, stream, mr);
   }
+
+  // We need both column and offset indexes to be present for each participating column.
+  auto const [has_column_index, has_offset_index] =
+    page_index_presence(row_group_indices, stats_column_schemas);
+  CUDF_EXPECTS(has_column_index and has_offset_index,
+               "Filter column page pruning using page-statistics requires both column and "
+               "offset indexes to be present",
+               std::runtime_error);
 
   // Optimization for single column filter: Directly build the row mask from page statistics
   if (num_columns == 1) {
@@ -983,10 +981,10 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
 template <typename ColumnView>
 thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   ColumnView const& row_mask,
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
-  cudf::host_span<input_column_info const> input_columns,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::span<input_column_info const> input_columns,
   cudf::size_type row_mask_offset,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   CUDF_FUNC_RANGE();
 
@@ -994,26 +992,24 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
                "Input row bitmask should be of type BOOL8");
 
   auto const total_rows = total_rows_in_row_groups(row_group_indices);
-
-  CUDF_EXPECTS(row_mask_offset + total_rows <= row_mask.size(),
-               "Mismatch in total rows in input row mask and row groups",
+  CUDF_EXPECTS(std::cmp_less_equal(total_rows, std::numeric_limits<size_type>::max()),
+               "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
+               "set of row groups",
                std::invalid_argument);
 
+  CUDF_EXPECTS(
+    std::cmp_less_equal(row_mask_offset + total_rows, row_mask.size()),
+    "Encountered a mismatch in number of rows in the row group pass and the row mask size",
+    std::overflow_error);
+
   // Return an empty vector if all rows are invalid or all rows are required
-  if (row_mask.null_count(row_mask_offset, row_mask_offset + total_rows, stream) == total_rows or
+  if (std::cmp_equal(row_mask.null_count(row_mask_offset, row_mask_offset + total_rows, stream),
+                     total_rows) or
       cudf::detail::all_of(row_mask.template begin<bool>() + row_mask_offset,
                            row_mask.template begin<bool>() + row_mask_offset + total_rows,
                            cuda::std::identity{},
                            stream)) {
-    return thrust::host_vector<bool>(0, stream);
-  }
-
-  auto const has_page_index = compute_has_page_index(per_file_metadata, row_group_indices);
-
-  // Return early if page index is not present
-  if (not has_page_index) {
-    CUDF_LOG_WARN("Encountered missing Parquet page index for one or more output columns");
-    return thrust::host_vector<bool>{};
+    return thrust::host_vector<bool>(0);
   }
 
   // Collect column schema indices from the input columns.
@@ -1022,6 +1018,22 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     input_columns.begin(), input_columns.end(), column_schema_indices.begin(), [](auto const& col) {
       return col.schema_idx;
     });
+
+  // Mapping a row mask to data pages only requires page row locations from the offset index.
+  auto const has_offset_index =
+    page_index_presence(row_group_indices, column_schema_indices).second;
+  if (not has_offset_index) {
+    CUDF_LOG_WARN(
+      "Encountered missing Parquet offset index for one or more output columns. Skipping page "
+      "pruning.");
+    return thrust::host_vector<bool>(0);
+  }
+
+  // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
+  // reuses one source's schema index for every source, so it is correct only when schemas match.
+  CUDF_EXPECTS(schema_idx_maps.empty(),
+               "Data page masking does not support mismatched Parquet schemas yet",
+               std::invalid_argument);
 
   // Compute page row offsets and column chunk page offsets for each column
   auto const num_columns = input_columns.size();
@@ -1091,8 +1103,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   if constexpr (cuda::std::is_same_v<ColumnView, cudf::mutable_column_view>) {
     if (row_mask.nullable() and row_mask.null_count() > 0) {
       thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       cuda::counting_iterator{row_mask_offset},
-                       cuda::counting_iterator{row_mask_offset + total_rows},
+                       cuda::counting_iterator<cudf::size_type>(row_mask_offset),
+                       cuda::counting_iterator<cudf::size_type>(row_mask_offset + total_rows),
                        [row_mask  = row_mask.template begin<bool>(),
                         null_mask = row_mask.null_mask()] __device__(auto const row_idx) {
                          if (not bit_is_set(null_mask, row_idx)) { row_mask[row_idx] = true; }
@@ -1126,7 +1138,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     cudf::detail::make_device_uvector_async(host_tree_level_ptrs, stream, mr);
 
   // Build Fenwick tree levels (zeroth level is just the row mask itself)
-  auto prev_level_size = total_rows;
+  auto prev_level_size = static_cast<cudf::size_type>(total_rows);
   std::for_each(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{num_levels - 1},
@@ -1158,9 +1170,10 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   //  Copy over search results to host
   auto host_results      = cudf::detail::make_pinned_vector_async(device_data_page_mask, stream);
   auto const total_pages = pinned_page_offsets.size() - num_columns;
-  auto data_page_mask    = thrust::host_vector<bool>(total_pages, stream);
+  auto data_page_mask    = thrust::host_vector<bool>{};
+  data_page_mask.reserve(total_pages);
   auto host_results_iter = host_results.begin();
-  stream.synchronize();
+  stream.sync();
 
   // Discard results for invalid ranges. i.e. ranges starting at the last page of a column and
   // ending at the first page of the next column
@@ -1182,16 +1195,16 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
 // Instantiate the templates with ColumnView as cudf::column_view and cudf::mutable_column_view
 template thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask<
   cudf::column_view>(cudf::column_view const& row_mask,
-                     cudf::host_span<std::vector<size_type> const> row_group_indices,
-                     cudf::host_span<input_column_info const> input_columns,
+                     std::span<std::vector<size_type> const> row_group_indices,
+                     std::span<input_column_info const> input_columns,
                      cudf::size_type row_mask_offset,
-                     rmm::cuda_stream_view stream) const;
+                     cuda::stream_ref stream) const;
 
 template thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask<
   cudf::mutable_column_view>(cudf::mutable_column_view const& row_mask,
-                             cudf::host_span<std::vector<size_type> const> row_group_indices,
-                             cudf::host_span<input_column_info const> input_columns,
+                             std::span<std::vector<size_type> const> row_group_indices,
+                             std::span<input_column_info const> input_columns,
                              cudf::size_type row_mask_offset,
-                             rmm::cuda_stream_view stream) const;
+                             cuda::stream_ref stream) const;
 
 }  // namespace cudf::io::parquet::experimental::detail

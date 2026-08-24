@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -220,7 +220,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def total_seconds(self) -> ColumnBase:
         conversion = unit_to_nanoseconds_conversion[self.time_unit] / 1e9
         # Typecast to decimal128 to avoid floating point precision issues
-        # https://github.com/rapidsai/cudf/issues/17664
+        # https://github.com/NVIDIA/cudf/issues/17664
         result = (
             (self.astype(self._UNDERLYING_DTYPE) * conversion)
             .astype(
@@ -244,7 +244,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
         if len(self) == 0:
             return super().strftime(format, dtype)
         return cast(
-            cudf.core.column.string.StringColumn,
+            "cudf.core.column.string.StringColumn",
             PylibcudfFunction(
                 plc.strings.convert.convert_durations.from_durations,
                 fixed_dtype_policy(dtype),
@@ -348,7 +348,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
             )
 
         return cast(
-            cudf.core.column.string.StringColumn,
+            "cudf.core.column.string.StringColumn",
             ColumnBase.create(plc_result, dtype),
         )
 

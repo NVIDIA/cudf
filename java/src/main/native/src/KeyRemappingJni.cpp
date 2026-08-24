@@ -73,7 +73,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_KeyRemapping_remapBuildKeys(JNIEnv* 
   {
     cudf::jni::auto_set_device(env);
     auto remap_ptr = reinterpret_cast<cudf::key_remapping*>(j_handle);
-    auto result    = remap_ptr->remap_build_keys();
+    auto result    = remap_ptr->remap_right_keys();
     return cudf::jni::release_as_jlong(result);
   }
   JNI_CATCH(env, 0);
@@ -91,7 +91,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_KeyRemapping_remapProbeKeys(JNIEnv* 
     cudf::jni::auto_set_device(env);
     auto remap_ptr = reinterpret_cast<cudf::key_remapping*>(j_handle);
     auto keys_view = reinterpret_cast<cudf::table_view const*>(j_keys_table);
-    auto result    = remap_ptr->remap_probe_keys(*keys_view);
+    auto result    = remap_ptr->remap_left_keys(*keys_view);
     return cudf::jni::release_as_jlong(result);
   }
   JNI_CATCH(env, 0);

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -408,7 +408,7 @@ def _process_col(
 ):
     if col.dtype.kind == "f":
         if unit not in (None, "ns"):
-            col = col * unit_to_nanoseconds_conversion[unit]  # type: ignore[index]
+            col = col * unit_to_nanoseconds_conversion[unit]
 
         if format is not None:
             # Converting to int because,
@@ -477,26 +477,39 @@ def _process_col(
             )
         else:
             if format is not None and "f" in format and unit is None:
-                col_ns = col.strptime(
-                    dtype=np.dtype(_unit_dtype_map["ns"]), format=format
-                )
                 col_us = col.strptime(
                     dtype=np.dtype(_unit_dtype_map["us"]), format=format
                 )
-                res = col_ns != col_us
-                if res.any():
-                    col = col_ns
-                else:
+                try:
+                    col_ns = col.strptime(
+                        dtype=np.dtype(_unit_dtype_map["ns"]), format=format
+                    )
+                except pd.errors.OutOfBoundsDatetime:
+                    # Values beyond the nanosecond Timestamp range: keep
+                    # microsecond precision, like pandas' unit inference.
                     col = col_us
+                else:
+                    res = col_ns != col_us
+                    if res.any():
+                        col = col_ns
+                    else:
+                        col = col_us
             else:
                 if format is None:
                     format = infer_format(
                         element=col.element_indexing(0),
                         dayfirst=dayfirst,
                     )
+                target_unit = unit
+                if unit is None:
+                    # pandas infers nanosecond precision from strings with
+                    # more than 6 fractional-second digits
+                    subsecond = re.search(r"%(\d)f", format)
+                    if subsecond is not None and int(subsecond.group(1)) > 6:
+                        target_unit = "ns"
                 col = col.strptime(
                     dtype=np.dtype(
-                        _unit_dtype_map.get(unit, _unit_dtype_map["us"])  # type: ignore[arg-type]
+                        _unit_dtype_map.get(target_unit, _unit_dtype_map["us"])  # type: ignore[arg-type]
                     ),
                     format=format,
                 )
@@ -647,13 +660,11 @@ class DateOffset:
     _FREQSTR_REGEX = re.compile("([-+]?[0-9]*)([a-zA-Z]+)")
 
     def __eq__(self, other):
-        if isinstance(other, str):
-            return self._maybe_as_fast_pandas_offset() == other
-        if isinstance(other, (pd.DateOffset, pd.offsets.Tick)):
-            return self._maybe_as_fast_pandas_offset() == other
-        if not isinstance(other, DateOffset):
-            return NotImplemented
-        return self.kwds == other.kwds
+        if isinstance(other, DateOffset):
+            return self.kwds == other.kwds
+        # Compare via the equivalent fast pandas offset so freq strings and
+        # pandas offsets (including cudf.pandas-proxied ones) compare equal.
+        return self._maybe_as_fast_pandas_offset() == other
 
     def __init__(self, n=1, normalize=False, **kwds):
         if normalize:

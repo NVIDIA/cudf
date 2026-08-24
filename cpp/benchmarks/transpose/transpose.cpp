@@ -1,7 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/table/table.hpp>
@@ -10,7 +12,6 @@
 #include <cudf/utilities/default_stream.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <nvbench/nvbench.cuh>
 
@@ -20,7 +21,7 @@ void bench_transpose(nvbench::state& state)
   constexpr auto column_type_id = cudf::type_id::INT32;
 
   auto int_column_generator =
-    thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0}, [count](int i) {
+    cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0}, [count](int i) {
       return cudf::make_numeric_column(
         cudf::data_type{column_type_id}, count, cudf::mask_state::ALL_VALID);
     });
@@ -42,8 +43,11 @@ void bench_transpose(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(bytes_read + null_bytes);
   state.add_global_memory_writes<nvbench::int8_t>(bytes_written + null_bytes);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { auto output = cudf::transpose(input); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_transpose)

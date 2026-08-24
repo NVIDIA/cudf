@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/aggregation.hpp>
 #include <cudf/copying.hpp>
@@ -35,11 +36,14 @@ static void bench_groupby_basic_sum(nvbench::state& state, nvbench::type_list<Da
   std::size_t write_size = 0;
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::groupby::groupby gb_obj(cudf::table_view({keys->view(), keys->view(), keys->view()}));
     auto const result = gb_obj.aggregate(requests);
     write_size = result.first->alloc_size() + result.second.front().results.front()->alloc_size();
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   state.add_global_memory_writes<nvbench::int8_t>(write_size);
 }
@@ -73,11 +77,14 @@ static void bench_groupby_pre_sorted_sum(nvbench::state& state, nvbench::type_li
   std::size_t write_size = 0;
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::groupby::groupby gb_obj(*sorted_keys, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
     auto const result = gb_obj.aggregate(requests);
     write_size = result.first->alloc_size() + result.second.front().results.front()->alloc_size();
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   state.add_global_memory_writes<nvbench::int8_t>(write_size);
 }

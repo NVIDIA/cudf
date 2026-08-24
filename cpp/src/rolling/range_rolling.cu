@@ -1,41 +1,43 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "detail/range_utils.cuh"
+#include "detail/range_rolling.hpp"
+#include "detail/rolling.hpp"
 
-#include <cudf/aggregation.hpp>
+#include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
-#include <cudf/column/column_factories.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/groupby/sort_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
-#include <cudf/reduction.hpp>
 #include <cudf/rolling.hpp>
-#include <cudf/rolling/range_window_bounds.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
-#include <cudf/utilities/type_checks.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/functional>
-#include <thrust/reduce.h>
+#include <cuda/stream>
 
+#include <cstddef>
+#include <memory>
 #include <optional>
+#include <utility>
+#include <variant>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
 
 rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                                      rmm::device_uvector<size_type> const& offsets,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   auto d_orderby        = column_device_view::create(orderby, stream);
@@ -55,7 +57,7 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   num_groups,
                                   offsets.begin(),
                                   offsets.begin() + 1,
-                                  stream.value());
+                                  stream.get());
   auto tmp = rmm::device_buffer(bytes, stream);
   cub::DeviceSegmentedReduce::Sum(tmp.data(),
                                   bytes,
@@ -64,7 +66,7 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   num_groups,
                                   offsets.begin(),
                                   offsets.begin() + 1,
-                                  stream.value());
+                                  stream.get());
   return null_counts;
 }
 
@@ -75,29 +77,24 @@ std::unique_ptr<column> make_range_window(
   order order,
   null_order null_order,
   range_window_type window,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   bool const nulls_at_start = (order == order::ASCENDING && null_order == null_order::BEFORE) ||
                               (order == order::DESCENDING && null_order == null_order::AFTER);
 
-  auto dispatch = [&](auto&& clamper, scalar const* row_delta) {
-    return type_dispatcher(orderby.type(),
-                           clamper,
-                           orderby,
-                           direction,
-                           order,
-                           grouping,
-                           nulls_at_start,
-                           row_delta,
-                           stream,
-                           mr);
-  };
   return std::visit(
-    [&](auto&& window) -> std::unique_ptr<column> {
-      using WindowType = cuda::std::decay_t<decltype(window)>;
-      return dispatch(rolling::range_window_clamper<WindowType>{}, window.delta());
+    [&](auto const& window_bound) -> std::unique_ptr<column> {
+      return dispatch_range_window(window_bound,
+                                   orderby,
+                                   direction,
+                                   order,
+                                   grouping,
+                                   nulls_at_start,
+                                   window_bound.delta(),
+                                   stream,
+                                   mr);
     },
     window);
 }
@@ -109,7 +106,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (group_keys.num_columns() > 0) {
@@ -150,6 +147,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
                               mr)};
   }
 }
+
 }  // namespace detail
 
 std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
@@ -159,7 +157,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

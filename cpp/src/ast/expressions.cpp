@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "jit/row_ir.hpp"
@@ -31,9 +31,47 @@ operation::operation(ast_operator op, expression const& left, expression const& 
                std::invalid_argument);
 }
 
+std::vector<std::reference_wrapper<expression const>>
+detail::expression_transformer::visit_operands(
+  std::span<std::reference_wrapper<expression const> const> operands)
+{
+  std::vector<std::reference_wrapper<expression const>> transformed_operands;
+  transformed_operands.reserve(operands.size());
+  for (auto const& operand : operands) {
+    transformed_operands.push_back(operand.get().accept(*this));
+  }
+  return transformed_operands;
+}
+
 cudf::size_type literal::accept(detail::expression_parser& visitor) const
 {
   return visitor.visit(*this);
+}
+
+cudf::data_type column_reference::get_data_type(table_view const& table) const
+{
+  CUDF_EXPECTS(get_column_index() >= 0 && get_column_index() < table.num_columns(),
+               "column index out of range",
+               std::out_of_range);
+  return table.column(get_column_index()).type();
+}
+
+cudf::data_type column_reference::get_data_type(table_view const& left_table,
+                                                table_view const& right_table) const
+{
+  auto const table = [&] {
+    if (get_table_source() == table_reference::LEFT) {
+      return left_table;
+    } else if (get_table_source() == table_reference::RIGHT) {
+      return right_table;
+    } else {
+      CUDF_FAIL("Column reference data type cannot be determined from unknown table.");
+    }
+  }();
+  CUDF_EXPECTS(get_column_index() >= 0 && get_column_index() < table.num_columns(),
+               "column index out of range",
+               std::out_of_range);
+  return table.column(get_column_index()).type();
 }
 
 cudf::size_type column_reference::accept(detail::expression_parser& visitor) const
@@ -71,7 +109,7 @@ auto operation::accept(detail::expression_transformer& visitor) const
 
 bool operation::may_evaluate_null(table_view const& left,
                                   table_view const& right,
-                                  rmm::cuda_stream_view stream) const
+                                  cuda::stream_ref stream) const
 {
   return std::any_of(operands.cbegin(),
                      operands.cend(),
@@ -97,7 +135,7 @@ std::reference_wrapper<expression const> detail::predicate::accept(
 
 bool detail::predicate::may_evaluate_null(table_view const& left,
                                           table_view const& right,
-                                          rmm::cuda_stream_view stream) const
+                                          cuda::stream_ref stream) const
 {
   return false;
 }

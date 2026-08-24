@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -6,6 +6,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.replace cimport (
     filter_tokens as cpp_filter_tokens,
     replace_tokens as cpp_replace_tokens,
@@ -17,6 +18,10 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -28,7 +33,7 @@ cpdef Column replace_tokens(
     Column targets,
     Column replacements,
     Scalar delimiter=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -63,11 +68,14 @@ cpdef Column replace_tokens(
         delimiter = Scalar.from_libcudf(
             cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
         )
+    cdef column_view c_input = input.view()
+    cdef column_view c_targets = targets.view()
+    cdef column_view c_replacements = replacements.view()
     with nogil:
         c_result = cpp_replace_tokens(
-            input.view(),
-            targets.view(),
-            replacements.view(),
+            c_input,
+            c_targets,
+            c_replacements,
             dereference(<const string_scalar*>delimiter.get()),
             _cs,
             mr.get_mr()
@@ -80,7 +88,7 @@ cpdef Column filter_tokens(
     size_type min_token_length,
     Scalar replacement=None,
     Scalar delimiter=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -121,9 +129,10 @@ cpdef Column filter_tokens(
             cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_filter_tokens(
-            input.view(),
+            c_input,
             min_token_length,
             dereference(<const string_scalar*>replacement.get()),
             dereference(<const string_scalar*>delimiter.get()),

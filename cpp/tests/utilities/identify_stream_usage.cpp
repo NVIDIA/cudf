@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,21 +67,15 @@ namespace detail {
  */
 class test_cuda_stream_pool : public cuda_stream_pool {
  public:
-  rmm::cuda_stream_view get_stream() override { return cudf::test::get_default_stream(); }
-  [[maybe_unused]] rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
-  {
-    return cudf::test::get_default_stream();
-  }
+  cuda::stream_ref get_stream() override { return cudf::test::get_default_stream(); }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    return std::vector<rmm::cuda_stream_view>(count, cudf::test::get_default_stream());
+    return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream());
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool() { return new test_cuda_stream_pool(); }
+cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
 
 }  // namespace detail
 #endif
@@ -130,17 +124,17 @@ class sanitizer_subscriber {
   static void check_result(SanitizerResult result);
 
   template <typename Args, cudaStream_t Args::* Field>
-  static void check_stream_arg(const Sanitizer_CallbackData* cbdata);
+  static void check_stream_arg(Sanitizer_CallbackData const* cbdata);
 
-  void callback(Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid, const void* cbdata);
+  void callback(Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid, void const* cbdata);
 };
 
 sanitizer_subscriber::sanitizer_subscriber()
 {
-  const auto cb = [](void* userdata,
+  auto const cb = [](void* userdata,
                      Sanitizer_CallbackDomain domain,
                      Sanitizer_CallbackId cbid,
-                     const void* cbdata) {
+                     void const* cbdata) {
     auto* subscriber = static_cast<sanitizer_subscriber*>(userdata);
     subscriber->callback(domain, cbid, cbdata);
   };
@@ -154,16 +148,16 @@ sanitizer_subscriber::~sanitizer_subscriber() { check_result(sanitizerUnsubscrib
 void sanitizer_subscriber::check_result(SanitizerResult result)
 {
   if (result != SANITIZER_SUCCESS) {
-    const char* str;
+    char const* str;
     sanitizerGetResultString(result, &str);
     throw std::runtime_error(std::string("Sanitizer error: ") + str);
   }
 }
 
 template <typename Args, cudaStream_t Args::* Field>
-void sanitizer_subscriber::check_stream_arg(const Sanitizer_CallbackData* cbdata)
+void sanitizer_subscriber::check_stream_arg(Sanitizer_CallbackData const* cbdata)
 {
-  const auto* args = static_cast<const Args*>(cbdata->functionParams);
+  auto const* args = static_cast<Args const*>(cbdata->functionParams);
   check_stream_and_error(args->*Field);
 }
 
@@ -183,7 +177,7 @@ void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
 {
   switch (domain) {
     case SANITIZER_CB_DOMAIN_RUNTIME_API: {
-      const auto* runtime_cbdata = static_cast<const Sanitizer_CallbackData*>(cbdata);
+      auto const* runtime_cbdata = static_cast<Sanitizer_CallbackData const*>(cbdata);
 
       if (runtime_cbdata->callbackSite == SANITIZER_API_ENTER) {
         switch (cbid) {
@@ -218,6 +212,10 @@ void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
           CHECK_STREAM_ARG(cudaMemcpy3DPeerAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync_ptsz, 7000, stream);
+#if CUDART_VERSION >= 13000
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync, 13000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync_ptsz, 13000, stream);
+#endif
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyToSymbolAsync, 3020, stream);

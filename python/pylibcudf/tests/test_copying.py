@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -453,6 +453,22 @@ def test_empty_like_table(source_table):
         plc_source_table.columns(), result.columns(), strict=True
     ):
         assert rcol.type() == icol.type()
+
+
+def test_reverse_column(target_column):
+    pa_target_column, plc_target_column = target_column
+    result = plc.copying.reverse(plc_target_column)
+    reversed_indices = pa.array(range(len(pa_target_column) - 1, -1, -1))
+    expected = pa_target_column.take(reversed_indices)
+    assert_column_eq(expected, result)
+
+
+def test_reverse_table(source_table):
+    pa_source_table, plc_source_table = source_table
+    result = plc.copying.reverse(plc_source_table)
+    reversed_indices = pa.array(range(pa_source_table.num_rows - 1, -1, -1))
+    expected = pa_source_table.take(reversed_indices)
+    assert_table_eq(expected, result)
 
 
 @pytest.mark.parametrize("size", [None, 10])
@@ -1038,3 +1054,38 @@ def test_get_element_out_of_bounds(input_column):
     _, plc_input_column = input_column
     with cudf_raises(IndexError):
         plc.copying.get_element(plc_input_column, 100)
+
+
+def test_gather_zero_columns_preserves_num_rows():
+    source = plc.Table([], num_rows=5)
+    gather_map = plc.Column.from_arrow(pa.array([0, 2, 4, 1], type=pa.int32()))
+    result = plc.copying.gather(
+        source, gather_map, plc.copying.OutOfBoundsPolicy.DONT_CHECK
+    )
+    assert result.num_columns() == 0
+    assert result.num_rows() == 4
+
+
+def test_scatter_zero_columns_preserves_num_rows():
+    source = plc.Table([], num_rows=2)
+    target = plc.Table([], num_rows=5)
+    scatter_map = plc.Column.from_arrow(pa.array([0, 3], type=pa.int32()))
+    result = plc.copying.scatter(source, scatter_map, target)
+    assert result.num_columns() == 0
+    assert result.num_rows() == 5
+
+
+def test_slice_zero_columns_preserves_num_rows():
+    result = plc.copying.slice(plc.Table([], num_rows=10), [1, 4, 5, 9])
+    assert len(result) == 2
+    assert result[0].num_columns() == 0
+    assert result[0].num_rows() == 3
+    assert result[1].num_rows() == 4
+
+
+def test_split_zero_columns_preserves_num_rows():
+    result = plc.copying.split(plc.Table([], num_rows=10), [4])
+    assert len(result) == 2
+    assert result[0].num_columns() == 0
+    assert result[0].num_rows() == 4
+    assert result[1].num_rows() == 6

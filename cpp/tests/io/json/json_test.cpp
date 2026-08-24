@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -631,7 +631,7 @@ TEST_P(JsonReaderParamTest, JsonLinesFileInput)
     to_records_orient({{{"0", "11"}, {"1", "1.1"}}, {{"0", "22"}, {"1", "2.2"}}}, "\n");
   std::string data = is_row_orient_test(test_opt) ? row_orient : record_orient;
 
-  const std::string fname = temp_env->get_temp_dir() + "JsonLinesFileTest.json";
+  std::string const fname = temp_env->get_temp_dir() + "JsonLinesFileTest.json";
   std::ofstream outfile(fname, std::ofstream::out);
   outfile << data;
   outfile.close();
@@ -656,7 +656,7 @@ TEST_P(JsonReaderParamTest, JsonLinesFileInput)
 
 TEST_F(JsonReaderTest, JsonLinesByteRangeCompleteRecord)
 {
-  const std::string fname = temp_env->get_temp_dir() + "JsonLinesByteRangeTest.json";
+  std::string const fname = temp_env->get_temp_dir() + "JsonLinesByteRangeTest.json";
   std::ofstream outfile(fname, std::ofstream::out);
   outfile << "[1000]\n[2000]\n[3000]\n[4000]\n[5000]\n[6000]\n[7000]\n[8000]\n[9000]\n";
   outfile.close();
@@ -682,7 +682,7 @@ TEST_F(JsonReaderTest, JsonLinesByteRangeCompleteRecord)
 
 TEST_F(JsonReaderTest, JsonLinesByteRangeIncompleteRecord)
 {
-  const std::string fname = temp_env->get_temp_dir() + "JsonLinesByteRangeTest.json";
+  std::string const fname = temp_env->get_temp_dir() + "JsonLinesByteRangeTest.json";
   std::ofstream outfile(fname, std::ofstream::out);
   outfile << "[1000]\n[2000]\n[3000]\n[4000]\n[5000]\n[6000]\n[7000]\n[8000]\n[9000]\n";
   outfile.close();
@@ -754,7 +754,7 @@ TEST_F(JsonReaderTest, JsonLinesByteRangeWithRealloc)
 
 TEST_F(JsonReaderTest, JsonLinesMultipleFilesByteRange_AcrossFiles)
 {
-  const std::string file1 = temp_env->get_temp_dir() + "JsonLinesMultipleFilesByteRangeTest1.json";
+  std::string const file1 = temp_env->get_temp_dir() + "JsonLinesMultipleFilesByteRangeTest1.json";
   std::ofstream outfile1(file1, std::ofstream::out);
   outfile1 << "[1000]\n[2000]\n[3000]\n[4000]\n[5000]\n[6000]\n[7000]\n[8000]\n[9000]";
   outfile1.close();
@@ -780,7 +780,7 @@ TEST_F(JsonReaderTest, JsonLinesMultipleFilesByteRange_AcrossFiles)
 
 TEST_F(JsonReaderTest, JsonLinesMultipleFilesByteRange_ExcessRangeSize)
 {
-  const std::string file1 = temp_env->get_temp_dir() + "JsonLinesMultipleFilesByteRangeTest1.json";
+  std::string const file1 = temp_env->get_temp_dir() + "JsonLinesMultipleFilesByteRangeTest1.json";
   std::ofstream outfile1(file1, std::ofstream::out);
   outfile1 << "[1000]\n[2000]\n[3000]\n[4000]\n[5000]\n[6000]\n[7000]\n[8000]\n[9000]";
   outfile1.close();
@@ -820,7 +820,7 @@ TEST_F(JsonReaderTest, JsonLinesMultipleFilesByteRange_ExcessRangeSize)
 
 TEST_F(JsonReaderTest, JsonLinesMultipleFilesByteRange_LoadAllFiles)
 {
-  const std::string file1 = temp_env->get_temp_dir() + "JsonLinesMultipleFilesByteRangeTest1.json";
+  std::string const file1 = temp_env->get_temp_dir() + "JsonLinesMultipleFilesByteRangeTest1.json";
   std::ofstream outfile1(file1, std::ofstream::out);
   outfile1 << "[1000]\n[2000]\n[3000]\n[4000]\n[5000]\n[6000]\n[7000]\n[8000]\n[9000]";
   outfile1.close();
@@ -859,7 +859,7 @@ TEST_F(JsonReaderTest, JsonLinesMultipleFilesByteRange_LoadAllFiles)
 
 TEST_P(JsonReaderRecordTest, JsonLinesObjects)
 {
-  const std::string fname = temp_env->get_temp_dir() + "JsonLinesObjectsTest.json";
+  std::string const fname = temp_env->get_temp_dir() + "JsonLinesObjectsTest.json";
   std::ofstream outfile(fname, std::ofstream::out);
   outfile << " {\"co\\\"l1\" : 1, \"col2\" : 2.0} \n";
   outfile.close();
@@ -1286,12 +1286,12 @@ TEST_P(JsonReaderParamTest, JsonLinesMultipleFileInputs)
     to_records_orient({{{"0", "33"}, {"1", "3.3"}}, {{"0", "44"}, {"1", "4.4"}}}, "\n") + "\n"};
   auto const& data = is_row_orient_test(test_opt) ? row_orient : record_orient;
 
-  const std::string file1 = temp_env->get_temp_dir() + "JsonLinesFileTest1.json";
+  std::string const file1 = temp_env->get_temp_dir() + "JsonLinesFileTest1.json";
   std::ofstream outfile(file1, std::ofstream::out);
   outfile << data[0];
   outfile.close();
 
-  const std::string file2 = temp_env->get_temp_dir() + "JsonLinesFileTest2.json";
+  std::string const file2 = temp_env->get_temp_dir() + "JsonLinesFileTest2.json";
   std::ofstream outfile2(file2, std::ofstream::out);
   outfile2 << data[1];
   outfile2.close();
@@ -1325,12 +1325,12 @@ TEST_P(JsonReaderParamTest, JsonLinesMultipleFileInputsNoNL)
     to_records_orient({{{"0", "33"}, {"1", "3.3"}}, {{"0", "44"}, {"1", "4.4"}}}, "\n")};
   auto const& data = is_row_orient_test(test_opt) ? row_orient : record_orient;
 
-  const std::string file1 = temp_env->get_temp_dir() + "JsonLinesFileTest1.json";
+  std::string const file1 = temp_env->get_temp_dir() + "JsonLinesFileTest1.json";
   std::ofstream outfile(file1, std::ofstream::out);
   outfile << data[0];
   outfile.close();
 
-  const std::string file2 = temp_env->get_temp_dir() + "JsonLinesFileTest2.json";
+  std::string const file2 = temp_env->get_temp_dir() + "JsonLinesFileTest2.json";
   std::ofstream outfile2(file2, std::ofstream::out);
   outfile2 << data[1];
   outfile2.close();
@@ -1844,9 +1844,9 @@ TEST_P(JsonReaderParamTest, JsonDtypeParsing)
                                make_validity(validity)};
 
   // Types to test
-  const std::vector<data_type> dtypes = {
+  std::vector<data_type> const dtypes = {
     dtype<int32_t>(), dtype<float>(), dtype<cudf::string_view>(), dtype<bool>()};
-  const std::vector<cudf::column_view> cols{cudf::column_view(int_col),
+  std::vector<cudf::column_view> const cols{cudf::column_view(int_col),
                                             cudf::column_view(float_col),
                                             cudf::column_view(str_col),
                                             cudf::column_view(bool_col)};
@@ -3360,12 +3360,12 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       auto empty_string_col = cudf::test::strings_column_wrapper{};
       cudf::test::structs_column_wrapper expected_structs{{}, cudf::test::iterators::all_nulls()};
       // make all null column of list of struct of string
-      auto wrapped = make_lists_column(
-        4,
-        cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0}.release(),
-        expected_structs.release(),
-        4,
-        cudf::create_null_mask(4, cudf::mask_state::ALL_NULL));
+      auto wrapped =
+        make_lists_column(4,
+                          cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0}.release(),
+                          expected_structs.release(),
+                          4,
+                          cudf::create_null_mask(4, cudf::mask_state::ALL_NULL));
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(2), *wrapped);
     }
   }
@@ -3420,11 +3420,12 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       auto const valids = std::vector<bool>{1, 0};
       auto [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valids.begin(), valids.end());
-      return cudf::make_lists_column(2,
-                                     size_type_wrapper{0, 1, 1}.release(),
-                                     int64_wrapper{1}.release(),
-                                     null_count,
-                                     std::move(null_mask));
+      return cudf::make_lists_column(
+        2,
+        cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 1}.release(),
+        int64_wrapper{1}.release(),
+        null_count,
+        std::move(null_mask));
     }();
 
     auto const expected1 = [&] {
@@ -3435,11 +3436,12 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       auto const valids = std::vector<bool>{0, 0};
       auto [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valids.begin(), valids.end());
-      return cudf::make_lists_column(2,
-                                     size_type_wrapper{0, 0, 0}.release(),
-                                     get_structs().release(),
-                                     null_count,
-                                     std::move(null_mask));
+      return cudf::make_lists_column(
+        2,
+        cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0}.release(),
+        get_structs().release(),
+        null_count,
+        std::move(null_mask));
     }();
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected0, result.tbl->get_column(0).view());
@@ -3504,7 +3506,7 @@ TEST_F(JsonReaderTest, NullifyMixedList)
     cudf::test::detail::make_null_mask(list_nulls.cbegin(), list_nulls.cend());
   auto const expected = cudf::make_lists_column(
     7,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 1, 1, 1, 1, 3, 3}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 1, 1, 1, 1, 3, 3}.release(),
     get_structs(),
     null_count,
     std::move(null_mask));
@@ -3644,9 +3646,9 @@ TEST_F(JsonReaderTest, DeviceReadAsyncThrows)
   try {
     cudf::io::read_json(read_args);
     // Test passes if no exception is thrown
-  } catch (const cudf::test::AsyncException&) {
+  } catch (cudf::test::AsyncException const&) {
     // Test passes if AsyncException is thrown (expected test exception)
-  } catch (const std::exception& e) {
+  } catch (std::exception const& e) {
     // Test fails if any other exception is thrown
     FAIL() << "Unexpected exception thrown: " << e.what();
   }
@@ -3667,12 +3669,276 @@ TEST_F(JsonReaderTest, DeviceWriteAsyncThrows)
   try {
     cudf::io::write_json(write_args);
     // Test passes if no exception is thrown
-  } catch (const cudf::test::AsyncException&) {
+  } catch (cudf::test::AsyncException const&) {
     // Test passes if AsyncException is thrown (expected test exception)
-  } catch (const std::exception& e) {
+  } catch (std::exception const& e) {
     // Test fails if any other exception is thrown
     FAIL() << "Unexpected exception thrown: " << e.what();
   }
+}
+
+// Tests for the per-top-level-column schema-mismatch diagnostic surfaced by
+// `read_json_with_row_diagnostics`. Downstream callers (e.g. spark-rapids-jni) use this signal to
+// implement their own policy when a JSON value's node category does not match the requested
+// schema. cuDF itself does NOT change the column contents on mismatch (existing
+// CHILD_NULL_ONLY behavior); the diagnostic is reported on a separate side channel so the
+// public `column_name_info`/`table_metadata` ABI is unaffected.
+// See https://github.com/NVIDIA/cudf/issues/22423.
+
+// Build schema for: struct<c1: int64, c2: list<struct<c3: int64, c4: string>>>.
+// Pin column order so cuDF emits columns in (c1, c2) regardless of JSON-encounter order.
+cudf::io::schema_element make_nested_mismatch_schema_st()
+{
+  cudf::io::schema_element st_c2_elem{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"c3", cudf::io::schema_element{cudf::data_type{cudf::type_id::INT64}}},
+     {"c4", cudf::io::schema_element{cudf::data_type{cudf::type_id::STRING}}}},
+    std::vector<std::string>{"c3", "c4"}};
+  cudf::io::schema_element st_c2{
+    cudf::data_type{cudf::type_id::LIST}, {{"element", st_c2_elem}}, std::vector<std::string>{}};
+  return cudf::io::schema_element{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"c1", cudf::io::schema_element{cudf::data_type{cudf::type_id::INT64}}}, {"c2", st_c2}},
+    std::vector<std::string>{"c1", "c2"}};
+}
+
+cudf::io::schema_element make_nested_mismatch_schema_st_strings()
+{
+  cudf::io::schema_element st_c2_elem{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"c3", cudf::io::schema_element{cudf::data_type{cudf::type_id::STRING}}},
+     {"c4", cudf::io::schema_element{cudf::data_type{cudf::type_id::STRING}}}},
+    std::vector<std::string>{"c3", "c4"}};
+  cudf::io::schema_element st_c2{
+    cudf::data_type{cudf::type_id::LIST}, {{"element", st_c2_elem}}, std::vector<std::string>{}};
+  return cudf::io::schema_element{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"c1", cudf::io::schema_element{cudf::data_type{cudf::type_id::STRING}}}, {"c2", st_c2}},
+    std::vector<std::string>{"c1", "c2"}};
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagNoMismatchEmpty)
+{
+  // Well-formed nested JSON: schema matches everywhere, so the diagnostic list stays empty.
+  std::string const json = "{\"data\": {\"c2\": [{\"c3\": 19, \"c4\": \"x\"}], \"c1\": 123456}}\n";
+  cudf::io::schema_element root{cudf::data_type{cudf::type_id::STRUCT},
+                                {{"data", make_nested_mismatch_schema_st()}}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  ASSERT_EQ(result.data.metadata.schema_info.size(), 1u);
+  EXPECT_TRUE(result.diagnostics.top_level_columns_with_schema_mismatch.empty());
+  EXPECT_TRUE(result.diagnostics.top_level_columns_with_schema_mismatch_rows.empty());
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagNestedMismatchListed)
+{
+  // df2 case from SPARK-33134: {"data": {"c2":[19],"c1":123456}}
+  // c2 expects list<struct> but JSON has list<int>; nested mismatch at depth 3.
+  // Diagnostic should list top-level "data" column. The cudf result table is unchanged
+  // (data row stays populated, partial — existing CHILD_NULL_ONLY behavior).
+  std::string const json = "{\"data\": {\"c2\": [19], \"c1\": 123456}}\n";
+  cudf::io::schema_element root{cudf::data_type{cudf::type_id::STRUCT},
+                                {{"data", make_nested_mismatch_schema_st()}}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  ASSERT_EQ(result.data.metadata.schema_info.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch,
+            std::vector<std::string>{"data"});
+  ASSERT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].column_name, "data");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].row_indices,
+            std::vector<cudf::size_type>{0});
+  // Default cudf behavior: column itself is not nulled (caller applies policy).
+  EXPECT_EQ(result.data.tbl->get_column(0).null_count(), 0);
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagRootLevelMismatchListed)
+{
+  // c2 is a scalar while the schema requests list<struct>. This fully prunes c2 from the parsed
+  // device column tree, so the reader synthesizes it from the schema as an all-null top-level
+  // column. The diagnostic must still list "c2", while "c1" must not appear.
+  std::string const json = "{\"c2\": 19, \"c1\": 123456}\n";
+  auto root_schema       = make_nested_mismatch_schema_st();
+  auto opts              = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root_schema)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  ASSERT_EQ(result.data.metadata.schema_info.size(), 2u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch,
+            std::vector<std::string>{"c2"});
+  ASSERT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].column_name, "c2");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].row_indices,
+            std::vector<cudf::size_type>{0});
+  EXPECT_EQ(result.data.tbl->get_column(1).type().id(), cudf::type_id::LIST);
+  EXPECT_EQ(result.data.tbl->get_column(1).null_count(), 1);
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagMixedRowsListed)
+{
+  std::string const json =
+    "{\"data\": {\"c2\": [{\"c3\": 19, \"c4\": \"x\"}], \"c1\": 1}}\n"
+    "{\"data\": {\"c2\": [19], \"c1\": 2}}\n";
+  cudf::io::schema_element root{cudf::data_type{cudf::type_id::STRUCT},
+                                {{"data", make_nested_mismatch_schema_st()}}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  ASSERT_EQ(result.data.metadata.schema_info.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch,
+            std::vector<std::string>{"data"});
+  ASSERT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].column_name, "data");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].row_indices,
+            std::vector<cudf::size_type>{1});
+  EXPECT_EQ(result.data.tbl->get_column(0).null_count(), 0);
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagRowsFollowOutputColumnOrder)
+{
+  std::string const json = "{\"a\": {\"c2\": [19], \"c1\": 1}, \"b\": {\"c2\": [29], \"c1\": 2}}\n";
+  cudf::io::schema_element root{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"a", make_nested_mismatch_schema_st()}, {"b", make_nested_mismatch_schema_st()}},
+    std::vector<std::string>{"b", "a"}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  ASSERT_EQ(result.data.metadata.schema_info.size(), 2u);
+  EXPECT_EQ(result.data.metadata.schema_info[0].name, "b");
+  EXPECT_EQ(result.data.metadata.schema_info[1].name, "a");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch,
+            std::vector<std::string>({"b", "a"}));
+  ASSERT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows.size(), 2u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].column_name, "b");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].row_indices,
+            std::vector<cudf::size_type>{0});
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[1].column_name, "a");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[1].row_indices,
+            std::vector<cudf::size_type>{0});
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagMixedRowsListedWithMixedTypesAsString)
+{
+  std::string const json =
+    "{\"data\": {\"c2\": [{\"c3\": 19, \"c4\": \"x\"}], \"c1\": 1}, \"id\": 10}\n"
+    "{\"data\": {\"c2\": [19], \"c1\": 2}, \"id\": 20}\n"
+    "{\"data\": {\"c2\": [{\"c3\": 39, \"c4\": \"z\"}], \"c1\": 3}, \"id\": 30}\n";
+  cudf::io::schema_element root{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"data", make_nested_mismatch_schema_st_strings()},
+     {"id", cudf::io::schema_element{cudf::data_type{cudf::type_id::STRING}}}},
+    std::vector<std::string>{"data", "id"}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .normalize_whitespace(true)
+                .mixed_types_as_string(true)
+                .keep_quotes(true)
+                .experimental(true)
+                .strict_validation(true)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  ASSERT_EQ(result.data.metadata.schema_info.size(), 2u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch,
+            std::vector<std::string>{"data"});
+  ASSERT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].column_name, "data");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].row_indices,
+            std::vector<cudf::size_type>{1});
+  EXPECT_EQ(result.data.tbl->get_column(0).null_count(), 0);
+  EXPECT_EQ(result.data.tbl->get_column(1).null_count(), 0);
+}
+
+TEST_F(JsonBatchedReaderTest, SchemaMismatchDiagBatchedRowsUseGlobalOffsets)
+{
+  std::string const row0 = "{\"data\": 1}\n";
+  std::string const row1 = "{\"data\": {\"c1\": 2}}\n";
+  std::string const row2 = "{\"data\": 3}\n";
+  std::string const json = row0 + row1 + row2;
+  this->set_batch_size(row0.size() + row1.size() + 1);
+
+  cudf::io::schema_element data_schema{
+    cudf::data_type{cudf::type_id::STRUCT},
+    {{"c1", cudf::io::schema_element{cudf::data_type{cudf::type_id::INT64}}}},
+    std::vector<std::string>{"c1"}};
+  cudf::io::schema_element root{cudf::data_type{cudf::type_id::STRUCT},
+                                {{"data", data_schema}},
+                                std::vector<std::string>{"data"}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+
+  auto result = cudf::io::read_json_with_row_diagnostics(opts);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch,
+            std::vector<std::string>{"data"});
+  ASSERT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows.size(), 1u);
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].column_name, "data");
+  EXPECT_EQ(result.diagnostics.top_level_columns_with_schema_mismatch_rows[0].row_indices,
+            std::vector<cudf::size_type>({0, 2}));
+}
+
+TEST_F(JsonReaderTest, SchemaMismatchDiagPlainReadJsonUnaffected)
+{
+  // The plain `read_json` path does not pay the cost of collecting diagnostics: its result
+  // matches the pre-PR behavior bit-for-bit (column count, null counts, schema_info contents).
+  // The row diagnostic side-channel is exposed only through `read_json_with_row_diagnostics`, so
+  // existing downstream consumers — including those that bake `column_name_info`'s destructor
+  // into their own binaries — see no observable change.
+  std::string const json = "{\"data\": {\"c2\": [19], \"c1\": 123456}}\n";
+  cudf::io::schema_element root{cudf::data_type{cudf::type_id::STRUCT},
+                                {{"data", make_nested_mismatch_schema_st()}}};
+  auto opts = cudf::io::json_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<std::byte const>{
+                  reinterpret_cast<std::byte const*>(json.data()), json.size()}})
+                .lines(true)
+                .recovery_mode(cudf::io::json_recovery_mode_t::RECOVER_WITH_NULL)
+                .dtypes(root)
+                .prune_columns(true)
+                .build();
+  auto result = cudf::io::read_json(opts);
+  ASSERT_EQ(result.metadata.schema_info.size(), 1u);
+  EXPECT_EQ(result.tbl->get_column(0).null_count(), 0);
 }
 
 TEST_F(JsonReaderTest, MalformedFieldNameWithBrace)

@@ -6,9 +6,9 @@ You will need:
    devcontainer](https://github.com/rapidsai/devcontainers/), add
    `"./features/src/rust": {"version": "latest", "profile": "default"},` to your
    preferred configuration. Or else, use
-   [rustup](https://www.rust-lang.org/tools/install)
+   [rustup](https://rust-lang.org/tools/install/)
 2. A [cudf development
-   environment](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
+   environment](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
    The combined devcontainer works, or whatever your favourite approach is.
 
 :::{note}
@@ -410,6 +410,23 @@ engine = pl.GPUEngine(
 )
 ```
 
+Each scan node may run up to `max_concurrent_io_tasks` reads concurrently. The
+limit applies independently to each scan node, each corresponding to a
+single `pl.scan_parquet` call in the query. Configure it through
+`executor_options` or
+`CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`:
+
+```python
+engine = pl.GPUEngine(
+    executor="streaming",
+    executor_options={"max_concurrent_io_tasks": 8},
+)
+```
+
+Before each read is submitted, it waits for a device-memory reservation.
+This makes aggregate read concurrency respond to memory pressure across all
+scan nodes on the rank.
+
 Internally, `collect_statistics` walks the IR graph, groups Parquet
 `Scan` nodes that share the same file paths (unioning projected columns
 for sampling), and builds one `DataSourceInfo` per path group. It then
@@ -677,3 +694,107 @@ The structured schema has three top-level fields:
 
 Note that all integers are stored as strings to make round-tripping
 to JSON easier.
+
+
+## Quent Traces
+
+cudf-polars emits [Quent] Traces. Users can control some aspects of the traces,
+like the Query Group and Query names:
+
+```python
+import cudf_polars.quent
+# Works with any of the streaming engines, e.g. SPMDEngine
+from cudf_polars.engine.spmd import SPMDEngine
+
+quent_context = cudf_polars.quent.QuentContext(
+    query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
+    query=cudf_polars.quent.Query(instance_name="test_query"),
+)
+
+with SPMDEngine(executor_options={"quent_context": quent_context}) as engine:
+    q.collect(engine=engine)
+```
+
+See the [Quent] README for more on visualizing the captured data.
+
+### Implementation Notes
+
+Quent tracing is currently implemented manually.
+
+`cudf_polars.quent._types` defines one dataclass per `Entity` from the quent
+data processing domain (e.g.  `Engine`, `Worker`, etc.). We prefer to reference
+other entities through instances of that type, rather than by ID. For example, a
+`Worker` has an `engine` field, rather than an `engine_id` field. This prevents
+accidentally using the ID for an entity of the wrong type.
+
+All IDs in `cudf_polars.quent` are UUIDs rather than integers or strings.
+
+Currently, we don't implement the finite state machines discussed in quent. Our
+instrumentation is very-much bolted on, rather than integrated into the
+functioning of cudf-polars. Instead of FSMs, our entities have a method for the
+various phases they move through:
+
+```python
+class Worker:
+    def init(self, ...) -> Event: ...
+    def exit(self, ...) -> Event: ...
+
+class Plan:
+    def declare(self, ...) -> Event: ...
+```
+
+Each of those returns an `Event`, another in-memory data structure representing the event.
+cudf-polars just manually calls those methods at the appropriate places.
+
+Ranks need to coordinate on the creation of some entities. For example, each
+actor in a `RayEngine` needs to use the same `engine_id` so that plans can be
+associated with the engine correctly. We store these types of worker-independent
+entities on a new `QuentContext` class, which is provided to the engine via
+`StreamingExecutor.quent_context`.
+
+Rank-local properties (like a `QuentLogger` (see below) or `Worker` entity)
+should be propagated through functions in a
+`cudf_polars.quent._context.LocalQuentContext`.
+
+`cudf_polars.quent._logging.QuentLogger` connects the `Event` objects to the
+actual events. When we want record something, we call
+`quent_logger.emit(event)`. For now, these events are just buffered in-memory
+but that could be adapted (and likely will in the future, to directly send these
+events to some collector). At the moment, we build on structlog, but this could
+probably be relaxed pretty easily. We aren't currently relying on any advanced
+features from structlog.
+
+Each rank has its own `QuentLogger`, which is constructed upon initialization of
+that rank's "worker" (`RankActor`, `_WorkerContext`). Each `StreamingEngine` subclass
+also has a `_quent_logger` attribute for "client-side" logs that records things like
+the engine start and exit events.
+
+Upon `StreamingEngine.shutdown`, all events are gathered from the workers and persisted
+on the (now closed) engine at `StreamingEngine._quent_events`.
+
+### Concepts
+
+cudf-polars and Quent's Query Engine domain have somewhat overlapping names for
+somewhat overlapping concepts. The following table relates cudf-polars' names to
+Quent's names.
+
+#### Cluster Types
+
+| cudf-polars Type | Quent Type | Notes |
+| ---------------- | ---------- | ----- |
+| `StreamingEngine`  | `Engine`     | The Quent `Engine.implementation` field includes runtime information like the version of cudf-polars. |
+| `RankActor` / `_WorkerContext` | Worker | The logical rank / worker responsible for executing the given query plan. |
+
+#### Query Types
+
+| cudf-polars Type | Quent Type | Notes |
+| ---------------- | ---------- | ----- |
+| `LazyFrame.collect` / `sink` | `Query` | A single query, executed by an `Engine` |
+| - | `QueryGroup` | A group of queries; this is a purely logical grouping, optionally controlled by the user. `polars` / `cudf-polars` don't have any concept of a query group. |
+| `IR` | `Plan` | A plan, translated from a polars expression. Traversing the `.children` of a cudf-polars `IR` node will give you the full plan. |
+| `IR` | `Operator` | A node in the query plan. |
+| - | `Port` | The input or output of some Operator. In cudf-polars, intermediate results are typically passed between IR nodes / operators as a `pylibcudf.Table` |
+| - | `Edge` | A connection between two `Port`s. |
+
+
+[Quent]: https://github.com/rapidsai/quent

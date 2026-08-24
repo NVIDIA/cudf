@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -382,7 +382,7 @@ size_t decompress_zstd(host_span<uint8_t const> src, host_span<uint8_t> dst)
   };
   size_t const decompressed_bytes = ZSTD_decompress(reinterpret_cast<void*>(dst.data()),
                                                     dst.size(),
-                                                    reinterpret_cast<const void*>(src.data()),
+                                                    reinterpret_cast<void const*>(src.data()),
                                                     src.size());
   check_error_code(ZSTD_isError(decompressed_bytes), __LINE__);
   return decompressed_bytes;
@@ -465,7 +465,7 @@ source_properties get_source_properties(compression_type compression, host_span<
     }
     case compression_type::ZSTD: {
       auto const ret =
-        ZSTD_findDecompressedSize(reinterpret_cast<const void*>(src.data()), src.size());
+        ZSTD_findDecompressedSize(reinterpret_cast<void const*>(src.data()), src.size());
       uncomp_len = static_cast<size_t>(ret);
       if (compression != compression_type::AUTO) {
         CUDF_EXPECTS(ret != ZSTD_CONTENTSIZE_UNKNOWN,
@@ -520,7 +520,7 @@ void device_decompress(compression_type compression,
                        device_span<codec_exec_result> results,
                        size_t max_uncomp_chunk_size,
                        size_t max_total_uncomp_size,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -549,7 +549,7 @@ void host_decompress(compression_type compression,
                      device_span<device_span<uint8_t const> const> inputs,
                      device_span<device_span<uint8_t> const> outputs,
                      device_span<codec_exec_result> results,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -557,7 +557,7 @@ void host_decompress(compression_type compression,
   auto const num_chunks = inputs.size();
   auto const h_inputs   = cudf::detail::make_host_vector_async(inputs, stream);
   auto const h_outputs  = cudf::detail::make_host_vector_async(outputs, stream);
-  stream.synchronize();
+  stream.sync();
 
   std::vector<std::future<size_t>> tasks;
   auto const num_streams =
@@ -584,6 +584,7 @@ void host_decompress(compression_type compression,
     h_results[i] = {tasks[i].get(), codec_status::SUCCESS};
   }
 
+  cudf::detail::join_streams(streams, stream);
   cudf::detail::cuda_memcpy<codec_exec_result>(results, h_results, stream);
 }
 
@@ -644,7 +645,7 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
   device_span<device_span<uint8_t const> const> inputs,
   size_t max_uncomp_chunk_size,
   size_t max_total_uncomp_size,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   if (compression == compression_type::NONE or
       get_host_engine_state(compression) == host_engine_state::ON) {
@@ -764,7 +765,7 @@ void decompress(compression_type compression,
                 device_span<detail::codec_exec_result> results,
                 size_t max_uncomp_chunk_size,
                 size_t max_total_uncomp_size,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -790,20 +791,37 @@ void decompress(compression_type compression,
     results, stream, cudf::get_current_device_resource_ref());
   device_span<codec_exec_result> results_view = tmp_results;
 
-  auto const streams = cudf::detail::fork_streams(stream, 2);
-  detail::device_decompress(compression,
-                            inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
-                            outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
-                            results_view.subspan(split_idx, results_view.size() - split_idx),
-                            max_uncomp_chunk_size,
-                            max_total_uncomp_size,
-                            streams[0]);
-  detail::host_decompress(compression,
-                          inputs_view.subspan(0, split_idx),
-                          outputs_view.subspan(0, split_idx),
-                          results_view.subspan(0, split_idx),
-                          streams[1]);
-  cudf::detail::join_streams(streams, stream);
+  // Chunks [0, split_idx) go to the host engine, [split_idx, end) to the device engine.
+  auto const has_host_work   = split_idx > 0;
+  auto const has_device_work = split_idx < inputs_view.size();
+
+  // Only fork/join when both host and device have work.
+  if (has_host_work and has_device_work) {
+    auto const streams = cudf::detail::fork_streams(stream, 2);
+    detail::device_decompress(compression,
+                              inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
+                              outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
+                              results_view.subspan(split_idx, results_view.size() - split_idx),
+                              max_uncomp_chunk_size,
+                              max_total_uncomp_size,
+                              streams[0]);
+    detail::host_decompress(compression,
+                            inputs_view.subspan(0, split_idx),
+                            outputs_view.subspan(0, split_idx),
+                            results_view.subspan(0, split_idx),
+                            streams[1]);
+    cudf::detail::join_streams(streams, stream);
+  } else if (has_device_work) {
+    detail::device_decompress(compression,
+                              inputs_view,
+                              outputs_view,
+                              results_view,
+                              max_uncomp_chunk_size,
+                              max_total_uncomp_size,
+                              stream);
+  } else {
+    detail::host_decompress(compression, inputs_view, outputs_view, results_view, stream);
+  }
 
   copy_results_to_original_order(results_view, results, order, stream);
 }

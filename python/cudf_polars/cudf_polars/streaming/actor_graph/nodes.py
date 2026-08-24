@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Core node definitions for the RapidsMPF streaming runtime."""
 
@@ -7,24 +7,26 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, cast
 
+from cudf_streaming.channel_metadata import ChannelMetadata
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
-from rapidsmpf.streaming.cudf.channel_metadata import ChannelMetadata
-from rapidsmpf.streaming.cudf.table_chunk import (
-    TableChunk,
-    make_table_chunks_available_or_wait,
-)
 
-from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, Empty
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
+    _leading_order_keys,
+    chunk_to_frame,
     chunkwise_evaluate,
     empty_table_chunk,
     gather_in_task_group,
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
+    from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
@@ -80,7 +83,9 @@ async def default_node_single(
         metadata_in = await recv_metadata(ch_in, context)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
-            partitioning=maybe_remap_partitioning(ir, metadata_in.partitioning),
+            partitioning=maybe_remap_partitioning(
+                ir, metadata_in.partitioning, context=context
+            ),
             duplicated=metadata_in.duplicated,
         )
 
@@ -92,6 +97,7 @@ async def default_node_single(
             ch_out,
             ch_in,
             metadata_out,
+            input_metadata=metadata_in,
             handle_empty_input=True,
             tracer=tracer,
         )
@@ -133,9 +139,13 @@ async def default_node_multi(
         local_count = 1
         duplicated = True
         partitioning = None
-        for idx, md_child in enumerate(
-            await gather_in_task_group(*(recv_metadata(ch, context) for ch in chs_in))
-        ):
+        child_metadatas = await gather_in_task_group(
+            *(recv_metadata(ch, context) for ch in chs_in)
+        )
+        child_ordering_metadatas = [
+            _leading_order_keys(md_child) for md_child in child_metadatas
+        ]
+        for idx, md_child in enumerate(child_metadatas):
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
             # Set "duplicated" to False as soon as we
@@ -144,7 +154,10 @@ async def default_node_multi(
             if idx == partitioning_index:
                 # Remap partitioning from child schema to output schema
                 partitioning = maybe_remap_partitioning(
-                    ir, md_child.partitioning, child_ir=ir.children[idx]
+                    ir,
+                    md_child.partitioning,
+                    child_ir=ir.children[idx],
+                    context=context,
                 )
         metadata = ChannelMetadata(
             local_count=local_count,
@@ -198,18 +211,22 @@ async def default_node_multi(
                 ready_chunks,
                 reserve_extra=sum(
                     chunk.data_alloc_size()
-                    for chunk in cast(list[TableChunk], ready_chunks)
+                    for chunk in cast("list[TableChunk]", ready_chunks)
                 ),
                 net_memory_delta=0,
             )
             dfs = [
-                DataFrame.from_table(
-                    chunk.table_view(),  # type: ignore[union-attr]
-                    list(child.schema.keys()),
-                    list(child.schema.values()),
-                    chunk.stream,  # type: ignore[union-attr]
+                chunk_to_frame(
+                    cast("TableChunk", chunk),
+                    child,
+                    ordering_metadata=child_ordering_metadata,
                 )
-                for chunk, child in zip(ready_chunks, ir.children, strict=True)
+                for chunk, child, child_ordering_metadata in zip(
+                    ready_chunks,
+                    ir.children,
+                    child_ordering_metadatas,
+                    strict=True,
+                )
             ]
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(
@@ -219,20 +236,13 @@ async def default_node_multi(
                     context=ir_context,
                 )
                 del dfs
-            if tracer is not None:
-                tracer.add_chunk(table=df.table)
-            await ch_out.send(
-                context,
-                Message(
-                    seq_num,
-                    TableChunk.from_pylibcudf_table(
-                        df.table,
-                        df.stream,
-                        exclusive_view=True,
-                        br=context.br(),
-                    ),
-                ),
+            output_chunk = TableChunk.from_pylibcudf_table(
+                df.table,
+                df.stream,
+                exclusive_view=True,
+                br=context.br(),
             )
+            await send_chunk(context, ch_out, output_chunk, seq_num, tracer=tracer)
             seq_num += 1
             del df
 
@@ -731,7 +741,11 @@ async def metadata_drain_node(
         context, ch_in, ch_out, ir_context=ir_context, trace_ir=ir
     ):
         # Drain metadata channel (we don't need it after this point)
-        metadata = await recv_metadata(ch_in, context)
+        msg = await ch_in.recv_metadata(context)
+        if msg is None:
+            # An upstream actor failed/was cancelled and shut down the channel
+            return
+        metadata = ChannelMetadata.from_message(msg)
         if metadata_collector is not None:
             metadata_collector.append(metadata)
 

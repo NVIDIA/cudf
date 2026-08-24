@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -14,6 +14,68 @@ from pyarrow.parquet import write_table as pq_write_table
 
 import pylibcudf as plc
 from pylibcudf.io.types import CompressionType
+
+
+def _map_string_view_to_string(dtype: pa.DataType) -> pa.DataType:
+    """Recursively convert string_view -> string in a pyarrow type."""
+    if pa.types.is_string_view(dtype):
+        return pa.string()
+    if pa.types.is_list(dtype):
+        value_field = dtype.value_field
+        return pa.list_(
+            pa.field(
+                value_field.name,
+                _map_string_view_to_string(value_field.type),
+                nullable=value_field.nullable,
+                metadata=value_field.metadata,
+            )
+        )
+    if pa.types.is_struct(dtype):
+        return pa.struct(
+            [
+                pa.field(
+                    f.name,
+                    _map_string_view_to_string(f.type),
+                    nullable=f.nullable,
+                )
+                for f in dtype
+            ]
+        )
+    return dtype
+
+
+def _normalize_string_view(obj):
+    """
+    Normalize string_view types to string.
+
+    PyArrow 21+ may produce string_view in places where previous versions
+    produced string. This helper ensures comparisons are not affected.
+    """
+    if isinstance(obj, pa.Table):
+        new_schema = pa.schema(
+            [
+                pa.field(
+                    f.name,
+                    _map_string_view_to_string(f.type),
+                    nullable=f.nullable,
+                    metadata=f.metadata,
+                )
+                for f in obj.schema
+            ],
+            metadata=obj.schema.metadata,
+        )
+        return obj.cast(new_schema)
+    elif isinstance(obj, pa.ChunkedArray):
+        new_type = _map_string_view_to_string(obj.type)
+        if new_type != obj.type:
+            return obj.cast(new_type)
+        return obj
+    elif isinstance(obj, pa.Array):
+        new_type = _map_string_view_to_string(obj.type)
+        if new_type != obj.type:
+            return obj.cast(new_type)
+        return obj
+    return obj
 
 
 def synchronize_stream(stream=None):
@@ -98,6 +160,11 @@ def assert_column_eq(
         lhs = lhs.combine_chunks()
     if isinstance(rhs, pa.ChunkedArray):
         rhs = rhs.combine_chunks()
+
+    # Normalize string_view -> string for comparison.
+    # PyArrow 21+ may produce string_view where previous versions produced string.
+    lhs = _normalize_string_view(lhs)
+    rhs = _normalize_string_view(rhs)
 
     def _make_fields_nullable(typ):
         new_fields = []

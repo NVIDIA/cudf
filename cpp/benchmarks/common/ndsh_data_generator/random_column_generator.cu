@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +58,7 @@ struct random_number_generator {
 
   CUDF_HOST_DEVICE random_number_generator(T lower, T upper) : lower(lower), upper(upper) {}
 
-  __device__ T operator()(const int64_t idx) const
+  __device__ T operator()(int64_t const idx) const
   {
     if constexpr (cudf::is_integral<T>()) {
       thrust::default_random_engine engine;
@@ -95,7 +95,7 @@ std::unique_ptr<cudf::column> generate_random_string_column(cudf::size_type lowe
   // We generate the strings in parallel into the `chars` vector using the
   // offsets vector generated above.
   thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::make_zip_iterator(cuda::std::make_tuple(offset_itr, offset_itr + 1)),
+                     cuda::make_zip_iterator(cuda::std::make_tuple(offset_itr, offset_itr + 1)),
                      num_rows,
                      random_string_generator(chars.data()));
 
@@ -171,7 +171,7 @@ std::unique_ptr<cudf::column> generate_repeat_string_column(std::string const& v
 }
 
 std::unique_ptr<cudf::column> generate_random_string_column_from_set(
-  cudf::host_span<const char* const> set,
+  cudf::host_span<char const* const> set,
   cudf::size_type num_rows,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)

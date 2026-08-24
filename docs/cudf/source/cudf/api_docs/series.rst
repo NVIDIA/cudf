@@ -35,7 +35,6 @@ Attributes
    Series.empty
    Series.name
    Series.valid_count
-   Series.values_host
 
 Conversion
 ----------
@@ -355,7 +354,6 @@ String handling
    count
    detokenize
    edit_distance
-   edit_distance_matrix
    endswith
    extract
    filter_alphanum

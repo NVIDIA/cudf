@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ import pytest
 
 import polars as pl
 
-from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.asserts import (
+    assert_gpu_result_equal,
+)
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 
@@ -90,6 +92,20 @@ def test_setsorted_expr_with_nulls(engine: pl.GPUEngine, descending, nulls_last)
     ldf = pl.LazyFrame({"a": values})
     q = ldf.select(pl.col("a").set_sorted(descending=descending))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_arg_sort_expression(engine: pl.GPUEngine, descending, nulls_last):
+    ldf = pl.LazyFrame(
+        {
+            "a": [5, -1, 3, 4, None, 8, 6, 7, None, 3],
+        }
+    )
+    query = ldf.select(
+        pl.col("a").arg_sort(descending=descending, nulls_last=nulls_last)
+    )
+    assert_gpu_result_equal(query, engine=engine)
 
 
 def test_sort_concat_filtered_to_empty(engine: pl.GPUEngine):

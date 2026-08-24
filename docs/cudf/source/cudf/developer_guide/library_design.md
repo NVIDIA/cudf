@@ -1,18 +1,9 @@
 # Library Design
 
-```{note}
-This page is significantly outdated!
-It will be updated in 25.04 to reflect the current state of cuDF. Which includes libcudf, pylibcudf, cudf classic, cudf.pandas, and cudf.polars.
-```
+cuDF contains 2 main data structures:
 
-At a high level, cuDF is structured in three layers, each of which serves a distinct purpose:
-
-1. The Frame layer: The user-facing implementation of pandas-like data structures like `DataFrame` and `Series`.
-2. The Column layer: The core internal data structures used to bridge the gap to our lower-level implementations.
-3. The Cython layer: The wrappers around the fast C++ `libcudf` library.
-
-In this document we will review each of these layers, their roles, and the requisite tradeoffs.
-Finally we tie these pieces together to provide a more holistic view of the project.
+1. The Frame: A user-facing object mirroring pandas-like data structures like `DataFrame` and `Series`.
+2. The Column: An object holding a 1-dimensional representation of GPU data that implements methods for a particular data type.
 
 
 ## The Frame layer
@@ -56,29 +47,22 @@ Finally we tie these pieces together to provide a more holistic view of the proj
 ```{image} frame_class_diagram.png
 ```
 
-This class diagram shows the relationship between the principal components of the `Frame` layer.
-The eponymous `Frame` class is, at its core, an object that holds a mapping of one or more columns.
-Some types of `Frame` contain indexes; in particular, any `DataFrame` or `Series` has an index.
-However, as a general container of columnar data, `Frame` is also the parent class for most types of index.
+The class diagram shows the inheritance between various subclasses of the `Frame` which leads to public objects
+like the `DataFrame`, `Series` and `Index`.
 
 ### Frames
 
-`Frame` exposes numerous methods common to all pandas data structures.
-Any methods that have the same API across `Series`, `DataFrame`, and `Index` and
-return the caller's type with the same shape should be defined here.
-Additionally any (internal) methods that could be used to share code between those classes may also be defined here.
+The `Frame` is a base class that holds a data structure called the `ColumnAccessor` that maps one or more columns to a unique label.
+The `Frame` and its subclass hierarchy is designed to consolidate shared implementation of private and public methods
+that are applicable across the public `Series`, `DataFrame` and `Index` objects:
 
-The primary internal subclass of `Frame` is `IndexedFrame`, a `Frame` with an index.
-An `IndexedFrame` represents the first type of object mentioned above: indexed tables.
-In particular, `IndexedFrame` is a parent class for `DataFrame` and `Series`.
-Any pandas methods that are defined for those two classes and returns the caller's type
-with the same shape should be defined here.
+- `Frame` implements base methods that are common across `Series`, `DataFrame`, and `Index`.
+- `SingleColumnFrame` implements methods that can be shared across `Series` and `Index` which are only represented by 1 column.
+- `IndexedFrame` implements methods that can be shared across `DataFrame` and `Series` which both contain and `Index`
 
-The second internal subclass of `Frame` is `SingleColumnFrame`.
-As you may surmise, it is a `Frame` with a single column of data.
-This class is a parent for `Index` and `Series`.
-While `IndexedFrame` provides a large amount of functionality, this class is much simpler.
-It defines shared APIs provided by all 1D pandas objects, and it flattens outputs where needed.
+Generally, a public `Series`, `DataFrame` or `Index` method should only implement class specific logic and eventually dispatch to a `super()` method to
+leverage a shared implementation. Likewise `SingleColumnFrame` and `IndexedFrame` methods should only implement single column and index related logic respectively
+and eventually dispatch to a `Frame` methods via `super()` to leverage a shared implementation which usually involves processing one or more Columns.
 
 ### Indexes
 
@@ -86,8 +70,8 @@ It defines shared APIs provided by all 1D pandas objects, and it flattens output
 subclasses:
 
 - A `RangeIndex` is backed by a Python `range` object, not a column.
-  Wherever possible, its methods have special implementations designed to avoid materializing to a column.
-  Where such an implementation is infeasible, we fall back to converting it to an `Index` of `int64`
+  Wherever possible, `RangeIndex` methods have special implementations designed to avoid materializing the `range` to a column.
+  Otherwise, a `RangeIndex` method converts to an `Index` of `int64`
   dtype first instead.
 - A `MultiIndex` can be backed by _multiple_ columns of data.
   Therefore, `MultiIndex` overrides methods in `SingleColumnFrame` that assume 1 column of data to support
@@ -96,91 +80,65 @@ subclasses:
 
 ## The Column layer
 
-The next layer in the cuDF stack is the Column layer.
-This layer forms the glue between pandas-like APIs and our underlying data layouts.
-The principal objects in the Column layer are the `ColumnAccessor` and the various `Column` classes.
-The `Column` is cuDF's core data structure that represents a single column of data of a specific data type.
-A `ColumnAccessor` is a mapping of column labels to `Column`s.
-A `Frame` owns a `ColumnAccessor`.
-
-### ColumnAccessor
-
-The primary purpose of the `ColumnAccessor` is to encapsulate pandas column selection semantics.
-Columns may be selected or inserted by index or by label, and label-based selections are as flexible as pandas is.
-For instance, Columns may be selected hierarchically (using tuples) or via wildcards.
-`ColumnAccessor`s also support the `MultiIndex` columns that can result from operations like groupbys.
-
 ### Columns
 
-Under the hood, cuDF is built around the [Apache Arrow Format](https://arrow.apache.org).
-This data format is both conducive to high-performance algorithms and suitable for data interchange between libraries.
-The `Column` class encapsulates our implementation of this data format.
-A `Column` is composed of the following:
+The `ColumnBase` represents 1 column in the `Frame` and is an object that contains two primary components:
 
-- A **data type**, specifying the type of each element.
-- A **data buffer** that may store the data for the column elements.
-  Some column types do not have a data buffer, instead storing data in the children columns.
-- A **mask buffer** whose bits represent the validity (null or not null) of each element.
-  Nullability is a core concept in the Arrow data model.
-  Columns whose elements are all valid may not have a mask buffer.
-  Mask buffers are padded to 64 bytes.
-- Its **children**, a tuple of columns used to represent complex types such as structs or lists.
-- A **size** indicating the number of elements in the column.
-- An integer **offset** use to represent the first element of column that is the "slice" of another column.
-  The size of the column then gives the extent of the slice rather than the size of the underlying buffer.
-  A column that is not a slice has an offset of 0.
+- A `pylibcudf.Column` representing the GPU data in [Apache Arrow Format](https://arrow.apache.org).
+- A `.dtype` which is a valid [pandas data type](https://pandas.pydata.org/docs/user_guide/basics.html#dtypes) exposed to the `Frame`
 
-More information about these fields can be found in the documentation of the
-[Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html),
-which is what the cuDF `Column` is based on.
+`ColumnBase` is a base class implementing shared methods applicable to processing a `pylibcudf.Column` of any data type. `ColumnBase`
+methods are generally implemented using pylibcudf APIs and contains data type resolution logic to return a new `ColumnBase` of appropriate
+data type if applicable.
 
-`ColumnBase` provides some standard methods, while other methods only make sense for data of a specific type.
-As a result, we have various subclasses of `ColumnBase` like `NumericalColumn`, `StringColumn`, and `DatetimeColumn`.
-Most dtype-specific decisions should be handled at the level of a specific `Column` subclass.
-Each type of `Column` only implements methods supported by that data type.
+`ColumnBase` has various subclasses eventually used by the `Frame`
+that consolidates logic and implements methods specific to 1 or more related data types:
 
-Different types of `ColumnBase` are also stored differently in memory according to the Arrow format.
-As one example, a `NumericalColumn` with 1000 `int32` elements and containing nulls is composed of:
+- `NumericalColumn`: integer, float, and boolean
+- `StringColumn`: string
+- `CategoricalColumn`: category
+- `DatetimeColumn`: timestamp
+- `DatetimeTZColumn`: timestamp with timezone
+- `TimedeltaColumn`: duration
+- `IntervalColumn`: interval
+- `ListColumn`: list
+- `StructColumn`: struct
+- `DecimalColumn`: decimal32, decimal64, decimal128
 
-1. A data buffer of size 4000 bytes (sizeof(int32) * 1000)
-2. A mask buffer of size 128 bytes (1000/8 padded to a multiple of 64
-   bytes)
-3. No children columns
+Each column subclass is restricted to hold a `.dtype` object corresponding to a valid [pandas data type](https://pandas.pydata.org/docs/user_guide/basics.html#dtypes), including pandas nullable extension types, of the same data type designation with the following exceptions:
 
-As another example, a `StringColumn` backing the Series `['do', 'you', 'have', 'any', 'cheese?']` is composed of:
+- A `CategoricalColumn` holds a `cudf.CategoricalDtype` instead of a `pandas.CategoricalDtype`
+- A `IntervalColumn` can hold a `cudf.IntervalDtype` instead of a `pandas.IntervalDtype`
+- A `ListColumn` can hold a `cudf.ListDtype`
+- A `StructColumn` can hold a `cudf.StructDtype`
+- A `DecimalColumn` can hold a `cudf.Decimal32Dtype`, `cudf.Decimal64Dtype`, `cudf.Decimal128Dtype` respectively
 
-1. A data buffer of UTF-8 characters `['d', 'o', 'y', 'o', 'u', 'h', ..., '?']`
-2. No mask buffer as there are no nulls
-3. A child column of "offsets"  indicating the start of each string to the characters column e.g. `[0, 2, 5, 9, 12, 19]`
+```{note}
+- There is no representation for the `pandas.PeriodDtype` or `pandas.SparseDtype`
+- The `object` dtype can be a `.dtype` of StringColumn strictly representing a string type. In pandas, this type can represent
+arbitrary "PyObject" data which cuDF does not support.
+```
 
-Operations that call `libcudf` routines first convert the `ColumnBase` to a `pylibcudf.Column`,
-invoke the corresponding `pylibcudf` function, and convert the result back to a `ColumnBase` object.
+The implementations of `ColumnBase` and its subclasses are located in `python/cudf/cudf/core/column`
 
 
-### Data types
+## `Frame` operations on `Columns`
 
-cuDF uses [dtypes](https://numpy.org/doc/stable/reference/arrays.dtypes.html) to represent different types of data.
-Since efficient GPU algorithms require preexisting knowledge of data layouts,
-cuDF does not support the arbitrary `object` dtype, but instead defines a few custom types for common use-cases:
-- `ListDtype`: Lists where each element in every list in a Column is of the same type
-- `StructDtype`: Dicts where a given key always maps to values of the same type
-- `CategoricalDtype`: Analogous to the pandas categorical dtype except that the categories are stored in device memory
-- `DecimalDtype`: Fixed-point numbers
-- `IntervalDtype`: Intervals
+There are two common patterns when implementing APIs in cuDF:
 
-Note that there is a many-to-one mapping between data types and `Column` classes.
-For instance, all numerical types (floats and ints of different widths) are all managed using `NumericalColumn`.
+- Operations that act on columns of a `Frame` individually
+    - Loop over each `ColumnBase` stored in a `Frame`'s `ColumnAccessor`
+    - Call the relevant method on the `ColumnBase`
+    - If returning another `Frame`, construct a new `ColumnAccessor` with each new `ColumnBase` result
 
+- Operations that act on multiple columns at once
+    - Collect all the `ColumnBase`s stored in a `Frame`'s `ColumnAccessor`
+    - Pass the underlying `pylibcudf.Column`s to a pylibcudf API
+    - If returning another `Frame`, construct a new `ColumnAccessor` with each new `ColumnBase` result
 
-### Buffer
-
-`Column`s are in turn composed of one or more `Buffer`s.
-A `Buffer` represents a single, contiguous, device memory allocation owned by another object.
-A `Buffer` constructed from a preexisting device memory allocation (such as a CuPy array) will view that memory.
-Conversely, when constructed from a host object,
-`Buffer` uses [`rmm.DeviceBuffer`](https://github.com/rapidsai/rmm#devicebuffers) to allocate new memory.
-The data is then copied from the host object into the newly allocated device memory.
-You can read more about [device memory allocation with RMM here](https://github.com/rapidsai/rmm).
+Both methods on `Frame` subclasses and intermediate objects such as `GroupBy`, `Rolling`, and `Resampler` mimic this pattern
+by accessing private APIs on `Frame`. These two patterns generalize most operations in cuDF but other public APIs may employ
+a more custom pattern.
 
 
 ### Spilling to host memory
@@ -247,33 +205,11 @@ To have each worker in dask print spill statistics, do something like:
     client.submit(spill_info)
 ```
 
-## Putting It All Together
-
-To this point, our discussion has assumed that all cuDF functions follow a strictly linear descent through these layers.
-However, it should be clear that in many cases this approach is not appropriate.
-Many common `Frame` operations do not operate on individual columns but on the `Frame` as a whole.
-Therefore, we in fact have two distinct common patterns for implementations in cuDF.
-
-1. The first pattern is for operations that act on columns of a `Frame` individually.
-   This group includes tasks like reductions and scans (`sum`/`cumsum`).
-   These operations are typically implemented by looping over the columns stored in a `Frame`'s `ColumnAccessor`.
-2. The second pattern is for operations that involve acting on multiple columns at once.
-   This group includes many core operations like grouping or merging.
-   These operations bypass the Column layer altogether, instead going straight from Frame to `pylibcudf`.
-
-The pandas API also includes a number of helper objects, such as `GroupBy`, `Rolling`, and `Resampler`.
-cuDF implements corresponding objects with the same APIs.
-Internally, these objects typically interact with cuDF objects at the Frame layer via composition.
-However, for performance reasons they frequently access internal attributes and methods of `Frame` and its subclasses.
-
-
 (copy-on-write-dev-doc)=
 
 ## Copy-on-write
 
 This section describes the internal implementation details of the copy-on-write feature.
-It is recommended that developers familiarize themselves with [the user-facing documentation](copy-on-write-user-doc) of this functionality before reading through the internals
-below.
 
 The core copy-on-write implementation relies on `ExposureTrackedBuffer` and the tracking features of `BufferOwner`.
 
@@ -294,8 +230,7 @@ someone accesses data through the `__cuda_array_interface__`, we eagerly trigger
 
 A read-only object can be quite useful for operations that will not
 mutate the data. To achieve this, we create simple wrapper classes around the `ExposureTrackedBuffer` that will construct an equivalent CAI except it will get the pointer by calling `.get_ptr(mode="read")`, avoiding marking the pointer as exposed as would occur with a writeable ptr access.
-This will not trigger a deep copy even if multiple `ExposureTrackedBuffer`s point to the same `ExposureTrackedBufferOwner`. This approach should only be used when the lifetime of the proxy object is restricted to cudf's internal code execution. Handing this out to external libraries or user-facing APIs will lead to untracked references and undefined copy-on-write behavior. We currently use this API for device to host
-copies like in `ColumnBase.data_array_view(mode="read")` which is used for `Column.values_host`.
+This will not trigger a deep copy even if multiple `ExposureTrackedBuffer`s point to the same `ExposureTrackedBufferOwner`. This approach should only be used when the lifetime of the proxy object is restricted to cudf's internal code execution. Handing this out to external libraries or user-facing APIs will lead to untracked references and undefined copy-on-write behavior.
 
 
 ### Internal access to raw data pointers

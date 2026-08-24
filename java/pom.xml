@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
   SPDX-License-Identifier: Apache-2.0
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -10,14 +10,14 @@
 
     <groupId>ai.rapids</groupId>
     <artifactId>cudf</artifactId>
-    <version>26.08.0-SNAPSHOT</version>
+    <version>26.10.0-SNAPSHOT</version>
 
     <name>cudfjni</name>
     <description>
         This project provides java bindings for cudf, to be able to process large amounts of data on a GPU.
         This is still a work in progress so some APIs may change until the 1.0 release.
     </description>
-    <url>http://ai.rapids</url>
+    <url>https://rapids.ai/</url>
 
     <licenses>
         <license>
@@ -28,10 +28,10 @@
         </license>
     </licenses>
     <scm>
-        <connection>scm:git:https://github.com/rapidsai/cudf.git</connection>
-        <developerConnection>scm:git:git@github.com:rapidsai/cudf.git</developerConnection>
+        <connection>scm:git:https://github.com/NVIDIA/cudf.git</connection>
+        <developerConnection>scm:git:git@github.com:NVIDIA/cudf.git</developerConnection>
         <tag>HEAD</tag>
-        <url>https://github.com/rapidsai/cudf</url>
+        <url>https://github.com/NVIDIA/cudf</url>
     </scm>
     <developers>
         <developer>
@@ -80,6 +80,60 @@
             <timezone>-8</timezone>
         </developer>
     </developers>
+
+    <repositories>
+        <!-- Prefer Google Cloud mirror, which has higher rate limits -->
+        <repository>
+            <id>gcs-maven-central-mirror</id>
+            <name>GCS Maven Central mirror</name>
+            <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+        <!-- Fall back to Maven upstream for packages not found in GCS mirror -->
+        <repository>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <!-- Prefer Google Cloud mirror, which has higher rate limits -->
+        <pluginRepository>
+            <id>gcs-maven-central-mirror</id>
+            <name>GCS Maven Central mirror</name>
+            <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+        <!-- Fall back to Maven upstream for packages not found in GCS mirror -->
+        <pluginRepository>
+            <id>central</id>
+            <name>Maven Plugin Repository</name>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
 
     <dependencies>
         <dependency>
@@ -149,7 +203,6 @@
         <junit.version>5.4.2</junit.version>
         <ai.rapids.refcount.debug>false</ai.rapids.refcount.debug>
         <ai.rapids.cudf.nvtx.enabled>false</ai.rapids.cudf.nvtx.enabled>
-        <native.build.path>${basedir}/target/cmake-build</native.build.path>
         <skipNativeCopy>false</skipNativeCopy>
         <cxx.flags/>
         <CMAKE_EXPORT_COMPILE_COMMANDS>OFF</CMAKE_EXPORT_COMPILE_COMMANDS>
@@ -172,6 +225,92 @@
                 <cxx.flags>-Wno-deprecated-declarations</cxx.flags>
             </properties>
         </profile>
+        <!--
+            Default `mvn test` compiles java/src/main, builds natives via cmake,
+            puts classes on the surefire classpath ahead of any JAR, and runs
+            java/src/test. That exercises the local tree, not a published
+            classifier JAR. Activate -Ppackaged-jar-tests with
+            -Dcudf.jar.path=<classifier.jar> to skip cmake/main compile, put the
+            packaged JAR on the classpath instead, and run the same tests
+            (plus PackagedJarOriginCheck) against it.
+        -->
+        <profile>
+            <id>packaged-jar-tests</id>
+            <properties>
+                <skipNativeCopy>true</skipNativeCopy>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>ai.rapids</groupId>
+                    <artifactId>cudf-packaged</artifactId>
+                    <version>${project.version}</version>
+                    <scope>system</scope>
+                    <systemPath>${cudf.jar.path}</systemPath>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>cmake</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.gmavenplus</groupId>
+                        <artifactId>gmavenplus-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>setproperty</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <skipMain>true</skipMain>
+                        </configuration>
+                    </plugin>
+                    <!-- copy-native-libs resolves ${native.cudf.path}, which is
+                         only defined by the disabled setproperty step above; skip
+                         it entirely since the packaged JAR already bundles natives. -->
+                    <plugin>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-native-libs</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>packaged-jar-origin-check</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <excludes combine.self="override"/>
+                                    <includes>
+                                        <include>**/PackagedJarOriginCheck.java</include>
+                                    </includes>
+                                    <failIfNoTests>true</failIfNoTests>
+                                    <systemPropertyVariables>
+                                        <cudf.packaged.jar>${cudf.jar.path}</cudf.packaged.jar>
+                                    </systemPropertyVariables>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>default-tests</id>
             <build>
@@ -182,6 +321,8 @@
                             <excludes>
                                 <exclude>**/CudaFatalTest.java</exclude>
                                 <exclude>**/ColumnViewNonEmptyNullsTest.java</exclude>
+                                <exclude>**/NativeDepsLoaderTest.java</exclude>
+                                <exclude>**/PackagedJarOriginCheck.java</exclude>
                             </excludes>
                         </configuration>
                         <executions>
@@ -209,6 +350,20 @@
                                 <configuration>
                                     <reuseForks>false</reuseForks>
                                     <test>*/CudaFatalTest.java</test>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>native-deps-loader-test</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <reuseForks>false</reuseForks>
+                                    <excludes combine.self="override"/>
+                                    <includes>
+                                        <include>**/NativeDepsLoaderTest.java</include>
+                                    </includes>
+                                    <failIfNoTests>true</failIfNoTests>
                                 </configuration>
                             </execution>
                         </executions>
@@ -233,6 +388,8 @@
                                 <exclude>**/ColumnViewNonEmptyNullsTest.java</exclude>
                                 <exclude>**/CuFileTest.java</exclude>
                                 <exclude>**/CudaFatalTest.java</exclude>
+                                <exclude>**/NativeDepsLoaderTest.java</exclude>
+                                <exclude>**/PackagedJarOriginCheck.java</exclude>
                             </excludes>
                         </configuration>
                         <executions>
@@ -260,6 +417,20 @@
                                 <configuration>
                                     <argLine>-da:ai.rapids.cudf.AssertEmptyNulls</argLine>
                                     <test>*/ColumnViewNonEmptyNullsTest.java</test>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>native-deps-loader-test</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <configuration>
+                                    <reuseForks>false</reuseForks>
+                                    <excludes combine.self="override"/>
+                                    <includes>
+                                        <include>**/NativeDepsLoaderTest.java</include>
+                                    </includes>
+                                    <failIfNoTests>true</failIfNoTests>
                                 </configuration>
                             </execution>
                         </executions>
@@ -332,17 +503,6 @@
                             </execution>
                         </executions>
                     </plugin>
-                    <plugin>
-                        <groupId>org.sonatype.plugins</groupId>
-                        <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.6.7</version>
-                        <extensions>true</extensions>
-                        <configuration>
-                            <serverId>ossrh</serverId>
-                            <nexusUrl>https://oss.sonatype.org/</nexusUrl>
-                            <autoReleaseAfterClose>false</autoReleaseAfterClose>
-                        </configuration>
-                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -375,6 +535,38 @@
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <id>netty-jdk9plus</id>
+            <activation><jdk>[9,)</jdk></activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true</argLine>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-common</artifactId>
+                    <version>${netty.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-buffer</artifactId>
+                    <version>${netty.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+            <properties>
+                <!-- Override netty version for JDK 21 compatibility -->
+                <netty.version>4.1.100.Final</netty.version>
+            </properties>
+        </profile>
     </profiles>
 
     <build>
@@ -385,23 +577,28 @@
                 <filtering>true</filtering>
             </resource>
             <resource>
-                <directory>${basedir}/..</directory>
-                <targetPath>META-INF</targetPath>
-                <includes>
-                    <include>LICENSE</include>
-                </includes>
+                <!-- Populated by the copy-license execution of maven-resources-plugin. -->
+                <directory>${project.build.directory}/license-resources</directory>
             </resource>
         </resources>
         <pluginManagement>
             <plugins>
                 <plugin>
-                    <groupId>org.codehaus.gmaven</groupId>
-                    <artifactId>gmaven-plugin</artifactId>
-                    <version>1.5</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-exec-plugin</artifactId>
-                    <version>1.6.0</version>
+                    <groupId>org.codehaus.gmavenplus</groupId>
+                    <artifactId>gmavenplus-plugin</artifactId>
+                    <version>3.0.0</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.apache.groovy</groupId>
+                            <artifactId>groovy</artifactId>
+                            <version>4.0.21</version>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.groovy</groupId>
+                            <artifactId>groovy-ant</artifactId>
+                            <version>4.0.21</version>
+                        </dependency>
+                    </dependencies>
                 </plugin>
                 <plugin>
                     <artifactId>maven-clean-plugin</artifactId>
@@ -515,8 +712,8 @@
                 </executions>
             </plugin>
             <plugin>
-                <groupId>org.codehaus.gmaven</groupId>
-                <artifactId>gmaven-plugin</artifactId>
+                <groupId>org.codehaus.gmavenplus</groupId>
+                <artifactId>gmavenplus-plugin</artifactId>
                 <executions>
                     <execution>
                         <id>setproperty</id>
@@ -525,18 +722,19 @@
                             <goal>execute</goal>
                         </goals>
                         <configuration>
-                            <source>
+                            <scripts>
+                              <script><![CDATA[
                                 def sout = new StringBuffer(), serr = new StringBuffer()
                                 //This only works on linux
                                 def proc = 'ldd ${native.build.path}/libcudfjni.so'.execute()
                                 proc.consumeProcessOutput(sout, serr)
                                 proc.waitForOrKill(10000)
-                                def libcudf = ~/libcudf.*\\.so\\s+=>\\s+(.*)libcudf.*\\.so\\s+.*/
+                                def libcudf = ~/libcudf.*\.so\s+=>\s+(.*)libcudf.*\.so\s+.*/
                                 def cudfm = libcudf.matcher(sout)
                                 if (cudfm.find()) {
-                                    pom.properties['native.cudf.path'] = cudfm.group(1)
+                                    project.properties['native.cudf.path'] = cudfm.group(1)
                                 } else {
-                                    fail("Could not find cudf as a dependency of libcudfjni out> $sout err> $serr")
+                                    throw new RuntimeException("Could not find cudf as a dependency of libcudfjni out> $sout err> $serr matcher> $cudfm")
                                 }
 
                                 def nvccout = new StringBuffer(), nvccerr = new StringBuffer()
@@ -547,11 +745,19 @@
                                 def cm = cudaPattern.matcher(nvccout)
                                 if (cm.find()) {
                                     def classifier = 'cuda' + cm.group(1)
-                                    pom.properties['cuda.classifier'] = classifier
+                                    // Emit "cuda<major>" on x86_64 and "cuda<major>-arm64" on
+                                    // aarch64 so a single pom produces a distinct Maven
+                                    // classifier per architecture.
+                                    def osArch = System.getProperty('os.arch')
+                                    if (osArch == 'aarch64' || osArch == 'arm64') {
+                                        classifier = classifier + '-arm64'
+                                    }
+                                    project.properties['cuda.classifier'] = classifier
                                 } else {
-                                    fail('could not find CUDA version')
+                                    throw new RuntimeException('could not find CUDA version')
                                 }
-                            </source>
+                              ]]></script>
+                            </scripts>
                         </configuration>
                     </execution>
                 </executions>
@@ -585,11 +791,38 @@
                         <ai.rapids.refcount.debug>${ai.rapids.refcount.debug}</ai.rapids.refcount.debug>
                         <ai.rapids.cudf.nvtx.enabled>${ai.rapids.cudf.nvtx.enabled}</ai.rapids.cudf.nvtx.enabled>
                     </systemPropertyVariables>
+                    <!-- NativeDepsLoaderTest mutates the lib-native-dir system property
+                         and asserts the JVM is pristine; it must run in its own forked
+                         JVM via the dedicated execution defined in the test profiles.
+                         PackagedJarOriginCheck needs a packaged classifier JAR and is
+                         only run by the packaged-jar-tests profile. -->
+                    <excludes>
+                        <exclude>**/NativeDepsLoaderTest.java</exclude>
+                        <exclude>**/PackagedJarOriginCheck.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>
                 <artifactId>maven-resources-plugin</artifactId>
                 <executions>
+                    <execution>
+                        <id>copy-license</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/license-resources/META-INF</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${basedir}/..</directory>
+                                    <includes>
+                                        <include>LICENSE</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>copy-native-libs</id>
                         <phase>generate-resources</phase>

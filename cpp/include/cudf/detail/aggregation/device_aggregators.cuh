@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -133,7 +133,7 @@ template <typename Source>
     (cudf::is_integral_not_bool<Source>() && cudf::is_signed<Source>()) ||
     (cudf::is_fixed_point<Source>() && cudf::has_atomic_support<device_storage_type_t<Source>>()) ||
     cuda::std::is_same_v<Source, numeric::decimal128>)
-struct update_target_element<Source, aggregation::SUM_WITH_OVERFLOW> {
+struct update_target_element<Source, aggregation::SUM_OVERFLOW> {
   using DeviceType = device_storage_type_t<Source>;
 
   __device__ void operator()(mutable_column_device_view target,
@@ -144,14 +144,14 @@ struct update_target_element<Source, aggregation::SUM_WITH_OVERFLOW> {
     auto sum_column      = target.child(0);
     auto overflow_column = target.child(1);
 
+    auto overflow_ref = cuda::atomic_ref<bool, cuda::thread_scope_device>{
+      *(overflow_column.data<bool>() + target_index)};
+
+    if (overflow_ref.load(cuda::memory_order_relaxed)) { return; }
+
     auto const source_value = source.element<DeviceType>(source_index);
     auto const old_sum =
       cudf::detail::atomic_add(&sum_column.element<DeviceType>(target_index), source_value);
-
-    // Early exit if overflow is already set
-    auto bool_ref = cuda::atomic_ref<bool, cuda::thread_scope_device>{
-      *(overflow_column.data<bool>() + target_index)};
-    if (bool_ref.load(cuda::memory_order_relaxed)) { return; }
 
     if (cuda::add_overflow<DeviceType>(old_sum, source_value).overflow) {
       cudf::detail::atomic_max(&overflow_column.element<bool>(target_index), true);

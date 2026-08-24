@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,7 +86,7 @@ std::vector<std::uint8_t> compress_zstd(host_span<uint8_t const> src)
   auto const compressed_size_actual =
     ZSTD_compress(reinterpret_cast<void*>(compressed_buffer.data()),
                   compressed_size_estimate,
-                  reinterpret_cast<const void*>(src.data()),
+                  reinterpret_cast<void const*>(src.data()),
                   src.size(),
                   1);
   check_error_code(ZSTD_isError(compressed_size_actual), __LINE__);
@@ -292,7 +292,7 @@ void device_compress(compression_type compression,
                      device_span<device_span<uint8_t const> const> inputs,
                      device_span<device_span<uint8_t> const> outputs,
                      device_span<codec_exec_result> results,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -314,7 +314,7 @@ void host_compress(compression_type compression,
                    device_span<device_span<uint8_t const> const> inputs,
                    device_span<device_span<uint8_t> const> outputs,
                    device_span<codec_exec_result> results,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -322,7 +322,7 @@ void host_compress(compression_type compression,
   auto const num_chunks = inputs.size();
   auto const h_inputs   = cudf::detail::make_host_vector_async(inputs, stream);
   auto const h_outputs  = cudf::detail::make_host_vector_async(outputs, stream);
-  stream.synchronize();
+  stream.sync();
 
   auto h_results = cudf::detail::make_pinned_vector<codec_exec_result>(results, stream);
 
@@ -425,7 +425,7 @@ void compress(compression_type compression,
               device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              rmm::cuda_stream_view stream)
+              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 

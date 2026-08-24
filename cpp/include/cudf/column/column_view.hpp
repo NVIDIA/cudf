@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -32,7 +32,7 @@ namespace detail {
  *
  * Unless otherwise noted, the memory layout of the `column_view_base`'s data
  *and bitmask is expected to adhere to the Arrow Physical Memory Layout
- * Specification: https://arrow.apache.org/docs/memory_layout.html
+ * Specification: https://arrow.apache.org/docs/format/Columnar.html#format-columnar
  *
  * Because `column_view_base` is non-owning, no device memory is allocated nor
  *freed when `column_view_base` objects are created or destroyed.
@@ -56,7 +56,7 @@ class column_view_base {
    * This function will only participate in overload resolution if `is_rep_layout_compatible<T>()`
    * or `std::is_same_v<T,void>` are true.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,
@@ -170,10 +170,9 @@ class column_view_base {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    * @return The count of null elements in the given range
    */
-  [[nodiscard]] size_type null_count(
-    size_type begin,
-    size_type end,
-    rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  [[nodiscard]] size_type null_count(size_type begin,
+                                     size_type end,
+                                     cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Indicates if the column contains null elements,
@@ -199,7 +198,7 @@ class column_view_base {
    */
   [[nodiscard]] bool has_nulls(size_type begin,
                                size_type end,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream()) const
+                               cuda::stream_ref stream = cudf::get_default_stream()) const
   {
     return null_count(begin, end, stream) > 0;
   }
@@ -306,7 +305,7 @@ class column_view_base {
  *
  * Unless otherwise noted, the memory layout of the `column_view`'s data and
  * bitmask is expected to adhere to the Arrow Physical Memory Layout
- * Specification: https://arrow.apache.org/docs/memory_layout.html
+ * Specification: https://arrow.apache.org/docs/format/Columnar.html#format-columnar
  *
  * Because `column_view` is non-owning, no device memory is allocated nor freed
  * when `column_view` objects are created or destroyed.
@@ -482,7 +481,7 @@ class column_view : public detail::column_view_base {
  *
  * Unless otherwise noted, the memory layout of the `mutable_column_view`'s data
  * and bitmask is expected to adhere to the Arrow Physical Memory Layout
- * Specification: https://arrow.apache.org/docs/memory_layout.html
+ * Specification: https://arrow.apache.org/docs/format/Columnar.html#format-columnar
  *
  * Because `mutable_column_view` is non-owning, no device memory is allocated
  * nor freed when `mutable_column_view` objects are created or destroyed.
@@ -560,7 +559,7 @@ class mutable_column_view : public detail::column_view_base {
    * @note It should be rare to need to access the `head<T>()` allocation of a
    * column, and instead, accessing the elements should be done via `data<T>()`.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,
@@ -725,6 +724,8 @@ size_type count_descendants(column_view parent);
  * @throws cudf::logic_error if the specified cast is not possible, i.e.,
  * `is_bit_castable(input.type(), type)` is false.
  *
+ * @ingroup utility_types
+ *
  * @param input The `column_view` to cast from
  * @param type The `data_type` to cast to
  * @return New `column_view` wrapping the same data as `input` but cast to `type`
@@ -747,6 +748,8 @@ column_view bit_cast(column_view const& input, data_type type);
  *
  * @throws cudf::logic_error if the specified cast is not possible, i.e.,
  * `is_bit_castable(input.type(), type)` is false.
+ *
+ * @ingroup utility_types
  *
  * @param input The `mutable_column_view` to cast from
  * @param type The `data_type` to cast to

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -173,7 +173,13 @@ filters : list of tuple, list of lists of tuples, default None
 row_groups : int, or list, or a list of lists default None
     If not None, specifies, for each input file, which row groups to read.
     If reading multiple inputs, a list of lists should be passed, one list
-    for each input.
+    for each input. Rows are returned in input order, and in the given
+    row-group order within each input; row groups are not sorted or
+    deduplicated, so repeated indices are read multiple times.
+
+    .. note::
+       When ``filters`` are also provided, the given order and any repeated
+       indices may not be preserved.
 categorical_partitions : boolean, default True
     Whether directory-partitioned columns should be interpreted as categorical
     or raw dtypes.
@@ -256,7 +262,7 @@ path : str or list of str
     File path or Root Directory path. Will be used as Root Directory path
     while writing a partitioned dataset. Use list of str with partition_offsets
     to write parts of the dataframe to different files.
-compression : {{'snappy', 'ZSTD', 'LZ4', None}}, default 'snappy'
+compression : {{'snappy', 'ZSTD', 'LZ4', 'GZIP', None}}, default 'snappy'
     Name of the compression to use; case insensitive.
     Use ``None`` for no compression.
 index : bool, default None
@@ -572,6 +578,12 @@ index : bool, default None
     ``RangeIndex`` will be stored as a range in the metadata so it
     doesn't require much space and is faster. Other indexes will
     be included as columns in the file output.
+
+Notes
+-----
+Timestamps in the last 999 milliseconds before the UNIX epoch are not
+representable in ORC; they are read back one second later, as with the Apache
+ORC writer (ORC-763, ORC-771).
 
 See Also
 --------
@@ -892,7 +904,9 @@ double_precision : int, default 10
     The number of decimal places to use when encoding
     floating point values.
 force_ascii : bool, default True
-    Force encoded string to be ASCII.
+    Force encoded string to be ASCII. If False, non-ASCII characters
+    are written as-is instead of being escaped to ``\\uXXXX`` sequences.
+    Supported with both the ``pandas`` and ``cudf`` engines.
 date_unit : string, default 'ms' (milliseconds)
     The time unit to encode to, governs timestamp and ISO8601
     precision.  One of 's', 'ms', 'us', 'ns' for second, millisecond,
@@ -1299,6 +1313,10 @@ encoding : str, default 'utf-8'
 compression : str, None
     A string representing the compression scheme to use in the output file
     Compression while writing csv is not supported currently
+quoting : int, optional
+    Control field quoting behavior per ``csv.QUOTE_*`` constants.
+    Use one of ``csv.QUOTE_MINIMAL`` (0) or ``csv.QUOTE_NONE`` (3).
+    Default is ``csv.QUOTE_MINIMAL``.
 lineterminator : str, optional
     The newline character or character sequence to use in the output file.
     Defaults to :data:`os.linesep`.
@@ -1320,7 +1338,8 @@ None or str
 
 Notes
 -----
-- Follows the standard of Pandas csv.QUOTE_NONNUMERIC for all output.
+- Supports ``csv.QUOTE_MINIMAL`` and ``csv.QUOTE_NONE`` quoting styles,
+  consistent with pandas. Other quoting styles raise ``NotImplementedError``.
 - The default behaviour is to write all rows of the dataframe at once.
   This can lead to memory or overflow errors for large tables. If this
   happens, consider setting the ``chunksize`` argument to some
@@ -2175,27 +2194,6 @@ def _fsspec_data_transfer(
     )
 
     return buf.tobytes()
-
-
-def _merge_ranges(byte_ranges, max_block=256_000_000, max_gap=64_000):
-    # Simple utility to merge small/adjacent byte ranges
-    new_ranges = []
-    if not byte_ranges:
-        # Early return
-        return new_ranges
-
-    offset, size = byte_ranges[0]
-    for new_offset, new_size in byte_ranges[1:]:
-        gap = new_offset - (offset + size)
-        if gap > max_gap or (size + new_size + gap) > max_block:
-            # Gap is too large or total read is too large
-            new_ranges.append((offset, size))
-            offset = new_offset
-            size = new_size
-            continue
-        size += new_size + gap
-    new_ranges.append((offset, size))
-    return new_ranges
 
 
 def _assign_block(fs, path_or_fob, local_buffer, offset, nbytes):

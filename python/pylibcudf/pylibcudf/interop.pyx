@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cpython.pycapsule cimport (
@@ -16,12 +16,17 @@ from pylibcudf.libcudf.interop cimport (
     to_dlpack as cpp_to_dlpack,
 )
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from ._interop_helpers import ColumnMetadata
 from cuda.bindings.cyruntime cimport cudaStream_t
 
@@ -34,7 +39,7 @@ __all__ = [
 
 
 cpdef Table from_dlpack(
-    object managed_tensor, object stream=None, DeviceMemoryResource mr=None
+    object managed_tensor, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Convert a DLPack DLTensor into a cudf table.
@@ -71,8 +76,8 @@ cpdef Table from_dlpack(
     # Note: A copy is always performed when converting the dlpack
     # data to a libcudf table. We also delete the dlpack_tensor pointer
     # as the pointer is not deleted by libcudf's from_dlpack function.
-    # TODO: https://github.com/rapidsai/cudf/issues/10874
-    # TODO: https://github.com/rapidsai/cudf/issues/10849
+    # TODO: https://github.com/NVIDIA/cudf/issues/10874
+    # TODO: https://github.com/NVIDIA/cudf/issues/10849
     with nogil:
         c_result = cpp_from_dlpack(dlpack_tensor, _cs, mr.get_mr())
 
@@ -81,7 +86,7 @@ cpdef Table from_dlpack(
     return result
 
 
-cpdef object to_dlpack(Table input, object stream=None, DeviceMemoryResource mr=None):
+cpdef object to_dlpack(Table input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """
     Convert a cudf table into a DLPack DLTensor.
 
@@ -102,6 +107,9 @@ cpdef object to_dlpack(Table input, object stream=None, DeviceMemoryResource mr=
     PyCapsule
         1D or 2D DLPack tensor with a copy of the table data, or nullptr.
     """
+
+    cdef table_view c_input
+
     for col in input._columns:
         if col.null_count():
             raise ValueError(
@@ -113,8 +121,9 @@ cpdef object to_dlpack(Table input, object stream=None, DeviceMemoryResource mr=
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    c_input = input.view()
     with nogil:
-        dlpack_tensor = cpp_to_dlpack(input.view(), _cs, mr.get_mr())
+        dlpack_tensor = cpp_to_dlpack(c_input, _cs, mr.get_mr())
 
     return PyCapsule_New(
         dlpack_tensor,

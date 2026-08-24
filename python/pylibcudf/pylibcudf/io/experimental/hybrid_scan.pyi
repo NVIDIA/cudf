@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from enum import IntEnum
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
@@ -19,8 +20,18 @@ except ImportError:
     from typing_extensions import Buffer
 
 class UseDataPageMask(IntEnum):
-    YES: int
-    NO: int
+    YES = 1
+    NO = 0
+
+class HybridScanMetadata:
+    @staticmethod
+    def from_footer_bytes(
+        footer_bytes: Buffer, options: ParquetReaderOptions
+    ) -> HybridScanMetadata: ...
+    @staticmethod
+    def from_parquet_metadata(
+        metadata: FileMetaData, options: ParquetReaderOptions
+    ) -> HybridScanMetadata: ...
 
 class HybridScanReader:
     def __init__(
@@ -30,6 +41,8 @@ class HybridScanReader:
     def from_parquet_metadata(
         metadata: FileMetaData, options: ParquetReaderOptions
     ) -> HybridScanReader: ...
+    @staticmethod
+    def from_metadata(metadata: HybridScanMetadata) -> HybridScanReader: ...
     def parquet_metadata(self) -> FileMetaData: ...
     def page_index_byte_range(self) -> ByteRangeInfo: ...
     def setup_page_index(self, page_index_bytes: Buffer) -> None: ...
@@ -49,18 +62,24 @@ class HybridScanReader:
     ) -> tuple[list[ByteRangeInfo], list[ByteRangeInfo]]: ...
     def filter_row_groups_with_dictionary_pages(
         self,
-        dictionary_page_data: list[Span],
+        dictionary_page_data: Sequence[Span],
         row_group_indices: list[int],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
     ) -> list[int]: ...
     def filter_row_groups_with_bloom_filters(
         self,
-        bloom_filter_data: list[Span],
+        bloom_filter_data: Sequence[Span],
         row_group_indices: list[int],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
     ) -> list[int]: ...
+    def build_all_true_row_mask(
+        self,
+        row_group_indices: list[int],
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> Column: ...
     def build_row_mask_with_page_index_stats(
         self,
         row_group_indices: list[int],
@@ -74,7 +93,7 @@ class HybridScanReader:
     def materialize_filter_columns(
         self,
         row_group_indices: list[int],
-        column_chunk_data: list[Span],
+        column_chunk_data: Sequence[Span],
         row_mask: Column,
         mask_data_pages: UseDataPageMask,
         options: ParquetReaderOptions,
@@ -87,7 +106,7 @@ class HybridScanReader:
     def materialize_payload_columns(
         self,
         row_group_indices: list[int],
-        column_chunk_data: list[Span],
+        column_chunk_data: Sequence[Span],
         row_mask: Column,
         mask_data_pages: UseDataPageMask,
         options: ParquetReaderOptions,
@@ -100,7 +119,7 @@ class HybridScanReader:
     def materialize_all_columns(
         self,
         row_group_indices: list[int],
-        column_chunk_data: list[Span],
+        column_chunk_data: Sequence[Span],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
@@ -112,7 +131,7 @@ class HybridScanReader:
         row_group_indices: list[int],
         row_mask: Column,
         mask_data_pages: UseDataPageMask,
-        column_chunk_data: list[Span],
+        column_chunk_data: Sequence[Span],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
@@ -128,7 +147,7 @@ class HybridScanReader:
         row_group_indices: list[int],
         row_mask: Column,
         mask_data_pages: UseDataPageMask,
-        column_chunk_data: list[Span],
+        column_chunk_data: Sequence[Span],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,

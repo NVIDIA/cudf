@@ -167,3 +167,28 @@ Properties and Methods
    StructDtype.serialize
    StructDtype.to_arrow
    StructDtype.type
+
+
+cudf.IntervalDtype
+==================
+.. autosummary::
+   :toctree: api/
+
+   IntervalDtype
+
+Properties and Methods
+----------------------
+.. autosummary::
+   :toctree: api/
+
+   IntervalDtype.deserialize
+   IntervalDtype.device_deserialize
+   IntervalDtype.device_serialize
+   IntervalDtype.fields
+   IntervalDtype.from_arrow
+   IntervalDtype.host_deserialize
+   IntervalDtype.host_serialize
+   IntervalDtype.is_dtype
+   IntervalDtype.serialize
+   IntervalDtype.to_arrow
+   IntervalDtype.type

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -67,3 +67,11 @@ def test_apply_deletion_mask():
     )
     expected = pa.table({"a": pa.array([2, 4], type=pa.int32())})
     assert_table_eq(expected, result)
+
+
+def test_apply_boolean_mask_zero_columns_preserves_num_rows():
+    source = plc.Table([], num_rows=4)
+    mask = plc.Column.from_arrow(pa.array([True, False, True, True]))
+    result = plc.stream_compaction.apply_boolean_mask(source, mask)
+    assert result.num_columns() == 0
+    assert result.num_rows() == 3

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
+
+#include <cuda/std/cmath>
+#include <cuda/std/type_traits>
 
 #include <tuple>
 
@@ -206,8 +209,8 @@ class aggregation_type {
       return val.size_bytes();
     } else if constexpr (std::is_integral_v<T>) {
       return val;
-    } else if constexpr (std::is_floating_point_v<T>) {
-      return isnan(val) ? 0 : val;
+    } else if constexpr (cuda::std::is_floating_point_v<T>) {
+      return cuda::std::isnan(val) ? 0 : val;
     } else if constexpr (cudf::is_fixed_point<T>()) {
       return val.value();
     } else if constexpr (cudf::is_duration<T>()) {

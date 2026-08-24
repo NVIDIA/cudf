@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -13,6 +13,10 @@ from pylibcudf.libcudf.nvtext.wordpiece_tokenize cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -30,7 +34,7 @@ cdef class WordPieceVocabulary:
     def __cinit__(
         self,
         Column vocab,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         cdef column_view c_vocab = vocab.view()
@@ -48,7 +52,7 @@ cpdef Column wordpiece_tokenize(
     Column input,
     WordPieceVocabulary vocabulary,
     size_type max_words_per_row,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -79,9 +83,10 @@ cpdef Column wordpiece_tokenize(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_wordpiece_tokenize(
-            input.view(),
+            c_input,
             dereference(vocabulary.c_obj.get()),
             max_words_per_row,
             _cs,

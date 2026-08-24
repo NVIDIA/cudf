@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,8 +9,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {
 
@@ -38,9 +39,9 @@ template <typename SetType>
 std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   SetType& global_set,
   bitmask_type const* row_bitmask,
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::groupby::detail::hash

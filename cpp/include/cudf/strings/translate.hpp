@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,12 +12,16 @@
 
 #include <vector>
 
+/**
+ * @file
+ * @brief Strings column APIs for translating or filtering individual characters.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_modify
  * @{
- * @file
  */
 
 /**
@@ -44,7 +48,7 @@ namespace strings {
 std::unique_ptr<column> translate(
   strings_column_view const& input,
   std::vector<std::pair<char_utf8, char_utf8>> const& chars_table,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -91,7 +95,7 @@ std::unique_ptr<column> filter_characters(
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> characters_to_filter,
   filter_type keep_characters       = filter_type::KEEP,
   string_scalar const& replacement  = string_scalar(""),
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

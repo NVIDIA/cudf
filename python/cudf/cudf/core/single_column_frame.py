@@ -1,13 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Base class for Frame types that only have a single column."""
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, Self
 
 import cupy as cp
+import numpy as np
 
 import cudf
 from cudf.api.extensions import no_default
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Hashable, Mapping
     from types import NotImplementedType
 
-    import numpy as np
     import pyarrow as pa
 
     from cudf._typing import (
@@ -122,6 +121,18 @@ class SingleColumnFrame(Frame, NotIterable):
         col = self._column
         if col.dtype.kind in {"i", "u", "f", "b"} and not col.has_nulls():
             return cp.asarray(col)
+        if not isinstance(col.dtype, np.dtype) and col.has_nulls():
+            # A pandas nullable/masked extension dtype with nulls cannot be
+            # represented as a plain numpy array without losing the NA. pandas
+            # keeps it as an ExtensionArray, so raise here and let cudf.pandas
+            # fall back to pandas ``.values`` instead of silently down-casting
+            # to a float array with NaN.
+            raise ValueError(
+                f"cannot convert to "
+                f"'{getattr(col.dtype, 'numpy_dtype', col.dtype)}'-dtype "
+                "NumPy array with missing values. Specify an appropriate "
+                "'na_value' for this dtype."
+            )
         return col.values
 
     @property
@@ -165,24 +176,6 @@ class SingleColumnFrame(Frame, NotIterable):
             .to_cupy(dtype=dtype, copy=copy, na_value=na_value)
             .reshape(len(self), order="F")
         )
-
-    @property  # type: ignore[explicit-override]
-    @_performance_tracking
-    def values_host(self) -> np.ndarray:
-        """
-        Return a numpy representation of the data.
-
-        .. deprecated:: 26.04
-            `values_host` is deprecated and will be removed in a future version.
-            Use `to_numpy()` instead.
-        """
-        warnings.warn(
-            "values_host is deprecated and will be removed in a future version. "
-            "Use to_numpy() instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
-        return self._column.to_numpy()
 
     @classmethod
     @_performance_tracking

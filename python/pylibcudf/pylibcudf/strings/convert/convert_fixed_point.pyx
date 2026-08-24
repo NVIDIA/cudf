@@ -1,15 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_fixed_point as cpp_fixed_point,
 )
 from pylibcudf.types cimport DataType, type_id
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -18,7 +22,7 @@ __all__ = ["from_fixed_point", "is_fixed_point", "to_fixed_point"]
 
 
 cpdef Column to_fixed_point(
-    Column input, DataType output_type, object stream=None, DeviceMemoryResource mr=None
+    Column input, DataType output_type, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new fixed-point column parsing decimal values from the
@@ -47,9 +51,10 @@ cpdef Column to_fixed_point(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.to_fixed_point(
-            input.view(),
+            c_input,
             output_type.c_obj,
             _cs,
             mr.get_mr()
@@ -58,7 +63,7 @@ cpdef Column to_fixed_point(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column from_fixed_point(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new strings column converting the fixed-point values
@@ -84,9 +89,10 @@ cpdef Column from_fixed_point(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.from_fixed_point(
-            input.view(), _cs, mr.get_mr()
+            c_input, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -94,7 +100,7 @@ cpdef Column from_fixed_point(
 cpdef Column is_fixed_point(
     Column input,
     DataType decimal_type=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -128,9 +134,10 @@ cpdef Column is_fixed_point(
     if decimal_type is None:
         decimal_type = DataType(type_id.DECIMAL64)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.is_fixed_point(
-            input.view(),
+            c_input,
             decimal_type.c_obj,
             _cs,
             mr.get_mr()

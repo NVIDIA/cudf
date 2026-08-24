@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <tests/iterator/pair_iterator_test.cuh>
@@ -8,8 +8,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/utility>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 
 using TestingTypes = cudf::test::NumericTypes;
@@ -62,7 +62,7 @@ TYPED_TEST(NumericPairIteratorTest, mean_var_output)
   transformer_pair_meanvar<T> transformer{};
 
   int const column_size{5000};
-  const T init{0};
+  T const init{0};
 
   // data and valid arrays
   std::vector<T> host_values(column_size);
@@ -104,7 +104,7 @@ TYPED_TEST(NumericPairIteratorTest, mean_var_output)
 
   // GPU test
   auto it_dev         = d_col->template pair_begin<T, true>();
-  auto it_dev_squared = thrust::make_transform_iterator(it_dev, transformer);
+  auto it_dev_squared = cuda::transform_iterator(it_dev, transformer);
   auto result         = thrust::reduce(rmm::exec_policy_nosync(cudf::get_default_stream()),
                                it_dev_squared,
                                it_dev_squared + d_col->size(),

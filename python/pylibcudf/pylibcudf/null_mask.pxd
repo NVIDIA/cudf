@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.libcudf.types cimport mask_state, size_type
@@ -30,9 +30,9 @@ cpdef DeviceBuffer create_null_mask(
     DeviceMemoryResource mr=*
 )
 
-cpdef tuple bitmask_and(list columns, object stream = *, DeviceMemoryResource mr=*)
+cpdef tuple bitmask_and(columns, object stream = *, DeviceMemoryResource mr=*)
 
-cpdef tuple bitmask_or(list columns, object stream = *, DeviceMemoryResource mr=*)
+cpdef tuple bitmask_or(columns, object stream = *, DeviceMemoryResource mr=*)
 
 cpdef size_type null_count(
     object bitmask,

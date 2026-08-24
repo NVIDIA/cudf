@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 #include <benchmarks/common/table_utilities.hpp>
 
@@ -32,11 +33,14 @@ static void nvbench_reduction_scan(nvbench::state& state, nvbench::type_list<typ
   cudf::column_view input(new_tbl->view().column(0));
 
   std::unique_ptr<cudf::column> result = nullptr;
+  auto const mem_stats_logger          = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     rmm::cuda_stream_view stream_view{launch.get_stream()};
     result = cudf::detail::inclusive_dense_rank_scan(
       input, stream_view, cudf::get_current_device_resource_ref());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   state.add_element_count(input.size());
   state.add_global_memory_reads(estimate_size(input));

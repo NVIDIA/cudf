@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pytest
 
 import cudf
@@ -52,4 +53,20 @@ def test_dataframe_mode(df, numeric_only, dropna):
     if len(actual.columns) == 0:
         # pandas < 3.0 returns an Index[object] instead of RangeIndex
         actual.columns = expected.columns
+
+    if not dropna:
+        # cudf coerces an all-null object column to float64 (see
+        # test_series_mode), so its all-null mode is float64 NaN rather than
+        # pandas' object None. Cast the corresponding expected columns to match.
+        for col in df.columns:
+            s = df[col]
+            if (
+                col in expected.columns
+                and len(s)
+                and s.null_count == len(s)
+                and isinstance(s.dtype, np.dtype)
+                and s.dtype.kind == "O"
+            ):
+                expected[col] = expected[col].astype("float64")
+
     assert_eq(expected, actual, check_dtype=False)

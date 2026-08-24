@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import array
 import datetime
@@ -450,7 +450,7 @@ def test_default_float_bitwidth_construction(default_float_bitwidth, data):
 
 
 def test_series_ordered_dedup():
-    # part of https://github.com/rapidsai/cudf/issues/11486
+    # part of https://github.com/NVIDIA/cudf/issues/11486
     rng = np.random.default_rng(seed=0)
     sr = cudf.Series(rng.integers(0, 100, 1000))
     # pandas unique() preserves order
@@ -1288,6 +1288,35 @@ def test_datetime_array_timeunit_cast(dtype):
     pdf["a"] = np.arange(5)
     pdf["b"] = testdata
     assert_eq(pdf, gdf)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        np.array(["2263-01-01"], dtype="datetime64[D]"),
+        np.array([datetime.datetime(2263, 1, 1)], dtype=object),
+        np.array([np.datetime64("2263-01-01", "D")], dtype=object),
+        np.array(["2263-01-01"], dtype=object),
+        np.array(["1600-01-01"], dtype="datetime64[D]"),
+    ],
+    ids=[
+        "datetime64[D]",
+        "object-datetime.datetime",
+        "object-numpy-scalar",
+        "object-string",
+        "pre-epoch",
+    ],
+)
+@pytest.mark.parametrize("box", ["Series", "Index", "DataFrame"])
+def test_constructor_datetime_out_of_bounds(box, data):
+    # Forcing values beyond the target unit's representable range must
+    # raise like pandas instead of silently wrapping around int64.
+    assert_exceptions_equal(
+        lfunc=getattr(pd, box),
+        rfunc=getattr(cudf, box),
+        lfunc_args_and_kwargs=([data], {"dtype": "datetime64[ns]"}),
+        rfunc_args_and_kwargs=([data], {"dtype": "datetime64[ns]"}),
+    )
 
 
 @pytest.mark.parametrize("timeunit", ["D", "W", "M", "Y"])

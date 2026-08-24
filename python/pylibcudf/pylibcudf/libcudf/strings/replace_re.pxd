@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
-from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
@@ -22,14 +21,6 @@ cdef extern from "cudf/strings/replace_re.hpp" namespace "cudf::strings" nogil:
         regex_program prog,
         string_scalar replacement,
         size_type max_replace_count,
-        cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
-
-    cdef unique_ptr[column] replace_re(
-        column_view input,
-        vector[string] patterns,
-        column_view replacements,
-        regex_flags flags,
         cudaStream_t stream,
         device_async_resource_ref mr) except +libcudf_exception_handler
 

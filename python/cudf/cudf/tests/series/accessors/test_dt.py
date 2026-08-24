@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import zoneinfo
@@ -549,6 +549,68 @@ def test_isocalendar_series(data):
     got = gs.dt.isocalendar()
 
     assert_eq(expect, got, check_dtype=False)
+
+
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_isocalendar_dtype(dtype):
+    # isocalendar's year/week/day columns must match pandas' backing dtype:
+    # UInt32 for numpy datetime, int64[pyarrow] for ArrowDtype timestamps.
+    ps = pd.Series(["2010-01-01", "2010-12-31", None], dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expect = ps.dt.isocalendar()
+    got = gs.dt.isocalendar()
+
+    # Exercise both value equality and the exact per-column dtype.
+    assert_eq(expect, got)
+    assert dict(got.dtypes) == dict(expect.dtypes)
+    if isinstance(dtype, pd.ArrowDtype):
+        assert all(dt == pd.ArrowDtype(pa.int64()) for dt in got.dtypes)
+    else:
+        assert all(dt == pd.UInt32Dtype() for dt in got.dtypes)
+
+
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+@pytest.mark.parametrize("attr", ["dayofweek", "day_of_week", "weekday"])
+def test_dayofweek_dtype(dtype, attr):
+    # dayofweek/day_of_week/weekday are aliases. pandas returns int32 for the
+    # numpy-backed variant but int64[pyarrow] for the ArrowDtype variant.
+    ps = pd.Series(["2010-01-01", "2010-12-31", "2011-06-15"], dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expect = getattr(ps.dt, attr)
+    got = getattr(gs.dt, attr)
+
+    assert_eq(expect, got)
+    if isinstance(dtype, pd.ArrowDtype):
+        assert got.dtype == pd.ArrowDtype(pa.int64())
+        assert expect.dtype == pd.ArrowDtype(pa.int64())
+    else:
+        assert got.dtype == np.dtype("int32")
+        assert expect.dtype == np.dtype("int32")
+
+
+@pytest.mark.parametrize(
+    "attr, expected_dtype",
+    [
+        ("days", np.dtype("int64")),
+        ("seconds", np.dtype("int32")),
+        ("microseconds", np.dtype("int32")),
+        ("nanoseconds", np.dtype("int32")),
+    ],
+)
+def test_timedelta_components_dtype(attr, expected_dtype):
+    # pandas returns int64 for .dt.days but int32 for the sub-day components
+    # (seconds/microseconds/nanoseconds); cudf must match.
+    ps = pd.Series([1000000, 200000, 3000000], dtype="timedelta64[ns]")
+    gs = cudf.from_pandas(ps)
+
+    expect = getattr(ps.dt, attr)
+    got = getattr(gs.dt, attr)
+    assert_eq(expect, got)
+    assert got.dtype == expected_dtype
+    # Sanity: our expectation tracks pandas' actual dtype.
+    assert expect.dtype == expected_dtype
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,6 +30,34 @@ TEST_F(JSONTest, JSONreader)
       .lines(true);
   cudf::io::table_with_metadata result =
     cudf::io::read_json(in_options, cudf::test::get_default_stream());
+}
+
+TEST_F(JSONTest, JSONreaderWithDiagnostics)
+{
+  std::string data = "[1, 1.1]\n[2, 2.2]\n[3, 3.3]\n";
+  cudf::io::json_reader_options in_options =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .dtypes(std::vector<cudf::data_type>{cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::FLOAT64}})
+      .lines(true);
+  cudf::io::json_reader_result result =
+    cudf::io::read_json_with_diagnostics(in_options, cudf::test::get_default_stream());
+}
+
+TEST_F(JSONTest, JSONreaderWithRowDiagnostics)
+{
+  std::string data = "[1, 1.1]\n[2, 2.2]\n[3, 3.3]\n";
+  cudf::io::json_reader_options in_options =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()}})
+      .dtypes(std::vector<cudf::data_type>{cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::FLOAT64}})
+      .lines(true);
+  cudf::io::json_reader_result_with_row_diagnostics result =
+    cudf::io::read_json_with_row_diagnostics(in_options, cudf::test::get_default_stream());
 }
 
 TEST_F(JSONTest, JSONwriter)

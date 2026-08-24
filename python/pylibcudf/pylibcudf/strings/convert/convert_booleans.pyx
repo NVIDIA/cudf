@@ -1,16 +1,20 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
-from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.strings.convert cimport (
     convert_booleans as cpp_convert_booleans,
 )
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from cython.operator import dereference
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -20,7 +24,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["from_booleans", "to_booleans"]
 
 cpdef Column to_booleans(
-    Column input, Scalar true_string, object stream=None, DeviceMemoryResource mr=None
+    Column input, Scalar true_string, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new bool column by parsing boolean values from the strings
@@ -52,9 +56,10 @@ cpdef Column to_booleans(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_booleans.to_booleans(
-            input.view(),
+            c_input,
             dereference(c_true_string),
             _cs,
             mr.get_mr()
@@ -66,7 +71,7 @@ cpdef Column from_booleans(
     Column booleans,
     Scalar true_string,
     Scalar false_string,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -105,9 +110,10 @@ cpdef Column from_booleans(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_booleans = booleans.view()
     with nogil:
         c_result = cpp_convert_booleans.from_booleans(
-            booleans.view(),
+            c_booleans,
             dereference(c_true_string),
             dereference(c_false_string),
             _cs,

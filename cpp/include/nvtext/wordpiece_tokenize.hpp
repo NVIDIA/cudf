@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,6 +15,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_tokenize
  * @{
  * @file
+ * @brief APIs for WordPiece tokenization of strings columns using a vocabulary.
  */
 
 /**
@@ -36,7 +37,7 @@ struct wordpiece_vocabulary {
    * @param mr Device memory resource used to allocate the returned column's device memory
    */
   wordpiece_vocabulary(cudf::strings_column_view const& input,
-                       rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                       cuda::stream_ref stream           = cudf::get_default_stream(),
                        rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
   ~wordpiece_vocabulary();
 
@@ -59,7 +60,7 @@ struct wordpiece_vocabulary {
  */
 std::unique_ptr<wordpiece_vocabulary> load_wordpiece_vocabulary(
   cudf::strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -106,7 +107,7 @@ std::unique_ptr<cudf::column> wordpiece_tokenize(
   cudf::strings_column_view const& input,
   wordpiece_vocabulary const& vocabulary,
   cudf::size_type max_words_per_row = 0,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of tokenize group

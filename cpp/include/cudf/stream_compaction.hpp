@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,12 +17,15 @@
 #include <variant>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for filtering rows
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_compact
  * @{
- * @file
- * @brief Column APIs for filtering rows
  */
 
 namespace ast {
@@ -71,7 +74,7 @@ std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -104,7 +107,7 @@ std::unique_ptr<table> drop_nulls(
 std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -149,7 +152,7 @@ std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -183,7 +186,7 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -211,7 +214,7 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> apply_boolean_mask(
   table_view const& input,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -239,7 +242,7 @@ std::unique_ptr<table> apply_boolean_mask(
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -267,6 +270,9 @@ enum class duplicate_keep_option {
  * Performance hint: if the input is pre-sorted, `cudf::unique` can produce an equivalent result
  * (i.e., same set of output rows) but with less running time than `cudf::distinct`.
  *
+ * A zero-column `input` is treated as empty, producing an empty table even when `input` has a
+ * non-zero row count.
+ *
  * @throws cudf::logic_error if the `keys` column indices are out of bounds in the `input` table.
  *
  * @param[in] input           input table_view to copy only unique rows
@@ -285,7 +291,7 @@ std::unique_ptr<table> unique(
   std::vector<size_type> const& keys,
   duplicate_keep_option keep,
   null_equality nulls_equal         = null_equality::EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -299,6 +305,9 @@ std::unique_ptr<table> unique(
  * Performance hint: if the input is pre-sorted, `cudf::unique` can produce an equivalent result
  * (i.e., same set of output rows) but with less running time than `cudf::distinct`.
  *
+ * A zero-column `input` is treated as empty, producing an empty table even when `input` has a
+ * non-zero row count.
+ *
  * @param input The input table
  * @param keys Vector of indices indicating key columns in the `input` table
  * @param keep Copy any, first, last, or none of the found duplicates
@@ -306,6 +315,7 @@ std::unique_ptr<table> unique(
  * @param nans_equal Flag to specify whether NaN elements should be considered as equal
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned table
+ *
  * @return Table with distinct rows in an unspecified order
  */
 std::unique_ptr<table> distinct(
@@ -314,7 +324,7 @@ std::unique_ptr<table> distinct(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -323,12 +333,16 @@ std::unique_ptr<table> distinct(
  * Given an `input` table_view, an output vector of all row indices of the distinct rows is
  * generated. If there are duplicate rows, which index is kept depends on the `keep` parameter.
  *
+ * A zero-column `input` is treated as empty, producing an empty column even when `input` has a
+ * non-zero row count.
+ *
  * @param input The input table
  * @param keep Get index of any, first, last, or none of the found duplicates
  * @param nulls_equal Flag to specify whether null elements should be considered as equal
  * @param nans_equal Flag to specify whether NaN elements should be considered as equal
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned vector
+ *
  * @return Column containing the result indices
  */
 std::unique_ptr<column> distinct_indices(
@@ -336,7 +350,7 @@ std::unique_ptr<column> distinct_indices(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -353,6 +367,9 @@ std::unique_ptr<column> distinct_indices(
  * with another values column `3, 4, 5`, the result could contain values `3, 4` or `4, 5` but not
  * `4, 3` or `5, 4`.
  *
+ * A zero-column `input` is treated as empty, producing an empty table even when `input` has a
+ * non-zero row count.
+ *
  * @param input The input table
  * @param keys Vector of indices indicating key columns in the `input` table
  * @param keep Copy any, first, last, or none of the found duplicates
@@ -360,6 +377,7 @@ std::unique_ptr<column> distinct_indices(
  * @param nans_equal Flag to specify whether NaN elements should be considered as equal
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate the returned table
+ *
  * @return Table with distinct rows, preserving input order
  */
 std::unique_ptr<table> stable_distinct(
@@ -368,7 +386,7 @@ std::unique_ptr<table> stable_distinct(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -413,7 +431,7 @@ std::unique_ptr<table> stable_distinct(
   std::optional<void*> user_data           = std::nullopt,
   null_aware is_null_aware                 = null_aware::NO,
   output_nullability predicate_nullability = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
+  cuda::stream_ref stream                  = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
@@ -464,7 +482,7 @@ std::vector<std::unique_ptr<column>> filter_extended(
   std::optional<void*> user_data           = std::nullopt,
   null_aware is_null_aware                 = null_aware::NO,
   output_nullability predicate_nullability = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
+  cuda::stream_ref stream                  = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
@@ -491,7 +509,7 @@ std::unique_ptr<table> filter(
   table_view const& predicate_table,
   ast::expression const& predicate_expr,
   table_view const& filter_table,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */

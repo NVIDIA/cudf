@@ -1,5 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from collections.abc import Sequence
 
 from rmm.pylibrmm.device_buffer import DeviceBuffer
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
@@ -29,12 +31,12 @@ def create_null_mask(
     mr: DeviceMemoryResource | None = None,
 ) -> DeviceBuffer: ...
 def bitmask_and(
-    columns: list[Column],
+    columns: Sequence[Column],
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> tuple[DeviceBuffer, int]: ...
 def bitmask_or(
-    columns: list[Column],
+    columns: Sequence[Column],
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> tuple[DeviceBuffer, int]: ...

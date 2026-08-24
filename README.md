@@ -8,7 +8,7 @@ Accelerated Data Science suite of libraries.
 
 cuDF is composed of multiple libraries including:
 
-* [libcudf](https://docs.rapids.ai/api/cudf/stable/libcudf/): A CUDA C++ library with [Apache Arrow](https://arrow.apache.org/) compliant
+* [libcudf](https://docs.rapids.ai/api/libcudf/stable/): A CUDA C++ library with [Apache Arrow](https://arrow.apache.org/) compliant
 data structures and fundamental algorithms for tabular data.
 * [pylibcudf](https://docs.rapids.ai/api/cudf/stable/pylibcudf/): A Python library providing [Cython](https://cython.org/) bindings for libcudf.
 * [cudf](https://docs.rapids.ai/api/cudf/stable/cudf/): A Python library providing
@@ -34,7 +34,7 @@ Operating System, GPU driver, and supported CUDA version information can be foun
 
 A stable release of each cudf library is available on PyPI. You will need to match the major version number of your installed CUDA version with a `-cu##` suffix when installing from PyPI.
 
-A development version of each library is available as a nightly release by including the `-i https://pypi.anaconda.org/rapidsai-wheels-nightly/simple` index.
+A development version of each library is available as a nightly release by including the `-i https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/` index.
 
 ```bash
 # CUDA 13
@@ -131,7 +131,7 @@ lf.drop_nulls().group_by(["A", "B"]).mean().collect(engine="gpu")
 
 ## Questions and Discussion
 
-For bug reports or feature requests, please [file an issue](https://github.com/rapidsai/cudf/issues/new/choose) on the GitHub issue tracker.
+For bug reports or feature requests, please [file an issue](https://github.com/NVIDIA/cudf/issues/new/choose) on the GitHub issue tracker.
 
 For questions or discussion about cuDF and GPU data processing, feel free to post in the [RAPIDS Slack](https://rapids.ai/slack-invite) workspace.
 

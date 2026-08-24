@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """AllGather logic for the RapidsMPF streaming runtime."""
 
@@ -6,18 +6,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from rapidsmpf.integrations.cudf.partition import unpack_and_concat
-from rapidsmpf.memory.packed_data import PackedData
+from cudf_streaming.partition_utils import unpack_and_concat
 from rapidsmpf.streaming.coll.allgather import AllGather
 
-from pylibcudf.contiguous_split import pack
-
 if TYPE_CHECKING:
+    import pylibcudf as plc
+    from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
-    from rapidsmpf.streaming.cudf.table_chunk import TableChunk
-
-    import pylibcudf as plc
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IRExecutionContext
@@ -70,17 +66,7 @@ class AllGatherManager:
             )
             self._manager.allgather.insert(
                 sequence_number,
-                # TODO: Avoid unnecessary copies.
-                # See https://github.com/rapidsai/rapidsmpf/issues/933
-                PackedData.from_cudf_packed_columns(
-                    pack(
-                        chunk.table_view(),
-                        chunk.stream,
-                        mr=self._manager.context.br().device_mr,
-                    ),
-                    chunk.stream,
-                    self._manager.context.br(),
-                ),
+                chunk.into_packed_data(self._manager.context.br()),
             )
             del chunk
 

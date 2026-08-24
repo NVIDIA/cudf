@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,11 +21,11 @@
 #include <nvtext/detail/tokenize.hpp>
 #include <nvtext/tokenize.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -37,7 +37,7 @@ namespace {
 template <typename TokenCounter>
 std::unique_ptr<cudf::column> token_count_fn(cudf::size_type strings_count,
                                              TokenCounter tokenizer,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   // create output column
@@ -61,7 +61,7 @@ std::unique_ptr<cudf::column> token_count_fn(cudf::size_type strings_count,
 template <typename Tokenizer>
 std::unique_ptr<cudf::column> tokenize_fn(cudf::size_type strings_count,
                                           Tokenizer tokenizer,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   // get the number of tokens in each string
@@ -85,7 +85,7 @@ std::unique_ptr<cudf::column> tokenize_fn(cudf::size_type strings_count,
                      strings_count,
                      tokenizer);
   // create the strings column using the tokens pointers
-  return cudf::strings::detail::make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  return cudf::make_strings_column(tokens, stream, mr);
 }
 
 }  // namespace
@@ -95,7 +95,7 @@ std::unique_ptr<cudf::column> tokenize_fn(cudf::size_type strings_count,
 // zero or more character tokenizer
 std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
                                        cudf::string_scalar const& delimiter,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -107,7 +107,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
 // zero or more character token counter
 std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& strings,
                                            cudf::string_scalar const& delimiter,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -120,7 +120,7 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& stri
 // one or more string delimiter tokenizer
 std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
                                        cudf::strings_column_view const& delimiters,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiters.size() > 0, "Parameter delimiters must not be empty");
@@ -139,7 +139,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
 // one or more string delimiter token counter
 std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& strings,
                                            cudf::strings_column_view const& delimiters,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiters.size() > 0, "Parameter delimiters must not be empty");
@@ -157,7 +157,7 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& stri
 
 // tokenize on every character
 std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const& strings_column,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
   auto strings_count = strings_column.size();
@@ -206,7 +206,7 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
     cuda::counting_iterator<int64_t>{0},
     cuda::counting_iterator<int64_t>{chars_bytes + 1},
     d_new_offsets,
-    [d_chars, chars_bytes] __device__(auto idx) {
+    [d_chars, chars_bytes] __device__(auto idx) -> bool {
       // this will also set the final value to the size chars_bytes
       return idx < chars_bytes ? cudf::strings::detail::is_begin_utf8_char(d_chars[idx]) : true;
     },
@@ -234,7 +234,7 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
 
 std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& input,
                                        cudf::string_scalar const& delimiter,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -243,7 +243,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& input,
 
 std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& input,
                                        cudf::strings_column_view const& delimiters,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -252,7 +252,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& input,
 
 std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& input,
                                            cudf::string_scalar const& delimiter,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -261,7 +261,7 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& inpu
 
 std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& input,
                                            cudf::strings_column_view const& delimiters,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -269,7 +269,7 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& inpu
 }
 
 std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const& input,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

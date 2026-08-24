@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Utility functions and classes for the RapidsMPF streaming runtime."""
 
@@ -10,39 +10,41 @@ import itertools
 import operator
 import struct
 import time
-from collections import deque
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import reduce
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from rapidsmpf.memory.memory_reservation import opaque_memory_usage
-from rapidsmpf.memory.packed_data import PackedData
-from rapidsmpf.streaming.coll.allgather import AllGather
-from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.cudf.channel_metadata import (
+import pylibcudf as plc
+import rmm.mr
+from cudf_streaming import CardinalityEstimate
+from cudf_streaming.channel_metadata import (
     ChannelMetadata,
     HashScheme,
     OrderKey,
     OrderScheme,
+    Ordering,
     Partitioning,
 )
-from rapidsmpf.streaming.cudf.table_chunk import (
+from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-
-import pylibcudf as plc
-import rmm.mr
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
+from rapidsmpf.memory.packed_data import PackedData
+from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.message import Message
 
 import cudf_polars.dsl.tracing
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.expr import Col, NamedExpr
-from cudf_polars.dsl.ir import Cache, Filter, GroupBy, HStack, Join, Projection, Select
+from cudf_polars.dsl.expr import Cast, Col, NamedExpr, TemporalFunction
+from cudf_polars.dsl.ir import Filter, GroupBy, HStack, Join, Projection, Select
 from cudf_polars.dsl.tracing import Scope
+from cudf_polars.dsl.utils.column_domain import column_domain_bindings
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.tracing import ActorTracer
+from cudf_polars.streaming.actor_graph.tracing import ActorTracer, send_chunk
 from cudf_polars.streaming.utils import _concat
 from cudf_polars.utils.dtypes import make_empty_column
 
@@ -56,14 +58,15 @@ if TYPE_CHECKING:
         Sequence,
     )
 
+    from cudf_streaming import CardinalityEstimator
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
     from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
-
     from rmm.pylibrmm.stream import Stream
 
+    from cudf_polars.dsl.expr import Expr
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.typing import Schema
@@ -71,6 +74,104 @@ if TYPE_CHECKING:
 
 InterRankScheme: TypeAlias = HashScheme | OrderScheme | None
 PartitioningScheme: TypeAlias = InterRankScheme | Literal["inherit"]
+OrderingMetadata: TypeAlias = dict[int, OrderKey]
+
+# Partitioning-level predicates:
+# - "flat": inter-rank scheme with local layout inherited from it.
+# - "inter_rank": inter-rank scheme only.
+# - "local": explicit local scheme only.
+PartitioningLevel: TypeAlias = Literal["flat", "inter_rank", "local"]
+
+# cuDF column/concatenate row limit (int32)
+CUDF_ROW_LIMIT = 2**31 - 1
+# Stay well below the cuDF row limit when forming a single table/partition.
+MAX_ROWS_PER_PARTITION = CUDF_ROW_LIMIT // 4
+
+
+def _hash_keys_match(
+    scheme: HashScheme, key_indices: tuple[int, ...], *, allow_subset: bool
+) -> bool:
+    current = scheme.column_indices
+    target = key_indices[: len(current)] if allow_subset else key_indices
+    return target == current
+
+
+def _ordering_keys_match(
+    ordering: Ordering,
+    keys: Sequence[int | OrderKey],
+    key_indices: tuple[int, ...],
+    *,
+    allow_subset: bool,
+    order_based: bool,
+) -> bool:
+    n_keys = len(ordering.keys)
+    if allow_subset:
+        if n_keys > len(key_indices):
+            return False
+    else:
+        if n_keys != len(key_indices):
+            return False
+        n_keys = len(key_indices)
+    if order_based:
+        return all(ok == k for ok, k in zip(ordering.keys, keys[:n_keys], strict=True))
+    return tuple(k.column_index for k in ordering.keys) == key_indices[:n_keys]
+
+
+def _matching_order_scheme(
+    scheme: OrderScheme,
+    keys: Sequence[int | OrderKey],
+    key_indices: tuple[int, ...],
+    *,
+    allow_subset: bool,
+    order_based: bool,
+) -> OrderScheme | None:
+    orderings = scheme.orderings
+    matches = [
+        (i, ordering)
+        for i, ordering in enumerate(orderings)
+        if _ordering_keys_match(
+            ordering,
+            keys,
+            key_indices,
+            allow_subset=allow_subset,
+            order_based=order_based,
+        )
+    ]
+    if matches:
+        # Prefer the most specific matching ordering; equal-length ties
+        # keep the original metadata order.
+        i, ordering = max(matches, key=lambda match: len(match[1].keys))
+        return OrderScheme(
+            (
+                ordering,
+                *orderings[:i],
+                *orderings[i + 1 :],
+            )
+        )
+    return None
+
+
+def _keys_match(
+    scheme: object,
+    keys: Sequence[int | OrderKey],
+    key_indices: tuple[int, ...],
+    *,
+    allow_subset: bool,
+    order_based: bool,
+) -> InterRankScheme:
+    if isinstance(scheme, HashScheme) and _hash_keys_match(
+        scheme, key_indices, allow_subset=allow_subset
+    ):
+        return scheme
+    if isinstance(scheme, OrderScheme):
+        return _matching_order_scheme(
+            scheme,
+            keys,
+            key_indices,
+            allow_subset=allow_subset,
+            order_based=order_based,
+        )
+    return None
 
 
 class ChunkStore:
@@ -79,6 +180,10 @@ class ChunkStore:
     def __init__(self, ctx: Context) -> None:
         self._mids: deque[int] = deque()
         self._store = ctx.spillable_messages()
+
+    def __len__(self) -> int:
+        """Return the number of messages in the store."""
+        return len(self._mids)
 
     def insert(self, msg: Message) -> None:
         """Insert a message into the store."""
@@ -130,6 +235,27 @@ async def gather_in_task_group(*coroutines: Coroutine[Any, Any, Any]) -> list[An
     return [task.result() for task in tasks]
 
 
+async def shutdown_channels(context: Context, *channels: Channel[Any]) -> None:
+    """Shutdown data and metadata paths for all channels."""
+    await gather_in_task_group(
+        *itertools.chain.from_iterable(
+            (ch.shutdown(context), ch.shutdown_metadata(context)) for ch in channels
+        )
+    )
+
+
+@asynccontextmanager
+async def shutdown_channels_on_error(
+    context: Context, *channels: Channel[Any]
+) -> AsyncIterator[None]:
+    """Shutdown channels on error without actor tracing."""
+    try:
+        yield
+    except BaseException:
+        await shutdown_channels(context, *channels)
+        raise
+
+
 @asynccontextmanager
 async def shutdown_on_error(
     context: Context,
@@ -138,10 +264,10 @@ async def shutdown_on_error(
     ir_context: IRExecutionContext | None = None,
 ) -> AsyncIterator[ActorTracer | None]:
     """
-    Shutdown on error for rapidsmpf.
+    Actor-level shutdown and tracing for rapidsmpf.
 
-    This context manager handles channel cleanup on errors and optionally
-    emits structlog tracing events when LOG_TRACES is enabled.
+    This context manager handles actor channel cleanup on errors and emits
+    structlog tracing events.
 
     Parameters
     ----------
@@ -180,12 +306,7 @@ async def shutdown_on_error(
         try:
             yield tracer
         except BaseException:
-            await gather_in_task_group(
-                *itertools.chain.from_iterable(
-                    (ch.shutdown(context), ch.shutdown_metadata(context))
-                    for ch in channels
-                )
-            )
+            await shutdown_channels(context, *channels)
             raise
         finally:
             stop = time.monotonic_ns()
@@ -208,40 +329,199 @@ async def shutdown_on_error(
             )
 
 
-def _scheme_column_indices(scheme: HashScheme | OrderScheme) -> tuple[int, ...]:
-    if isinstance(scheme, HashScheme):
-        return scheme.column_indices
-    return tuple(k.column_index for k in scheme.keys)
-
-
-def _update_scheme_indices(
-    scheme: HashScheme | OrderScheme, new_indices: tuple[int, ...]
-) -> HashScheme | OrderScheme:
-    if isinstance(scheme, HashScheme):
-        return HashScheme(new_indices, scheme.modulus)
-    return scheme.with_keys(
-        [
+def _update_ordering_indices(
+    ordering: Ordering, new_indices: tuple[int, ...]
+) -> Ordering:
+    return ordering.with_keys(
+        (
             OrderKey(idx, k.order, k.null_order)
-            for k, idx in zip(scheme.keys, new_indices, strict=False)
-        ]
+            for k, idx in zip(ordering.keys, new_indices, strict=True)
+        )
     )
 
 
+def _is_truncate_transparent_cast(expr: Cast) -> bool:
+    src_id = expr.children[0].dtype.id()
+    dst_id = expr.dtype.id()
+    if src_id == dst_id:
+        return True
+    return (
+        src_id == plc.TypeId.INT64 and dst_id == plc.TypeId.TIMESTAMP_NANOSECONDS
+    ) or (src_id == plc.TypeId.TIMESTAMP_NANOSECONDS and dst_id == plc.TypeId.INT64)
+
+
+def _unwrap_truncate_transparent_casts(expr: Expr) -> Expr:
+    while isinstance(expr, Cast) and _is_truncate_transparent_cast(expr):
+        (expr,) = expr.children
+    return expr
+
+
+def _truncate_source_name(expr: Expr) -> str | None:
+    expr = _unwrap_truncate_transparent_casts(expr)
+    if (
+        isinstance(expr, TemporalFunction)
+        and expr.name is TemporalFunction.Name.Truncate
+    ):
+        source = _unwrap_truncate_transparent_casts(expr.children[0])
+        if isinstance(source, Col):
+            return source.name
+    return None
+
+
+def _ordering_derivation(ne: NamedExpr) -> tuple[str, bool] | None:
+    """
+    Return derivation metadata for supported one-column ordering derivations.
+
+    This is intentionally narrow for now: only temporal truncation is recognized.
+    """
+    source_name = _truncate_source_name(ne.value)
+    if source_name is None:
+        return None
+    # Truncated boundaries may be non-strict.
+    return source_name, False
+
+
+def _derived_ordering(
+    ordering: Ordering,
+    ne: NamedExpr,
+    old_to_new_names: dict[str, dict[str, None]],
+    child_schema: Schema,
+    output_schema: Schema,
+    context: Context | None,
+) -> Ordering | None:
+    """Create an ordering for a supported derivation of one key."""
+    if context is None:
+        return None
+
+    derivation = _ordering_derivation(ne)
+    if derivation is None:
+        return None
+    source_name, strict_boundaries = derivation
+
+    old_key_names = indices_to_names(ordering.column_indices, child_schema)
+    try:
+        source_position = old_key_names.index(source_name)
+    except ValueError:
+        return None
+
+    prefix_names = old_key_names[:source_position]
+    if not set(prefix_names).issubset(set(old_to_new_names)):
+        return None
+
+    target_key_names = (
+        *(
+            _preferred_target_name(name, old_to_new_names[name])
+            for name in prefix_names
+        ),
+        ne.name,
+    )
+    new_indices = names_to_indices(target_key_names, output_schema)
+
+    br = context.br()
+    boundary_chunk = ordering.get_boundaries(br)
+    stream = boundary_chunk.stream
+    boundary_df = DataFrame.from_table(
+        boundary_chunk.table_view(),
+        old_key_names,
+        [child_schema[name] for name in old_key_names],
+        stream,
+    )
+    column = ne.evaluate(boundary_df)
+    boundary_columns = [
+        *boundary_chunk.table_view().columns()[:source_position],
+        column.obj,
+    ]
+    boundary_table = plc.concatenate.concatenate(
+        [plc.Table(boundary_columns)],
+        stream=stream,
+        mr=br.device_mr,
+    )
+    boundaries = TableChunk.from_pylibcudf_table(
+        boundary_table,
+        stream,
+        exclusive_view=True,
+        br=br,
+    )
+    keys = tuple(
+        OrderKey(idx, key.order, key.null_order)
+        for idx, key in zip(
+            new_indices,
+            (*ordering.keys[:source_position], ordering.keys[source_position]),
+            strict=True,
+        )
+    )
+    return Ordering(
+        keys,
+        boundaries,
+        strict_boundaries=strict_boundaries,
+    )
+
+
+def _select_column_targets(select: Select) -> dict[str, dict[str, None]]:
+    old_to_new_names: defaultdict[str, dict[str, None]] = defaultdict(dict)
+    for output_name, source in column_domain_bindings(select).items():
+        old_to_new_names[source.name][output_name] = None
+    return dict(old_to_new_names)
+
+
+def _preferred_target_name(old_name: str, targets: dict[str, None]) -> str:
+    return old_name if old_name in targets else next(iter(targets))
+
+
 def _remap_scheme_select(
-    select: Select, scheme: PartitioningScheme
+    select: Select, scheme: PartitioningScheme, context: Context | None
 ) -> PartitioningScheme:
-    if isinstance(scheme, (HashScheme, OrderScheme)):
-        old_to_new_names = {
-            ne.value.name: ne.name for ne in select.exprs if isinstance(ne.value, Col)
-        }
+    if isinstance(scheme, HashScheme):
+        old_to_new_names = _select_column_targets(select)
         old_key_names = indices_to_names(
-            _scheme_column_indices(scheme), select.children[0].schema
+            scheme.column_indices, select.children[0].schema
         )
         if set(old_key_names).issubset(set(old_to_new_names)):
             new_indices = names_to_indices(
-                tuple(old_to_new_names[n] for n in old_key_names), select.schema
+                tuple(
+                    _preferred_target_name(n, old_to_new_names[n])
+                    for n in old_key_names
+                ),
+                select.schema,
             )
-            return _update_scheme_indices(scheme, new_indices)
+            return HashScheme(new_indices, scheme.modulus)
+        return None
+    if isinstance(scheme, OrderScheme):
+        old_to_new_names = _select_column_targets(select)
+        new_orderings: list[Ordering] = []
+        for ordering in scheme.orderings:
+            old_key_names = indices_to_names(
+                ordering.column_indices, select.children[0].schema
+            )
+            if set(old_key_names).issubset(set(old_to_new_names)):
+                target_key_names = tuple(
+                    _preferred_target_name(n, old_to_new_names[n])
+                    for n in old_key_names
+                )
+                new_indices = names_to_indices(target_key_names, select.schema)
+                new_orderings.append(_update_ordering_indices(ordering, new_indices))
+                if len(old_key_names) == 1:
+                    for alias in old_to_new_names[old_key_names[0]]:
+                        if alias == target_key_names[0]:
+                            continue
+                        new_orderings.append(
+                            _update_ordering_indices(
+                                ordering, names_to_indices((alias,), select.schema)
+                            )
+                        )
+            for ne in select.exprs:
+                derived = _derived_ordering(
+                    ordering,
+                    ne,
+                    old_to_new_names,
+                    select.children[0].schema,
+                    select.schema,
+                    context,
+                )
+                if derived is not None:
+                    new_orderings.append(derived)
+        if new_orderings:
+            return OrderScheme(new_orderings)
         return None
     if scheme not in (None, "inherit"):  # pragma: no cover
         return None  # Guard against future/unsupported scheme types
@@ -251,13 +531,25 @@ def _remap_scheme_select(
 def _remap_scheme_simple(
     ir: IR, scheme: PartitioningScheme, child: IR
 ) -> PartitioningScheme:
-    if isinstance(scheme, (HashScheme, OrderScheme)):
-        old_key_names = indices_to_names(_scheme_column_indices(scheme), child.schema)
+    if isinstance(scheme, HashScheme):
+        old_key_names = indices_to_names(scheme.column_indices, child.schema)
         try:
             new_indices = names_to_indices(old_key_names, ir.schema)
         except (ValueError, IndexError):
             return None
-        return _update_scheme_indices(scheme, new_indices)
+        return HashScheme(new_indices, scheme.modulus)
+    if isinstance(scheme, OrderScheme):
+        new_orderings: list[Ordering] = []
+        for ordering in scheme.orderings:
+            old_key_names = indices_to_names(ordering.column_indices, child.schema)
+            try:
+                new_indices = names_to_indices(old_key_names, ir.schema)
+            except (ValueError, IndexError):
+                continue
+            new_orderings.append(_update_ordering_indices(ordering, new_indices))
+        if new_orderings:
+            return OrderScheme(new_orderings)
+        return None
     return scheme  # None or "inherit" passes through unchanged
 
 
@@ -272,7 +564,11 @@ def _hstack_to_select(hstack: HStack) -> Select:
 
 
 def maybe_remap_partitioning(
-    ir: IR, partitioning: Partitioning | None, *, child_ir: IR | None = None
+    ir: IR,
+    partitioning: Partitioning | None,
+    *,
+    child_ir: IR | None = None,
+    context: Context | None = None,
 ) -> Partitioning | None:
     """
     Remap partitioning for simple IR nodes.
@@ -286,6 +582,9 @@ def maybe_remap_partitioning(
     child_ir
         The child IR whose schema the partitioning refers to. When None,
         the first child (ir.children[0]) is used.
+    context
+        Runtime context used to materialize transformed boundary tables for
+        derived orderings. When None, only metadata-only remapping is applied.
 
     Returns
     -------
@@ -306,8 +605,8 @@ def maybe_remap_partitioning(
             # HStack is a special case of Select
             ir = _hstack_to_select(ir)
         return Partitioning(
-            inter_rank=_remap_scheme_select(ir, partitioning.inter_rank),
-            local=_remap_scheme_select(ir, partitioning.local),
+            inter_rank=_remap_scheme_select(ir, partitioning.inter_rank, context),
+            local=_remap_scheme_select(ir, partitioning.local, context),
         )
     if isinstance(ir, GroupBy):
         return Partitioning(
@@ -316,7 +615,7 @@ def maybe_remap_partitioning(
             ),
             local=_remap_scheme_simple(ir, partitioning.local, ir.children[0]),
         )
-    if isinstance(ir, (Cache, Join, Projection, Filter)):
+    if isinstance(ir, (Join, Projection, Filter)):
         child = child_ir if child_ir is not None else ir.children[0]
         return Partitioning(
             inter_rank=_remap_scheme_simple(ir, partitioning.inter_rank, child),
@@ -433,6 +732,8 @@ def _evaluate_chunk_sync(
     ir: IR,
     ir_context: IRExecutionContext,
     br: BufferResource,
+    *,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> TableChunk:
     """
     Apply an IR node's do_evaluate to a table chunk (synchronous).
@@ -450,17 +751,18 @@ def _evaluate_chunk_sync(
         The IR execution context.
     br
         The buffer resource for lifetime tracking.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from.
 
     Returns
     -------
     The resulting table chunk after evaluation.
     """
-    input_schema = ir.children[0].schema
-    names = list(input_schema.keys())
-    dtypes = list(input_schema.values())
+    df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
     df = ir.do_evaluate(
         *ir._non_child_args,
-        DataFrame.from_table(chunk.table_view(), names, dtypes, chunk.stream),
+        df_in,
         context=ir_context,
     )
     return TableChunk.from_pylibcudf_table(
@@ -473,6 +775,7 @@ async def evaluate_chunk(
     chunk: TableChunk,
     *irs: IR,
     ir_context: IRExecutionContext,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> TableChunk:
     """
     Make chunk available, reserve memory, and evaluate.
@@ -488,6 +791,9 @@ async def evaluate_chunk(
         in order within a single memory reservation.
     ir_context
         The IR execution context.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from during the first evaluation.
 
     Returns
     -------
@@ -503,8 +809,14 @@ async def evaluate_chunk(
     with opaque_memory_usage(extra):
         for single_ir in irs:
             chunk = await ir_context.to_thread(
-                _evaluate_chunk_sync, chunk, single_ir, ir_context, context.br()
+                _evaluate_chunk_sync,
+                chunk,
+                single_ir,
+                ir_context,
+                context.br(),
+                ordering_metadata=ordering_metadata,
             )
+            ordering_metadata = None
         return chunk
 
 
@@ -643,11 +955,12 @@ async def chunkwise_evaluate(
     ch_in: Channel[TableChunk],
     metadata: ChannelMetadata,
     *,
+    input_metadata: ChannelMetadata | None = None,
     handle_empty_input: bool = False,
     tracer: ActorTracer | None = None,
 ) -> None:
     """
-    Apply IR evaluation chunk-by-chunk, preserving partitioning.
+    Apply IR evaluation chunk-by-chunk.
 
     Use when data is already partitioned on the relevant keys and each
     chunk can be processed independently.
@@ -665,7 +978,10 @@ async def chunkwise_evaluate(
     ch_in
         The input channel.
     metadata
-        The channel metadata to forward (partitioning preserved).
+        The channel metadata to forward.
+    input_metadata
+        The input metadata to synthesize local DataFrame metadata from.
+        Defaults to ``metadata`` for partition-preserving callers.
     handle_empty_input
         If True and no chunks are received, create an empty chunk and evaluate
         it. Use for operations like aggregations that always produce output.
@@ -675,6 +991,10 @@ async def chunkwise_evaluate(
     await send_metadata(ch_out, context, metadata)
     if tracer is not None and metadata.duplicated:
         tracer.set_duplicated()
+
+    input_ordering_metadata = _leading_order_keys(
+        metadata if input_metadata is None else input_metadata
+    )
 
     received_any = False
     while (msg := await ch_in.recv(context)) is not None:
@@ -691,19 +1011,22 @@ async def chunkwise_evaluate(
                 TableChunk.from_message(msg, br=context.br()),
                 ir,
                 ir_context=ir_context,
+                ordering_metadata=input_ordering_metadata,
             )
         del msg, cd
-        if tracer is not None:
-            tracer.add_chunk(table=result.table_view())
-        await ch_out.send(context, Message(seq_num, result))
+        await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
         chunk = empty_table_chunk(ir.children[0], context, ir_context.get_cuda_stream())
-        result = await evaluate_chunk(context, chunk, ir, ir_context=ir_context)
+        result = await evaluate_chunk(
+            context,
+            chunk,
+            ir,
+            ir_context=ir_context,
+            ordering_metadata=input_ordering_metadata,
+        )
         del chunk
-        if tracer is not None:
-            tracer.add_chunk(table=result.table_view())
-        await ch_out.send(context, Message(0, result))
+        await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
     await ch_out.drain(context)
 
@@ -731,14 +1054,146 @@ def indices_to_names(indices: tuple[int, ...], schema: Schema) -> tuple[str, ...
 class TableSizeStats:
     """Sampled chunks and aggregate size/row stats for a table channel."""
 
-    chunks: dict[int, TableChunk] = field(default_factory=dict)
-    """The sampled chunks, keyed by sequence number."""
+    chunks: ChunkStore
+    """The sampled chunks/messages in replay order."""
     total_size: int = 0
-    """The total estimated size of the table in bytes."""
+    """The estimated table size in bytes for the represented scope."""
     total_rows: int = 0
-    """The total estimated number of rows in the table."""
+    """The estimated number of rows for the represented scope."""
     total_chunks: int = 0
-    """The total estimated number of chunks in the table."""
+    """The estimated number of chunks for the represented scope."""
+    is_complete: bool = False
+    """Whether the sample contains the entire table for the represented scope."""
+    cardinality: CardinalityEstimate | None = None
+    """Global cardinality statistics for the sampled rows, when requested."""
+
+
+@dataclass(frozen=True)
+class ChunkSampler:
+    """Object for obtaining statistics from a channel of TableChunks."""
+
+    context: Context
+    ch_in: Channel[TableChunk]
+    max_chunks: int
+    max_bytes: int
+    ch_in_chunk_count: int
+    cardinality_estimator: CardinalityEstimator | None = None
+    cardinality_columns: tuple[int, ...] = ()
+
+    async def sample_channel(
+        self,
+        ch_out: Channel[TableChunk],
+    ) -> tuple[bool, int, int]:
+        """
+        Sample a prefix from the input channel.
+
+        Parameters
+        ----------
+        ch_out
+            Channel to forward samples into.
+
+        Returns
+        -------
+        bool
+            Whether sampling exhausted the input.
+        int
+            Number of bytes in the sampled chunks.
+        int
+            Number of rows in the sampled chunks.
+        """
+        sampled_bytes = 0
+        sampled_rows = 0
+        exhausted = False
+        await ch_out.shutdown_metadata(self.context)
+        for _ in range(self.max_chunks):
+            msg = await self.ch_in.recv(self.context)
+            if msg is None:
+                exhausted = True
+                break
+            chunk = TableChunk.from_message(msg, br=self.context.br())
+            sampled_bytes += chunk.data_alloc_size()
+            sampled_rows += chunk.shape[0]
+            await ch_out.send(self.context, Message(msg.sequence_number, chunk))
+            if sampled_bytes >= self.max_bytes:
+                break
+        await ch_out.drain(self.context)
+        return exhausted, sampled_bytes, sampled_rows
+
+    async def store_sample(
+        self,
+        ch_in: Channel[TableChunk],
+    ) -> ChunkStore:
+        """
+        Store chunks from a channel.
+
+        Parameters
+        ----------
+        ch_in
+            Channel to store
+
+        Returns
+        -------
+        ChunkStore containing the chunks from the channel.
+        """
+        chunks = ChunkStore(self.context)
+        while (msg := await ch_in.recv(self.context)) is not None:
+            chunk = TableChunk.from_message(msg, br=self.context.br())
+            chunks.insert(Message(msg.sequence_number, chunk))
+        return chunks
+
+    async def sample(self) -> TableSizeStats:
+        """Sample the configured channel and return extrapolated statistics."""
+        ch_sampled = self.context.create_channel()
+        temporary_channels = [ch_sampled]
+        tasks: list[Coroutine[Any, Any, Any]]
+        if self.cardinality_estimator is None:
+            tasks = [self.sample_channel(ch_sampled), self.store_sample(ch_sampled)]
+        else:
+            ch_cardinality_input = self.context.create_channel()
+            ch_cardinality = self.context.create_channel()
+            temporary_channels.extend((ch_cardinality_input, ch_cardinality))
+            # The sampled output must be consumed concurrently with estimation:
+            # backpressure there can prevent the cardinality result from being
+            # produced.
+            tasks = [
+                self.sample_channel(ch_cardinality_input),
+                self.cardinality_estimator.estimate(
+                    self.context,
+                    ch_cardinality_input,
+                    ch_cardinality,
+                    ch_sampled,
+                    self.cardinality_columns,
+                ),
+                self.store_sample(ch_sampled),
+                ch_cardinality.recv(self.context),
+            ]
+
+        async with shutdown_channels_on_error(self.context, *temporary_channels):
+            results = await gather_in_task_group(*tasks)
+        if self.cardinality_estimator is None:
+            (is_complete, sample_bytes, sample_rows), chunks = results
+            cardinality = None
+        else:
+            (is_complete, sample_bytes, sample_rows), _, chunks, msg = results
+            if msg is None:
+                raise RuntimeError("Cardinality estimator did not produce an estimate")
+            cardinality = CardinalityEstimate.from_message(msg)
+
+        sample_count = len(chunks)
+        if sample_count and not is_complete:
+            total_size = int((sample_bytes / sample_count) * self.ch_in_chunk_count)
+            total_rows = int((sample_rows / sample_count) * self.ch_in_chunk_count)
+        else:
+            total_size = sample_bytes
+            total_rows = sample_rows
+        return TableSizeStats(
+            chunks=chunks,
+            total_size=total_size,
+            total_rows=total_rows,
+            total_chunks=(sample_count if is_complete else self.ch_in_chunk_count),
+            is_complete=is_complete,
+            cardinality=cardinality,
+        )
 
 
 async def _sample_chunks(
@@ -747,6 +1202,9 @@ async def _sample_chunks(
     max_sample_chunks: int,
     max_sample_bytes: int,
     local_count: int,
+    *,
+    cardinality_estimator: CardinalityEstimator | None = None,
+    cardinality_columns: Sequence[int] = (),
 ) -> TableSizeStats:
     """
     Sample chunks from a channel and extrapolate to a per-rank size estimate.
@@ -763,42 +1221,33 @@ async def _sample_chunks(
         The maximum number of bytes to sample.
     local_count
         The expected number of local chunks (used for extrapolation).
+    cardinality_estimator
+        Optional distributed cardinality estimator. When provided, cardinality
+        is estimated from the same fixed chunk prefix used for size sampling.
+    cardinality_columns
+        Column indices whose row tuples are counted. An empty sequence selects
+        all columns.
 
     Returns
     -------
-    Sampled chunks and the extrapolated total size/rows for this rank.
+    Sampled chunks, extrapolated size/rows, and optional global cardinality.
     """
-    sampled_chunks: dict[int, TableChunk] = {}
-    total_size = 0
-    total_rows = 0
-    for _ in range(max_sample_chunks):
-        msg = await ch.recv(context)
-        if msg is None:
-            break
-        chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
-            context.br(), allow_overbooking=True
-        )
-        sampled_chunks[msg.sequence_number] = chunk
-        total_size += chunk.data_alloc_size()
-        total_rows += chunk.shape[0]
-        if total_size >= max_sample_bytes:
-            break
-    if sampled_chunks:
-        total_size = int((total_size / len(sampled_chunks)) * local_count)
-        total_rows = int((total_rows / len(sampled_chunks)) * local_count)
-    return TableSizeStats(
-        chunks=sampled_chunks,
-        total_size=total_size,
-        total_rows=total_rows,
-        total_chunks=local_count,
-    )
+    return await ChunkSampler(
+        context=context,
+        ch_in=ch,
+        max_chunks=max_sample_chunks,
+        max_bytes=max_sample_bytes,
+        ch_in_chunk_count=local_count,
+        cardinality_estimator=cardinality_estimator,
+        cardinality_columns=tuple(cardinality_columns),
+    ).sample()
 
 
 async def replay_buffered_channel(
     context: Context,
     ch_out: Channel[TableChunk],
     ch_in: Channel[TableChunk],
-    buffered_chunks: dict[int, TableChunk],
+    buffered_chunks: ChunkStore,
     metadata: ChannelMetadata,
     *,
     trace_ir: IR,
@@ -823,15 +1272,15 @@ async def replay_buffered_channel(
     """
     async with shutdown_on_error(context, ch_out, ch_in, trace_ir=trace_ir):
         await send_metadata(ch_out, context, metadata)
-        for seq_num, chunk in buffered_chunks.items():
-            await ch_out.send(context, Message(seq_num, chunk))
+        for msg in buffered_chunks:
+            await ch_out.send(context, msg)
         while (msg := await ch_in.recv(context)) is not None:
             await ch_out.send(context, msg)
         await ch_out.drain(context)
 
 
 @dataclass(frozen=True)
-class NormalizedPartitioning:
+class NormalizedPartitioning:  # noqa: PLW1641 (frozen=True generates __hash__ even with custom __eq__)
     """
     Normalized view of channel partitioning for a set of key column indices.
 
@@ -857,14 +1306,69 @@ class NormalizedPartitioning:
             and self.local_scheme == other.local_scheme
         )
 
-    def is_strictly_partitioned(self) -> bool:
-        """True if data is strictly partitioned with no boundary straddling."""
-        if not self:
+    def _scheme_for_level(self, level: PartitioningLevel) -> PartitioningScheme:
+        """Return the scheme relevant to the requested partitioning level."""
+        match level:
+            case "flat":
+                if self.local_scheme != "inherit":
+                    return None
+                return self.inter_rank_scheme
+            case "inter_rank":
+                return self.inter_rank_scheme
+            case "local":
+                return self.local_scheme
+
+    @staticmethod
+    def _scheme_is_strict(scheme: PartitioningScheme) -> bool:
+        """True when one scheme proves strict partitioning."""
+        if scheme is None or scheme == "inherit":
             return False
-        for scheme in [self.inter_rank_scheme, self.local_scheme]:
-            if isinstance(scheme, OrderScheme) and not scheme.strict_boundaries:
+        if isinstance(scheme, OrderScheme):
+            return scheme.orderings[0].strict_boundaries
+        return True
+
+    @staticmethod
+    def _ordering_covers_keys(
+        ordering: Ordering,
+        order_keys: Sequence[int | OrderKey],
+    ) -> bool:
+        """True when an ordering covers the requested sort keys."""
+        ordering_keys = ordering.keys
+        if len(ordering.keys) < len(order_keys):
+            # If we are only sorted on a subset of the keys, we need strict
+            # boundaries to know later keys cannot interleave across chunks.
+            if not ordering.strict_boundaries:
+                return False
+            order_keys = order_keys[: len(ordering.keys)]
+        else:
+            ordering_keys = ordering.keys[: len(order_keys)]
+        for current, target in zip(ordering_keys, order_keys, strict=True):
+            if isinstance(target, OrderKey):
+                if current != target:
+                    return False
+            elif current.column_index != target:
                 return False
         return True
+
+    def is_strictly_partitioned(
+        self,
+        *,
+        level: PartitioningLevel = "flat",
+    ) -> bool:
+        """True if data is strictly partitioned at the requested level."""
+        return self._scheme_is_strict(self._scheme_for_level(level))
+
+    def is_ordered(
+        self,
+        order_keys: Sequence[int | OrderKey],
+        *,
+        level: PartitioningLevel = "flat",
+    ) -> bool:
+        """True if the selected ordering covers order_keys."""
+        scheme = self._scheme_for_level(level)
+        if not isinstance(scheme, OrderScheme):
+            return False
+        return self._ordering_covers_keys(scheme.orderings[0], order_keys)
 
     def is_aligned_with(
         self, other: NormalizedPartitioning, br: BufferResource
@@ -876,9 +1380,11 @@ class NormalizedPartitioning:
             rhs: PartitioningScheme,
         ) -> bool:
             if isinstance(lhs, OrderScheme):
-                return isinstance(rhs, OrderScheme) and lhs.boundaries_aligned_with(
-                    rhs, br
-                )
+                if not isinstance(rhs, OrderScheme):
+                    return False
+                lhs_ordering = lhs.orderings[0]
+                rhs_ordering = rhs.orderings[0]
+                return lhs_ordering.boundaries_aligned_with(rhs_ordering, br)
             elif isinstance(lhs, HashScheme):
                 return (
                     isinstance(rhs, HashScheme)
@@ -887,9 +1393,17 @@ class NormalizedPartitioning:
                 )
             return lhs == "inherit" and rhs == "inherit"
 
+        def _local_schemes_strict(
+            lhs: PartitioningScheme, rhs: PartitioningScheme
+        ) -> bool:
+            return (lhs == "inherit" and rhs == "inherit") or (
+                self._scheme_is_strict(lhs) and self._scheme_is_strict(rhs)
+            )
+
         return (
-            self.is_strictly_partitioned()
-            and other.is_strictly_partitioned()
+            self.is_strictly_partitioned(level="inter_rank")
+            and other.is_strictly_partitioned(level="inter_rank")
+            and _local_schemes_strict(self.local_scheme, other.local_scheme)
             and _schemes_aligned(self.inter_rank_scheme, other.inter_rank_scheme)
             and _schemes_aligned(self.local_scheme, other.local_scheme)
         )
@@ -968,38 +1482,14 @@ class NormalizedPartitioning:
         if partitioning_metadata is None:
             return trivial, None
 
-        def _hash_keys_match(scheme: HashScheme) -> bool:
-            current = scheme.column_indices
-            target = key_indices[: len(current)] if allow_subset else key_indices
-            return target == current
-
-        def _order_keys_match(scheme: OrderScheme) -> bool:
-            if allow_subset:
-                n = len(scheme.keys)
-                if n > len(key_indices):
-                    return False
-            else:
-                if len(scheme.keys) != len(key_indices):
-                    return False
-                n = len(key_indices)
-            if order_based:
-                return all(ok == k for ok, k in zip(scheme.keys, keys[:n], strict=True))
-            return all(
-                k.column_index == k_idx
-                for k, k_idx in zip(scheme.keys, key_indices[:n], strict=True)
-            )
-
-        def _keys_match(
-            scheme: object,
-        ) -> InterRankScheme:
-            if isinstance(scheme, HashScheme) and _hash_keys_match(scheme):
-                return scheme
-            if isinstance(scheme, OrderScheme) and _order_keys_match(scheme):
-                return scheme
-            return None
-
         inter_rank = partitioning_metadata.inter_rank
-        strict_inter_rank = _keys_match(inter_rank)
+        strict_inter_rank = _keys_match(
+            inter_rank,
+            keys,
+            key_indices,
+            allow_subset=allow_subset,
+            order_based=order_based,
+        )
         inter_rank_scheme: InterRankScheme = strict_inter_rank or trivial
         if inter_rank_scheme is None and nranks > 1:
             # Partitioning is meaningless without inter-rank partitioning
@@ -1007,7 +1497,13 @@ class NormalizedPartitioning:
 
         local = partitioning_metadata.local
         local_scheme: PartitioningScheme
-        matched_local = _keys_match(local)
+        matched_local = _keys_match(
+            local,
+            keys,
+            key_indices,
+            allow_subset=allow_subset,
+            order_based=order_based,
+        )
         if matched_local is not None:
             local_scheme = matched_local
         elif local == "inherit":
@@ -1138,7 +1634,48 @@ def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> TableChunk:
     )
 
 
-def chunk_to_frame(chunk: TableChunk, ir: IR) -> DataFrame:
+def _leading_order_keys(metadata: ChannelMetadata | None) -> OrderingMetadata:
+    """Return unambiguous leading order keys implied by channel metadata."""
+    if metadata is None or metadata.partitioning is None:
+        return {}
+
+    scheme = metadata.partitioning.local
+    if scheme == "inherit":
+        scheme = metadata.partitioning.inter_rank
+    if not isinstance(scheme, OrderScheme):
+        return {}
+
+    candidates: dict[int, OrderKey | None] = {}
+    for ordering in scheme.orderings:
+        if not ordering.keys:
+            continue
+        key = ordering.keys[0]
+        current = candidates.get(key.column_index, key)
+        candidates[key.column_index] = key if current == key else None
+    return {index: key for index, key in candidates.items() if key is not None}
+
+
+def _apply_ordering_metadata(
+    df: DataFrame, ordering_metadata: OrderingMetadata
+) -> DataFrame:
+    """Apply precomputed safe column-level sortedness metadata."""
+    for index, key in ordering_metadata.items():
+        if index >= df.num_columns:
+            continue
+        df.columns[index].set_sorted(
+            is_sorted=plc.types.Sorted.YES,
+            order=key.order,
+            null_order=key.null_order,
+        )
+    return df
+
+
+def chunk_to_frame(
+    chunk: TableChunk,
+    ir: IR,
+    *,
+    ordering_metadata: OrderingMetadata | None = None,
+) -> DataFrame:
     """
     Convert a TableChunk to a DataFrame.
 
@@ -1148,16 +1685,24 @@ def chunk_to_frame(chunk: TableChunk, ir: IR) -> DataFrame:
         The TableChunk to convert.
     ir
         The IR node to use for the schema.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from.
 
     Returns
     -------
     A DataFrame.
     """
-    return DataFrame.from_table(
+    df = DataFrame.from_table(
         chunk.table_view(),
         list(ir.schema.keys()),
         list(ir.schema.values()),
         chunk.stream,
+    )
+    return (
+        df
+        if ordering_metadata is None
+        else _apply_ordering_metadata(df, ordering_metadata)
     )
 
 

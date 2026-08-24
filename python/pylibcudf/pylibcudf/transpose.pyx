@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
@@ -13,12 +13,16 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["transpose"]
 
 cpdef Table transpose(
-    Table input_table, object stream=None, DeviceMemoryResource mr=None
+    Table input_table, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Transpose a Table.
 
@@ -44,9 +48,10 @@ cpdef Table transpose(
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input_table = input_table.view()
     with nogil:
         c_result = cpp_transpose.transpose(
-            input_table.view(), _cs, mr.get_mr()
+            c_input_table, _cs, mr.get_mr()
         )
 
     owner_table = Table(

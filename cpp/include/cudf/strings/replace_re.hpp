@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,6 +12,11 @@
 
 #include <optional>
 
+/**
+ * @file
+ * @brief Strings column APIs for replacing substrings matching a regex pattern.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -20,7 +25,6 @@ struct regex_program;
 /**
  * @addtogroup strings_replace
  * @{
- * @file
  */
 
 /**
@@ -46,34 +50,8 @@ std::unique_ptr<column> replace_re(
   regex_program const& prog,
   string_scalar const& replacement           = string_scalar(""),
   std::optional<size_type> max_replace_count = std::nullopt,
-  rmm::cuda_stream_view stream               = cudf::get_default_stream(),
+  cuda::stream_ref stream                    = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr          = cudf::get_current_device_resource_ref());
-
-/**
- * @brief For each string, replaces any character sequence matching the given patterns
- * with the corresponding string in the `replacements` column.
- *
- * @deprecated in 26.06. To be removed in a future release.
- *
- * Any null string entries return corresponding null output column entries.
- *
- * See the @ref md_regex "Regex Features" page for details on patterns supported by this API.
- *
- * @param input Strings instance for this operation
- * @param patterns The regular expression patterns to search within each string
- * @param replacements The strings used for replacement
- * @param flags Regex flags for interpreting special characters in the patterns
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return New strings column
- */
-[[deprecated]] std::unique_ptr<column> replace_re(
-  strings_column_view const& input,
-  std::vector<std::string> const& patterns,
-  strings_column_view const& replacements,
-  regex_flags const flags           = regex_flags::DEFAULT,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief For each string, replaces any character sequence matching the given regex
@@ -97,7 +75,7 @@ std::unique_ptr<column> replace_with_backrefs(
   strings_column_view const& input,
   regex_program const& prog,
   std::string_view replacement,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace strings

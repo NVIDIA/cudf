@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 
@@ -68,7 +68,7 @@ def test_compile_masked_unary(op, ty):
         return op(x)
 
     cc = (7, 5)
-    ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
+    _ptx, _resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
 
 
 @pytest.mark.parametrize("op", arith_ops)
@@ -121,12 +121,12 @@ def test_compile_arith_masked_vs_constant(op, ty, constant):
         return op(x, constant)
 
     cc = (7, 5)
-    ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
+    _ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
 
     assert isinstance(resty, MaskedType)
 
     # Check that the masked typing matches that of the unmasked typing
-    um_ptx, um_resty = compile_ptx(func, (ty,), cc=cc, device=True)
+    _um_ptx, um_resty = compile_ptx(func, (ty,), cc=cc, device=True)
     assert resty.value_type == um_resty
 
 
@@ -138,7 +138,7 @@ def test_compile_arith_constant_vs_masked(op, ty, constant):
         return op(constant, x)
 
     cc = (7, 5)
-    ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
+    _ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
 
     assert isinstance(resty, MaskedType)
 
@@ -150,7 +150,7 @@ def test_compile_arith_masked_vs_na(op, ty):
         return op(x, NA)
 
     cc = (7, 5)
-    ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
+    _ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
 
     assert isinstance(resty, MaskedType)
 
@@ -162,7 +162,7 @@ def test_compile_arith_na_vs_masked(op, ty):
         return op(NA, x)
 
     cc = (7, 5)
-    ptx, resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
+    _ptx, _resty = compile_ptx(func, (MaskedType(ty),), cc=cc, device=True)
 
 
 @pytest.mark.parametrize("op", ops)
@@ -187,7 +187,7 @@ def test_compile_arith_masked_ops(
     if masked[1]:
         ty2 = MaskedType(ty2)
 
-    ptx, resty = compile_ptx(func, (ty1, ty2), cc=cc, device=True)
+    _ptx, _resty = compile_ptx(func, (ty1, ty2), cc=cc, device=True)
 
 
 def func_x_is_na(x):

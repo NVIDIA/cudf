@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column.hpp>
@@ -115,10 +116,13 @@ void BM_Segmented_Reduction(nvbench::state& state,
     offsets_view.template data<cudf::size_type>(), static_cast<std::size_t>(offsets_view.size())};
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(
     nvbench::exec_tag::sync, [input_view, output_type, offset_span, &agg](nvbench::launch& launch) {
       segmented_reduce(input_view, offset_span, *agg, output_type, cudf::null_policy::INCLUDE);
     });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 using Types = nvbench::type_list<bool, int32_t, float, double>;

@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include <cudf/column/column_child_offsets.hpp>
 #include <cudf/column/column_view.hpp>
 
 /**
@@ -21,7 +22,8 @@ namespace CUDF_EXPORT cudf {
  * @brief A wrapper class for operations on a dictionary column.
  *
  * A dictionary column contains a set of keys and a column of indices.
- * The keys are a sorted set of unique values for the column.
+ * The keys are not required to be unique.
+ *
  * The indices represent the corresponding positions of each element's
  * value in the keys.
  */
@@ -52,9 +54,9 @@ class dictionary_column_view : private column_view {
   dictionary_column_view& operator=(dictionary_column_view&&) = default;
 
   /// Index of the indices column of the dictionary column
-  static constexpr size_type indices_column_index{0};
+  static constexpr size_type indices_column_index = cudf::dictionary_indices_column_index;
   /// Index of the keys column of the dictionary column
-  static constexpr size_type keys_column_index{1};
+  static constexpr size_type keys_column_index = cudf::dictionary_keys_column_index;
 
   using column_view::has_nulls;
   using column_view::is_empty;

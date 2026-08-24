@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -36,7 +36,7 @@ namespace reduction::detail {
 std::unique_ptr<scalar> sum(column_view const& col,
                             data_type const output_dtype,
                             std::optional<std::reference_wrapper<scalar const>> init,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 /**
@@ -55,11 +55,11 @@ std::unique_ptr<scalar> sum(column_view const& col,
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Struct scalar with sum and overflow flag
  */
-std::unique_ptr<scalar> sum_with_overflow(column_view const& col,
-                                          data_type const output_type,
-                                          std::optional<std::reference_wrapper<scalar const>> init,
-                                          rmm::cuda_stream_view stream,
-                                          rmm::device_async_resource_ref mr);
+std::unique_ptr<scalar> sum_overflow(column_view const& col,
+                                     data_type const output_type,
+                                     std::optional<std::reference_wrapper<scalar const>> init,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr);
 
 /**
  * @brief Computes minimum of elements in input column
@@ -78,7 +78,7 @@ std::unique_ptr<scalar> sum_with_overflow(column_view const& col,
 std::unique_ptr<scalar> min(column_view const& col,
                             data_type const output_dtype,
                             std::optional<std::reference_wrapper<scalar const>> init,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 /**
@@ -98,7 +98,7 @@ std::unique_ptr<scalar> min(column_view const& col,
 std::unique_ptr<scalar> max(column_view const& col,
                             data_type const output_dtype,
                             std::optional<std::reference_wrapper<scalar const>> init,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 /**
@@ -107,12 +107,15 @@ std::unique_ptr<scalar> max(column_view const& col,
  * If all elements in input column are null, output scalar is null.
  *
  * @param col input column to compute reduction
+ * @param dispatch_type The type to dispatch on. For dictionary columns this must be the keys type;
+ *                      for all other columns it must equal `col.type()`.
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Index of the minimum element as scalar of type `output_dtype`
  */
 std::unique_ptr<scalar> argmin(column_view const& col,
-                               rmm::cuda_stream_view stream,
+                               data_type dispatch_type,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 /**
@@ -121,12 +124,15 @@ std::unique_ptr<scalar> argmin(column_view const& col,
  * If all elements in input column are null, output scalar is null.
  *
  * @param col input column to compute reduction
+ * @param dispatch_type The type to dispatch on. For dictionary columns this must be the keys type;
+ *                      for all other columns it must equal `col.type()`.
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Index of the maximum element as scalar of type `output_dtype`
  */
 std::unique_ptr<scalar> argmax(column_view const& col,
-                               rmm::cuda_stream_view stream,
+                               data_type dispatch_type,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 /**
@@ -138,7 +144,7 @@ std::unique_ptr<scalar> argmax(column_view const& col,
  * @return A pair consisting of the minimum value and the maximum value
  */
 std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> minmax(
-  cudf::column_view const& col, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+  cudf::column_view const& col, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 /**
  * @brief Computes any of elements in input column is true when typecasted to bool
@@ -158,7 +164,7 @@ std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> minmax(
 std::unique_ptr<scalar> any(column_view const& col,
                             data_type const output_dtype,
                             std::optional<std::reference_wrapper<scalar const>> init,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 /**
@@ -179,7 +185,7 @@ std::unique_ptr<scalar> any(column_view const& col,
 std::unique_ptr<scalar> all(column_view const& col,
                             data_type const output_dtype,
                             std::optional<std::reference_wrapper<scalar const>> init,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 /**
@@ -194,7 +200,7 @@ std::unique_ptr<scalar> all(column_view const& col,
  * @return A list_scalar storing a structs column as the result histogram
  */
 std::unique_ptr<scalar> histogram(column_view const& input,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr);
 
 /**
@@ -206,7 +212,7 @@ std::unique_ptr<scalar> histogram(column_view const& input,
  * @return A list_scalar storing the result histogram
  */
 std::unique_ptr<scalar> merge_histogram(column_view const& input,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr);
 
 /**
@@ -227,7 +233,7 @@ std::unique_ptr<scalar> merge_histogram(column_view const& input,
 std::unique_ptr<scalar> product(column_view const& col,
                                 data_type const output_dtype,
                                 std::optional<std::reference_wrapper<scalar const>> init,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr);
 
 /**
@@ -246,7 +252,7 @@ std::unique_ptr<scalar> product(column_view const& col,
  */
 std::unique_ptr<scalar> sum_of_squares(column_view const& col,
                                        data_type const output_dtype,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -265,7 +271,7 @@ std::unique_ptr<scalar> sum_of_squares(column_view const& col,
  */
 std::unique_ptr<scalar> mean(column_view const& col,
                              data_type const output_dtype,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr);
 
 /**
@@ -287,7 +293,7 @@ std::unique_ptr<scalar> mean(column_view const& col,
 std::unique_ptr<scalar> variance(column_view const& col,
                                  data_type const output_dtype,
                                  size_type ddof,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
@@ -309,7 +315,7 @@ std::unique_ptr<scalar> variance(column_view const& col,
 std::unique_ptr<scalar> standard_deviation(column_view const& col,
                                            data_type const output_dtype,
                                            size_type ddof,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr);
 
 /**
@@ -339,7 +345,7 @@ std::unique_ptr<scalar> standard_deviation(column_view const& col,
 std::unique_ptr<scalar> nth_element(column_view const& col,
                                     size_type n,
                                     null_policy null_handling,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -353,7 +359,7 @@ std::unique_ptr<scalar> nth_element(column_view const& col,
  */
 std::unique_ptr<scalar> collect_list(column_view const& col,
                                      null_policy null_handling,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -365,7 +371,7 @@ std::unique_ptr<scalar> collect_list(column_view const& col,
  * @return merged list as scalar
  */
 std::unique_ptr<scalar> merge_lists(lists_column_view const& col,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -383,7 +389,7 @@ std::unique_ptr<scalar> collect_set(column_view const& col,
                                     null_policy null_handling,
                                     null_equality nulls_equal,
                                     nan_equality nans_equal,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -399,7 +405,7 @@ std::unique_ptr<scalar> collect_set(column_view const& col,
 std::unique_ptr<scalar> merge_sets(lists_column_view const& col,
                                    null_equality nulls_equal,
                                    nan_equality nans_equal,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr);
 
 /**
@@ -413,7 +419,7 @@ std::unique_ptr<scalar> merge_sets(lists_column_view const& col,
  */
 std::unique_ptr<scalar> bitwise_reduction(bitwise_op bit_op,
                                           column_view const& col,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr);
 
 /**
@@ -435,7 +441,7 @@ std::unique_ptr<cudf::scalar> quantile(column_view const& col,
                                        double quantile_value,
                                        cudf::interpolation interpolation,
                                        cudf::data_type const output_type,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -452,7 +458,7 @@ std::unique_ptr<cudf::scalar> quantile(column_view const& col,
 std::unique_ptr<scalar> nunique(column_view const& col,
                                 null_policy null_handling,
                                 data_type const output_dtype,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr);
 
 /**
@@ -470,7 +476,7 @@ std::unique_ptr<scalar> nunique(column_view const& col,
 std::unique_ptr<scalar> count(column_view const& col,
                               null_policy null_handling,
                               data_type const output_type,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 }  // namespace reduction::detail

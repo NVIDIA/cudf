@@ -12,8 +12,3 @@ def edit_distance(
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
-def edit_distance_matrix(
-    input: Column,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Column: ...

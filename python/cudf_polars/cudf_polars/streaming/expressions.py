@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Multi-partition Expr classes and utilities.
@@ -192,15 +192,19 @@ def _decompose_unique(
     )
     (column,) = columns
 
+    distinct_ir = Distinct(
+        {column.name: column.dtype},
+        plc.stream_compaction.DuplicateKeepOption.KEEP_ANY,
+        None,
+        None,
+        maintain_order,
+        input_ir,
+    )
+    # Expr.unique() always lowers to KEEP_ANY with no subset or slice,
+    # so the Distinct fallback cases are not reachable here. We can call
+    # lower_distinct directly.
     input_ir, partition_info = lower_distinct(
-        Distinct(
-            {column.name: column.dtype},
-            plc.stream_compaction.DuplicateKeepOption.KEEP_ANY,
-            None,
-            None,
-            maintain_order,
-            input_ir,
-        ),
+        distinct_ir,
         input_ir,
         partition_info,
         config_options,
@@ -520,7 +524,7 @@ def _decompose(
         # All child IRs were Empty. Use an Empty({}) with
         # count=1 to ensure that scalar expressions still
         # produce one output partition with a single row
-        # See: https://github.com/rapidsai/cudf/pull/20409
+        # See: https://github.com/NVIDIA/cudf/pull/20409
         input_ir = Empty({})
         partition_info[input_ir] = PartitionInfo(count=1)
 

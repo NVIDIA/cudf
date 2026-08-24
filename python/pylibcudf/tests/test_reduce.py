@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -50,6 +50,11 @@ def test_is_not_valid_aggregation(agg, dt):
     assert not plc.reduce.is_valid_reduce_aggregation(plc_type, agg)
 
 
+@pytest.fixture(params=[False, True], ids=["Column", "Table"])
+def column_as_table(request):
+    return request.param
+
+
 @pytest.mark.parametrize(
     "data,expected",
     [
@@ -59,14 +64,19 @@ def test_is_not_valid_aggregation(agg, dt):
         ([1, 2, 3, 4, 5], 5),
     ],
 )
-def test_distinct_count(data, expected):
+def test_distinct_count(data, expected, column_as_table):
     arr = pa.array(data, type=pa.int32())
     col = plc.Column.from_arrow(arr)
-    result = plc.reduce.distinct_count(
-        col,
-        plc.types.NullPolicy.INCLUDE,
-        plc.types.NanPolicy.NAN_IS_VALID,
-    )
+    if column_as_table:
+        result = plc.reduce.distinct_count_table(
+            plc.Table([col]), plc.types.NullEquality.EQUAL
+        )
+    else:
+        result = plc.reduce.distinct_count(
+            col,
+            plc.types.NullPolicy.INCLUDE,
+            plc.types.NanPolicy.NAN_IS_VALID,
+        )
     assert result == expected
 
 
@@ -80,14 +90,19 @@ def test_distinct_count(data, expected):
         ([1, None, 2, None, 3], 4),
     ],
 )
-def test_distinct_count_with_nulls(data, expected):
+def test_distinct_count_with_nulls(data, expected, column_as_table):
     arr = pa.array(data, type=pa.int32())
     col = plc.Column.from_arrow(arr)
-    result = plc.reduce.distinct_count(
-        col,
-        plc.types.NullPolicy.INCLUDE,
-        plc.types.NanPolicy.NAN_IS_VALID,
-    )
+    if column_as_table:
+        result = plc.reduce.distinct_count_table(
+            plc.Table([col]), plc.types.NullEquality.EQUAL
+        )
+    else:
+        result = plc.reduce.distinct_count(
+            col,
+            plc.types.NullPolicy.INCLUDE,
+            plc.types.NanPolicy.NAN_IS_VALID,
+        )
     assert result == expected
 
 
@@ -112,25 +127,35 @@ def test_distinct_count_exclude_nulls():
         ([1, 2, 3, 4, 5], 5),
     ],
 )
-def test_unique_count(data, expected):
+def test_unique_count(data, expected, column_as_table):
     arr = pa.array(data, type=pa.int32())
     col = plc.Column.from_arrow(arr)
-    result = plc.reduce.unique_count(
-        col,
-        plc.types.NullPolicy.INCLUDE,
-        plc.types.NanPolicy.NAN_IS_VALID,
-    )
+    if column_as_table:
+        result = plc.reduce.unique_count_table(
+            plc.Table([col]), plc.types.NullEquality.EQUAL
+        )
+    else:
+        result = plc.reduce.unique_count(
+            col,
+            plc.types.NullPolicy.INCLUDE,
+            plc.types.NanPolicy.NAN_IS_VALID,
+        )
     assert result == expected
 
 
-def test_unique_count_with_nulls():
+def test_unique_count_with_nulls(column_as_table):
     arr = pa.array([1, 1, None, None, 2, 2], type=pa.int32())
     col = plc.Column.from_arrow(arr)
-    result = plc.reduce.unique_count(
-        col,
-        plc.types.NullPolicy.INCLUDE,
-        plc.types.NanPolicy.NAN_IS_VALID,
-    )
+    if column_as_table:
+        result = plc.reduce.unique_count_table(
+            plc.Table([col]), plc.types.NullEquality.EQUAL
+        )
+    else:
+        result = plc.reduce.unique_count(
+            col,
+            plc.types.NullPolicy.INCLUDE,
+            plc.types.NanPolicy.NAN_IS_VALID,
+        )
     assert result == 3
 
 
@@ -143,3 +168,104 @@ def test_unique_count_exclude_nulls():
         plc.types.NanPolicy.NAN_IS_VALID,
     )
     assert result == 2
+
+
+def test_count_nulls_unequal():
+    arr = pa.array([1, 1, None, None, 2, 2], type=pa.int64())
+    col = plc.Column.from_arrow(arr)
+    table = plc.Table([col])
+    result = plc.reduce.unique_count_table(
+        table, plc.types.NullEquality.UNEQUAL
+    )
+    assert result == 4
+
+
+def test_distinct_count_nulls_unequal():
+    arr = pa.array([1, None, 1, 2, None, 2], type=pa.int64())
+    col = plc.Column.from_arrow(arr)
+    table = plc.Table([col])
+    result = plc.reduce.distinct_count_table(
+        table, plc.types.NullEquality.UNEQUAL
+    )
+    assert result == 4
+
+
+@pytest.mark.parametrize(
+    "data,expected",
+    [
+        ([1, 2, 2, 3, 3, 3], 3),
+        ([1, 1, 1, 1], 1),
+        ([], 0),
+        ([1, 2, 3, 4, 5], 5),
+    ],
+)
+def test_approx_distinct_count(data, expected):
+    arr = pa.array(data, type=pa.int64())
+    col = plc.Column.from_arrow(arr)
+    sketch = plc.reduce.ApproxDistinctCount(
+        plc.Table([col]),
+        null_handling=plc.types.NullPolicy.INCLUDE,
+        nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+    )
+    assert sketch.estimate() == expected
+
+
+def test_approx_distinct_count_with_nulls():
+    arr = pa.array([1, None, 2, None, 3], type=pa.int64())
+    col = plc.Column.from_arrow(arr)
+    included = plc.reduce.ApproxDistinctCount(
+        plc.Table([col]),
+        null_handling=plc.types.NullPolicy.INCLUDE,
+        nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+    )
+    excluded = plc.reduce.ApproxDistinctCount(
+        plc.Table([col]),
+        null_handling=plc.types.NullPolicy.EXCLUDE,
+        nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+    )
+    assert included.estimate() == 4
+    assert excluded.estimate() == 3
+    assert included.null_handling() == plc.types.NullPolicy.INCLUDE
+    assert excluded.null_handling() == plc.types.NullPolicy.EXCLUDE
+
+
+def test_approx_distinct_count_add_and_merge():
+    col1 = plc.Column.from_arrow(pa.array([1, 2, 3], type=pa.int64()))
+    col2 = plc.Column.from_arrow(pa.array([3, 4, 5], type=pa.int64()))
+    sketch = plc.reduce.ApproxDistinctCount(
+        plc.Table([col1]),
+        null_handling=plc.types.NullPolicy.INCLUDE,
+        nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+    )
+    sketch.add(plc.Table([col2]))
+    assert sketch.estimate() == 5
+
+    other = plc.reduce.ApproxDistinctCount(
+        plc.Table([plc.Column.from_arrow(pa.array([6, 7], type=pa.int64()))]),
+        null_handling=plc.types.NullPolicy.INCLUDE,
+        nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+    )
+    sketch.merge(other)
+    assert sketch.estimate() == 7
+
+
+def test_approx_distinct_count_metadata():
+    col = plc.Column.from_arrow(pa.array([1, 2, 3], type=pa.int64()))
+    sketch = plc.reduce.ApproxDistinctCount(plc.Table([col]), precision=14)
+    assert sketch.precision() == 14
+    assert sketch.nan_handling() == plc.types.NanPolicy.NAN_IS_NULL
+    assert sketch.standard_error() == pytest.approx(1.04 / (2**14) ** 0.5)
+    assert plc.reduce.ApproxDistinctCount.sketch_bytes(14) > 0
+    assert plc.reduce.ApproxDistinctCount.sketch_alignment() > 0
+
+
+def test_approx_distinct_count_large_cardinality():
+    arr = pa.array(list(range(100_000)), type=pa.int64())
+    col = plc.Column.from_arrow(arr)
+    sketch = plc.reduce.ApproxDistinctCount(
+        plc.Table([col]),
+        precision=14,
+        null_handling=plc.types.NullPolicy.INCLUDE,
+        nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+    )
+    assert sketch.estimate() == pytest.approx(100_000, rel=0.05)

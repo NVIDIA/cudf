@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,12 +9,16 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for splitting strings using a delimiter string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_split
  * @{
- * @file
  */
 
 /**
@@ -44,7 +48,7 @@ std::unique_ptr<table> split(
   strings_column_view const& strings_column,
   string_scalar const& delimiter    = string_scalar(""),
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -74,7 +78,7 @@ std::unique_ptr<table> rsplit(
   strings_column_view const& strings_column,
   string_scalar const& delimiter    = string_scalar(""),
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -148,7 +152,7 @@ std::unique_ptr<column> split_record(
   strings_column_view const& strings,
   string_scalar const& delimiter    = string_scalar(""),
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -227,7 +231,7 @@ std::unique_ptr<column> rsplit_record(
   strings_column_view const& strings,
   string_scalar const& delimiter    = string_scalar(""),
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -250,7 +254,7 @@ std::unique_ptr<column> split_part(
   strings_column_view const& input,
   string_scalar const& delimiter    = string_scalar(""),
   size_type index                   = 0,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

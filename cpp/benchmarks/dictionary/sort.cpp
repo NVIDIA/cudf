@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
@@ -35,8 +36,13 @@ static void bench_dictionary_sort(nvbench::state& state)
   state.add_global_memory_writes<uint8_t>(result->alloc_size());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { auto result = cudf::sort(input_table, {}, {}, stream); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_dictionary_sort)

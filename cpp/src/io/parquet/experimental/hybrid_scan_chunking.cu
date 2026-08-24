@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,16 +32,13 @@ using parquet::detail::pass_intermediate_data;
 
 void hybrid_scan_reader_impl::handle_chunking(
   read_mode mode,
-  cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
-  cudf::host_span<bool const> data_page_mask)
+  std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
+  host_span<bool const> data_page_mask)
 {
   // if this is our first time in here, setup the first pass.
   if (!_pass_itm_data) {
     // setup the next pass
-    setup_next_pass(column_chunk_data);
-
-    // Must be called as soon as we create the pass
-    set_pass_page_mask(data_page_mask);
+    setup_next_pass(column_chunk_data, data_page_mask);
   }
 
   auto& pass = *_pass_itm_data;
@@ -78,7 +75,8 @@ void hybrid_scan_reader_impl::handle_chunking(
 }
 
 void hybrid_scan_reader_impl::setup_next_pass(
-  cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data)
+  std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
+  std::span<bool const> data_page_mask)
 {
   auto const num_passes = _file_itm_data.num_passes();
   CUDF_EXPECTS(num_passes == 1,
@@ -120,7 +118,16 @@ void hybrid_scan_reader_impl::setup_next_pass(
     pass.num_rows  = _file_itm_data.global_num_rows;
 
     // Setup page information for the chunk (which we can access without decompressing)
-    setup_compressed_data(column_chunk_data);
+    if (_sparse_page_io) {
+      CUDF_EXPECTS(data_page_mask.empty(),
+                   "Encountered a non-empty input data page mask in sparse I/O path.",
+                   std::invalid_argument);
+      setup_sparse_compressed_data(column_chunk_data);
+      set_sparse_pass_page_mask(column_chunk_data);
+    } else {
+      setup_compressed_data(column_chunk_data);
+      set_pass_page_mask(data_page_mask);
+    }
 
     // detect malformed columns.
     // - we have seen some cases in the wild where we have a row group containing N
@@ -148,24 +155,32 @@ void hybrid_scan_reader_impl::setup_next_pass(
     // store off how much memory we've used so far. This includes the compressed page data and the
     // decompressed dictionary data. we will subtract this from the available total memory for the
     // subpasses
-    auto chunk_iter = thrust::make_transform_iterator(pass.chunks.d_begin(),
-                                                      parquet::detail::get_chunk_compressed_size{});
-    pass.base_mem_size =
-      decomp_dict_data_size +
-      cudf::detail::reduce(
+    auto const compressed_data_size = [&] {
+      // In Sparse I/O case, compressed chunk size is the sum of its page data span sizes
+      if (_sparse_page_io) {
+        return std::accumulate(column_chunk_data.begin(),
+                               column_chunk_data.end(),
+                               std::size_t{0},
+                               [](auto size, auto const& page) { return size + page.size(); });
+      }
+      auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(),
+                                                 parquet::detail::get_chunk_compressed_size{});
+      return cudf::detail::reduce(
         chunk_iter, chunk_iter + pass.chunks.size(), size_t{0}, cuda::std::plus<size_t>{}, _stream);
+    }();
+    pass.base_mem_size = decomp_dict_data_size + compressed_data_size;
 
     // if we are doing subpass reading, generate more accurate num_row estimates for list columns.
     // this helps us to generate more accurate subpass splits.
     if (pass.has_compressed_data && _input_pass_read_limit != 0) {
-      if (_has_page_index) {
+      if (_has_offset_index) {
         generate_list_column_row_counts(is_estimate_row_counts::NO);
       } else {
         generate_list_column_row_counts(is_estimate_row_counts::YES);
       }
     }
 
-    _stream.synchronize();
+    _stream.sync();
   }
 }
 

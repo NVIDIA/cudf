@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ std::atomic_bool& debug()
 
 cudaError_t prefetch_noexcept(void const* ptr,
                               std::size_t size,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::cuda_device_id device_id) noexcept
 {
   if (!detail::enabled()) { return cudaSuccess; }
@@ -51,11 +51,11 @@ cudaError_t prefetch_noexcept(void const* ptr,
 #if defined(CUDART_VERSION) && CUDART_VERSION >= 13000
   cudaMemLocation location{
     (device_id.value() == cudaCpuDeviceId) ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice,
-    device_id.value()};
+    {device_id.value()}};
   constexpr int flags = 0;
-  auto result         = cudaMemPrefetchAsync(ptr, size, location, flags, stream.value());
+  auto result         = cudaMemPrefetchAsync(ptr, size, location, flags, stream.get());
 #else
-  auto result = cudaMemPrefetchAsync(ptr, size, device_id.value(), stream.value());
+  auto result = cudaMemPrefetchAsync(ptr, size, device_id.value(), stream.get());
 #endif
   // Need to flush the CUDA error so that the context is not corrupted.
   if (result == cudaErrorInvalidValue) { cudaGetLastError(); }
@@ -64,7 +64,7 @@ cudaError_t prefetch_noexcept(void const* ptr,
 
 void prefetch(void const* ptr,
               std::size_t size,
-              rmm::cuda_stream_view stream,
+              cuda::stream_ref stream,
               rmm::cuda_device_id device_id)
 {
   auto result = prefetch_noexcept(ptr, size, stream, device_id);

@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
@@ -20,6 +21,8 @@ void cudftable_write_common(cudf::table_view const& view, io_type sink_type, nvb
   std::size_t encoded_file_size = 0;
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch&, auto& timer) {
       cuio_source_sink_pair source_sink(sink_type);
@@ -37,6 +40,8 @@ void cudftable_write_common(cudf::table_view const& view, io_type sink_type, nvb
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
   state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void BM_cudftable_write_data_sizes(nvbench::state& state)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,20 +37,26 @@ template <column_selection ColSelection,
           row_selection RowSelection,
           converts_strings ConvertsStrings,
           uses_pandas_metadata UsesPandasMetadata,
+          output_dict OutputDict,
           cudf::type_id Timestamp>
 void BM_parquet_read_options(nvbench::state& state,
                              nvbench::type_list<nvbench::enum_type<ColSelection>,
                                                 nvbench::enum_type<RowSelection>,
                                                 nvbench::enum_type<ConvertsStrings>,
                                                 nvbench::enum_type<UsesPandasMetadata>,
+                                                nvbench::enum_type<OutputDict>,
                                                 nvbench::enum_type<Timestamp>>)
 {
   auto const num_chunks = RowSelection == row_selection::ALL ? 1 : chunked_read_num_chunks;
 
-  auto constexpr str_to_categories = ConvertsStrings == converts_strings::YES;
-  auto constexpr uses_pd_metadata  = UsesPandasMetadata == uses_pandas_metadata::YES;
+  auto constexpr str_to_categories   = ConvertsStrings == converts_strings::YES;
+  auto constexpr output_dict_columns = OutputDict == output_dict::YES;
+  auto constexpr uses_pd_metadata    = UsesPandasMetadata == uses_pandas_metadata::YES;
 
   auto const ts_type = cudf::data_type{Timestamp};
+
+  auto const rg_size_bytes = state.get_int64("row_group_size_bytes");
+  auto const rg_size_rows  = state.get_int64("row_group_size_rows");
 
   auto const data_types =
     dtypes_for_column_selection(get_type_or_group({static_cast<int32_t>(data_type::INTEGRAL),
@@ -69,6 +75,9 @@ void BM_parquet_read_options(nvbench::state& state,
   cuio_source_sink_pair source_sink(io_type::HOST_BUFFER);
   cudf::io::parquet_writer_options options =
     cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view);
+  // Sentinel 0 == use cuDF default (parquet bytes default is size_t::max).
+  if (rg_size_bytes > 0) options.set_row_group_size_bytes(rg_size_bytes);
+  if (rg_size_rows > 0) options.set_row_group_size_rows(rg_size_rows);
   cudf::io::write_parquet(options);
 
   auto const cols_to_read =
@@ -78,11 +87,15 @@ void BM_parquet_read_options(nvbench::state& state,
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
       .column_names(cols_to_read)
       .convert_strings_to_categories(str_to_categories)
+      .output_dict_columns(output_dict_columns)
       .use_pandas_metadata(uses_pd_metadata)
       .timestamp_type(ts_type);
 
   auto const num_row_groups = read_parquet_metadata(source_sink.make_source_info()).num_rowgroups();
-  auto const chunk_row_cnt  = cudf::util::div_rounding_up_unsafe(view.num_rows(), num_chunks);
+  CUDF_EXPECTS(RowSelection != row_selection::ROW_GROUPS || num_row_groups >= num_chunks,
+               "ROW_GROUPS option requires at least one row group per read chunk");
+
+  auto const chunk_row_cnt = cudf::util::div_rounding_up_unsafe(view.num_rows(), num_chunks);
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
@@ -130,14 +143,20 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_options,
                                       row_selections,
                                       nvbench::enum_type_list<converts_strings::YES>,
                                       nvbench::enum_type_list<uses_pandas_metadata::YES>,
+                                      nvbench::enum_type_list<output_dict::NO>,
                                       nvbench::enum_type_list<cudf::type_id::EMPTY>))
   .set_name("parquet_read_row_selection")
   .set_type_axes_names({"column_selection",
                         "row_selection",
                         "str_to_categories",
                         "uses_pandas_metadata",
+                        "output_dict_columns",
                         "timestamp_type"})
-  .set_min_samples(4);
+  .set_min_samples(4)
+  // NOTE: row_selection::ROW_GROUPS reads a fraction of row groups; non-zero
+  // RG sizing values here change what each chunk reads.
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});
 
 using col_selections = nvbench::enum_type_list<column_selection::ALL,
                                                column_selection::ALTERNATE,
@@ -148,14 +167,18 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_options,
                                       nvbench::enum_type_list<row_selection::ALL>,
                                       nvbench::enum_type_list<converts_strings::YES>,
                                       nvbench::enum_type_list<uses_pandas_metadata::YES>,
+                                      nvbench::enum_type_list<output_dict::NO>,
                                       nvbench::enum_type_list<cudf::type_id::EMPTY>))
   .set_name("parquet_read_column_selection")
   .set_type_axes_names({"column_selection",
                         "row_selection",
                         "str_to_categories",
                         "uses_pandas_metadata",
+                        "output_dict_columns",
                         "timestamp_type"})
-  .set_min_samples(4);
+  .set_min_samples(4)
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});
 
 NVBENCH_BENCH_TYPES(
   BM_parquet_read_options,
@@ -163,11 +186,40 @@ NVBENCH_BENCH_TYPES(
                     nvbench::enum_type_list<row_selection::ALL>,
                     nvbench::enum_type_list<converts_strings::YES, converts_strings::NO>,
                     nvbench::enum_type_list<uses_pandas_metadata::YES, uses_pandas_metadata::NO>,
+                    nvbench::enum_type_list<output_dict::NO>,
                     nvbench::enum_type_list<cudf::type_id::EMPTY>))
   .set_name("parquet_read_misc_options")
   .set_type_axes_names({"column_selection",
                         "row_selection",
                         "str_to_categories",
                         "uses_pandas_metadata",
+                        "output_dict_columns",
                         "timestamp_type"})
-  .set_min_samples(4);
+  .set_min_samples(4)
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});
+
+// Sweep `output_dict_columns` on/off. Only flat STRING columns are dictionary-transcoded, so this
+// case reports read throughput and peak memory for both the direct transcode (YES) and the plain
+// STRING materialization (NO). Varying `row_group_size_rows` exercises the single-row-group fast
+// path (few, large row groups) versus the multi-row-group concatenate path (many, small ones).
+NVBENCH_BENCH_TYPES(BM_parquet_read_options,
+                    NVBENCH_TYPE_AXES(nvbench::enum_type_list<column_selection::ALL>,
+                                      nvbench::enum_type_list<row_selection::ALL>,
+                                      nvbench::enum_type_list<converts_strings::NO>,
+                                      nvbench::enum_type_list<uses_pandas_metadata::NO>,
+                                      nvbench::enum_type_list<output_dict::YES, output_dict::NO>,
+                                      nvbench::enum_type_list<cudf::type_id::EMPTY>))
+  .set_name("parquet_read_dict_output")
+  .set_type_axes_names({"column_selection",
+                        "row_selection",
+                        "str_to_categories",
+                        "uses_pandas_metadata",
+                        "output_dict_columns",
+                        "timestamp_type"})
+  .set_min_samples(4)
+  .add_int64_axis("row_group_size_bytes", {0})
+  // Explicit row-group sizes (in rows) rather than the cuDF default. Larger values yield fewer,
+  // bigger row groups (favoring the single-row-group fast path); smaller values yield many small
+  // row groups (exercising the multi-row-group assembly).
+  .add_int64_axis("row_group_size_rows", {1'000'000, 100'000, 10'000, 1'000});

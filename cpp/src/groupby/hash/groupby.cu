@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,7 +21,7 @@
 #include <cudf/utilities/traits.cuh>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <utility>
@@ -31,21 +31,22 @@ namespace cudf::groupby::detail::hash {
 namespace {
 
 std::unique_ptr<table> dispatch_groupby(table_view const& keys,
-                                        host_span<aggregation_request const> requests,
+                                        std::span<aggregation_request const> requests,
                                         cudf::detail::result_cache* cache,
                                         bool const keys_have_nulls,
                                         null_policy const include_null_keys,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   auto const null_keys_are_equal  = null_equality::EQUAL;
   auto const has_null             = nullate::DYNAMIC{cudf::has_nested_nulls(keys)};
   auto const skip_rows_with_nulls = keys_have_nulls and include_null_keys == null_policy::EXCLUDE;
 
-  auto preprocessed_keys = cudf::detail::row::hash::preprocessed_table::create(keys, stream);
-  auto const comparator  = cudf::detail::row::equality::self_comparator{preprocessed_keys};
-  auto const row_hash    = cudf::detail::row::hash::row_hasher{std::move(preprocessed_keys)};
-  auto const d_row_hash  = row_hash.device_hasher(has_null);
+  auto preprocessed_keys = cudf::detail::row::hash::preprocessed_table::create(
+    keys, stream, cudf::get_current_device_resource_ref());
+  auto const comparator = cudf::detail::row::equality::self_comparator{preprocessed_keys};
+  auto const row_hash   = cudf::detail::row::hash::row_hasher{std::move(preprocessed_keys)};
+  auto const d_row_hash = row_hash.device_hasher(has_null);
 
   if (cudf::detail::has_nested_columns(keys)) {
     auto const d_row_equal = comparator.equal_to<true>(has_null, null_keys_are_equal);
@@ -111,7 +112,7 @@ struct can_use_hash_groupby_fn {
  * @return true A hash-based groupby should be used
  * @return false A hash-based groupby should not be used
  */
-bool can_use_hash_groupby(host_span<aggregation_request const> requests)
+bool can_use_hash_groupby(std::span<aggregation_request const> requests)
 {
   return std::all_of(requests.begin(), requests.end(), [](aggregation_request const& r) {
     auto const v_type = is_dictionary(r.values.type())
@@ -132,9 +133,9 @@ bool can_use_hash_groupby(host_span<aggregation_request const> requests)
 // Hash-based groupby
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby(
   table_view const& keys,
-  host_span<aggregation_request const> requests,
+  std::span<aggregation_request const> requests,
   null_policy include_null_keys,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   cudf::detail::result_cache cache(requests.size());

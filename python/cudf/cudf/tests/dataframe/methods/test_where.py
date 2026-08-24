@@ -114,6 +114,19 @@ def test_frame_series_where_other():
     assert_eq(expected, actual)
 
 
+@pytest.mark.parametrize("method", ["where", "mask"])
+def test_frame_series_condition_nondefault_index(method):
+    pdf = pd.DataFrame({"a": [1, 2], "b": [3, 4]}, index=["i0", "i1"])
+    gdf = cudf.from_pandas(pdf)
+    pcond = pd.Series([True, False], index=pdf.index)
+    gcond = cudf.from_pandas(pcond)
+
+    expected = getattr(pdf, method)(pcond, 100)
+    actual = getattr(gdf, method)(gcond, 100)
+
+    assert_eq(expected, actual)
+
+
 @pytest.mark.parametrize(
     "data,condition,other,error",
     [

@@ -1,12 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import concurrent.futures
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 import polars as pl
+
+from rapidsmpf.bootstrap import get_nranks, is_running_with_rrun
 
 from cudf_polars.testing.engine_utils import (
     ALL_ENGINE_FIXTURE_PARAMS,
@@ -16,19 +19,60 @@ from cudf_polars.testing.engine_utils import (
     create_streaming_options,
     merge_streaming_options,
 )
+from cudf_polars.utils.versions import POLARS_VERSION_LT_140, POLARS_VERSION_LT_141
+
+
+@pytest.fixture
+def xfail_decimal_sum_precision_polars_140(request: pytest.FixtureRequest) -> None:
+    """xfail decimal ``sum`` tests on polars 1.40."""
+    request.applymarker(
+        pytest.mark.xfail(
+            condition=(not POLARS_VERSION_LT_140) and POLARS_VERSION_LT_141,
+            reason="polars 1.40 reports narrow precision for decimal sum "
+            "(Decimal(9,2) vs (38,2)), fixed in 1.41. "
+            "See https://github.com/pola-rs/polars/issues/27269",
+        )
+    )
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
     from cudf_polars.engine.core import StreamingEngine
+    from cudf_polars.engine.dask import DaskEngine
     from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.engine.ray import RayEngine
     from cudf_polars.engine.spmd import SPMDEngine
 
 
-# Number of ranks for multi-rank streaming engines that share one GPU
-# (currently ``RayEngine``). Single-GPU dev hosts and CI runners require
-# ``allow_gpu_sharing=True`` to oversubscribe one device across actors.
-NUM_RANKS = 2
+@pytest.fixture(scope="session")
+def ray_num_ranks() -> int:
+    """
+    Number of ranks for multi-rank streaming engines that share one GPU
+    (currently ``RayEngine``). Single-GPU dev hosts and CI runners require
+    ``allow_gpu_sharing=True`` to oversubscribe one device across actors.
+    """
+    return 2
+
+
+@pytest.fixture(scope="session")
+def ray_init_options(ray_num_ranks: int) -> dict[str, Any]:
+    """
+    Keyword arguments forwarded to ``ray.init`` for the test Ray cluster.
+
+    When using this fixture, a ``RayEngine`` must be constructed with:
+    - ``num_ranks`` set
+    - ``engine_options={"allow_gpu_sharing": True}``
+
+    This is required because the cluster is configured with ``num_gpus=0``,
+    so Ray does not autodetect or track GPU resources.
+    """
+    return {
+        "num_cpus": ray_num_ranks,
+        "num_gpus": 0,
+        "include_dashboard": False,
+        "object_store_memory": 256 * 1024 * 1024,  # 256 MB
+    }
 
 
 @pytest.fixture(params=[False, True], ids=["no_nulls", "nulls"], scope="session")
@@ -39,8 +83,6 @@ def with_nulls(request: pytest.FixtureRequest):
 @pytest.fixture(autouse=True)
 def _skip_unless_spmd(request: pytest.FixtureRequest) -> None:
     """Skip tests in SPMD multi-rank mode unless marked with ``pytest.mark.spmd``."""
-    from rapidsmpf.bootstrap import get_nranks, is_running_with_rrun
-
     if (
         is_running_with_rrun()
         and get_nranks() > 1
@@ -65,6 +107,8 @@ def _engine_param(request: pytest.FixtureRequest) -> EngineFixtureParam:
 @pytest.fixture(scope="session")
 def _unconfigured_engine(
     _engine_param: EngineFixtureParam,
+    ray_num_ranks: int,
+    ray_init_options: dict[str, Any],
 ) -> Generator[tuple[pl.GPUEngine, StreamingOptions | None], None, None]:
     """
     Fixture generating an engine resource and options to apply before use.
@@ -93,6 +137,11 @@ def _unconfigured_engine(
         yield pl.GPUEngine(executor="in-memory", raise_on_fail=True), None
     else:
         engine: StreamingEngine
+        if _engine_param.engine_name in ("dask", "ray") and is_running_with_rrun():
+            pytest.skip(
+                f"{_engine_param.engine_name} engine cannot be constructed "
+                "inside an rrun cluster"
+            )
         match _engine_param.engine_name:
             case "spmd":
                 from cudf_polars.engine.spmd import SPMDEngine
@@ -110,9 +159,9 @@ def _unconfigured_engine(
                 # otherwise ``RayEngine`` defaults to
                 # ``get_num_gpus_in_ray_cluster()``
                 engine = RayEngine(
-                    num_ranks=NUM_RANKS,
+                    num_ranks=ray_num_ranks,
                     engine_options={"allow_gpu_sharing": True},
-                    ray_init_options={"include_dashboard": False},
+                    ray_init_options=ray_init_options,
                 )
             case _:  # pragma: no cover
                 raise ValueError(
@@ -162,6 +211,24 @@ def spmd_engine_factory(
         )
 
     return factory
+
+
+@pytest.fixture
+def ray_engine(
+    _unconfigured_engine: tuple[RayEngine, StreamingOptions],
+) -> RayEngine:
+    """Return the shared configured :class:`RayEngine`."""
+    engine, options = _unconfigured_engine
+    return configure_streaming_engine(engine, options)
+
+
+@pytest.fixture
+def dask_engine(
+    _unconfigured_engine: tuple[DaskEngine, StreamingOptions],
+) -> DaskEngine:
+    """Return the shared configured :class:`DaskEngine`."""
+    engine, options = _unconfigured_engine
+    return configure_streaming_engine(engine, options)
 
 
 @pytest.fixture
@@ -223,6 +290,9 @@ def engine(
     """
     Return a :class:`polars.GPUEngine` for each engine variant under test.
 
+    Every variant is configured with ``raise_on_fail=True``, so an unsupported
+    GPU path raises instead of silently falling back to the CPU engine.
+
     Parameters
     ----------
     _unconfigured_engine
@@ -247,22 +317,23 @@ def engine(
 
 
 @pytest.fixture
-def engine_raise_on_fail() -> pl.GPUEngine:
+def in_memory_engine() -> pl.GPUEngine:
     """
-    Return a default :class:`polars.GPUEngine` with ``raise_on_fail=True``.
+    Return an in-memory :class:`polars.GPUEngine` with ``raise_on_fail=True``.
 
-    Returns
-    -------
-    In-memory engine configured to raise exceptions on failure.
-
-    Notes
-    -----
-    Intended for error-path tests that assert specific exceptions propagate
-    from ``.collect()``. Uses the in-memory executor so errors are not wrapped
-    by a streaming task group.
+    Use this for tests that intentionally exercise in-memory-only behavior
+    instead of the parametrized engine matrix, but generally prefer the ``engine``
+    fixture instead.
     """
-    # TODO: We should be testing with all supported engine variants
     return pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+
+
+@pytest.fixture
+def timeout_seconds() -> int:
+    """
+    Conservative timeout for APIs that accept a timeout parameter.
+    """
+    return 30
 
 
 def pytest_configure(config: pytest.Config):
@@ -294,6 +365,10 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
 
     if "spmd_engine" in fixtures or "spmd_engine_factory" in fixtures:
         engines = ["spmd"]
+    elif "ray_engine" in fixtures:
+        engines = ["ray"]
+    elif "dask_engine" in fixtures:
+        engines = ["dask"]
     elif "streaming_engine" in fixtures or "streaming_engine_factory" in fixtures:
         engines = STREAMING_ENGINE_FIXTURE_PARAMS
     elif "engine" in fixtures:
@@ -339,3 +414,10 @@ def pytest_collection_modifyitems(
             else marker.kwargs.get("reason", "unsupported on streaming engine")
         )
         item.add_marker(pytest.mark.skip(reason=reason))
+
+
+@pytest.fixture(scope="module")
+def parquet_stats_executor() -> concurrent.futures.ThreadPoolExecutor:  # type: ignore[misc]
+    """A thread pool to use for cudf-polars status collection."""
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        yield executor

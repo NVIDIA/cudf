@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,8 +29,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
 
 #include <limits>
@@ -1422,7 +1420,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
                        SymbolT* d_top_of_stack,
                        stack_behavior_t stack_behavior,
                        SymbolT delimiter,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   check_input_size(json_in.size());
 
@@ -1507,7 +1505,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
 std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> process_token_stream(
   device_span<PdaTokenT const> tokens,
   device_span<SymbolOffsetT const> token_indices,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   // Instantiate FST for post-processing the token stream to remove all tokens that belong to an
@@ -1532,11 +1530,11 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
   // StructBegin, StructEnd. Also, all LineEnd are removed as well, as these are not relevant after
   // this stage anymore
   filter_fst.Transduce(
-    cuda::std::make_reverse_iterator(
-      thrust::make_zip_iterator(tokens.data(), token_indices.data()) + tokens.size()),
+    cuda::std::make_reverse_iterator(cuda::make_zip_iterator(tokens.data(), token_indices.data()) +
+                                     tokens.size()),
     static_cast<SymbolOffsetT>(tokens.size()),
     cuda::std::make_reverse_iterator(
-      thrust::make_zip_iterator(filtered_tokens_out.data(), filtered_token_indices_out.data()) +
+      cuda::make_zip_iterator(filtered_tokens_out.data(), filtered_token_indices_out.data()) +
       tokens.size()),
     cuda::make_discard_iterator(),
     d_num_selected_tokens.data(),
@@ -1561,7 +1559,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
 std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> get_token_stream(
   device_span<SymbolT const> json_in,
   cudf::io::json_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   check_input_size(json_in.size());
@@ -1594,7 +1592,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
   // Input to the full pushdown automaton finite-state transducer, where a input symbol comprises
   // the combination of a character from the JSON input together with the stack context for that
   // character.
-  auto zip_in = thrust::make_zip_iterator(json_in.data(), stack_symbols.data());
+  auto zip_in = cuda::make_zip_iterator(json_in.data(), stack_symbols.data());
 
   // Spark, as the main stakeholder in the `recover_from_error` option, has the specific need to
   // ignore any characters that follow the first value on each JSON line. This is an FST that
@@ -1617,7 +1615,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                         stream);
 
     // Make sure memory of the FST's lookup tables isn't freed before the FST completes
-    stream.synchronize();
+    stream.sync();
   }
 
   constexpr auto max_translation_table_size =
@@ -1695,7 +1693,7 @@ void make_json_column(json_column& root_column,
                       device_span<SymbolT const> d_input,
                       cudf::io::json_reader_options const& options,
                       bool include_quote_char,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       rmm::device_async_resource_ref mr)
 {
   // Range of encapsulating function that parses to internal columnar data representation
@@ -1709,7 +1707,7 @@ void make_json_column(json_column& root_column,
   auto token_indices_gpu = cudf::detail::make_host_vector_async(d_token_indices_gpu, stream);
 
   // Make sure tokens have been copied to the host
-  stream.synchronize();
+  stream.sync();
 
   // Whether this token is the valid token to begin the JSON document with
   auto is_valid_root_token = [](PdaTokenT const token) {
@@ -2076,7 +2074,7 @@ void make_json_column(json_column& root_column,
  * @param stream The CUDA stream to which kernels are dispatched
  */
 cudf::io::parse_options parsing_options(cudf::io::json_reader_options const& options,
-                                        rmm::cuda_stream_view stream)
+                                        cuda::stream_ref stream)
 {
   auto parse_opts = cudf::io::parse_options{',', '\n', '\"', '.'};
 
@@ -2097,7 +2095,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
   device_span<SymbolT const> d_input,
   cudf::io::json_reader_options const& options,
   std::optional<schema_element> schema,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Range of orchestrating/encapsulating function
@@ -2138,7 +2136,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
 
       // Prepare iterator that returns (string_offset, string_length)-tuples
       auto offset_length_it =
-        thrust::make_zip_iterator(d_string_offsets.begin(), d_string_lengths.begin());
+        cuda::make_zip_iterator(d_string_offsets.begin(), d_string_lengths.begin());
 
       data_type target_type{};
 

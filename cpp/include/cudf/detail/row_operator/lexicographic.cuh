@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -421,8 +421,8 @@ class device_row_comparator {
                                  cuda::std::numeric_limits<int>::max());
         }
 
-        lcol = detail::structs_column_device_view(lcol).get_sliced_child(0);
-        rcol = detail::structs_column_device_view(rcol).get_sliced_child(0);
+        lcol = structs_column_device_view(lcol).get_sliced_child(0);
+        rcol = structs_column_device_view(rcol).get_sliced_child(0);
         ++depth;
       }
 
@@ -467,8 +467,8 @@ class device_row_comparator {
       column_device_view rcol = _rhs.slice(rhs_element_index, 1);
 
       while (lcol.type().id() == type_id::LIST) {
-        lcol = detail::lists_column_device_view(lcol).get_sliced_child();
-        rcol = detail::lists_column_device_view(rcol).get_sliced_child();
+        lcol = lists_column_device_view(lcol).get_sliced_child();
+        rcol = lists_column_device_view(rcol).get_sliced_child();
       }
 
       auto const l_offsets = _l_dremel_device_view->offsets;
@@ -677,8 +677,10 @@ struct less_equivalent_comparator
  *
  */
 struct preprocessed_table {
-  using table_device_view_owner =
-    std::invoke_result_t<decltype(table_device_view::create), table_view, rmm::cuda_stream_view>;
+  using table_device_view_owner = std::invoke_result_t<decltype(table_device_view::create),
+                                                       table_view,
+                                                       cuda::stream_ref,
+                                                       rmm::device_async_resource_ref>;
 
   /**
    * @brief Preprocess table for use with lexicographical comparison
@@ -705,7 +707,7 @@ struct preprocessed_table {
   static std::shared_ptr<preprocessed_table> create(table_view const& table,
                                                     host_span<order const> column_order,
                                                     host_span<null_order const> null_precedence,
-                                                    rmm::cuda_stream_view stream);
+                                                    cuda::stream_ref stream);
 
   /**
    * @brief Preprocess tables for use with lexicographical comparison
@@ -733,7 +735,7 @@ struct preprocessed_table {
     table_view const& rhs,
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
  private:
   friend class self_comparator;
@@ -765,7 +767,7 @@ struct preprocessed_table {
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
     bool has_ranked_children,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @brief Construct a preprocessed table for use with lexicographical comparison
@@ -922,7 +924,7 @@ class self_comparator {
   self_comparator(table_view const& t,
                   host_span<order const> column_order         = {},
                   host_span<null_order const> null_precedence = {},
-                  rmm::cuda_stream_view stream                = cudf::get_default_stream())
+                  cuda::stream_ref stream                     = cudf::get_default_stream())
     : d_t{preprocessed_table::create(t, column_order, null_precedence, stream)}
   {
   }
@@ -1079,7 +1081,7 @@ class two_table_comparator {
                        table_view const& right,
                        host_span<order const> column_order         = {},
                        host_span<null_order const> null_precedence = {},
-                       rmm::cuda_stream_view stream                = cudf::get_default_stream());
+                       cuda::stream_ref stream                     = cudf::get_default_stream());
 
   /**
    * @brief Construct an owning object for performing a lexicographic comparison between two rows of

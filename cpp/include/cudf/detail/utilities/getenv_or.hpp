@@ -8,6 +8,7 @@
 #include <cudf/logger.hpp>
 
 #include <cstdlib>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -36,6 +37,18 @@ T getenv_or(std::string_view env_var_name, T default_val)
   }
 
   if (env_val == nullptr) { return std::move(default_val); }
+
+  std::stringstream sstream(env_val);
+  T converted_val;
+  sstream >> converted_val;
+  return converted_val;
+}
+
+template <typename T>
+std::optional<T> getenv_optional(std::string_view env_var_name)
+{
+  auto const env_val = std::getenv(env_var_name.data());
+  if (env_val == nullptr) { return std::nullopt; }
 
   std::stringstream sstream(env_val);
   T converted_val;

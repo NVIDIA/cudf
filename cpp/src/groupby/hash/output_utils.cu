@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,12 +17,12 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/scatter.h>
 #include <thrust/transform.h>
 
@@ -42,17 +42,17 @@ namespace {
  * @brief Functor to create the result columns for hash-based groupby aggregations
  *
  * This functor handles the creation of appropriately typed and sized columns for each
- * aggregation, including special handling for SUM_WITH_OVERFLOW which requires a struct column.
+ * aggregation, including special handling for SUM_OVERFLOW which requires a struct column.
  * For data types smaller than 4 bytes, the buffer size is adjusted to be a multiple of 4 to
  * ensure memory safety when atomic operations use 4-byte CAS loops to emulate smaller atomics.
  */
 struct result_column_creator {
   size_type output_size;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   explicit result_column_creator(size_type output_size_,
-                                 rmm::cuda_stream_view stream_,
+                                 cuda::stream_ref stream_,
                                  rmm::device_async_resource_ref mr_)
     : output_size{output_size_}, stream{stream_}, mr{mr_}
   {
@@ -80,7 +80,7 @@ struct result_column_creator {
       }
       return make_fixed_width_column(d_type, size, state, stream, mr);
     };
-    if (agg != aggregation::SUM_WITH_OVERFLOW) {
+    if (agg != aggregation::SUM_OVERFLOW) {
       auto const target_type = cudf::detail::target_type(col_type, agg);
       auto const mask_flag   = nullable ? mask_state::ALL_NULL : mask_state::UNALLOCATED;
       return make_uninitialized_column(target_type, output_size, mask_flag);
@@ -116,7 +116,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             table_view const& values,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(agg_kinds.size()),
@@ -139,11 +139,11 @@ std::unique_ptr<table> create_results_table(size_type output_size,
 template <typename SetType>
 rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
                                                       size_type num_total_keys,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<size_type> unique_key_indices(num_total_keys, stream, mr);
-  auto const keys_end = key_set.retrieve_all(unique_key_indices.begin(), stream.value());
+  auto const keys_end = key_set.retrieve_all(unique_key_indices.begin(), stream.get());
   unique_key_indices.resize(std::distance(unique_key_indices.begin(), keys_end), stream);
   return unique_key_indices;
 }
@@ -151,19 +151,19 @@ rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
 template rmm::device_uvector<size_type> extract_populated_keys<global_set_t>(
   global_set_t const& key_set,
   size_type num_total_keys,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template rmm::device_uvector<size_type> extract_populated_keys<nullable_global_set_t>(
   nullable_global_set_t const& key_set,
   size_type num_total_keys,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 rmm::device_uvector<size_type> compute_key_transform_map(
   size_type num_total_keys,
   device_span<size_type const> unique_key_indices,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Map from old key indices (index of the keys in the original input keys table) to new key
@@ -181,7 +181,7 @@ rmm::device_uvector<size_type> compute_key_transform_map(
 
 rmm::device_uvector<size_type> compute_target_indices(device_span<size_type const> input,
                                                       device_span<size_type const> transform_map,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<size_type> target_indices(input.size(), stream, mr);
@@ -199,7 +199,7 @@ void finalize_output(table_view const& values,
                      std::vector<std::unique_ptr<aggregation>> const& aggregations,
                      std::unique_ptr<table>& agg_results,
                      cudf::detail::result_cache* cache,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   auto result_cols       = agg_results->release();
   auto const null_counts = [&]() -> std::vector<size_type> {

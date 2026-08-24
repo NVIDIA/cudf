@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/timezone.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
 
@@ -129,7 +130,7 @@ struct timezone_file {
   [[nodiscard]] auto timecnt() const { return header.timecnt; }
   [[nodiscard]] auto typecnt() const { return header.typecnt; }
 
-  // Based on https://tools.ietf.org/id/draft-murchison-tzdist-tzif-00.html
+  // Based on https://datatracker.ietf.org/doc/html/draft-murchison-tzdist-tzif-16
   static constexpr auto leap_second_rec_size(bool is_64bit) noexcept
   {
     return (is_64bit ? sizeof(uint64_t) : sizeof(uint32_t)) + sizeof(uint32_t);
@@ -452,7 +453,7 @@ static int64_t get_transition_time(dst_transition_s const& trans, int year)
 
 std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
                                                       std::string_view timezone_name,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -463,7 +464,7 @@ namespace detail {
 
 std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
                                                       std::string_view timezone_name,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   if (timezone_name == "UTC" || timezone_name.empty()) {
@@ -576,7 +577,7 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
     std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0));
 
   // Need to finish copies before transition_times and offsets go out of scope
-  stream.synchronize();
+  cudf::detail::sync_stream(stream);
 
   return std::make_unique<cudf::table>(std::move(tz_table_columns));
 }

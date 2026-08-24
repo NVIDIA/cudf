@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -62,7 +62,7 @@ abstract class Aggregation {
         HISTOGRAM(34),
         MERGE_HISTOGRAM(35),
         BITWISE_AGG(36),
-        SUM_WITH_OVERFLOW(37);
+        SUM_OVERFLOW(37);
 
         final int nativeId;
 
@@ -534,9 +534,9 @@ abstract class Aggregation {
         return new SumAggregation();
     }
 
-    static final class SumWithOverflowAggregation extends NoParamAggregation {
-        private SumWithOverflowAggregation() {
-            super(Kind.SUM_WITH_OVERFLOW);
+    static final class SumOverflowAggregation extends NoParamAggregation {
+        private SumOverflowAggregation() {
+            super(Kind.SUM_OVERFLOW);
         }
     }
 
@@ -545,12 +545,12 @@ abstract class Aggregation {
      * children {sum: same type as input, overflow: BOOL8}. The input may be any
      * signed integer type (INT8/16/32/64) or fixed-point decimal
      * (DECIMAL32/64/128), for both column reductions and hash-based groupby.
-     * On overflow the sum value is zeroed; the boolean flag is the source of
+     * On overflow the sum value is unspecified; the boolean flag is the source of
      * truth. Sort-based groupby, scan, segmented reduce, and rolling are not
      * supported by cudf.
      */
-    static SumWithOverflowAggregation sumWithOverflow() {
-        return new SumWithOverflowAggregation();
+    static SumOverflowAggregation sumOverflow() {
+        return new SumOverflowAggregation();
     }
 
     static final class ProductAggregation extends NoParamAggregation {

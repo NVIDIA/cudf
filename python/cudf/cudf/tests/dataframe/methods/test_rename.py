@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -79,11 +79,14 @@ def test_rename_reset_label_dtype():
     assert_eq(result, expected)
 
 
-def test_dataframe_rename_columns_keep_type():
+def test_dataframe_rename_columns_reinfers_label_dtype():
+    # pandas rebuilds the columns Index from the transformed labels on
+    # rename, re-inferring its dtype (int8 -> int64) rather than
+    # preserving it.
     gdf = cudf.DataFrame([[1, 2, 3]])
     gdf.columns = cudf.Index([4, 5, 6], dtype=np.int8)
     result = gdf.rename({4: 50}, axis="columns").columns
-    expected = pd.Index([50, 5, 6], dtype=np.int8)
+    expected = pd.Index([50, 5, 6], dtype=np.int64)
     assert_eq(result, expected)
 
 
@@ -148,3 +151,24 @@ def test_rename_for_level_is_None_MC():
     got = gdf.rename(columns={"a": "f"}, level=None)
 
     assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("level", [0, 1])
+def test_rename_for_level_unnamed_MultiIndex_dataframe(level):
+    # GH: renaming a level of an *unnamed* MultiIndex must overwrite that
+    # level rather than insert a spurious extra level (the level name is
+    # ``None``, so it cannot be used as the ColumnAccessor key).
+    pdf = pd.DataFrame(
+        {"d": [0, 1, 2]},
+        index=pd.MultiIndex.from_arrays(
+            [["A", "B", "B"], ["cat", "cat", "cat"]]
+        ),
+    )
+    gdf = cudf.from_pandas(pdf)
+    mapper = {"A": "Apple", "B": "B"}
+
+    expect = pdf.rename(index=mapper, level=level)
+    got = gdf.rename(index=mapper, level=level)
+
+    assert_eq(expect, got)
+    assert got.index.nlevels == 2

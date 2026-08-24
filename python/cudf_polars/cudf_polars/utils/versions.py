@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Version utilities so that cudf_polars supports a range of polars versions."""
@@ -16,6 +16,9 @@ POLARS_VERSION_LT_136 = POLARS_VERSION < parse("1.36.0")
 POLARS_VERSION_LT_137 = POLARS_VERSION < parse("1.37.0")
 POLARS_VERSION_LT_138 = POLARS_VERSION < parse("1.38.0")
 POLARS_VERSION_LT_139 = POLARS_VERSION < parse("1.39.0")
+POLARS_VERSION_LT_140 = POLARS_VERSION < parse("1.40.0")
+POLARS_VERSION_LT_141 = POLARS_VERSION < parse("1.41.0")
+POLARS_VERSION_LT_142 = POLARS_VERSION < parse("1.42.0")
 
 
 def _ensure_polars_version() -> None:

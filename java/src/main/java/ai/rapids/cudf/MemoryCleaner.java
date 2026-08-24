@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -368,6 +368,11 @@ public final class MemoryCleaner {
 
   public static void register(CompiledExpression expr, Cleaner cleaner) {
     all.put(cleaner.id, new CleanerWeakReference(expr, cleaner, collected, false));
+  }
+
+  static void register(HybridScanReader reader, Cleaner cleaner) {
+    // RMM blocker: wrapper can hold device memory (chunked_filter_row_mask).
+    all.put(cleaner.id, new CleanerWeakReference(reader, cleaner, collected, true));
   }
 
   static void register(HashJoin hashJoin, Cleaner cleaner) {

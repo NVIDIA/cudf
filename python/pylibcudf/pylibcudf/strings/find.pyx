@@ -1,13 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport find as cpp_find
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -23,7 +28,7 @@ cpdef Column find(
     ColumnOrScalar target,
     size_type start=0,
     size_type stop=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Returns a column of character position values where the target string is
@@ -62,19 +67,24 @@ cpdef Column find(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
+    cdef column_view c_target
     if ColumnOrScalar is Column:
+        c_input = input.view()
+        c_target = target.view()
         with nogil:
             result = cpp_find.find(
-                input.view(),
-                target.view(),
+                c_input,
+                c_target,
                 start,
                 _cs,
                 mr.get_mr()
             )
     elif ColumnOrScalar is Scalar:
+        c_input = input.view()
         with nogil:
             result = cpp_find.find(
-                input.view(),
+                c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 start,
                 stop,
@@ -92,7 +102,7 @@ cpdef Column rfind(
     Scalar target,
     size_type start=0,
     size_type stop=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -124,9 +134,10 @@ cpdef Column rfind(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
     with nogil:
         result = cpp_find.rfind(
-            input.view(),
+            c_input,
             dereference(<string_scalar*>(target.c_obj.get())),
             start,
             stop,
@@ -139,7 +150,7 @@ cpdef Column rfind(
 cpdef Column contains(
     Column input,
     ColumnOrScalar target,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -175,18 +186,23 @@ cpdef Column contains(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
+    cdef column_view c_target
     if ColumnOrScalar is Column:
+        c_input = input.view()
+        c_target = target.view()
         with nogil:
             result = cpp_find.contains(
-                input.view(),
-                target.view(),
+                c_input,
+                c_target,
                 _cs,
                 mr.get_mr()
             )
     elif ColumnOrScalar is Scalar:
+        c_input = input.view()
         with nogil:
             result = cpp_find.contains(
-                input.view(),
+                c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
                 mr.get_mr()
@@ -200,7 +216,7 @@ cpdef Column contains(
 cpdef Column starts_with(
     Column input,
     ColumnOrScalar target,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -236,19 +252,24 @@ cpdef Column starts_with(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
+    cdef column_view c_target
 
     if ColumnOrScalar is Column:
+        c_input = input.view()
+        c_target = target.view()
         with nogil:
             result = cpp_find.starts_with(
-                input.view(),
-                target.view(),
+                c_input,
+                c_target,
                 _cs,
                 mr.get_mr()
             )
     elif ColumnOrScalar is Scalar:
+        c_input = input.view()
         with nogil:
             result = cpp_find.starts_with(
-                input.view(),
+                c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
                 mr.get_mr()
@@ -261,7 +282,7 @@ cpdef Column starts_with(
 cpdef Column ends_with(
     Column input,
     ColumnOrScalar target,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -296,18 +317,23 @@ cpdef Column ends_with(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
+    cdef column_view c_target
     if ColumnOrScalar is Column:
+        c_input = input.view()
+        c_target = target.view()
         with nogil:
             result = cpp_find.ends_with(
-                input.view(),
-                target.view(),
+                c_input,
+                c_target,
                 _cs,
                 mr.get_mr()
             )
     elif ColumnOrScalar is Scalar:
+        c_input = input.view()
         with nogil:
             result = cpp_find.ends_with(
-                input.view(),
+                c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
                 mr.get_mr()

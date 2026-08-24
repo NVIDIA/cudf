@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import zoneinfo
@@ -11,7 +11,7 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core.column.decimal import Decimal32Column, Decimal64Column
+from cudf.core.column.decimal import DecimalColumn
 from cudf.core.column.numerical import NumericalColumn
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
@@ -83,7 +83,7 @@ def test_string_astype_object_pd_na_pandas_compat(dtype):
     with cudf.option_context("mode.pandas_compatible", True):
         with pytest.raises(
             NotImplementedError,
-            match="Casting nullable string columns with pd.NA to object",
+            match=r"Casting nullable string columns with pd.NA to object",
         ):
             sr.astype(object)
 
@@ -484,6 +484,72 @@ def test_typecast_to_different_datetime_resolutions(datetime_types_as_str):
     np_data = np.array(pd_data).astype(datetime_types_as_str)
     gdf_series = cudf.Series(pd_data).astype(datetime_types_as_str)
     np.testing.assert_equal(np_data, gdf_series.to_numpy())
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        np.array(["2263-01-01"], dtype="datetime64[s]"),
+        np.array(["1600-01-01"], dtype="datetime64[s]"),
+        np.array(["2263-01-01", "NaT"], dtype="datetime64[s]"),
+    ],
+    ids=["above-range", "below-range", "with-null"],
+)
+def test_typecast_datetime_narrowing_out_of_bounds(data):
+    # Casting to a finer resolution whose int64 range cannot hold the
+    # values must raise like pandas instead of wrapping around.
+    psr = pd.Series(data)
+    gsr = cudf.Series(data)
+    assert_exceptions_equal(
+        lfunc=psr.astype,
+        rfunc=gsr.astype,
+        lfunc_args_and_kwargs=(["datetime64[ns]"],),
+        rfunc_args_and_kwargs=(["datetime64[ns]"],),
+    )
+
+
+def test_typecast_datetime_narrowing_in_bounds():
+    # The bounds check is relative to the target unit: year 9999 fits in
+    # seconds and microseconds, just not nanoseconds.
+    data = [datetime.date(9999, 12, 31)]
+    psr = pd.Series(data, dtype="datetime64[s]")
+    gsr = cudf.Series(data, dtype="datetime64[s]")
+    assert_eq(psr.astype("datetime64[us]"), gsr.astype("datetime64[us]"))
+
+    # All-null columns can always be narrowed.
+    all_null = np.array(["NaT", "NaT"], dtype="datetime64[s]")
+    assert_eq(
+        pd.Series(all_null).astype("datetime64[ns]"),
+        cudf.Series(all_null).astype("datetime64[ns]"),
+    )
+
+
+def test_typecast_datetime_tz_narrowing_out_of_bounds():
+    data = np.array(["2263-01-01"], dtype="datetime64[s]")
+    psr = pd.Series(data).dt.tz_localize("UTC")
+    gsr = cudf.Series(data).dt.tz_localize("UTC")
+    target = pd.DatetimeTZDtype("ns", "UTC")
+    assert_exceptions_equal(
+        lfunc=psr.astype,
+        rfunc=gsr.astype,
+        lfunc_args_and_kwargs=([target],),
+        rfunc_args_and_kwargs=([target],),
+    )
+
+
+def test_string_astype_datetime_tz():
+    target = pd.DatetimeTZDtype("ns", "UTC")
+
+    data = ["2000-01-01"]
+    assert_eq(pd.Series(data).astype(target), cudf.Series(data).astype(target))
+
+    out_of_bounds = ["2263-01-01"]
+    assert_exceptions_equal(
+        lfunc=pd.Series(out_of_bounds).astype,
+        rfunc=cudf.Series(out_of_bounds).astype,
+        lfunc_args_and_kwargs=([target],),
+        rfunc_args_and_kwargs=([target],),
+    )
 
 
 @pytest.mark.parametrize(
@@ -1144,10 +1210,165 @@ def test_series_astype_null_cases():
 
 
 def test_series_astype_null_categorical():
-    sr = cudf.Series([None, None, None], dtype="category")
-    expect = cudf.Series([None, None, None], dtype="int32")
-    got = sr.astype("int32")
-    assert_eq(expect, got)
+    # A null-containing categorical cannot be cast to a non-nullable integer
+    # dtype, matching pandas (the categories are promoted to float).
+    psr = pd.Series([None, None, None], dtype="category")
+    gsr = cudf.Series([None, None, None], dtype="category")
+    assert_exceptions_equal(
+        psr.astype,
+        gsr.astype,
+        (["int32"],),
+        (["int32"],),
+    )
+
+
+# Converting a categorical with nulls to a non-nullable numpy integer dtype
+# raises, matching pandas.
+@pytest.mark.parametrize(
+    "data",
+    [
+        [1, 2, None],
+        [1, 2, 3, None, None],
+        [None, None, None],
+    ],
+)
+def test_categorical_astype_nan_to_int_pandas_compat(
+    data, integer_types_as_str
+):
+    psr = pd.Series(data, dtype="category")
+    gsr = cudf.Series(data, dtype="category")
+    assert_exceptions_equal(
+        psr.astype,
+        gsr.astype,
+        ([integer_types_as_str],),
+        ([integer_types_as_str],),
+    )
+
+
+def test_categorical_astype_nan_to_int_via_np_dtype_pandas_compat(
+    integer_types_as_str,
+):
+    psr = pd.Series([1, 2, None], dtype="category")
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    assert_exceptions_equal(
+        psr.astype,
+        gsr.astype,
+        ([np.dtype(integer_types_as_str)],),
+        ([np.dtype(integer_types_as_str)],),
+    )
+
+
+@pytest.mark.parametrize("dtype", ["bool", np.dtype("bool")])
+def test_categorical_astype_nan_to_bool_pandas_compat_deviation(dtype):
+    # cuDF intentionally deviates from pandas here. Casting a null-containing
+    # categorical to ``bool``:
+    #   * pandas promotes to ``object`` dtype, e.g. ``[True, True, nan]``
+    #   * cuDF has no object-backed bool, so it keeps a nullable ``bool``
+    #     column, e.g. ``[True, True, <NA>]``
+    psr = pd.Series([1, 2, None], dtype="category")
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    got = gsr.astype(dtype)
+    # Confirm pandas' (divergent) object-dtype behavior so this test fails if
+    # pandas ever changes and the deviation needs revisiting.
+    assert psr.astype(dtype).dtype == object
+    # cuDF's intentional nullable-bool result.
+    assert_eq(got, cudf.Series([True, True, None], dtype="bool"))
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_categorical_astype_nan_to_float_pandas_compat(dtype):
+    psr = pd.Series([1, 2, None], dtype="category")
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    assert_eq(psr.astype(dtype), gsr.astype(dtype))
+
+
+def test_categorical_astype_no_nulls_int_pandas_compat(integer_types_as_str):
+    psr = pd.Series([1, 2, 3], dtype="category")
+    gsr = cudf.Series([1, 2, 3], dtype="category")
+    assert_eq(
+        psr.astype(integer_types_as_str),
+        gsr.astype(integer_types_as_str),
+    )
+
+
+def test_categorical_astype_no_nulls_bool_pandas_compat():
+    psr = pd.Series([1, 2, 3], dtype="category")
+    gsr = cudf.Series([1, 2, 3], dtype="category")
+    assert_eq(psr.astype("bool"), gsr.astype("bool"))
+
+
+def test_categorical_astype_nan_to_int_default_mode(integer_types_as_str):
+    # Casting a null-containing categorical to a non-nullable integer dtype
+    # raises like pandas regardless of ``mode.pandas_compatible``.
+    psr = pd.Series([1, 2, None], dtype="category")
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    assert_exceptions_equal(
+        psr.astype,
+        gsr.astype,
+        ([integer_types_as_str],),
+        ([integer_types_as_str],),
+    )
+
+
+def test_categorical_astype_nan_to_bool_default_mode():
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    assert_eq(
+        gsr.astype("bool"), cudf.Series([True, True, None], dtype="bool")
+    )
+
+
+@pytest.mark.parametrize(
+    "ext_dtype",
+    [
+        pd.Int8Dtype(),
+        pd.Int16Dtype(),
+        pd.Int32Dtype(),
+        pd.Int64Dtype(),
+        pd.UInt8Dtype(),
+        pd.UInt16Dtype(),
+        pd.UInt32Dtype(),
+        pd.UInt64Dtype(),
+    ],
+)
+def test_categorical_astype_nan_to_nullable_extension_pandas_compat(ext_dtype):
+    psr = pd.Series([1, 2, None], dtype="category")
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    assert_eq(psr.astype(ext_dtype), gsr.astype(ext_dtype))
+
+
+@pytest.mark.parametrize(
+    "pa_type",
+    [pa.int8(), pa.int64(), pa.uint32(), pa.bool_()],
+)
+def test_categorical_astype_nan_to_arrow_pandas_compat(pa_type):
+    arrow_dtype = pd.ArrowDtype(pa_type)
+    psr = pd.Series([1, 2, None], dtype="category")
+    gsr = cudf.Series([1, 2, None], dtype="category")
+    assert_eq(psr.astype(arrow_dtype), gsr.astype(arrow_dtype))
+
+
+@pytest.mark.parametrize("dtype", ["int8", "int64", "uint32"])
+def test_categoricalindex_astype_nan_to_int_pandas_compat(dtype):
+    pi = pd.CategoricalIndex([1, 2, None])
+    gi = cudf.CategoricalIndex([1, 2, None])
+    assert_exceptions_equal(
+        pi.astype,
+        gi.astype,
+        ([dtype],),
+        ([dtype],),
+    )
+
+
+def test_categoricalindex_astype_nan_to_bool_pandas_compat():
+    gi = cudf.CategoricalIndex([1, 2, None])
+    got = gi.astype("bool")
+    assert_eq(got, cudf.Index([True, True, None], dtype="bool"))
+
+
+def test_categoricalindex_astype_nan_to_float_pandas_compat():
+    pi = pd.CategoricalIndex([1, 2, None])
+    gi = cudf.CategoricalIndex([1, 2, None])
+    assert_eq(pi.astype("float64"), gi.astype("float64"))
 
 
 @pytest.mark.parametrize("precision, scale", [(7, 2), (11, 4), (18, 9)])
@@ -1172,7 +1393,7 @@ def test_typecast_from_float_to_decimal(
     request.applymarker(
         pytest.mark.xfail(
             float_types_as_str == "float32" and to_dtype.precision > 12,
-            reason="https://github.com/rapidsai/cudf/issues/14169",
+            reason="https://github.com/NVIDIA/cudf/issues/14169",
         )
     )
     got = data.astype(float_types_as_str)
@@ -1180,7 +1401,7 @@ def test_typecast_from_float_to_decimal(
     pa_arr = got.to_arrow().cast(
         pa.decimal64(to_dtype.precision, to_dtype.scale)
     )
-    expected = cudf.Series._from_column(Decimal64Column.from_arrow(pa_arr))
+    expected = cudf.Series._from_column(DecimalColumn.from_arrow(pa_arr))
 
     got = got.astype(to_dtype)
 
@@ -1212,7 +1433,7 @@ def test_typecast_from_int_to_decimal(integer_types_as_str, precision, scale):
         .cast("float64")
         .cast(pa.decimal64(to_dtype.precision, to_dtype.scale))
     )
-    expected = cudf.Series._from_column(Decimal64Column.from_arrow(pa_arr))
+    expected = cudf.Series._from_column(DecimalColumn.from_arrow(pa_arr))
 
     got = got.astype(to_dtype)
 
@@ -1267,12 +1488,12 @@ def test_typecast_to_from_decimal(from_dtype, to_dtype):
         pa_arr = s.to_arrow().cast(
             pa.decimal32(to_dtype.precision, to_dtype.scale), safe=False
         )
-        expected = cudf.Series._from_column(Decimal32Column.from_arrow(pa_arr))
+        expected = cudf.Series._from_column(DecimalColumn.from_arrow(pa_arr))
     elif isinstance(to_dtype, cudf.Decimal64Dtype):
         pa_arr = s.to_arrow().cast(
             pa.decimal64(to_dtype.precision, to_dtype.scale), safe=False
         )
-        expected = cudf.Series._from_column(Decimal64Column.from_arrow(pa_arr))
+        expected = cudf.Series._from_column(DecimalColumn.from_arrow(pa_arr))
 
     with expect_warning_if(to_dtype.scale < s.dtype.scale, UserWarning):
         got = s.astype(to_dtype)
@@ -1354,16 +1575,19 @@ def test_categorical_typecast(data, categories):
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
-        ([1], np.uint8),
-        ([1, None], np.uint8),
-        (np.arange(np.iinfo(np.int8).max), np.uint8),
-        (np.append(np.arange(np.iinfo(np.int8).max), [None]), np.uint8),
-        (np.arange(np.iinfo(np.int16).max), np.uint16),
-        (np.append(np.arange(np.iinfo(np.int16).max), [None]), np.uint16),
-        (np.arange(np.iinfo(np.uint8).max), np.uint8),
-        (np.append(np.arange(np.iinfo(np.uint8).max), [None]), np.uint8),
-        (np.arange(np.iinfo(np.uint16).max), np.uint16),
-        (np.append(np.arange(np.iinfo(np.uint16).max), [None]), np.uint16),
+        # cat.codes uses a signed dtype matching pandas (which widens
+        # int8 -> int16 -> int32 once the category count reaches each type's
+        # max), so e.g. 127 categories -> int16 and 32767 categories -> int32.
+        ([1], np.int8),
+        ([1, None], np.int8),
+        (np.arange(np.iinfo(np.int8).max), np.int16),
+        (np.append(np.arange(np.iinfo(np.int8).max), [None]), np.int16),
+        (np.arange(np.iinfo(np.int16).max), np.int32),
+        (np.append(np.arange(np.iinfo(np.int16).max), [None]), np.int32),
+        (np.arange(np.iinfo(np.uint8).max), np.int16),
+        (np.append(np.arange(np.iinfo(np.uint8).max), [None]), np.int16),
+        (np.arange(np.iinfo(np.uint16).max), np.int32),
+        (np.append(np.arange(np.iinfo(np.uint16).max), [None]), np.int32),
     ],
 )
 def test_astype_dtype(values, expected):
@@ -1402,3 +1626,68 @@ def test_astype_aware_to_naive_raises():
         cudf_ser.astype("datetime64[ns]")
     with pytest.raises(TypeError):
         pd_ser.astype("datetime64[ns]")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["123_1"],
+        ["1_2", "1_000", "20_000"],
+        ["1_2_3"],
+        ["123", "456"],
+    ],
+)
+@pytest.mark.parametrize("dtype", ["int32", "int64", "uint64"])
+def test_string_astype_int_pep515_underscores(data, dtype):
+    # https://github.com/NVIDIA/cudf/issues/12047
+    # Python (PEP 515) allows underscores between digits, so pandas
+    # parses "123_1" as 1231; cudf should match.
+    got = cudf.Series(data).astype(dtype)
+    expect = pd.Series(data).astype(dtype)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["_12"],
+        ["12_"],
+        ["1__2"],
+        ["1_2", "_3"],
+    ],
+)
+@pytest.mark.parametrize("dtype", ["int32", "int64", "uint64"])
+def test_string_astype_int_invalid_underscores_raises(data, dtype):
+    # https://github.com/NVIDIA/cudf/issues/12047
+    # Underscores not surrounded by digits are invalid (PEP 515);
+    # both pandas and cudf must reject them.
+    assert_exceptions_equal(
+        lfunc=pd.Series(data).astype,
+        rfunc=cudf.Series(data).astype,
+        lfunc_args_and_kwargs=((), {"dtype": dtype}),
+        rfunc_args_and_kwargs=((), {"dtype": dtype}),
+    )
+
+
+@pytest.mark.parametrize(
+    "data, src_dtype, masked_dtype",
+    [
+        ([1.0, 2.0, float("nan")], "float64", pd.Float64Dtype()),
+        ([1, 2, 3], "int64", pd.Int64Dtype()),
+    ],
+)
+def test_astype_masked_equivalent_dtype_no_source_mutation(
+    data, src_dtype, masked_dtype
+):
+    # casting to the equivalent masked dtype takes a short-circuit path;
+    # it must not mutate the source column's dtype in place (the column
+    # is shared with the source Series/frame)
+    ser = cudf.Series(data, dtype=src_dtype)
+    result = ser.astype(masked_dtype)
+
+    assert ser.dtype == np.dtype(src_dtype)
+    assert result.dtype == masked_dtype
+    assert_eq(
+        result.to_pandas(),
+        pd.Series(data, dtype=src_dtype).astype(masked_dtype),
+    )

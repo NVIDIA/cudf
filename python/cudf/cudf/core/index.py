@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -7,6 +7,7 @@ import datetime
 import itertools
 import operator
 import warnings
+from collections import Counter
 from collections.abc import Hashable, MutableMapping
 from functools import cache, cached_property
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
@@ -15,6 +16,7 @@ import cupy
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from pandas.core.tools.times import to_time
 
 import pylibcudf as plc
 
@@ -32,6 +34,7 @@ from cudf.core.column import (
     CategoricalColumn,
     ColumnBase,
     DatetimeColumn,
+    DatetimeTZColumn,
     IntervalColumn,
     NumericalColumn,
     StringColumn,
@@ -80,11 +83,11 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
     from datetime import tzinfo
 
-    from cudf._typing import ColumnLike, Dtype
+    from cudf._typing import ColumnLike, Dtype, DtypeObj
     from cudf.core.dataframe import DataFrame
     from cudf.core.multiindex import MultiIndex
     from cudf.core.series import Series
-    from cudf.core.tools.datetimes import DateOffset, MonthEnd, YearEnd
+    from cudf.core.tools.datetimes import DateOffset
 
 
 def ensure_index(index_like: Any, nan_as_null=no_default) -> Index:
@@ -102,6 +105,39 @@ def _get_result_name(
     left_name: Hashable, right_name: Hashable
 ) -> Hashable | None:
     return left_name if _is_same_name(left_name, right_name) else None
+
+
+def _tag_levels(names: list[Hashable]) -> list[tuple[Hashable, int]]:
+    """Tag each level name with its occurrence index.
+
+    Identifying a level by ``(name, occurrence)`` lets duplicate level names be
+    matched by their position among equal names instead of collapsing onto a
+    single join key. The tags are unique by construction.
+    """
+    seen: Counter = Counter()
+    tags = []
+    for name in names:
+        tags.append((name, seen[name]))
+        seen[name] += 1
+    return tags
+
+
+def _join_label(
+    side: str,
+    pos: int,
+    tag: tuple[Hashable, int],
+    overlap_index: dict[tuple[Hashable, int], int],
+    key_labels: list[str],
+) -> str:
+    """Map a level to its merge-key label.
+
+    Shared levels get a stable ``__join_key_<i>`` label so merge keys line up;
+    levels unique to one side get a distinct placeholder so non-key columns
+    never collide.
+    """
+    if tag in overlap_index:
+        return key_labels[overlap_index[tag]]
+    return f"__{side}_{pos}"
 
 
 def _lexsorted_equal_range(
@@ -142,7 +178,7 @@ def _lexsorted_equal_range(
     )
     upper_bound = plc.copying.get_element(plc_upper_bound, 0).to_py()
 
-    return cast(int, lower_bound), cast(int, upper_bound), sort_inds
+    return cast("int", lower_bound), cast("int", upper_bound), sort_inds
 
 
 def _index_from_data(data: MutableMapping, name: Any = no_default):
@@ -774,26 +810,83 @@ class Index(SingleColumnFrame):
                 f"[None, False, True]; {sort} was passed."
             )
 
-        if cudf.get_option("mode.pandas_compatible"):
+        # pandas ignores the dtype of a zero-length RangeIndex or
+        # object-dtype operand when reconciling dtypes for union
+        # (pandas-dev/pandas#60797), so such operands must neither
+        # trigger mixed-type errors nor dtype promotion.
+        dtype_ignored = any(
+            len(idx) == 0
+            and (isinstance(idx, RangeIndex) or idx.dtype == np.dtype(object))
+            for idx in (self, other)
+        )
+
+        if not dtype_ignored:
             # Cache dtype.kind to avoid repeated attribute access
             self_kind = self.dtype.kind
             other_kind = other.dtype.kind
+
+            if (
+                (self_kind in "Mm" or other_kind in "Mm")
+                and self_kind != other_kind
+                and not isinstance(self.dtype, CategoricalDtype)
+                and not isinstance(other.dtype, CategoricalDtype)
+            ):
+                # datetime/timedelta + any other kind results in object
+                # dtype for union in pandas, which cudf cannot represent;
+                # the non-empty merge path already refuses these pairs.
+                # Categorical operands are excluded because the merge
+                # decategorizes them, matching pandas.
+                raise MixedTypeError("Cannot perform union with mixed types")
+            if (
+                self_kind == "M"
+                and other_kind == "M"
+                and isinstance(self.dtype, pd.DatetimeTZDtype)
+                != isinstance(other.dtype, pd.DatetimeTZDtype)
+            ):
+                # tz-naive + tz-aware results in object dtype in pandas.
+                raise MixedTypeError("Cannot perform union with mixed types")
 
             if (self_kind == "b" and other_kind != "b") or (
                 self_kind != "b" and other_kind == "b"
             ):
                 # Bools + other types will result in mixed type.
-                # This is not yet consistent in pandas and specific to APIs.
+                # This is not yet consistent in pandas and specific to
+                # APIs.
                 raise MixedTypeError("Cannot perform union with mixed types")
             if (self_kind == "i" and other_kind == "u") or (
                 self_kind == "u" and other_kind == "i"
             ):
-                # signed + unsigned types will result in
-                # mixed type for union in pandas.
+                # signed + unsigned types will result in mixed type for
+                # union in pandas, which cudf cannot represent.
                 raise MixedTypeError("Cannot perform union with mixed types")
+
+        # pandas reconciles mismatched dtypes to their common type before
+        # short-circuiting on an empty operand, so the result dtype must
+        # not depend on which operand is empty.
+        promote_dtype: DtypeObj | None = None
+        if not dtype_ignored and self.dtype != other.dtype:
+            if is_dtype_obj_numeric(
+                self.dtype, include_decimal=False
+            ) and is_dtype_obj_numeric(other.dtype, include_decimal=False):
+                common_dtype = find_common_type([self.dtype, other.dtype])
+                # Mixed-backend pairs can only reconcile to object; never
+                # promote numeric values through a lossy object cast.
+                if is_dtype_obj_numeric(common_dtype, include_decimal=False):
+                    promote_dtype = common_dtype
+            elif (
+                isinstance(self.dtype, np.dtype)
+                and isinstance(other.dtype, np.dtype)
+                and self.dtype.kind == other.dtype.kind
+                and self.dtype.kind in "Mm"
+            ):
+                # Same-kind datetime/timedelta dtypes only differ in
+                # unit; reconcile to the common resolution.
+                promote_dtype = find_common_type([self.dtype, other.dtype])
 
         if not len(other):
             res = self._get_reconciled_name_object(other)
+            if promote_dtype is not None:
+                res = res.astype(promote_dtype)
             if sort:
                 return res.sort_values()  # type: ignore[return-value]
             return res
@@ -801,12 +894,14 @@ class Index(SingleColumnFrame):
             common_dtype = find_common_type([self.dtype, other.dtype])
             res = self._get_reconciled_name_object(other).astype(common_dtype)
             if sort:
-                return res.sort_values()  # type: ignore[return-value]
+                return res.sort_values()
             return res
         elif not len(self):
             res = other._get_reconciled_name_object(self)
+            if promote_dtype is not None:
+                res = res.astype(promote_dtype)
             if sort:
-                return res.sort_values()  # type: ignore[return-value]
+                return res.sort_values()
             return res
 
         result = self._union(other, sort=sort)
@@ -814,10 +909,25 @@ class Index(SingleColumnFrame):
         return result
 
     def _intersection(self, other, sort: bool | None = None) -> Index:
+        lcol = self.unique()._column
+        rcol = other.unique()._column
+        if (
+            is_dtype_obj_numeric(self.dtype, include_decimal=False)
+            and is_dtype_obj_numeric(other.dtype, include_decimal=False)
+            and self.dtype != other.dtype
+        ):
+            # pandas casts mismatched numeric dtypes to their common type
+            # for set operations ("cast to float, not object"); cast up
+            # front so the merge's key-dtype rules (which keep the left
+            # operand's dtype for inner joins) don't leak the left dtype
+            # into the result.
+            common_dtype = find_common_type([self.dtype, other.dtype])
+            lcol = lcol.astype(common_dtype)
+            rcol = rcol.astype(common_dtype)
         intersection_result = _index_from_data(
-            cudf.DataFrame._from_data({"None": self.unique()._column})
+            cudf.DataFrame._from_data({"None": lcol})
             .merge(
-                cudf.DataFrame._from_data({"None": other.unique()._column}),
+                cudf.DataFrame._from_data({"None": rcol}),
                 how="inner",
                 on="None",
             )
@@ -1015,7 +1125,7 @@ class Index(SingleColumnFrame):
         elif self.equals(other):
             res = self[:0]._get_reconciled_name_object(other).unique()
             if sort:
-                return res.sort_values()  # type: ignore[return-value]
+                return res.sort_values()
             return res
 
         res_name = _get_result_name(self.name, other.name)
@@ -1108,8 +1218,7 @@ class Index(SingleColumnFrame):
         sorted by.
 
         >>> idx.sort_values(ascending=False, return_indexer=True)
-        (Index([1000, 100, 10, 1], dtype='int64'), array([3, 1, 0, 2],
-                                                            dtype=int32))
+        (Index([1000, 100, 10, 1], dtype='int64'), array([3, 1, 0, 2]))
 
         Sorting values in a MultiIndex:
 
@@ -1209,6 +1318,17 @@ class Index(SingleColumnFrame):
             if not is_scalar(level):
                 raise ValueError("level should be an int or a label only")
 
+        if level is None and self_is_multi and other_is_multi:
+            # Joining two MultiIndexes joins on the levels they have in common
+            # (mirroring pandas' Index._join_multi). When the level names match
+            # exactly the join reduces to a set operation over the full tuples.
+            if list(self.names) == list(other.names):
+                return self._join_same_level_multi(other, how, sort)
+            # pandas ignores ``sort`` for differing-name MultiIndex joins
+            # (its Index._join_multi is invoked without it), sorting only outer
+            # joins, so ``sort`` is intentionally not forwarded here.
+            return self._join_multi(other, how)
+
         if other_is_multi:
             if how == "left":
                 how = "right"
@@ -1256,6 +1376,115 @@ class Index(SingleColumnFrame):
             idx = _index_from_data(output._data)
             idx.name = self.name if same_names else None
             return idx
+
+    @_performance_tracking
+    def _join_same_level_multi(self, other, how: str, sort: bool):
+        """Join two MultiIndexes that share the same level names.
+
+        With identical level names the join behaves like a set operation over
+        the full tuples, matching pandas' ``Index.join`` fast path.
+        """
+        # pandas always sorts the result of an outer join, regardless of
+        # ``sort``; for the other join types ``sort`` controls whether the
+        # join keys are ordered lexicographically.
+        sort = sort or how == "outer"
+        if how == "inner":
+            result = self.intersection(other, sort=False)
+        elif how == "outer":
+            return self.union(other).sort_values()
+        elif how == "left":
+            result = self.copy(deep=False)
+        elif how == "right":
+            result = other.copy(deep=False)
+        else:
+            raise ValueError(f"Invalid join type {how}")
+        return result.sort_values() if sort else result
+
+    @_performance_tracking
+    def _join_multi(self, other, how: str):
+        """Join two MultiIndexes with differing level names.
+
+        The join is performed on the levels the two indexes have in common and
+        the remaining levels are carried through, mirroring pandas'
+        ``Index._join_multi``. The resulting level order is ``self``'s levels
+        followed by ``other``'s unique levels (or the reverse for ``how`` of
+        ``"right"``). Like pandas, the result preserves the driving side's row
+        order except for ``how="outer"``, which is sorted lexicographically.
+        """
+        self_names = list(self.names)
+        other_names = list(other.names)
+
+        self_tags = _tag_levels(self_names)
+        other_tags = _tag_levels(other_names)
+        # ``self_tags`` are unique by construction, so this set only removes
+        # nothing; ``overlap`` stays an ordered list because ``overlap_index``
+        # below relies on self's level order.
+        other_tag_set = set(other_tags)
+        overlap = [tag for tag in self_tags if tag in other_tag_set]
+        if not overlap:
+            raise ValueError("cannot join with no overlapping index names")
+        overlap_index = {tag: i for i, tag in enumerate(overlap)}
+
+        key_labels = [f"__join_key_{i}" for i in range(len(overlap))]
+        left_labels = [
+            _join_label("l", i, tag, overlap_index, key_labels)
+            for i, tag in enumerate(self_tags)
+        ]
+        right_labels = [
+            _join_label("r", j, tag, overlap_index, key_labels)
+            for j, tag in enumerate(other_tags)
+        ]
+
+        left_df = cudf.DataFrame._from_data(
+            dict(zip(left_labels, self._columns, strict=True))
+        )
+        right_df = cudf.DataFrame._from_data(
+            dict(zip(right_labels, other._columns, strict=True))
+        )
+
+        # Preserve the row order of the side that drives the join; pandas only
+        # sorts the result for outer joins.
+        if how != "outer":
+            order_side = right_df if how == "right" else left_df
+            order_side["__join_order"] = cudf.Series(range(len(order_side)))
+
+        merged = left_df.merge(right_df, on=key_labels, how=how, sort=False)
+
+        if how == "outer":
+            merged = merged.sort_values(by=key_labels)
+        else:
+            merged = merged.sort_values(by="__join_order")
+
+        # Reassemble levels: the driving side's levels in full, then the other
+        # side's unique levels. The driving side is ``self`` except for
+        # ``how="right"``, which leads with ``other``.
+        if how == "right":
+            first_labels, first_names = right_labels, other_names
+            second_labels, second_names, second_tags = (
+                left_labels,
+                self_names,
+                self_tags,
+            )
+        else:
+            first_labels, first_names = left_labels, self_names
+            second_labels, second_names, second_tags = (
+                right_labels,
+                other_names,
+                other_tags,
+            )
+        ordered = list(zip(first_labels, first_names, strict=True))
+        ordered += [
+            (lbl, name)
+            for lbl, name, tag in zip(
+                second_labels, second_names, second_tags, strict=True
+            )
+            if tag not in overlap_index
+        ]
+
+        return cudf.MultiIndex.from_arrays(
+            [merged[lbl] for lbl, _ in ordered],
+            names=[name for _, name in ordered],
+        )
 
     def drop_duplicates(
         self,
@@ -1569,7 +1798,7 @@ class Index(SingleColumnFrame):
     def __sizeof__(self):
         return self.memory_usage(deep=True)
 
-    @cached_property  # type: ignore[explicit-override]
+    @cached_property
     @_performance_tracking
     def is_unique(self) -> bool:
         return self._column.is_unique
@@ -1692,8 +1921,12 @@ class Index(SingleColumnFrame):
 
         if not len(self):
             return self._return_get_indexer_result(result.values)
+
+        haystack = self._column
+        if isinstance(haystack.dtype, CategoricalDtype):
+            haystack = haystack._get_decategorized_column()
         try:
-            lcol, rcol = _match_join_keys(needle, self._column, "inner")
+            lcol, rcol = _match_join_keys(needle, haystack, "inner")
         except ValueError:
             return self._return_get_indexer_result(result.values)
 
@@ -1815,7 +2048,7 @@ class Index(SingleColumnFrame):
                 # and generate the repr separately and
                 # merge them.
                 pd_cats = pd.Categorical(
-                    preprocess.astype(preprocess.categories.dtype).to_pandas()
+                    preprocess._column._get_decategorized_column().to_pandas()
                 )
                 pd_preprocess = pd.CategoricalIndex(pd_cats)
                 data_repr = repr(pd_preprocess).split("\n")
@@ -1868,9 +2101,7 @@ class Index(SingleColumnFrame):
             and isinstance(self, DatetimeIndex)
             and self._freq is not None
         ):
-            keywords.append(
-                f"freq={self._freq._maybe_as_fast_pandas_offset().freqstr!r}"
-            )
+            keywords.append(f"freq={self._freq.freqstr!r}")
         joined_keywords = ", ".join(keywords)
         lines.append(f"{prior_to_dtype} {joined_keywords})")
         return "\n".join(lines)
@@ -2127,6 +2358,16 @@ class Index(SingleColumnFrame):
                 f"Requested level ({level}) does not match index name ({self.name})"
             )
 
+    def _level_index_from_level(self, level) -> int:
+        """
+        Return level index from given level name or index.
+
+        A flat index only ever has one level, so this validates ``level``
+        and returns 0.
+        """
+        self._validate_index_level(level)
+        return 0
+
     def unique(self, level: int | None = None) -> Self:
         if level is not None:
             self._validate_index_level(level)
@@ -2323,7 +2564,7 @@ class RangeIndex(Index):
 
     @property
     @_performance_tracking
-    def _data(self) -> ColumnAccessor:
+    def _data(self) -> ColumnAccessor:  # type: ignore[override]  # (RangeIndex materializes data lazily)
         return ColumnAccessor({self.name: self._column}, verify=False)
 
     @property
@@ -2557,27 +2798,41 @@ class RangeIndex(Index):
     def values(self) -> cupy.ndarray:
         return cupy.arange(self.start, self.stop, self.step)
 
-    @cached_property
     @_performance_tracking
-    def values_host(self) -> np.ndarray:
-        """
-        Return a numpy array from the RangeIndex.
+    def to_numpy(
+        self,
+        dtype: Dtype | None = None,
+        copy: bool = False,
+        na_value=None,
+    ) -> np.ndarray:
+        """Convert the RangeIndex to a NumPy array.
 
-        .. deprecated:: 26.04
-            `values_host` is deprecated and will be removed in a future version.
-            Use `to_numpy()` instead.
+        Parameters
+        ----------
+        dtype : str or :class:`numpy.dtype`, optional
+            The dtype to cast the result to. Defaults to the RangeIndex dtype.
+        copy : bool, default False
+            Whether to ensure that the returned value is not a view on
+            another array. Note that ``copy=False`` does not ensure that
+            ``to_numpy()`` is no-copy. Rather, ``copy=True`` ensures that
+            a copy is made, even if not strictly necessary.
+        na_value : Any, default None
+            Value to use for missing values. Since ``RangeIndex`` cannot
+            contain missing values, this parameter has no effect.
+
+        Returns
+        -------
+        numpy.ndarray
         """
-        warnings.warn(
-            "values_host is deprecated and will be removed in a future version. "
-            "Use to_numpy() instead.",
-            FutureWarning,
-            stacklevel=2,
+        return (
+            self._to_numpy(dtype, na_value).copy()
+            if copy
+            else self._to_numpy(dtype, na_value)
         )
-        return np.arange(self.start, self.stop, self.step)
 
-    @_performance_tracking
-    def to_numpy(self) -> np.ndarray:
-        return np.arange(self.start, self.stop, self.step)
+    @cache
+    def _to_numpy(self, dtype=None, na_value=None) -> np.ndarray:
+        return self.to_pandas().to_numpy(dtype=dtype, na_value=na_value)
 
     @_performance_tracking
     def to_cupy(self) -> cupy.ndarray:
@@ -2637,28 +2892,38 @@ class RangeIndex(Index):
             self._validate_index_level(level)
         return self.copy()
 
-    @_performance_tracking
-    def __mul__(self, other):
-        # Multiplication by raw ints must return a RangeIndex to match pandas.
-        if (
-            isinstance(other, (np.ndarray, cupy.ndarray))
-            and other.ndim == 0
-            and other.dtype.kind in "iu"
-        ):
-            other = other.item()
-        if isinstance(other, (int, np.integer)):
-            return RangeIndex(
-                self.start * other, self.stop * other, self.step * other
-            )
-        return self._as_int_index().__mul__(other)
-
-    @_performance_tracking
-    def __rmul__(self, other):
-        # Multiplication is commutative.
-        return self.__mul__(other)
+    _UFUNC_DUNDER_OPS = {
+        "add": ("__add__", "__radd__"),
+        "subtract": ("__sub__", "__rsub__"),
+        "multiply": ("__mul__", "__rmul__"),
+        "floor_divide": ("__floordiv__", "__rfloordiv__"),
+    }
 
     @_performance_tracking
     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+        # numpy operands enter through the ufunc protocol rather than the
+        # (reflected) dunder, e.g. ``np.int32(2) * RangeIndex``. Like pandas
+        # (``maybe_dispatch_ufunc_to_dunder_op``), route the shift/rescale
+        # ufuncs on a raw int through the regular binop path first so they
+        # preserve a range where possible.
+        if (
+            method == "__call__"
+            and not kwargs
+            and len(inputs) == 2
+            and (ops := self._UFUNC_DUNDER_OPS.get(ufunc.__name__)) is not None
+        ):
+            reflected = inputs[0] is not self
+            other = inputs[0] if reflected else inputs[1]
+            if (
+                isinstance(other, (int, np.integer))
+                # np.timedelta64 subclasses np.integer but is not a raw int
+                and not isinstance(other, np.timedelta64)
+            ) or (
+                isinstance(other, np.ndarray)
+                and other.ndim == 0
+                and other.dtype.kind in "iu"
+            ):
+                return self._binaryop(other, ops[reflected])
         return self._as_int_index().__array_ufunc__(
             ufunc, method, *inputs, **kwargs
         )
@@ -2846,11 +3111,22 @@ class RangeIndex(Index):
             return index
         # Evenly spaced values can return a
         # RangeIndex instead of a materialized Index.
-        if not index._column.has_nulls() and len(index) > 1:
-            uniques = cupy.unique(cupy.diff(index.values))
-            if len(uniques) == 1 and (diff := uniques[0].get()) != 0:
-                new_range = range(index[0], index[-1] + diff, diff)
-                return type(self)(new_range, name=index.name)
+        if not index._column.has_nulls():
+            if len(index) > 1:
+                uniques = cupy.unique(cupy.diff(index.values))
+                if len(uniques) == 1 and (diff := uniques[0].get()) != 0:
+                    new_range = range(index[0], index[-1] + diff, diff)
+                    return type(self)(new_range, name=index.name)
+            elif index.dtype == np.dtype(np.int64):
+                # 0- and 1-element results are always representable as a
+                # range, but only when int64: a narrower dtype means the
+                # result was deliberately materialized (e.g. under
+                # default_integer_bitwidth) and must be preserved.
+                if len(index) == 0:
+                    return type(self)(range(0), name=index.name)
+                start = int(index[0])
+                if start < np.iinfo(np.int64).max:
+                    return type(self)(range(start, start + 1), name=index.name)
         return index
 
     def sort_values(
@@ -2893,8 +3169,69 @@ class RangeIndex(Index):
         return self._as_int_index()._split(splits)
 
     def _binaryop(self, other, op: str):  # type: ignore[override]
-        # TODO: certain binops don't require materializing range index and
-        # could use some optimization.
+        # Ops with a raw int that shift or exactly rescale the range return
+        # a RangeIndex to match pandas (RangeIndex._arith_method and
+        # RangeIndex.__floordiv__); everything else materializes.
+        if (
+            isinstance(other, (np.ndarray, cupy.ndarray))
+            and other.ndim == 0
+            and other.dtype.kind in "iu"
+        ):
+            other = other.item()
+        if isinstance(other, (int, np.integer)) and not isinstance(
+            # np.timedelta64 subclasses np.integer but is not a raw int
+            other,
+            np.timedelta64,
+        ):
+            # The shift/rescale ops accept bools as 0/1, like pandas (whose
+            # fastpath only checks that the op *result* is integral, which a
+            # bool operand satisfies); ``__floordiv__`` matches pandas'
+            # ``is_integer`` check in rejecting them.
+            is_bool = isinstance(other, (bool, np.bool_))
+            other_int = int(other)
+            if op in {"__add__", "__radd__"}:
+                return RangeIndex(
+                    self.start + other_int,
+                    self.stop + other_int,
+                    self.step,
+                    name=self.name,
+                )
+            elif op == "__sub__":
+                return RangeIndex(
+                    self.start - other_int,
+                    self.stop - other_int,
+                    self.step,
+                    name=self.name,
+                )
+            elif op == "__rsub__":
+                return RangeIndex(
+                    other_int - self.start,
+                    other_int - self.stop,
+                    -self.step,
+                    name=self.name,
+                )
+            elif op in {"__mul__", "__rmul__"}:
+                if other_int != 0:
+                    return RangeIndex(
+                        self.start * other_int,
+                        self.stop * other_int,
+                        self.step * other_int,
+                        name=self.name,
+                    )
+                # Rescaling by 0 (or False) would collapse the step; match
+                # pandas by materializing to an int64 index of zeros.
+                other = other_int
+            elif op == "__floordiv__" and other_int != 0 and not is_bool:
+                if len(self) == 0 or (
+                    self.start % other_int == 0 and self.step % other_int == 0
+                ):
+                    start = self.start // other_int
+                    step = self.step // other_int
+                    stop = start + len(self) * step
+                    return RangeIndex(start, stop, step or 1, name=self.name)
+                elif len(self) == 1:
+                    start = self.start // other_int
+                    return RangeIndex(start, start + 1, 1, name=self.name)
         return self._as_int_index()._binaryop(other, op=op)
 
     def join(
@@ -3076,6 +3413,21 @@ class RangeIndex(Index):
         return (type(self), self.start, self.stop, self.step)
 
 
+_PERIODS_PER_DAY = {
+    "s": 86_400,
+    "ms": 86_400_000,
+    "us": 86_400_000_000,
+    "ns": 86_400_000_000_000,
+}
+
+
+def _time_to_micros(value: datetime.time) -> int:
+    """Return the number of microseconds since midnight for ``value``."""
+    return (
+        value.hour * 3600 + value.minute * 60 + value.second
+    ) * 1_000_000 + value.microsecond
+
+
 class DatetimeIndex(Index):
     """
     Immutable , ordered and sliceable sequence of datetime64 data,
@@ -3210,11 +3562,8 @@ class DatetimeIndex(Index):
         if yearfirst is not False:
             raise NotImplementedError("yearfirst == True is not yet supported")
 
-        if freq is None:
-            if isinstance(data, type(self)):
-                freq = data.freq
-            if was_pd_index and data.freq is not None:
-                freq = data.freq.freqstr
+        if freq is None and isinstance(data, (type(self), pd.DatetimeIndex)):
+            freq = data.freq
 
         name = _getdefault_name(data, name=name)
 
@@ -3228,7 +3577,18 @@ class DatetimeIndex(Index):
             if dtype.kind != "M":
                 raise TypeError("dtype must be a datetime type")
             elif not isinstance(data.dtype, pd.DatetimeTZDtype):
-                data = data.astype(dtype)
+                if (
+                    isinstance(dtype, pd.DatetimeTZDtype)
+                    and data.dtype.kind not in "iuf"
+                ):
+                    # pandas interprets timezone-naive strings/datetimes as
+                    # wall time in the target timezone (numeric data stays
+                    # interpreted as UTC epoch values)
+                    data = data.astype(
+                        np.dtype(f"datetime64[{dtype.unit}]")
+                    ).tz_localize(str(dtype.tz))
+                else:
+                    data = data.astype(dtype)
         elif data.dtype.kind != "M":
             if is_dtype_obj_string(data.dtype):
                 # Pandas's array_to_datetime falls back to [s] when no
@@ -3257,22 +3617,32 @@ class DatetimeIndex(Index):
     @_performance_tracking
     def serialize(self):
         header, frames = super().serialize()
-        if self.freq is not None:
+        if self._freq is None:
+            header["freq"] = None
+        elif type(self._freq) is pd.DateOffset:
+            # generic offsets have no parseable freqstr; store the kwds
+            # plus n/normalize, which .kwds omits
             header["freq"] = {
-                "kwds": self.freq.kwds,
+                "kwds": self._freq.kwds,
+                "n": self._freq.n,
+                "normalize": self._freq.normalize,
             }
         else:
-            header["freq"] = None
+            header["freq"] = self._freq.freqstr
         return header, frames
 
     @classmethod
     @_performance_tracking
     def deserialize(cls, header, frames):
         obj = super().deserialize(header, frames)
-        if (header_payload := header.get("freq")) is not None:
-            freq = cudf.DateOffset(**header_payload["kwds"])
+        if isinstance(header_payload := header.get("freq"), dict):
+            freq = pd.DateOffset(
+                n=header_payload.get("n", 1),
+                normalize=header_payload.get("normalize", False),
+                **header_payload["kwds"],
+            )
         else:
-            freq = None
+            freq = header_payload
 
         obj._freq = _validate_freq(freq)
         return obj
@@ -3340,7 +3710,7 @@ class DatetimeIndex(Index):
     @_performance_tracking
     def copy(self, name=None, deep=False):
         idx_copy = super().copy(name=name, deep=deep)
-        idx_copy._freq = _validate_freq(self._freq)
+        idx_copy._freq = self._freq
         return idx_copy
 
     def as_unit(self, unit: str, round_ok: bool = True) -> Self:
@@ -3383,6 +3753,84 @@ class DatetimeIndex(Index):
             name=self.name,
         )
 
+    @_performance_tracking
+    def indexer_between_time(
+        self,
+        start_time,
+        end_time,
+        include_start: bool = True,
+        include_end: bool = True,
+    ) -> cupy.ndarray:
+        """
+        Return index positions of values between particular times of day.
+
+        Parameters
+        ----------
+        start_time, end_time : datetime.time, str
+            Time passed either as object (datetime.time) or as string in
+            appropriate format ("%H:%M", "%H%M", "%I:%M%p", "%I%M%p",
+            "%H:%M:%S", "%H%M%S", "%I:%M:%S%p", "%I%M%S%p").
+        include_start : bool, default True
+        include_end : bool, default True
+
+        Returns
+        -------
+        cupy.ndarray
+            Integer positions of values between ``start_time`` and
+            ``end_time``. Returned as a device array, following cuDF
+            convention (pandas returns a host ``numpy.ndarray``).
+        """
+        start_time = to_time(start_time)
+        end_time = to_time(end_time)
+
+        # Microseconds since midnight for each value, computed the way pandas'
+        # DatetimeIndex._get_time_micros does: take the integer view of the
+        # local wall-clock timestamps, reduce it modulo one day, and scale the
+        # remainder to microseconds (truncating any finer resolution). Using
+        # the local time makes tz-aware indexes match pandas. NaT entries
+        # become nulls, filled with the -1 sentinel pandas also uses; it sits
+        # below every real time-of-day, so NaT is excluded from an ordinary
+        # range and (as in pandas) included by a midnight-wrapping one.
+        column = self._column
+        if isinstance(column, DatetimeTZColumn):
+            column = column._local_time
+        unit = column.time_unit
+        time_of_day = (
+            Index._from_column(column.astype(np.dtype(np.int64)))
+            % _PERIODS_PER_DAY[unit]
+        )
+        if unit == "ns":
+            time_micros = time_of_day // 1_000
+        elif unit == "ms":
+            time_micros = time_of_day * 1_000
+        elif unit == "s":
+            time_micros = time_of_day * 1_000_000
+        else:  # microsecond resolution
+            time_micros = time_of_day
+        time_micros = time_micros.fillna(-1)
+
+        start_micros = _time_to_micros(start_time)
+        end_micros = _time_to_micros(end_time)
+
+        after_start = (
+            time_micros >= start_micros
+            if include_start
+            else time_micros > start_micros
+        )
+        before_end = (
+            time_micros <= end_micros
+            if include_end
+            else time_micros < end_micros
+        )
+
+        if start_micros <= end_micros:
+            mask = after_start & before_end
+        else:
+            # the interval wraps around midnight
+            mask = after_start | before_end
+
+        return cupy.flatnonzero(mask)
+
     @cached_property
     def _constructor(self):
         return DatetimeIndex
@@ -3396,8 +3844,8 @@ class DatetimeIndex(Index):
         return self._column.astype(np.dtype(np.int64)).values
 
     @property
-    def inferred_freq(self) -> DateOffset | MonthEnd | YearEnd | None:
-        if self._freq:
+    def inferred_freq(self):
+        if self._freq is not None:
             return self._freq
 
         plc_col = self._column.plc_column
@@ -3453,7 +3901,12 @@ class DatetimeIndex(Index):
                 if (c := getattr(cmps, component)) != 0:
                     kwds[component] = c
 
-            return cudf.DateOffset(**kwds)
+            # not pd.DateOffset(**kwds): a generic pd.DateOffset never
+            # compares equal to the fast offsets pandas infers (e.g.
+            # pd.DateOffset(days=1) != pd.offsets.Day()) and its freqstr
+            # is not parseable, so single-unit offsets must be converted
+            # to their fast pandas equivalents
+            return cudf.DateOffset(**kwds)._maybe_as_fast_pandas_offset()
 
         # maximum unique count supported is months with 4 unique lengths
         # bail above that for now
@@ -3462,12 +3915,12 @@ class DatetimeIndex(Index):
             if all(x in self.YEARLY_PERIODS for x in uniques_host):
                 # Could be year end or could be an anchored year end
                 if self.is_year_end.all():
-                    return cudf.DateOffset._from_freqstr("YE-DEC")
+                    return pd.tseries.frequencies.to_offset("YE-DEC")
                 else:
                     raise NotImplementedError()
             elif all(x in self.MONTHLY_PERIODS for x in uniques_host):
                 if self.is_month_end.all():
-                    return cudf.DateOffset._from_freqstr("ME")
+                    return pd.tseries.frequencies.to_offset("ME")
             else:
                 raise NotImplementedError
         else:
@@ -3475,6 +3928,10 @@ class DatetimeIndex(Index):
         return None
 
     def _get_slice_frequency(self, slc=None):
+        if self._freq is None:
+            # match pandas: slicing an index without a cached freq
+            # produces a result with freq=None
+            return None
         if slc.step in (1, None):
             # no change in freq
             return self._freq
@@ -3483,12 +3940,7 @@ class DatetimeIndex(Index):
         else:
             if slc:
                 # fastpath: dont introspect
-                # Multiply the pandas offset directly (pd.Timedelta(offset)
-                # fails for calendar-based offsets like Day in pandas 3).
-                new_freq = slc.step * self._freq._maybe_as_fast_pandas_offset()
-                return cudf.DateOffset._from_freqstr(
-                    pd.tseries.frequencies.to_offset(new_freq).freqstr
-                )
+                return slc.step * self._freq
             else:
                 return self.inferred_freq
 
@@ -3498,36 +3950,31 @@ class DatetimeIndex(Index):
         unique_vals = cudf.Series._from_column(
             self.to_series().diff()._column.unique()
         )
-        if freq == cudf.DateOffset(months=1):
+        if freq == pd.DateOffset(months=1):
             possible = pd.Series(list(self.MONTHLY_PERIODS | {pd.NaT}))
             if unique_vals.isin(possible).sum() != len(unique_vals):
                 raise ValueError(
                     f"Inferred frequency from passed values does not "
-                    f"conform to passed frequency "
-                    f"{freq._maybe_as_fast_pandas_offset().freqstr}"
+                    f"conform to passed frequency {freq.freqstr}"
                 )
-        elif freq == cudf.DateOffset(years=1):
+        elif freq == pd.DateOffset(years=1):
             possible = pd.Series(list(self.YEARLY_PERIODS | {pd.NaT}))
             if unique_vals.isin(possible).sum() != len(unique_vals):
                 raise ValueError(
                     f"Inferred frequency from passed values does not "
-                    f"conform to passed frequency "
-                    f"{freq._maybe_as_fast_pandas_offset().freqstr}"
+                    f"conform to passed frequency {freq.freqstr}"
                 )
         else:
             if len(unique_vals) > 2 or (
-                len(unique_vals) == 2
-                and unique_vals[1].value
-                != freq._maybe_as_fast_pandas_offset().nanos
+                len(unique_vals) == 2 and unique_vals[1].value != freq.nanos
             ):
                 raise ValueError(
                     f"Inferred frequency from passed values does not "
-                    f"conform to passed frequency "
-                    f"{freq._maybe_as_fast_pandas_offset().freqstr}"
+                    f"conform to passed frequency {freq.freqstr}"
                 )
 
     @property
-    def freq(self) -> DateOffset | None:
+    def freq(self) -> pd.tseries.offsets.BaseOffset | None:
         return self._freq
 
     @freq.setter
@@ -3846,8 +4293,14 @@ class DatetimeIndex(Index):
         >>> datetime_index.microsecond
         Index([0, 1, 2], dtype='int32')
         """
-        # .microsecond is already a cached_property
-        return Index._from_column(self._column.microsecond, name=self.name)
+        # libcudf's MICROSECOND component excludes the millisecond
+        # component, but pandas folds milliseconds into microsecond. Match
+        # pandas (and Series.dt.microsecond) by adding millisecond * 1000.
+        micro = self._column.microsecond
+        extra = self._column.millisecond.astype(np.dtype(np.int32)) * np.int32(
+            1000
+        )
+        return Index._from_column(micro + extra, name=self.name)
 
     @property
     @_performance_tracking
@@ -4093,7 +4546,7 @@ class DatetimeIndex(Index):
             inferred = result.inferred_freq
             if inferred is None:
                 try:
-                    result.freq = self._freq._maybe_as_fast_pandas_offset()
+                    result.freq = self._freq
                 except ValueError:
                     pass
             else:
@@ -5227,9 +5680,6 @@ class IntervalIndex(Index):
             "Getting a scalar from an IntervalIndex is not yet supported"
         )
 
-    def _is_interval(self) -> bool:
-        return True
-
     def _pandas_repr_compatible(self, nan_rep=None) -> Self:
         return self
 
@@ -5600,11 +6050,28 @@ def _get_nearest_indexer(
     return indexer
 
 
-def _validate_freq(freq: Any) -> DateOffset | MonthEnd | YearEnd | None:
+def _validate_freq(freq: Any) -> pd.tseries.offsets.BaseOffset | None:
+    """Normalize ``freq`` to a canonical pandas offset.
+
+    Accepts freq strings, pandas offsets and cudf's own offset classes,
+    rejecting frequencies that cudf cannot represent.
+    """
+    from cudf.core.tools.datetimes import DateOffset, MonthEnd, YearEnd
+
+    if freq is None:
+        return None
+    if isinstance(freq, (DateOffset, MonthEnd, YearEnd)):
+        return freq._maybe_as_fast_pandas_offset()
     if isinstance(freq, str):
-        return cudf.DateOffset._from_freqstr(freq)
-    elif freq is None:
-        return freq
-    elif freq is not None and not isinstance(freq, cudf.DateOffset):
+        # cudf supports a subset of pandas frequency strings; parse with
+        # cudf's DateOffset (which raises for unsupported ones) and store
+        # the equivalent pandas offset.
+        return DateOffset._from_freqstr(freq)._maybe_as_fast_pandas_offset()
+    if not isinstance(freq, pd.tseries.offsets.BaseOffset):
         raise ValueError(f"Invalid frequency: {freq}")
-    return cast(cudf.DateOffset, freq)
+    # gate pandas offsets on the same supported subset
+    if type(freq) is pd.DateOffset:
+        DateOffset(**freq.kwds)
+    else:
+        DateOffset._from_freqstr(freq.freqstr)
+    return freq

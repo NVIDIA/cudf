@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import gzip
 import zlib
 from decimal import Decimal
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import numpy as np
 import pytest
@@ -15,15 +16,18 @@ from werkzeug import Response
 
 import polars as pl
 
+from cudf_polars.containers import DataType
+from cudf_polars.dsl.ir import IRExecutionContext, Scan
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.testing.io import make_partitioned_source
+from cudf_polars.utils.config import ConfigOptions, ParquetOptions
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_138,
     POLARS_VERSION_LT_139,
+    POLARS_VERSION_LT_142,
 )
 
 if TYPE_CHECKING:
@@ -40,10 +44,10 @@ NO_CHUNK_ENGINE = pl.GPUEngine(
 
 
 @pytest.fixture(
-    params=[(None, None), ("row-index", 0), ("index", 10)],
+    params=[(None, 0), ("row-index", 0), ("index", 10)],
     ids=["no_row_index", "zero_offset_row_index", "offset_row_index"],
 )
-def row_index(request):
+def row_index(request) -> tuple[str | None, int]:
     return request.param
 
 
@@ -167,6 +171,46 @@ def test_negative_slice_pushdown_raises(engine: pl.GPUEngine, tmp_path):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_scan_parquet_prefetch_file_metadata_in_memory_raises():
+    with pytest.raises(
+        NotImplementedError,
+        match=r"Prefetching is not supported for the in-memory executor.",
+    ):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="in-memory",
+                parquet_options=ParquetOptions(prefetch_file_metadata=True),
+            )
+        )
+
+
+def test_scan_do_evaluate_missing_prefetch_metadata() -> None:
+    paths = ["/some/missing/file.parquet"]
+    parquet_options = ParquetOptions(prefetch_file_metadata=True)
+    context = IRExecutionContext()
+    schema = {"a": DataType(pl.Int64())}
+
+    with pytest.raises(
+        AssertionError,
+        match=(r"Paths do not match cached parquet info."),
+    ):
+        Scan.do_evaluate(
+            schema,
+            "parquet",
+            {},
+            paths,
+            None,
+            0,
+            -1,
+            None,
+            None,
+            None,
+            parquet_options,
+            [],
+            context=context,
+        )
+
+
 def test_scan_unsupported_raises(engine: pl.GPUEngine, tmp_path):
     df = pl.DataFrame({"a": [1, 2, 3]})
 
@@ -191,6 +235,24 @@ def test_scan_row_index_projected_out(tmp_path):
     q = pl.scan_parquet(tmp_path / "df.pq").with_row_index().select(pl.col("a"))
 
     assert_gpu_result_equal(q, engine=NO_CHUNK_ENGINE)
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_scan_parquet_pandas_index_projected_out(tmp_path, chunked):
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+
+    pd.DataFrame({"a": [1, 2, 3], "b": [4.0, 5.0, 6.0]}).to_parquet(
+        tmp_path / "pdf.pq", engine="pyarrow", index=True
+    )
+    q = pl.scan_parquet(tmp_path / "pdf.pq").select("b")
+
+    engine = pl.GPUEngine(
+        executor="in-memory",
+        raise_on_fail=True,
+        parquet_options={"chunked": chunked},
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_scan_csv_column_renames_projection_schema(engine: pl.GPUEngine, tmp_path):
@@ -474,13 +536,14 @@ def test_select_arbitrary_order_with_row_index_column(engine: pl.GPUEngine, tmp_
 )
 def test_scan_csv_with_and_without_header(
     engine: pl.GPUEngine,
-    df,
-    tmp_path,
-    has_header,
-    new_columns,
-    row_index,
-    columns,
-    zlice,
+    df: pl.DataFrame,
+    tmp_path: Path,
+    *,
+    has_header: bool,
+    new_columns: list[str] | None,
+    row_index: tuple[str | None, int],
+    columns: list[str] | None,
+    zlice: tuple[int, int] | None,
 ):
     path = tmp_path / "test.csv"
     make_partitioned_source(
@@ -523,13 +586,29 @@ def test_scan_with_row_index(engine: pl.GPUEngine, tmp_path: Path) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_scan_from_file_uri(engine: pl.GPUEngine, tmp_path: Path) -> None:
-    tmp_path.mkdir(exist_ok=True)
-    path = tmp_path / "out.parquet"
+@pytest.mark.parametrize(
+    "subdir",
+    [
+        "foo",
+        pytest.param(
+            "foo=bar",
+            marks=pytest.mark.xfail(
+                condition=POLARS_VERSION_LT_142,
+                reason="https://github.com/pola-rs/polars/issues/27840",
+                strict=True,
+            ),
+        ),
+    ],
+)
+def test_scan_from_file_uri(engine: pl.GPUEngine, tmp_path: Path, subdir: str) -> None:
+    target_dir = tmp_path / subdir
+    target_dir.mkdir()
+    path = target_dir / "out.parquet"
     df = pl.DataFrame({"a": 1})
     df.write_parquet(path)
-    q = pl.scan_parquet(f"file://{path}")
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    encoded = quote(str(path), safe="/")
+    q = pl.scan_parquet(f"file://{encoded}")
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("chunked", [False, True])
@@ -725,15 +804,9 @@ def test_scan_tiny_file_not_compressed(engine: pl.GPUEngine, tmp_path):
 )
 @pytest.mark.parametrize("custom_engine", [None, NO_CHUNK_ENGINE])
 def test_scan_parquet_zero_width_with_limit(
-    engine: pl.GPUEngine, tmp_path, custom_engine, request
+    engine: pl.GPUEngine, tmp_path, custom_engine
 ):
     active_engine = custom_engine if custom_engine is not None else engine
-    request.applymarker(
-        pytest.mark.xfail(
-            is_streaming_engine(active_engine),
-            reason="https://github.com/rapidsai/cudf/issues/21644",
-        )
-    )
     path = tmp_path / "zero_width.parquet"
     pl.LazyFrame(height=20).sink_parquet(path)
     q = pl.scan_parquet(path).head(5)
@@ -795,3 +868,16 @@ def test_scan_parquet_is_between_literal_dtype_mismatch_22622(
     )
 
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_142,
+    reason="hive::HivePartitionedDf not exposed in the logical plan before 1.42",
+)
+def test_scan_parquet_hive_partitioned_raises(
+    engine: pl.GPUEngine, tmp_path: Path
+) -> None:
+    (tmp_path / "part=1").mkdir()
+    pl.DataFrame({"x": [1, 2, 3]}).write_parquet(tmp_path / "part=1" / "data.parquet")
+    q = pl.scan_parquet(tmp_path, hive_schema={"part": pl.Int32})
+    assert_ir_translation_raises(q, engine, NotImplementedError)

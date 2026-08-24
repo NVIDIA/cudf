@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,6 +27,18 @@ auto concatenate_column_views(std::vector<ViewType> const& views)
   return concat_cols;
 }
 
+template <typename ViewType>
+size_type concatenated_table_num_rows(std::vector<ViewType> const& views)
+{
+  if (views.empty()) { return 0; }
+  auto const num_rows = views.front().num_rows();
+  CUDF_EXPECTS(std::all_of(views.begin(),
+                           views.end(),
+                           [num_rows](auto const& view) { return view.num_rows() == num_rows; }),
+               "Mismatch in number of rows");
+  return num_rows;
+}
+
 }  // namespace
 
 template <typename ColumnView>
@@ -40,6 +52,19 @@ table_view_base<ColumnView>::table_view_base(std::vector<ColumnView> const& cols
   } else {
     _num_rows = 0;
   }
+}
+
+template <typename ColumnView>
+table_view_base<ColumnView>::table_view_base(std::vector<ColumnView> const& cols,
+                                             size_type num_rows)
+  : _columns{cols}, _num_rows{num_rows}
+{
+  CUDF_EXPECTS(num_rows >= 0, "Number of rows cannot be negative.", std::invalid_argument);
+  CUDF_EXPECTS(std::all_of(cols.begin(),
+                           cols.end(),
+                           [num_rows](ColumnView const& col) { return col.size() == num_rows; }),
+               "Column size mismatch",
+               std::invalid_argument);
 }
 
 // Explicit instantiation for a table of `column_view`s
@@ -58,16 +83,17 @@ table_view table_view::select(std::vector<size_type> const& column_indices) cons
 // Convert mutable view to immutable view
 mutable_table_view::operator table_view()
 {
-  return table_view{std::vector<column_view>{begin(), end()}};
+  return table_view{std::vector<column_view>{begin(), end()}, num_rows()};
 }
 
 table_view::table_view(std::vector<table_view> const& views)
-  : table_view{detail::concatenate_column_views(views)}
+  : table_view{detail::concatenate_column_views(views), detail::concatenated_table_num_rows(views)}
 {
 }
 
 mutable_table_view::mutable_table_view(std::vector<mutable_table_view> const& views)
-  : mutable_table_view{detail::concatenate_column_views(views)}
+  : mutable_table_view{detail::concatenate_column_views(views),
+                       detail::concatenated_table_num_rows(views)}
 {
 }
 
@@ -79,7 +105,7 @@ table_view scatter_columns(table_view const& source,
   // scatter(updated_table.begin(),updated_table.end(),indices.begin(),updated_columns.begin());
   for (size_type idx = 0; idx < source.num_columns(); ++idx)
     updated_columns[map[idx]] = source.column(idx);
-  return table_view{updated_columns};
+  return table_view{updated_columns, target.num_rows()};
 }
 
 std::vector<column_view> get_nullable_columns(table_view const& table)

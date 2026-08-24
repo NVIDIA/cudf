@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Window ``over()`` actor for the RapidsMPF streaming runtime.
@@ -40,19 +40,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+import polars as pl
+
+import pylibcudf as plc
+from cudf_streaming.channel_metadata import ChannelMetadata
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.cudf.channel_metadata import ChannelMetadata
-from rapidsmpf.streaming.cudf.table_chunk import (
-    TableChunk,
-    make_table_chunks_available_or_wait,
-)
-
-import polars as pl
-
-import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataFrame, DataType
 from cudf_polars.dsl.expr import GroupedWindow
@@ -64,6 +63,7 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     ShuffleManager,
 )
 from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
@@ -86,13 +86,14 @@ from cudf_polars.streaming.actor_graph.utils import (
     shutdown_on_error,
 )
 from cudf_polars.streaming.over import Over, _build_over_groupby_irs
+from cudf_polars.streaming.utils import _contains_input_order_window_without_order_by
+from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
-
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.expr import Col
@@ -162,16 +163,17 @@ def _evaluate_ir_broadcast_sync(
     ir: Over,
     global_agg_df: DataFrame,
     key_names: tuple[str, ...],
-    ir_context: IRExecutionContext,
     br: BufferResource,
 ) -> TableChunk:
     """Map the per-group aggregate onto a chunk's rows to produce its Over output."""
     chunk_df = chunk_to_frame(chunk, ir.children[0])
-    # global_agg_df and chunk_df may live on different streams (the former from
-    # the upstream allgather/reduction on ir_context's stream, the latter from
-    # the input message). Join them so the broadcast kernels read global_agg_df
-    # safely.
-    with ir_context.stream_ordered_after(chunk_df, global_agg_df) as stream:
+    # global_agg_df and chunk_df may live on different streams. Since we do
+    # an evaluation of values in chunk_df via Expr.evaluate, run the
+    # broadcast on chunk_dfs stream, making sure the global_agg stream
+    # waits.
+    with stream_ordered_after(
+        lambda: chunk_df.stream, upstreams=[global_agg_df.stream]
+    ) as stream:
         result_cols = [
             _broadcast_gw_sync(
                 ne.value, chunk_df, global_agg_df, key_names, stream
@@ -212,7 +214,6 @@ async def _evaluate_broadcast_chunk(
             ir,
             global_agg_df,
             key_names,
-            ir_context,
             context.br(),
         )
 
@@ -287,12 +288,30 @@ def _evaluate_window_with_stamps(
     ir: Over,
     ir_context: IRExecutionContext,
     stamps: OriginStamps,
+    *,
+    sort_by_input_order: bool,
 ) -> DataFrame:
     """Evaluate *ir* on the un-stamped portion of *chunk*; reattach stamps after."""
     child_schema = ir.children[0].schema
     stream = ir_context.get_cuda_stream()
-    columns = chunk.table_view().columns()
     n_child = len(child_schema)
+    table = chunk.table_view()
+    if sort_by_input_order:
+        columns = table.columns()
+        table = plc.sorting.stable_sort_by_key(
+            table,
+            plc.Table(
+                [
+                    columns[n_child + 2],  # origin rank
+                    columns[n_child],  # origin chunk index (local)
+                    columns[n_child + 1],  # origin row index (in chunk)
+                ]
+            ),
+            [plc.types.Order.ASCENDING] * 3,
+            [plc.types.NullOrder.AFTER] * 3,
+            stream=stream,
+        )
+    columns = table.columns()
 
     input_df = DataFrame.from_table(
         plc.Table(columns[:n_child]),
@@ -404,7 +423,9 @@ async def _allgather_and_broadcast(
 
     metadata_out = ChannelMetadata(
         local_count=metadata_in.local_count,
-        partitioning=maybe_remap_partitioning(ir, metadata_in.partitioning),
+        partitioning=maybe_remap_partitioning(
+            ir, metadata_in.partitioning, context=context
+        ),
         duplicated=metadata_in.duplicated,
     )
     await send_metadata(ch_out, context, metadata_out)
@@ -419,9 +440,7 @@ async def _allgather_and_broadcast(
             ir_context,
             global_agg_per_row_size,
         )
-        if tracer is not None:
-            tracer.add_chunk(table=result.table_view())
-        await ch_out.send(context, Message(msg.sequence_number, result))
+        await send_chunk(context, ch_out, result, msg.sequence_number, tracer=tracer)
 
     await ch_out.drain(context)
 
@@ -511,6 +530,8 @@ async def _evaluate_and_route_to_origin(
     return_shuffle: ShuffleManager,
     num_ranks: int,
     stamps: OriginStamps,
+    *,
+    sort_by_input_order: bool,
 ) -> None:
     """Window-evaluate each local forward partition, then ship rows back to their origin."""
     async with return_shuffle.inserting() as inserter:
@@ -523,7 +544,12 @@ async def _evaluate_and_route_to_origin(
                 extracted, stream, exclusive_view=True, br=context.br()
             )
             evaluated = await ir_context.to_thread(
-                _evaluate_window_with_stamps, partition, ir, ir_context, stamps
+                _evaluate_window_with_stamps,
+                partition,
+                ir,
+                ir_context,
+                stamps,
+                sort_by_input_order=sort_by_input_order,
             )
             routed, splits = await ir_context.to_thread(
                 _partition_by_origin_rank, evaluated, num_ranks, context.br()
@@ -579,9 +605,7 @@ async def _reassemble_input_chunks(
                 exclusive_view=True,
                 br=context.br(),
             )
-        if tracer is not None:
-            tracer.add_chunk(table=chunk.table_view())
-        await ch_out.send(context, Message(sequence_number, chunk))
+        await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
 
 
 async def _shuffle_and_reassemble(
@@ -604,7 +628,9 @@ async def _shuffle_and_reassemble(
 
     metadata_out = ChannelMetadata(
         local_count=metadata_in.local_count,
-        partitioning=maybe_remap_partitioning(ir, metadata_in.partitioning),
+        partitioning=maybe_remap_partitioning(
+            ir, metadata_in.partitioning, context=context
+        ),
         duplicated=False,
     )
     await send_metadata(ch_out, context, metadata_out)
@@ -633,6 +659,9 @@ async def _shuffle_and_reassemble(
     )
 
     ch_replay = context.create_channel()
+    sort_by_input_order = _contains_input_order_window_without_order_by(
+        [ne.value for ne in ir.exprs]
+    )
     sequence_numbers, _ = await gather_in_task_group(
         _distribute_by_group(
             context,
@@ -656,6 +685,7 @@ async def _shuffle_and_reassemble(
         return_shuffle,
         comm.nranks,
         stamps,
+        sort_by_input_order=sort_by_input_order,
     )
     await _reassemble_input_chunks(
         context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer
@@ -720,10 +750,14 @@ async def over_actor(
             keys=ir.key_indices,
             allow_subset=True,
         )
-        if partitioning.is_strictly_partitioned():
+        if partitioning.is_strictly_partitioned(
+            level="local" if metadata_in.duplicated else "flat",
+        ):
             metadata_out = ChannelMetadata(
                 local_count=metadata_in.local_count,
-                partitioning=maybe_remap_partitioning(ir, metadata_in.partitioning),
+                partitioning=maybe_remap_partitioning(
+                    ir, metadata_in.partitioning, context=context
+                ),
                 duplicated=metadata_in.duplicated,
             )
             await chunkwise_evaluate(
@@ -733,6 +767,7 @@ async def over_actor(
                 ch_out,
                 ch_in,
                 metadata_out,
+                input_metadata=metadata_in,
                 tracer=tracer,
             )
             return

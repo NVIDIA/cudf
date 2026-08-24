@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -100,8 +100,23 @@ class StringMethods(BaseAccessor):
             # Validate dtype is suitable for string operations
             is_valid_string = is_string_dtype(value_type)
         if not is_valid_string:
+            # Mirror pandas' inferred-type naming in the error message
+            # (see pandas lib.infer_dtype) so error messages match.
+            kind_to_inferred = {
+                "i": "integer",
+                "u": "integer",
+                "f": "floating",
+                "b": "boolean",
+                "c": "complex",
+                "M": "datetime64",
+                "m": "timedelta64",
+            }
+            inferred_dtype = kind_to_inferred.get(
+                getattr(value_type, "kind", ""), str(value_type)
+            )
             raise AttributeError(
-                "Can only use .str accessor with string values"
+                "Can only use .str accessor with string values, "
+                f"not {inferred_dtype}"
             )
         super().__init__(parent=parent)
 
@@ -975,6 +990,7 @@ class StringMethods(BaseAccessor):
             Number of replacements to make from the start.
         regex : bool, default True
             If True, assumes the pattern is a regular expression.
+            Raises ValueError if pat is not a string.
             If False, treats the pattern as a literal string.
 
         Returns
@@ -1033,14 +1049,8 @@ class StringMethods(BaseAccessor):
                 )
 
             if regex:
-                warnings.warn(
-                    "regex support for multiple replace patterns  "
-                    "will be removed in a future version.",
-                    FutureWarning,
-                )
-                result = self._column.replace_re(
-                    list(pat),
-                    as_column(repl, dtype=DEFAULT_STRING_DTYPE),  # type: ignore[arg-type]
+                raise ValueError(
+                    "multiple pattern replace with regex=True is not supported"
                 )
             else:
                 result = self._column.replace_multiple(
@@ -3856,7 +3866,7 @@ class StringMethods(BaseAccessor):
             # mypy can't deduce that the return value of
             # StringColumn.__eq__ is ColumnBase because the binops are
             # dynamically added by a mixin class
-            cast(ColumnBase, self._column == "").fillna(False)
+            cast("ColumnBase", self._column == "").fillna(False)
         )
 
     def isspace(self) -> Series | Index:
@@ -4891,7 +4901,7 @@ class StringMethods(BaseAccessor):
         if isinstance(result, cudf.Series) and not as_list:
             # before exploding, removes those lists which have 0 length
             result = result[result.list.len() > 0]
-            return result.explode()  # type: ignore[union-attr]
+            return result.explode()
         return result
 
     def hash_character_ngrams(
@@ -5326,7 +5336,7 @@ class StringMethods(BaseAccessor):
         """
         The ``targets`` strings are measured against the strings in this
         instance using the Levenshtein edit distance algorithm.
-        https://www.cuelogic.com/blog/the-levenshtein-algorithm
+        https://en.wikipedia.org/wiki/Levenshtein_distance
 
         The ``targets`` parameter may also be a single string in which
         case the edit distance is computed for all the strings against
@@ -5370,45 +5380,6 @@ class StringMethods(BaseAccessor):
         return self._return_or_inplace(
             self._column.edit_distance(targets_column)  # type: ignore[arg-type]
         )
-
-    def edit_distance_matrix(self) -> Series | Index:
-        """Computes the edit distance between strings in the series.
-
-        The series to compute the matrix should have more than 2 strings and
-        should not contain nulls.
-
-        Edit distance is measured based on the `Levenshtein edit distance
-        algorithm <https://www.cuelogic.com/blog/the-levenshtein-algorithm>`_.
-
-        Returns
-        -------
-        Series of ListDtype(int64)
-            Assume ``N`` is the length of this series. The return series
-            contains ``N`` lists of size ``N``, where the ``j`` th number in
-            the ``i`` th row of the series tells the edit distance between the
-            ``i`` th string and the ``j`` th string of this series.  The matrix
-            is symmetric. Diagonal elements are 0.
-
-        Examples
-        --------
-        >>> import cudf
-        >>> s = cudf.Series(['abc', 'bc', 'cba'])
-        >>> s.str.edit_distance_matrix()
-        0    [0, 1, 2]
-        1    [1, 0, 2]
-        2    [2, 2, 0]
-        dtype: list
-        """
-        if self._column.size < 2:
-            raise ValueError(
-                "Require size >= 2 to compute edit distance matrix."
-            )
-        if self._column.has_nulls():
-            raise ValueError(
-                "Cannot compute edit distance between null strings. "
-                "Consider removing them using `dropna` or fill with `fillna`."
-            )
-        return self._return_or_inplace(self._column.edit_distance_matrix())
 
     def minhash(
         self, seed: int, a: ColumnLike, b: ColumnLike, width: int

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,7 +10,7 @@
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <jit/cache.hpp>
 #include <jit/span.cuh>
@@ -38,7 +38,7 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 
 template <typename T>
 rmm::device_uvector<T> to_device_vector(std::vector<T> const& host,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<T> device{host.size(), stream, mr};
@@ -50,7 +50,7 @@ template <typename DeviceView, typename ColumnView>
 std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>>,
            rmm::device_uvector<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;
@@ -72,13 +72,13 @@ column_views_to_device(std::span<ColumnView const> views,
   return std::make_tuple(std::move(handles), std::move(device_array));
 }
 
-std::vector<std::string> input_type_names(
-  std::span<std::variant<column_view, scalar_column_view> const> views);
+kernel get_udf_kernel(std::string const& source_file,
+                      std::string const& kernel_name,
+                      std::string const& cuda_source);
 
-jitify2::Kernel get_udf_kernel(jitify2::PreprocessedProgramData const& preprocessed_program_data,
-                               std::string const& kernel_name,
-                               std::string const& cuda_source,
-                               std::vector<std::string> const& extra_options = {});
+rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
+                                   std::string const& kernel_name,
+                                   std::string const& udf_type);
 
 }  // namespace jit
 }  // namespace cudf

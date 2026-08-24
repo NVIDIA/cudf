@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Define common type operations."""
@@ -252,7 +252,7 @@ def _union_categoricals(
 
     result_col = cudf.core.column.CategoricalColumn._concat(
         [
-            cast(cudf.core.column.CategoricalColumn, obj._column)
+            cast("cudf.core.column.CategoricalColumn", obj._column)
             for obj in to_union
         ]
     )

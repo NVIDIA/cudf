@@ -16,9 +16,6 @@ def _only_spaces(s):
     return bool(_regex_whitespaces.match(s))
 
 
-_wrapopts = {"width": 78, "replace_whitespace": False}
-
-
 def docfmt(**kwargs):
     """Format docstring.
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 66."""
@@ -29,10 +29,10 @@ def duckdb_impl(run_config: RunConfig) -> str:
     smc = params["smc"]
     # Column names vary by scale factor (extracted from dsqgen)
     # Used in f-string below - ruff doesn't detect f-string variable usage
-    sales_one = params["sales_one"]  # ruff: noqa: F841
-    sales_two = params["sales_two"]  # ruff: noqa: F841
-    net_one = params["net_one"]  # ruff: noqa: F841
-    net_two = params["net_two"]  # ruff: noqa: F841
+    sales_one = params["sales_one"]
+    sales_two = params["sales_two"]
+    net_one = params["net_one"]
+    net_two = params["net_two"]
     smc_str = "(" + ", ".join(f"'{c}'" for c in smc) + ")"
 
     return f"""

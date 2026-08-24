@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +15,6 @@
 #include <cudf/dictionary/encode.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <stdexcept>
 
@@ -38,7 +37,7 @@ class CopyRangeTypedTestFixture : public cudf::test::BaseFixture {
 
     // test the out-of-place version first
 
-    const cudf::column_view immutable_view{target};
+    cudf::column_view const immutable_view{target};
     auto p_ret = cudf::copy_range(source, immutable_view, source_begin, source_end, target_begin);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*p_ret, expected);
 
@@ -338,12 +337,12 @@ TEST_F(CopyRangeTestFixture, CopyDictionary)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
   }
 
-  auto source_validity = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0}, [](auto i) { return i != 3; });
-  auto target_validity = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0}, [](auto i) { return i != 3 && i != 9; });
-  auto expected_validity = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0}, [](auto i) { return i != 5 && i != 9; });
+  auto source_validity   = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                  [](auto i) { return i != 3; });
+  auto target_validity   = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                  [](auto i) { return i != 3 && i != 9; });
+  auto expected_validity = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                    [](auto i) { return i != 5 && i != 9; });
   {
     auto source = cudf::dictionary::encode(cudf::test::strings_column_wrapper(
       source_elements.begin(), source_elements.end(), source_validity));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,17 +9,20 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
+
+/**
+ * @file
+ * @brief Column APIs for individual list sequence
+ */
 
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_filling
  * @{
- * @file
- * @brief Column APIs for individual list sequence
  */
 
 /**
@@ -56,7 +59,7 @@ namespace lists {
 std::unique_ptr<column> sequences(
   column_view const& starts,
   column_view const& sizes,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -98,7 +101,7 @@ std::unique_ptr<column> sequences(
   column_view const& starts,
   column_view const& steps,
   column_view const& sizes,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

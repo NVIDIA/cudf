@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -67,7 +67,7 @@ def test_categorical_assignment(codes, categories):
     # assign categorical array
     # needed for dask_cudf support for including file name
     # as a categorical column
-    # see issue: https://github.com/rapidsai/cudf/issues/2269
+    # see issue: https://github.com/NVIDIA/cudf/issues/2269
     pd_df = pd.DataFrame({"a": np.ones(len(data))})
     cd_df = cudf.from_pandas(pd_df)
 

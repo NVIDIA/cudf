@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -362,7 +362,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnNegativeScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -408,7 +408,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnPositiveScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -2472,9 +2472,9 @@ TEST_F(CsvReaderTest, CsvDefaultOptionsWriteReadMatch)
 
 TEST_F(CsvReaderTest, UseColsValidation)
 {
-  const std::string buffer = "1,2,3";
+  std::string const buffer = "1,2,3";
 
-  const cudf::io::csv_reader_options idx_cnt_options =
+  cudf::io::csv_reader_options const idx_cnt_options =
     cudf::io::csv_reader_options::builder(
       cudf::io::source_info{cudf::host_span<std::byte const>{
         reinterpret_cast<std::byte const*>(buffer.c_str()), buffer.size()}})
@@ -2504,7 +2504,7 @@ TEST_F(CsvReaderTest, UseColsValidation)
 
 TEST_F(CsvReaderTest, CropColumns)
 {
-  const std::string csv_in{"12,9., 10\n34,8., 20\n56,7., 30"};
+  std::string const csv_in{"12,9., 10\n34,8., 20\n56,7., 30"};
 
   cudf::io::csv_reader_options in_opts =
     cudf::io::csv_reader_options::builder(

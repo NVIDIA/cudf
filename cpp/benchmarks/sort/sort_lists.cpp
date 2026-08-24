@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_nested_types.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/sorting.hpp>
@@ -22,9 +23,14 @@ void sort_multiple_lists(nvbench::state& state)
   auto const stream      = cudf::get_default_stream();
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::sorted_order(*input_table, {}, {}, stream, cudf::get_current_device_resource_ref());
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void sort_lists_of_structs(nvbench::state& state)
@@ -64,10 +70,15 @@ void sort_lists_of_structs(nvbench::state& state)
   auto const stream      = cudf::get_default_stream();
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     rmm::cuda_stream_view stream_view{launch.get_stream()};
     cudf::sorted_order(input_table, {}, {}, stream, cudf::get_current_device_resource_ref());
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 }  // namespace

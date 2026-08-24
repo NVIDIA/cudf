@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """A datatype, preserving polars metadata."""
@@ -62,14 +62,17 @@ def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
         # isinstance narrows dtype to pl.List, but .inner returns DataTypeClass | DataType
         return {
             "kind": "list",
-            "inner": _dtype_to_header(cast(pl.DataType, dtype.inner)),
+            "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
         }
     if isinstance(dtype, pl.Struct):
         # isinstance narrows dtype to pl.Struct, but field.dtype returns DataTypeClass | DataType
         return {
             "kind": "struct",
             "fields": [
-                {"name": f.name, "dtype": _dtype_to_header(cast(pl.DataType, f.dtype))}
+                {
+                    "name": f.name,
+                    "dtype": _dtype_to_header(cast("pl.DataType", f.dtype)),
+                }
                 for f in dtype.fields
             ],
         }
@@ -87,12 +90,12 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
         return pl.Decimal(header["precision"], header["scale"])
     if header["kind"] == "datetime":
         return pl.Datetime(
-            time_unit=cast(Literal["ns", "us", "ms"], header["time_unit"]),
+            time_unit=cast("Literal['ns', 'us', 'ms']", header["time_unit"]),
             time_zone=header["time_zone"],
         )
     if header["kind"] == "duration":
         return pl.Duration(
-            time_unit=cast(Literal["ns", "us", "ms"], header["time_unit"])
+            time_unit=cast("Literal['ns', 'us', 'ms']", header["time_unit"])
         )
     if header["kind"] == "list":
         return pl.List(_dtype_from_header(header["inner"]))
@@ -201,7 +204,7 @@ class DataType:
         if isinstance(polars_dtype, type):
             polars_dtype = polars_dtype()
         # After conversion, it's guaranteed to be a DataType instance
-        self.polars_type = cast(pl.DataType, polars_dtype)
+        self.polars_type = cast("pl.DataType", polars_dtype)
         self.plc_type = _from_polars(self.polars_type)
 
     def id(self) -> plc.TypeId:
@@ -215,12 +218,14 @@ class DataType:
         if self.plc_type.id() == plc.TypeId.STRUCT:
             # field.dtype returns DataTypeClass | DataType, need to cast to DataType
             return [
-                DataType(cast(pl.DataType, field.dtype))
-                for field in cast(pl.Struct, self.polars_type).fields
+                DataType(cast("pl.DataType", field.dtype))
+                for field in cast("pl.Struct", self.polars_type).fields
             ]
         elif self.plc_type.id() == plc.TypeId.LIST:
             # .inner returns DataTypeClass | DataType, need to cast to DataType
-            return [DataType(cast(pl.DataType, cast(pl.List, self.polars_type).inner))]
+            return [
+                DataType(cast("pl.DataType", cast("pl.List", self.polars_type).inner))
+            ]
         return []
 
     def scale(self) -> int:

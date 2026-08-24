@@ -1,10 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
-from packaging.version import parse
 
 import cudf
 from cudf.core.index import IntervalIndex, interval_range
@@ -121,14 +120,6 @@ def test_interval_range_periods_basic_dtype(start_t, end_t, periods_t):
     gindex = cudf.interval_range(
         start=start, end=end, periods=periods, closed="left"
     )
-    if (
-        parse(np.__version__) < parse("2")
-        and pindex.dtype.subtype != gindex.dtype.subtype
-    ):
-        # NEP 50 in numpy 2 changes pandas' subtype result to match cudf
-        pindex = pindex.astype(
-            pd.IntervalDtype(gindex.dtype.subtype, pindex.dtype.closed)
-        )
 
     assert_eq(pindex, gindex)
 
@@ -172,16 +163,6 @@ def test_interval_range_periods_freq_end_dtype(periods_t, freq_t, end_t):
     gindex = cudf.interval_range(
         end=end, freq=freq, periods=periods, closed="left"
     )
-    if (
-        parse(np.__version__) < parse("2")
-        and pindex.dtype.subtype != gindex.dtype.subtype
-    ):
-        # NEP 50 in numpy 2 changes pandas' subtype result to match cudf
-        pindex = pindex.astype(
-            pd.IntervalDtype(
-                subtype=gindex.dtype.subtype, closed=pindex.dtype.closed
-            )
-        )
     assert_eq(pindex, gindex)
 
 
@@ -211,16 +192,6 @@ def test_interval_range_periods_freq_start_dtype(periods_t, freq_t, start_t):
     gindex = cudf.interval_range(
         start=start, freq=freq, periods=periods, closed="left"
     )
-    if (
-        parse(np.__version__) < parse("2")
-        and pindex.dtype.subtype != gindex.dtype.subtype
-    ):
-        # NEP 50 in numpy 2 changes pandas' subtype result to match cudf
-        pindex = pindex.astype(
-            pd.IntervalDtype(
-                subtype=gindex.dtype.subtype, closed=pindex.dtype.closed
-            )
-        )
     assert_eq(pindex, gindex)
 
 
@@ -392,4 +363,48 @@ def test_interval_range_name():
 def test_from_interval_range_indexing():
     result = cudf.interval_range(start=0, end=1, name="a").repeat(2)
     expected = pd.interval_range(start=0, end=1, name="a").repeat(2)
+    assert_eq(result, expected)
+
+
+def test_interval_equality_series_eq():
+    s = cudf.Series(pd.arrays.IntervalArray.from_breaks([0, 1, 2, 3]))
+    result = s == s
+    expected = cudf.Series([True, True, True])
+    assert_eq(result, expected)
+
+
+def test_interval_equality_series_ne():
+    s = cudf.Series(pd.arrays.IntervalArray.from_breaks([0, 1, 2, 3]))
+    other = cudf.Series(pd.arrays.IntervalArray.from_breaks([0, 1, 2, 4]))
+    result = s != other
+    expected = cudf.Series([False, False, True])
+    assert_eq(result, expected)
+
+
+def test_interval_equality_series_eq_with_nulls():
+    pi = pd.arrays.IntervalArray.from_breaks([0.0, 1.0, 2.0, 3.0])
+    ps = pd.array(pi, dtype=pi.dtype)
+    ps[1] = pd.NA
+    s = cudf.Series(ps)
+    result = s == s
+    # cudf uses NULL_EQUALS semantics: null == null is True
+    expected = cudf.Series([True, True, True])
+    assert_eq(result, expected)
+
+
+def test_interval_equality_index_eq():
+    idx = cudf.IntervalIndex.from_breaks([0, 1, 2, 3])
+    other = cudf.IntervalIndex.from_breaks([0, 1, 5, 3])
+    result = idx == other
+    expected = np.array([True, False, False])
+    np.testing.assert_array_equal(result.get(), expected)
+
+
+@pytest.mark.parametrize("closed", ["left", "right", "both", "neither"])
+def test_interval_equality_eq_respects_closed(closed):
+    s = cudf.Series(
+        pd.arrays.IntervalArray.from_breaks([0, 1, 2], closed=closed)
+    )
+    result = s == s
+    expected = cudf.Series([True, True])
     assert_eq(result, expected)

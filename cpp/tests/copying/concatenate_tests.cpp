@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ template <typename T>
 struct TypedColumnTest : public cudf::test::BaseFixture {
   cudf::data_type type() { return cudf::data_type{cudf::type_to_id<T>()}; }
 
-  TypedColumnTest(rmm::cuda_stream_view stream = cudf::get_default_stream())
+  TypedColumnTest(cuda::stream_ref stream = cudf::get_default_stream())
     : data{_num_elements * sizeof(T), stream},
       mask{cudf::bitmask_allocation_size_bytes(_num_elements), stream}
   {
@@ -56,11 +56,11 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
     std::vector<char> h_mask(mask.size());
     std::iota(h_mask.begin(), h_mask.end(), char{0});
     CUDF_CUDA_TRY(
-      cudaMemcpyAsync(typed_data, h_data.data(), data.size(), cudaMemcpyDefault, stream.value()));
+      cudaMemcpyAsync(typed_data, h_data.data(), data.size(), cudaMemcpyDefault, stream.get()));
     CUDF_CUDA_TRY(
-      cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.value()));
+      cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.get()));
     _null_count = cudf::null_count(static_cast<cudf::bitmask_type*>(mask.data()), 0, _num_elements);
-    stream.synchronize();
+    stream.sync();
   }
 
   [[nodiscard]] cudf::size_type num_elements() const { return _num_elements; }
@@ -229,6 +229,15 @@ TEST_F(TableTest, ConcatenateTables)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*concat_table, gold_table);
 }
 
+TEST_F(TableTest, ConcatenateZeroColumnTables)
+{
+  TView t1{std::vector<column_view>{}, 7};
+  TView t2{std::vector<column_view>{}, 5};
+  auto concat_table = cudf::concatenate(std::vector<TView>({t1, t2}));
+  EXPECT_EQ(concat_table->num_columns(), 0);
+  EXPECT_EQ(concat_table->num_rows(), 12);
+}
+
 TEST_F(TableTest, ConcatenateTablesWithOffsets)
 {
   column_wrapper<int32_t> col1_1{{5, 4, 3, 5, 8, 5, 6}};
@@ -372,7 +381,7 @@ TEST_F(OverflowTest, OverflowTest)
     constexpr auto size = static_cast<cudf::size_type>(static_cast<uint32_t>(1024) * 1024 * 1024);
 
     // try and concatenate 6 string columns of with 1 billion chars in each
-    auto offsets    = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, size};
+    auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>{0, size};
     auto many_chars = rmm::device_uvector<char>(size, cudf::get_default_stream());
     auto col        = cudf::make_strings_column(
       1, offsets.release(), many_chars.release(), 0, rmm::device_buffer{});
@@ -413,7 +422,7 @@ TEST_F(OverflowTest, OverflowTest)
       cudf::make_structs_column(inner_size, std::move(children), 0, rmm::device_buffer{});
 
     // list
-    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, inner_size};
+    auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, inner_size};
     auto col =
       cudf::make_lists_column(1, offsets.release(), std::move(struct_col), 0, rmm::device_buffer{});
 
@@ -430,7 +439,7 @@ TEST_F(OverflowTest, OverflowTest)
     constexpr cudf::size_type size = 3;
 
     // list
-    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, inner_size};
+    auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, inner_size};
     auto many_chars =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size);
     auto list_col =
@@ -636,7 +645,7 @@ TEST_F(OverflowTest, Presliced)
     constexpr cudf::size_type list_size = inner_size / num_rows;
 
     // list
-    auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+    auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{
       0, list_size, (list_size * 2) - 1, list_size * 3, inner_size};
     auto many_chars =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size);

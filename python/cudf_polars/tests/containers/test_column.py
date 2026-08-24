@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ def test_serialize_cache_miss():
     assert frames[0].nbytes > 0
     assert frames[1].nbytes > 0
 
-    # https://github.com/rapidsai/cudf/pull/18953
+    # https://github.com/NVIDIA/cudf/pull/18953
     # In a multi-GPU setup, we might attempt to deserialize a column
     # whose type we haven't seen before. polars lets you use either the
     # class (`pl.Int8`) or an instance (`pl.Int8()`) in most places
@@ -313,6 +313,24 @@ def test_astype_to_string(val, plc_tid, pl_type):
     target_dtype = DataType(pl.String())
     result = col.astype(target_dtype, stream=stream)
     assert result.dtype == target_dtype
+
+
+def test_astype_duration_to_narrower_integer():
+    stream = get_cuda_stream()
+    col = Column(
+        plc.unary.cast(
+            plc.Column.from_iterable_of_py(
+                [1, 2, -3], plc.DataType(plc.TypeId.INT64), stream=stream
+            ),
+            plc.DataType(plc.TypeId.DURATION_MICROSECONDS),
+            stream=stream,
+        ),
+        dtype=DataType(pl.Duration(time_unit="us")),
+    )
+    target_dtype = DataType(pl.Int32())
+    result = col.astype(target_dtype, stream=stream)
+    assert result.dtype == target_dtype
+    assert result.obj.type().id() == plc.TypeId.INT32
 
 
 def test_astype_from_string_unsupported():

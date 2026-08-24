@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -52,7 +52,9 @@ if TYPE_CHECKING:
 
 
 # Maximum size of a string column is 2 GiB
-_STRINGS_UDF_DEFAULT_HEAP_SIZE = os.environ.get("STRINGS_UDF_HEAP_SIZE", 2**31)
+_STRINGS_UDF_DEFAULT_HEAP_SIZE = int(
+    os.environ.get("STRINGS_UDF_HEAP_SIZE", str(2**31))
+)
 _HEAP_SIZE = 0
 
 JIT_SUPPORTED_TYPES = (
@@ -87,14 +89,6 @@ def _all_dtypes_from_frame(frame, supported_types=JIT_SUPPORTED_TYPES):
         if str(dtype) in supported_types and not is_dtype_obj_string(dtype)
         else np.dtype("O")
         for colname, dtype in frame._dtypes
-    }
-
-
-def _supported_dtypes_from_frame(frame, supported_types=JIT_SUPPORTED_TYPES):
-    return {
-        colname: dtype
-        for colname, dtype in frame._dtypes
-        if str(dtype) in supported_types
     }
 
 

@@ -20,9 +20,11 @@ void BM_parquet_read_long_strings(nvbench::state& state)
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
   auto const data_size   = static_cast<size_t>(state.get_int64("data_size"));
 
-  auto const d_type      = get_type_or_group(static_cast<int32_t>(data_type::STRING));
-  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
-  auto const compression = cudf::io::compression_type::SNAPPY;
+  auto const d_type        = get_type_or_group(static_cast<int32_t>(data_type::STRING));
+  auto const source_type   = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const compression   = cudf::io::compression_type::SNAPPY;
+  auto const rg_size_bytes = state.get_int64("row_group_size_bytes");
+  auto const rg_size_rows  = state.get_int64("row_group_size_rows");
   cuio_source_sink_pair source_sink(source_type);
 
   auto const avg_string_length = static_cast<cudf::size_type>(state.get_int64("avg_string_length"));
@@ -50,6 +52,9 @@ void BM_parquet_read_long_strings(nvbench::state& state)
     cudf::io::parquet_writer_options write_opts =
       cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
         .compression(compression);
+    // Sentinel 0 == use cuDF default (parquet bytes default is size_t::max).
+    if (rg_size_bytes > 0) write_opts.set_row_group_size_bytes(rg_size_bytes);
+    if (rg_size_rows > 0) write_opts.set_row_group_size_rows(rg_size_rows);
     cudf::io::write_parquet(write_opts);
     return view.num_rows();
   }();
@@ -118,8 +123,9 @@ NVBENCH_BENCH(BM_parquet_read_long_strings)
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
   .add_int64_axis("data_size", {512 << 20})
-  .add_int64_power_of_two_axis("avg_string_length",
-                               nvbench::range(4, 16, 2));  // 16, 64, ... -> 64k
+  .add_int64_power_of_two_axis("avg_string_length", nvbench::range(4, 16, 2))  // 16, 64, ... -> 64k
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});
 
 NVBENCH_BENCH(BM_parquet_read_file_shape)
   .set_name("parquet_read_file_shape")

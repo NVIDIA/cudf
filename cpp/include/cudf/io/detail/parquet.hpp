@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,8 +16,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -59,7 +60,7 @@ class reader {
   explicit reader(std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                   std::vector<FileMetaData>&& parquet_metadatas,
                   parquet_reader_options const& options,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr);
 
   /**
@@ -146,7 +147,7 @@ class chunked_reader : private reader {
                           std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                           std::vector<parquet::FileMetaData>&& parquet_metadatas,
                           parquet_reader_options const& options,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr);
 
   /**
@@ -189,7 +190,7 @@ class writer {
   explicit writer(std::vector<std::unique_ptr<data_sink>> sinks,
                   parquet_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Constructor for writer to handle chunked parquet options.
@@ -204,7 +205,7 @@ class writer {
   explicit writer(std::vector<std::unique_ptr<data_sink>> sinks,
                   chunked_parquet_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header
@@ -263,7 +264,7 @@ parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> con
  * @return List of FileMetaData objects, one per parquet source
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
-  host_span<std::unique_ptr<datasource> const> sources);
+  std::span<std::unique_ptr<datasource> const> sources);
 
 }  // namespace parquet::detail
 }  // namespace io

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/strings/convert/convert_floats.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -61,9 +61,9 @@ TEST_F(StringsConvertTest, ToFloats32)
     "123abc",  "456e",         "-1.78e+5", "-122.33644782123456789",
     "12e+309", "3.4028236E38", "INF",      "Infinity"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   std::vector<float> h_expected;
   std::for_each(h_strings.begin(), h_strings.end(), [&](char const* str) {
@@ -74,9 +74,9 @@ TEST_F(StringsConvertTest, ToFloats32)
   auto results = cudf::strings::to_floats(strings_view, cudf::data_type{cudf::type_id::FLOAT32});
 
   cudf::test::fixed_width_column_wrapper<float> expected(
-    h_expected.begin(),
-    h_expected.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_expected.begin(), h_expected.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
@@ -95,16 +95,16 @@ TEST_F(StringsConvertTest, FromFloats32)
     "100.0", "654321.25", "-12761.125", "0.0", "5.0", "-4.0", "NaN", "8.395422433e+11", "-0.0"};
 
   cudf::test::fixed_width_column_wrapper<float> floats(
-    h_floats.begin(),
-    h_floats.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    h_floats.begin(), h_floats.end(), cuda::transform_iterator(h_expected.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto results = cudf::strings::from_floats(floats);
 
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -158,16 +158,16 @@ TEST_F(StringsConvertTest, FromFloats64)
     "100.0", "654321.25", "-12761.125", "0.0", "5.0", "-4.0", "NaN", "8.395422232e+11", "-0.0"};
 
   cudf::test::fixed_width_column_wrapper<double> floats(
-    h_floats.begin(),
-    h_floats.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    h_floats.begin(), h_floats.end(), cuda::transform_iterator(h_expected.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto results = cudf::strings::from_floats(floats);
 
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }

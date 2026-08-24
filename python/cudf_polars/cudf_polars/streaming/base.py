@@ -166,12 +166,21 @@ class IOPartitionPlan:
       - SINGLE_READ: `factor` is the total number of files.
     """
 
-    __slots__ = ("factor", "flavor")
+    __slots__ = ("estimated_chunk_bytes", "factor", "flavor")
     factor: int
     flavor: IOPartitionFlavor
+    estimated_chunk_bytes: int | None
+    """Estimated decompressed bytes per chunk (Scan nodes only)."""
 
-    def __init__(self, factor: int, flavor: IOPartitionFlavor) -> None:
+    def __init__(
+        self,
+        factor: int,
+        flavor: IOPartitionFlavor,
+        *,
+        estimated_chunk_bytes: int | None = None,
+    ) -> None:
         if flavor == IOPartitionFlavor.SINGLE_FILE and factor != 1:  # pragma: no cover
             raise ValueError(f"Expected factor == 1 for {flavor}, got: {factor}")
         self.factor = factor
         self.flavor = flavor
+        self.estimated_chunk_bytes = estimated_chunk_bytes

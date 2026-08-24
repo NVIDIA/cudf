@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Common utilities for collective operations."""
 
@@ -138,10 +138,8 @@ class ReserveOpIDs:
                         _get_new_collective_id_unsafe(),
                     ]
                 elif isinstance(node, Join) and self.dynamic_planning_enabled:
-                    # Join needs 4 IDs: size allgather, left shuffle/bcast,
-                    # right shuffle/bcast, bloom filter
+                    # Join needs 3 IDs: allgather, left shuffle, right shuffle.
                     self.collective_id_map[node] = [
-                        _get_new_collective_id_unsafe(),
                         _get_new_collective_id_unsafe(),
                         _get_new_collective_id_unsafe(),
                         _get_new_collective_id_unsafe(),

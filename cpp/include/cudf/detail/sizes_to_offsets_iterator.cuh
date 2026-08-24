@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,11 +11,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/scan.h>
 
 #include <stdexcept>
@@ -256,7 +256,7 @@ auto sizes_to_offsets(SizesIterator begin,
                       SizesIterator end,
                       OffsetsIterator result,
                       int64_t initial_offset,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   using SizeType = cuda::std::iter_value_t<SizesIterator>;
   static_assert(std::is_integral_v<SizeType>,
@@ -286,8 +286,10 @@ auto sizes_to_offsets(SizesIterator begin,
  * The return also includes the total number of elements -- the last element value from the
  * scan.
  *
+ * The returned column is always `type_id::INT32` since offsets children are 32-bit.
+ *
  * @throw std::overflow_error if the total size of the scan (last element) greater than maximum
- * value of `size_type`
+ * value of `int32_t`
  *
  * @tparam InputIterator Used as input to scan to set the offset values
  * @param begin The beginning of the input sequence
@@ -300,29 +302,35 @@ template <typename InputIterator>
 std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(
   InputIterator begin,
   InputIterator end,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  auto count          = static_cast<size_type>(std::distance(begin, end));
-  auto offsets_column = make_numeric_column(
-    data_type{type_to_id<size_type>()}, count + 1, mask_state::UNALLOCATED, stream, mr);
+  auto count = static_cast<size_type>(std::distance(begin, end));
+  auto offsets_column =
+    make_numeric_column(data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr);
   auto offsets_view = offsets_column->mutable_view();
-  auto d_offsets    = offsets_view.template data<size_type>();
+  auto d_offsets    = offsets_view.template data<int32_t>();
 
   // The number of offsets is count+1 so to build the offsets from the sizes
   // using exclusive-scan technically requires count+1 input values even though
   // the final input value is never used.
   // The input iterator is wrapped here to allow the last value to be safely read.
+  // The input sizes are deliberately not narrowed to the 32-bit offsets type here -- doing so
+  // would corrupt individual sizes larger than `int32_t` before they reach the scan, so the
+  // overflow check below could no longer detect the overflow. Narrowing happens only on write
+  // to `d_offsets`, after the accumulated total has been validated.
+  using SizeType = cuda::std::iter_value_t<InputIterator>;
   auto map_fn =
-    cuda::proclaim_return_type<size_type>([begin, count] __device__(size_type idx) -> size_type {
-      return idx < count ? static_cast<size_type>(begin[idx]) : size_type{0};
+    cuda::proclaim_return_type<SizeType>([begin, count] __device__(size_type idx) -> SizeType {
+      return idx < count ? begin[idx] : SizeType{0};
     });
   auto input_itr = cudf::detail::make_counting_transform_iterator(0, map_fn);
   // Use the sizes-to-offsets iterator to compute the total number of elements
   auto const total_elements =
     sizes_to_offsets(input_itr, input_itr + count + 1, d_offsets, 0, stream);
+  // the offsets are 32-bit so the total must fit in an int32_t
   CUDF_EXPECTS(
-    total_elements <= static_cast<decltype(total_elements)>(std::numeric_limits<size_type>::max()),
+    total_elements <= static_cast<decltype(total_elements)>(std::numeric_limits<int32_t>::max()),
     "Size of output exceeds the column size limit",
     std::overflow_error);
 

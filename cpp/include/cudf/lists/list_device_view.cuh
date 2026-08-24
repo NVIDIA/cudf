@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,7 +12,6 @@
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda_runtime.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace CUDF_EXPORT cudf {
 
@@ -21,7 +20,7 @@ namespace CUDF_EXPORT cudf {
  * a list of elements of arbitrary type (including further nested lists).
  */
 class list_device_view {
-  using lists_column_device_view = cudf::detail::lists_column_device_view;
+  using lists_column_device_view = cudf::lists_column_device_view;
 
  public:
   list_device_view() = default;
@@ -40,10 +39,10 @@ class list_device_view {
     cudf_assert(row_index >= 0 && row_index < lists_column.size() && row_index < offsets.size() &&
                 "row_index out of bounds");
 
-    begin_offset = offsets.element<size_type>(row_index + lists_column.offset());
+    begin_offset = offsets.element<int32_t>(row_index + lists_column.offset());
     cudf_assert(begin_offset >= 0 && begin_offset <= lists_column.child().size() &&
                 "begin_offset out of bounds.");
-    _size = offsets.element<size_type>(row_index + 1 + lists_column.offset()) - begin_offset;
+    _size = offsets.element<int32_t>(row_index + 1 + lists_column.offset()) - begin_offset;
   }
 
   ~list_device_view() = default;
@@ -144,12 +143,12 @@ class list_device_view {
   /// const pair iterator for the list
   template <typename T>
   using const_pair_iterator =
-    thrust::transform_iterator<pair_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
+    cuda::transform_iterator<pair_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
 
   /// const pair iterator type for the list
   template <typename T>
   using const_pair_rep_iterator =
-    thrust::transform_iterator<pair_rep_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
+    cuda::transform_iterator<pair_rep_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
 
   /**
    * @brief Fetcher for a pair iterator to the first element in the list_device_view.
@@ -325,14 +324,13 @@ class list_device_view {
  *
  */
 struct list_size_functor {
-  detail::lists_column_device_view const d_column;  ///< The list column to access
+  lists_column_device_view const d_column;  ///< The list column to access
   /**
    * @brief Constructor
    *
    * @param d_col The cudf::lists_column_device_view whose rows are being accessed
    */
-  CUDF_HOST_DEVICE inline list_size_functor(detail::lists_column_device_view const& d_col)
-    : d_column(d_col)
+  CUDF_HOST_DEVICE inline list_size_functor(lists_column_device_view const& d_col) : d_column(d_col)
   {
   }
   /**
@@ -363,7 +361,7 @@ struct list_size_functor {
  * @param c The list_column_device_view to iterate over
  * @return An iterator that returns the size of the list by row index
  */
-CUDF_HOST_DEVICE auto inline make_list_size_iterator(detail::lists_column_device_view const& c)
+CUDF_HOST_DEVICE auto inline make_list_size_iterator(lists_column_device_view const& c)
 {
   return detail::make_counting_transform_iterator(0, list_size_functor{c});
 }

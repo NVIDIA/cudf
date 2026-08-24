@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -42,7 +42,9 @@ def _string_view_to_string_schema(schema: pa.Schema) -> pa.Schema:
         ],
         # Cast needed because schema.metadata is dict[bytes, bytes] but
         # pa.schema expects dict[bytes | str, bytes | str] | None
-        metadata=cast(dict[bytes | str, bytes | str] | None, schema.metadata),
+        metadata=cast(
+            "dict[bytes | str, bytes | str] | None", schema.metadata
+        ),
     )
 
 

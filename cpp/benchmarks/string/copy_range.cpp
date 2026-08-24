@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/copying.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -34,9 +35,12 @@ static void bench_copy_range(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);   // all bytes are read;
   state.add_global_memory_writes<nvbench::int8_t>(data_size);  // both columns are similar size
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto result = cudf::copy_range(source, target, start, end, start / 2);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_copy_range)

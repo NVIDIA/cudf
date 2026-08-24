@@ -3,11 +3,11 @@
 Contributions to cuDF fall into the following categories:
 
 1. To report a bug, request a new feature, or report a problem with documentation, please file an
-   [issue](https://github.com/rapidsai/cudf/issues/new/choose) describing the problem or new feature
+   [issue](https://github.com/NVIDIA/cudf/issues/new/choose) describing the problem or new feature
    in detail. The RAPIDS team evaluates and triages issues, and schedules them for a release. If you
    believe the issue needs priority attention, please comment on the issue to notify the team.
 2. To propose and implement a new feature, please file a new feature request
-   [issue](https://github.com/rapidsai/cudf/issues/new/choose). Describe the intended feature and
+   [issue](https://github.com/NVIDIA/cudf/issues/new/choose). Describe the intended feature and
    discuss the design and implementation with the team and community. Once the team agrees that the
    plan looks good, go ahead and implement it, using the [code contributions](#code-contributions)
    guide below.
@@ -32,7 +32,7 @@ conda install cudf -c rapidsai-nightly -c conda-forge
 ```
 
 3. Build and view the docs locally following the instructions in the [Building
-documentation docs](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/documentation/#building-and-viewing-docs)
+documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/documentation/#building-documentation)
 4. Follow steps 7-10 in the section [Your first issue](#your-first-issue)
 
 ## Code contributions
@@ -42,19 +42,22 @@ documentation docs](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/
 1. Follow the guide at the bottom of this page for
    [Setting up your build environment](#setting-up-your-build-environment).
 2. Find an issue to work on. The best way is to look for the
-   [good first issue](https://github.com/rapidsai/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-   or [help wanted](https://github.com/rapidsai/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+   [good first issue](https://github.com/NVIDIA/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+   or [help wanted](https://github.com/NVIDIA/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
    labels.
 3. Comment on the issue stating that you are going to work on it.
 4. Create a fork of the cudf repository and check out a branch with a name that
    describes your planned work. For example, `fix-documentation`.
 5. Write code to address the issue or implement the feature.
 6. Add unit tests and unit benchmarks.
-7. [Create your pull request](https://github.com/rapidsai/cudf/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
+7. [Create your pull request](https://github.com/NVIDIA/cudf/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
 8. Verify that CI passes all [status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks).
    Fix if needed.
 9. Wait for other developers to review your code and update code as needed.
-   Changes to any C++ files require at least 2 approvals from the cudf-cpp-codeowners before merging.
+   Changes to libcudf C++ files require at least 2 approvals from the cudf-cpp-codeowners before
+   merging.
+   Changes limited to libcudf_streaming C++ files require at least 1 approval from the
+   rapidsmpf-cpp-codeowners before merging.
 10. Once reviewed and approved, a RAPIDS developer will merge your pull request.
 
 If you are unsure about anything, don't hesitate to comment on issues and ask for clarification!
@@ -63,10 +66,10 @@ If you are unsure about anything, don't hesitate to comment on issues and ask fo
 
 Once you have gotten your feet wet and are more comfortable with the code, you can look at the
 prioritized issues for our next release in our
-[project boards](https://github.com/rapidsai/cudf/projects).
+[project boards](https://github.com/NVIDIA/cudf/projects).
 
 **Note:** Always look at the release board that is
-[currently under development](https://docs.rapids.ai/maintainers) for issues to work on. This is
+[currently under development](https://docs.rapids.ai/maintainers/) for issues to work on. This is
 where RAPIDS developers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start
@@ -95,7 +98,7 @@ Compilers:
 CUDA/GPU Runtime:
 
 * CUDA 12.2+
-* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/) >=7.0)
+* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0)
 
 You can obtain CUDA from
 [https://developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads).
@@ -106,7 +109,7 @@ You can obtain CUDA from
 
 ```bash
 CUDF_HOME=$(pwd)/cudf
-git clone https://github.com/rapidsai/cudf.git $CUDF_HOME
+git clone https://github.com/NVIDIA/cudf.git $CUDF_HOME
 cd $CUDF_HOME
 ```
 
@@ -119,9 +122,7 @@ Instructions for a minimal build environment without conda are included below.
 
 ```bash
 # create the conda environment (assuming in base `cudf` directory)
-# note: RAPIDS currently doesn't support `channel_priority: strict`;
-# use `channel_priority: flexible` instead
-conda env create --name cudf_dev --file conda/environments/all_cuda-132_arch-$(uname -m).yaml
+conda env create --name cudf_dev --file conda/environments/all_cuda-133_arch-$(uname -m).yaml
 # activate the environment
 conda activate cudf_dev
 ```
@@ -142,26 +143,28 @@ conda activate cudf_dev
 
 ### Build cuDF from source
 
-- A `build.sh` script is provided in `$CUDF_HOME`. Running the script with no additional arguments
-  will install the `libcudf`, `cudf` and `dask_cudf` libraries. By default, the libraries are
-  installed to the `$CONDA_PREFIX` directory. To install into a different location, set the location
-  in `$INSTALL_PREFIX`. Finally, note that the script depends on the `nvcc` executable being on your
-  path, or defined in `$CUDACXX`.
+- A `build.sh` script is provided in `$CUDF_HOME`. Running the script without explicit targets
+  builds and installs the default targets: `libcudf`, `pylibcudf`, `cudf`, `libcudf_streaming`, `cudf_streaming`,
+  `cudf_polars`, and `dask_cudf`. By default, C++ libraries are installed to the `$CONDA_PREFIX` directory. To install
+  them into a different location, set `$INSTALL_PREFIX`. Python packages are installed into the
+  active Python environment. Finally, note that the script depends on the `nvcc` executable being on
+  your path, or defined in `$CUDACXX`.
 
 ```bash
 cd $CUDF_HOME
 
 # Choose one of the following commands, depending on whether
 # you want to build and install the libcudf C++ library only,
-# or include the cudf and/or dask_cudf Python libraries:
+# or include Python libraries:
 
-./build.sh  # libcudf, cudf and dask_cudf
+./build.sh  # libcudf, pylibcudf, cudf, libcudf_streaming, cudf_streaming, cudf_polars, and dask_cudf
 ./build.sh libcudf  # libcudf only
 ./build.sh libcudf cudf  # libcudf and cudf only
 ```
 
-- Other libraries like `cudf-kafka` and `custreamz` can be installed with this script. For the
-  complete list of libraries as well as details about the script usage, run the `help` command:
+- Other libraries like `cudf-kafka` and `custreamz` can be installed with this
+  script. For the complete list of libraries as well as details about the script usage, run the
+  `help` command:
 
 ```bash
 ./build.sh --help
@@ -174,7 +177,7 @@ To build C++ tests, you can also request that build.sh build the `tests` target.
 To build all libraries and tests, with Python packages in development mode, simply run
 
 ```bash
-./build.sh --pydevelop libcudf libcudf_kafka pylibcudf cudf cudf_polars dask_cudf cudf_kafka custreamz
+./build.sh --pydevelop tests libcudf libcudf_kafka libcudf_streaming pylibcudf cudf cudf_streaming cudf_polars dask_cudf cudf_kafka custreamz
 ```
 
 - **Note**: if Cython files (`*.pyx` or `*.pxd`) have changed, the Python build must be rerun.
@@ -184,6 +187,7 @@ To run the C++ tests, run
 ```bash
 ctest --test-dir ${CUDF_HOME}/cpp/build  # libcudf
 ctest --test-dir ${CUDF_HOME}/cpp/libcudf_kafka/build  # libcudf_kafka
+ctest --test-dir ${CUDF_HOME}/cpp/libcudf_streaming/build  # libcudf_streaming
 ```
 
 To run python tests, run
@@ -193,6 +197,7 @@ To run python tests, run
 cd $CUDF_HOME/python
 pytest -v ${CUDF_HOME}/python/cudf/cudf/tests
 pytest -v ${CUDF_HOME}/python/dask_cudf/dask_cudf/ # There are tests in both tests/ and io/tests/
+pytest -v ${CUDF_HOME}/python/cudf_streaming/cudf_streaming/tests
 pytest -v ${CUDF_HOME}/python/custreamz/custreamz/tests
 ```
 
@@ -322,7 +327,7 @@ This will bring up an interactive prompt to select which spelling fixes to apply
 
 The [C++ Developer Guide](cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md) includes details on contributing to libcudf C++ code.
 
-The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/index.html) includes details on contributing to cuDF Python code.
+The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/) includes details on contributing to cuDF Python code.
 
 
 ## Attribution

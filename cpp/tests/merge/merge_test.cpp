@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -259,7 +259,7 @@ TYPED_TEST(MergeTest_, MergeWithEmptyColumn)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
 
   cudf::test::fixed_width_column_wrapper<TypeParam, typename decltype(sequence)::value_type>
     expectedDataWrap1(
@@ -324,7 +324,7 @@ TYPED_TEST(MergeTest_, Merge1KeyColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
 
   auto seq_out1 = cudf::detail::make_counting_transform_iterator(0, [outputRows](auto row) {
     if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {
@@ -402,7 +402,7 @@ TYPED_TEST(MergeTest_, Merge2KeyColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
 
   auto seq_out1 = cudf::detail::make_counting_transform_iterator(0, [outputRows](auto row) {
     if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {
@@ -489,8 +489,8 @@ TYPED_TEST(MergeTest_, Merge1KeyNullColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
-  const cudf::size_type column1TotalNulls =
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const column1TotalNulls =
     a_left_tbl_cview.null_count() + a_right_tbl_cview.null_count();
 
   // data: 0 1 2 3 4 5 6 7 | valid: 1 1 1 1 1 1 0 0
@@ -573,7 +573,7 @@ TYPED_TEST(MergeTest_, Merge2KeyNullColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
 
   // data: 0 0 1 1 2 2 3 3 | valid: 1 1 1 1 1 1 1 1
   auto seq_out1 = cudf::detail::make_counting_transform_iterator(0, [outputRows](auto row) {
@@ -651,7 +651,7 @@ TYPED_TEST(MergeTest_, NMerge1KeyColumns)
   std::unique_ptr<cudf::table> p_outputTable;
   EXPECT_NO_THROW(p_outputTable = cudf::merge(tables, key_cols, column_order, null_precedence));
 
-  const cudf::size_type outputRows = inputRows * num_tables;
+  cudf::size_type const outputRows = inputRows * num_tables;
 
   auto seq_out1 = cudf::detail::make_counting_transform_iterator(0, [](auto row) {
     if (cudf::type_to_id<TypeParam>() == cudf::type_id::BOOL8) {

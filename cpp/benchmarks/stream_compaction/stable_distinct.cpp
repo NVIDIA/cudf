@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/stream_compaction/stream_compaction_common.hpp>
 
 #include <cudf/column/column_view.hpp>
@@ -43,10 +44,15 @@ void nvbench_stable_distinct(nvbench::state& state, nvbench::type_list<Type>)
   auto input_table  = cudf::table_view({input_column, input_column, input_column, input_column});
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = cudf::stable_distinct(
       input_table, {0}, keep, cudf::null_equality::EQUAL, cudf::nan_equality::ALL_EQUAL);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 using data_type = nvbench::type_list<int32_t, int64_t>;
@@ -83,10 +89,15 @@ void nvbench_stable_distinct_list(nvbench::state& state, nvbench::type_list<Type
     {dtype}, table_size_bytes{static_cast<size_t>(size)}, data_profile{builder}, 0);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = cudf::stable_distinct(
       *table, {0}, keep, cudf::null_equality::EQUAL, cudf::nan_equality::ALL_EQUAL);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH_TYPES(nvbench_stable_distinct_list,

@@ -1,13 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport padding as cpp_padding
 from pylibcudf.libcudf.strings.side_type cimport side_type
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -19,7 +24,7 @@ cpdef Column pad(
     size_type width,
     side_type side,
     str fill_char,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -50,10 +55,10 @@ cpdef Column pad(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_padding.pad(
-            input.view(),
+            c_input,
             width,
             side,
             c_fill_char,
@@ -64,7 +69,7 @@ cpdef Column pad(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column zfill(
-    Column input, size_type width, object stream=None, DeviceMemoryResource mr=None
+    Column input, size_type width, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Add '0' as padding to the left of each string.
@@ -89,10 +94,10 @@ cpdef Column zfill(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_padding.zfill(
-            input.view(),
+            c_input,
             width,
             _cs,
             mr.get_mr()
@@ -101,7 +106,7 @@ cpdef Column zfill(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column zfill_by_widths(
-    Column input, Column widths, object stream=None, DeviceMemoryResource mr=None
+    Column input, Column widths, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Add '0' as padding to the left of each string.
@@ -126,11 +131,12 @@ cpdef Column zfill_by_widths(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
+    cdef column_view c_widths = widths.view()
     with nogil:
         c_result = cpp_padding.zfill_by_widths(
-            input.view(),
-            widths.view(),
+            c_input,
+            c_widths,
             _cs,
             mr.get_mr()
         )

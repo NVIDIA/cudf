@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/sorting.hpp>
@@ -27,6 +28,7 @@ static void bench_rank(nvbench::state& state)
   state.add_element_count(n_rows, "n_rows");
   state.add_global_memory_reads<nvbench::int32_t>(n_rows);
   state.add_global_memory_writes<nvbench::int32_t>(n_rows);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = cudf::rank(input->view(),
@@ -36,6 +38,9 @@ static void bench_rank(nvbench::state& state)
                              cudf::null_order::AFTER,
                              false);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_rank)

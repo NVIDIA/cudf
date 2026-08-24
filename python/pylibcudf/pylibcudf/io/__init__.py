@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from . import (
@@ -9,16 +9,18 @@ from . import (
     json,
     orc,
     parquet,
+    parquet_io_utils,
     parquet_metadata,
     text,
     timezone,
     types,
 )
 from .parquet_metadata import FileMetaData
-from .types import SinkInfo, SourceInfo, TableWithMetadata
+from .types import FilepathSource, SinkInfo, SourceInfo, TableWithMetadata
 
 __all__ = [
     "FileMetaData",
+    "FilepathSource",
     "SinkInfo",
     "SourceInfo",
     "TableWithMetadata",
@@ -29,6 +31,7 @@ __all__ = [
     "json",
     "orc",
     "parquet",
+    "parquet_io_utils",
     "parquet_metadata",
     "text",
     "timezone",

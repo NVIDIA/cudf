@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
@@ -41,6 +42,7 @@ static void BM_binaryop_transform(nvbench::state& state)
   // Use the number of bytes read from global memory
   state.add_global_memory_reads<key_type>(static_cast<std::size_t>(num_rows) * (tree_levels + 1));
   state.add_global_memory_writes<key_type>(num_rows);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     // Execute tree that chains additions like (((a + b) + c) + d)
@@ -58,6 +60,9 @@ static void BM_binaryop_transform(nvbench::state& state)
       });
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 template <cudf::binary_operator cmp_op, cudf::binary_operator reduce_op>
@@ -95,7 +100,8 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
   state.add_global_memory_writes<nvbench::int32_t>(num_rows);
 
   // Construct binary operations (a == b && c == d && e == f && ...)
-  auto constexpr bool_type = cudf::data_type{cudf::type_id::BOOL8};
+  auto constexpr bool_type    = cudf::data_type{cudf::type_id::BOOL8};
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     rmm::cuda_stream_view stream{launch.get_stream().get_stream()};
@@ -113,6 +119,9 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
         reduction = std::move(reduced);
       });
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define BINARYOP_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns) \

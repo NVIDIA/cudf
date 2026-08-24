@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/ast/ast_operator.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
@@ -12,9 +13,19 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/stream>
+
 #include <cstdint>
+#include <functional>
+#include <initializer_list>
 #include <memory>
+#include <optional>
 #include <vector>
+
+/**
+ * @file
+ * @brief Class definitions for building and evaluating abstract syntax tree expressions.
+ */
 
 namespace CUDF_EXPORT cudf {
 
@@ -44,7 +55,6 @@ namespace ast {
 /**
  * @addtogroup expressions
  * @{
- * @file
  */
 
 // Forward declaration.
@@ -93,7 +103,7 @@ struct [[nodiscard]] expression {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return `true` if the expression may evaluate to null, otherwise false
    */
-  [[nodiscard]] bool may_evaluate_null(table_view const& left, rmm::cuda_stream_view stream) const
+  [[nodiscard]] bool may_evaluate_null(table_view const& left, cuda::stream_ref stream) const
   {
     return may_evaluate_null(left, left, stream);
   }
@@ -108,7 +118,7 @@ struct [[nodiscard]] expression {
    */
   [[nodiscard]] virtual bool may_evaluate_null(table_view const& left,
                                                table_view const& right,
-                                               rmm::cuda_stream_view stream) const = 0;
+                                               cuda::stream_ref stream) const = 0;
 
   virtual ~expression() {}
 };
@@ -242,7 +252,8 @@ class literal : public expression {
    * @param value A numeric scalar value
    */
   template <typename T>
-  literal(cudf::numeric_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::numeric_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
 
@@ -253,7 +264,8 @@ class literal : public expression {
    * @param value A timestamp scalar value
    */
   template <typename T>
-  literal(cudf::timestamp_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::timestamp_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
 
@@ -264,7 +276,8 @@ class literal : public expression {
    * @param value A duration scalar value
    */
   template <typename T>
-  literal(cudf::duration_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::duration_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
 
@@ -273,7 +286,10 @@ class literal : public expression {
    *
    * @param value A string scalar value
    */
-  literal(cudf::string_scalar& value) : scalar(value), value(value) {}
+  literal(cudf::string_scalar& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
+  {
+  }
 
   /**
    * @brief Construct a new literal object.
@@ -281,30 +297,75 @@ class literal : public expression {
    * @param value A fixed-point scalar value
    */
   template <typename T>
-  literal(cudf::fixed_point_scalar<T>& value) : scalar(value), value(value)
+  literal(cudf::fixed_point_scalar<T>& value)
+    : scalar{ast_scalar{std::ref(value), generic_scalar_device_view(value)}}
   {
   }
+
+  /**
+   * @brief Construct a new literal object.
+   *
+   * @param value A scalar column view value
+   */
+  literal(scalar_column_view value) : scalar{std::move(value)} {}
 
   /**
    * @brief Get the data type.
    *
    * @return The data type of the literal
    */
-  [[nodiscard]] cudf::data_type get_data_type() const { return get_value().type(); }
+  [[nodiscard]] cudf::data_type get_data_type() const
+  {
+    return std::visit(
+      [](auto const& value) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(value)>, ast_scalar>) {
+          return value.value.type();
+        } else {
+          return value.type();
+        }
+      },
+      scalar);
+  }
+
+  /**
+   * @brief Check whether the literal is backed by a scalar column view.
+   *
+   * @return true if the literal is backed by a scalar column view
+   */
+  [[nodiscard]] bool is_scalar_column_view() const noexcept
+  {
+    return std::holds_alternative<scalar_column_view>(scalar);
+  }
 
   /**
    * @brief Get the value object.
    *
    * @return The device scalar object
    */
-  [[nodiscard]] generic_scalar_device_view get_value() const { return value; }
+  [[nodiscard]] generic_scalar_device_view get_value() const
+  {
+    return std::get<ast_scalar>(scalar).value;
+  }
 
   /**
    * @brief Get the scalar.
    *
    * @return The scalar object
    */
-  [[nodiscard]] cudf::scalar const& get_scalar() const { return scalar; }
+  [[nodiscard]] cudf::scalar const& get_scalar() const
+  {
+    return std::get<ast_scalar>(scalar).scalar.get();
+  }
+
+  /**
+   * @brief Get scalar column view.
+   *
+   * @return The scalar column view object
+   */
+  [[nodiscard]] scalar_column_view const& get_scalar_column_view() const
+  {
+    return std::get<scalar_column_view>(scalar);
+  }
 
   /**
    * @copydoc expression::accept
@@ -325,7 +386,7 @@ class literal : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override
+                                       cuda::stream_ref stream) const override
   {
     return !is_valid(stream);
   }
@@ -336,14 +397,23 @@ class literal : public expression {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return true if the underlying scalar is valid
    */
-  [[nodiscard]] bool is_valid(rmm::cuda_stream_view stream) const
+  [[nodiscard]] bool is_valid(cuda::stream_ref stream) const
   {
-    return scalar.is_valid(stream);
+    if (auto* s = std::get_if<ast_scalar>(&scalar)) {
+      return s->scalar.get().is_valid(stream);
+    } else {
+      auto& c = std::get<scalar_column_view>(scalar);
+      return c.null_count() == 0;
+    }
   }
 
  private:
-  cudf::scalar const& scalar;
-  generic_scalar_device_view const value;
+  struct ast_scalar {
+    std::reference_wrapper<cudf::scalar const> scalar;
+    generic_scalar_device_view value;
+  };
+
+  std::variant<ast_scalar, scalar_column_view> scalar;
 };
 
 /**
@@ -384,10 +454,7 @@ class column_reference : public expression {
    * @param table Table used to determine types
    * @return The data type of the column
    */
-  [[nodiscard]] cudf::data_type get_data_type(table_view const& table) const
-  {
-    return table.column(get_column_index()).type();
-  }
+  [[nodiscard]] cudf::data_type get_data_type(table_view const& table) const;
 
   /**
    * @brief Get the data type.
@@ -397,19 +464,7 @@ class column_reference : public expression {
    * @return The data type of the column
    */
   [[nodiscard]] cudf::data_type get_data_type(table_view const& left_table,
-                                              table_view const& right_table) const
-  {
-    auto const table = [&] {
-      if (get_table_source() == table_reference::LEFT) {
-        return left_table;
-      } else if (get_table_source() == table_reference::RIGHT) {
-        return right_table;
-      } else {
-        CUDF_FAIL("Column reference data type cannot be determined from unknown table.");
-      }
-    }();
-    return table.column(get_column_index()).type();
-  }
+                                              table_view const& right_table) const;
 
   /**
    * @copydoc expression::accept
@@ -424,7 +479,7 @@ class column_reference : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override
+                                       cuda::stream_ref stream) const override
   {
     return (table_source == table_reference::LEFT ? left : right).column(column_index).has_nulls();
   }
@@ -499,7 +554,7 @@ class operation : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override;
+                                       cuda::stream_ref stream) const override;
 
   /**
    * @copydoc expression::accept
@@ -539,7 +594,7 @@ class predicate : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override;
+                                       cuda::stream_ref stream) const override;
 
   /**
    * @copydoc expression::accept
@@ -592,7 +647,7 @@ class column_name_reference : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override
+                                       cuda::stream_ref stream) const override
   {
     return true;
   }
@@ -697,6 +752,142 @@ class tree {
   // allocator with type-erased deleters.
   std::vector<std::unique_ptr<expression>> expressions;
 };
+
+namespace jit {
+
+/**
+ * @brief JIT operation kinds for `cudf::ast::jit::operation`.
+ */
+enum class op : uint8_t {
+  // Identity operators
+  IDENTITY,
+
+  // Null handling operators
+  IS_NULL,
+
+  COALESCE,
+  PREDICATE,
+
+  /// Arithmetic operators
+  ADD,
+  SUB,
+  MUL,
+  DIV,
+  NEG,
+  ABS,
+  MOD,
+  PYMOD,
+  TRUE_DIV,
+  FLOOR_DIV,
+
+  /// Overflow-checking Arithmetic functions. raise errors on overflow, division by zero, etc.
+  ADD_OVERFLOW,
+  SUB_OVERFLOW,
+  MUL_OVERFLOW,
+  DIV_OVERFLOW,
+  NEG_OVERFLOW,
+  ABS_OVERFLOW,
+  MOD_OVERFLOW,
+  CHECK_PRECISION,
+
+  /// Bitwise operators
+  BITWISE_AND,
+  BITWISE_INVERT,
+  BITWISE_OR,
+  BITWISE_XOR,
+  BITWISE_SHIFT_LEFT,
+  BITWISE_SHIFT_RIGHT,
+
+  /// Type conversion/scaling operators
+  CAST_TO_BOOL8,
+  CAST_TO_INT8,
+  CAST_TO_INT16,
+  CAST_TO_INT32,
+  CAST_TO_INT64,
+  CAST_TO_UINT8,
+  CAST_TO_UINT16,
+  CAST_TO_UINT32,
+  CAST_TO_UINT64,
+  CAST_TO_FLOAT32,
+  CAST_TO_FLOAT64,
+  CAST_TO_DECIMAL32,
+  CAST_TO_DECIMAL64,
+  CAST_TO_DECIMAL128,
+  RESCALE,
+
+  /// Comparison & Logic operators
+  EQUAL,
+  NOT_EQUAL,
+  GREATER,
+  GREATER_EQUAL,
+  LESS,
+  LESS_EQUAL,
+  NULL_EQUAL,
+  NULL_LOGICAL_AND,
+  NULL_LOGICAL_OR,
+  LOGICAL_AND,
+  LOGICAL_OR,
+  LOGICAL_NOT,
+  IF_ELSE,
+
+  /// Mathematical operators
+  CBRT,
+  CEIL,
+  FLOOR,
+  RINT,
+  SQRT,
+  POW,
+  EXP,
+  LOG,
+
+  /// Trigonometric operators
+  ARCCOS,
+  ARCCOSH,
+  ARCSIN,
+  ARCSINH,
+  ARCTAN,
+  ARCTANH,
+  COS,
+  COSH,
+  SIN,
+  SINH,
+  TAN,
+  TANH,
+};
+
+/**
+ * @brief Creates a JIT expression operation from an opcode and argument list.
+ *
+ * @param tree The expression tree to which this expression will be added.
+ * @param operator_id The JIT operation kind.
+ * @param args Operation arguments.
+ * @param error_policy Specifies how fallible operations handle errors.
+ * @param target_scale Required only for `op::RESCALE`.
+ * @return A reference to the created operation expression.
+ */
+expression const& operation(ast::tree& tree,
+                            op operator_id,
+                            std::vector<std::reference_wrapper<expression const>> const& args,
+                            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
+                            std::optional<int32_t> target_scale = std::nullopt);
+
+/**
+ * @brief Creates a JIT expression operation from an opcode and argument list.
+ *
+ * @param tree The expression tree to which this expression will be added.
+ * @param operator_id The JIT operation kind.
+ * @param args Operation arguments.
+ * @param error_policy Specifies how fallible operations handle errors.
+ * @param target_scale Required only for `op::RESCALE`.
+ * @return A reference to the created operation expression.
+ */
+expression const& operation(ast::tree& tree,
+                            op operator_id,
+                            std::initializer_list<std::reference_wrapper<expression const>> args,
+                            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
+                            std::optional<int32_t> target_scale = std::nullopt);
+
+}  // namespace jit
 
 /** @} */  // end of group
 }  // namespace ast

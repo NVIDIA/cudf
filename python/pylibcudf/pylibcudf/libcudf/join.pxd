@@ -216,30 +216,26 @@ cdef extern from "cudf/join/mixed_join.hpp" namespace "cudf" nogil:
     ) except +libcudf_exception_handler
 
 cdef extern from "cudf/join/filtered_join.hpp" namespace "cudf" nogil:
-    cpdef enum class set_as_build_table:
-        LEFT
-        RIGHT
-
     cdef cppclass filtered_join:
         filtered_join() except +
         filtered_join(
-            const table_view build,
+            const table_view right,
             null_equality compare_nulls,
             cudaStream_t stream
         ) except +libcudf_exception_handler
         filtered_join(
-            const table_view build,
+            const table_view right,
             null_equality compare_nulls,
             double load_factor,
             cudaStream_t stream
         ) except +libcudf_exception_handler
         gather_map_type semi_join(
-            const table_view probe,
+            const table_view left,
             cudaStream_t stream,
             device_async_resource_ref mr
         ) except +libcudf_exception_handler
         gather_map_type anti_join(
-            const table_view probe,
+            const table_view left,
             cudaStream_t stream,
             device_async_resource_ref mr
         ) except +libcudf_exception_handler

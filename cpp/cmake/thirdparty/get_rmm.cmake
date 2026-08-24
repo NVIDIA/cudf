@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -16,20 +16,21 @@ function(find_and_configure_rmm BUILD_SHARED EXCLUDE_FROM_ALL)
   endif()
 
   # Find or install RMM.
-  set(_rmm_args BUILD_EXPORT_SET cudf-exports)
+  set(_rmm_args)
   if(NOT EXCLUDE_FROM_ALL)
-    list(APPEND _rmm_args INSTALL_EXPORT_SET cudf-exports)
+    list(APPEND _rmm_args BUILD_EXPORT_SET cudf-exports INSTALL_EXPORT_SET cudf-exports)
   endif()
   rapids_cpm_rmm(${_rmm_args} ${_exclude_flag} CPM_ARGS OPTIONS "BUILD_SHARED_LIBS ${BUILD_SHARED}")
 
   # If rmm was found as a pre-existing shared library (e.g. conda), we need find_dependency(rmm) in
-  # the installed config even when EXCLUDE_FROM_ALL is set. EXCLUDE_FROM_ALL controls whether CPM-
-  # built targets are installed, but a pre-existing shared library is not absorbed into libcudf and
-  # must be findable by downstream consumers.
+  # the build and installed configs even when EXCLUDE_FROM_ALL is set. EXCLUDE_FROM_ALL controls
+  # whether CPM-built targets are installed, but a pre-existing shared library is not absorbed into
+  # libcudf and must be findable by downstream consumers.
   if(EXCLUDE_FROM_ALL)
     get_target_property(_rmm_type rmm::rmm TYPE)
     if(NOT _rmm_type STREQUAL "STATIC_LIBRARY")
       include("${rapids-cmake-dir}/export/package.cmake")
+      rapids_export_package(BUILD rmm cudf-exports VERSION ${rmm_VERSION})
       rapids_export_package(INSTALL rmm cudf-exports VERSION ${rmm_VERSION})
     endif()
   endif()

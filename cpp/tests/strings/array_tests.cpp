@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,6 @@
 #include <cudf/table/table_view.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <vector>
 
@@ -61,8 +60,7 @@ TEST_P(SliceParmsTest, Slice)
   cudf::test::strings_column_wrapper expected(
     h_strings.begin() + start,
     h_strings.begin() + end,
-    thrust::make_transform_iterator(h_strings.begin() + start,
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin() + start, [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
@@ -81,8 +79,7 @@ TEST_P(SliceParmsTest, SliceAllNulls)
   cudf::test::strings_column_wrapper expected(
     h_strings.begin() + start,
     h_strings.begin() + end,
-    thrust::make_transform_iterator(h_strings.begin() + start,
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin() + start, [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -180,7 +177,7 @@ TEST_F(StringsColumnTest, ScatterScalar)
   cudf::test::fixed_width_column_wrapper<int32_t> scatter_map({0, 5});
 
   cudf::string_scalar scalar("__");
-  auto source  = std::vector<std::reference_wrapper<const cudf::scalar>>({scalar});
+  auto source  = std::vector<std::reference_wrapper<cudf::scalar const>>({scalar});
   auto results = cudf::scatter(source, scatter_map, cudf::table_view({target}));
 
   cudf::test::strings_column_wrapper expected({"__", "bb", "", "", "aa", "__", "ééé"},
@@ -198,7 +195,7 @@ TEST_F(StringsColumnTest, ScatterZeroSizeStringsColumn)
   cudf::test::expect_column_empty(results->view().column(0));
 
   cudf::string_scalar scalar("");
-  auto scalar_source = std::vector<std::reference_wrapper<const cudf::scalar>>({scalar});
+  auto scalar_source = std::vector<std::reference_wrapper<cudf::scalar const>>({scalar});
   results            = cudf::scatter(scalar_source, scatter_map, cudf::table_view({target}));
   cudf::test::expect_column_empty(results->view().column(0));
 }

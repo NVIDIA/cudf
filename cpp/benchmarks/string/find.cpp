@@ -1,9 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/generate_skewed_data.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
@@ -39,6 +41,7 @@ static void bench_find_string(nvbench::state& state)
     state.add_global_memory_writes<nvbench::int8_t>(input.size());
   }
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (api == "find") {
     if (tgt_type == "scalar") {
       state.exec(nvbench::exec_tag::sync,
@@ -72,6 +75,8 @@ static void bench_find_string(nvbench::state& state)
                  [&](nvbench::launch& launch) { cudf::strings::ends_with(input, targets); });
     }
   }
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_find_string)
@@ -81,3 +86,38 @@ NVBENCH_BENCH(bench_find_string)
   .add_int64_axis("hit_rate", {20, 80})  // percentage
   .add_string_axis("api", {"find", "contains", "starts_with", "ends_with"})
   .add_string_axis("target", {"scalar", "column"});
+
+static void bench_find_string_skewed(nvbench::state& state)
+{
+  auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const short_length     = static_cast<cudf::size_type>(state.get_int64("short_length"));
+  auto const long_tail_length = static_cast<cudf::size_type>(state.get_int64("long_tail_length"));
+  auto const short_string_pct = static_cast<int32_t>(state.get_int64("short_string_pct"));
+  auto const hit_rate         = static_cast<int32_t>(state.get_int64("hit_rate"));
+
+  auto const stream = cudf::get_default_stream();
+  auto const col    = create_skewed_string_column(
+    num_rows, short_length, long_tail_length, short_string_pct, hit_rate);
+  auto const input = cudf::strings_column_view(col->view());
+
+  auto target = cudf::string_scalar(skewed_string_target_substring);
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  auto const data_size = col->alloc_size();
+  state.add_global_memory_reads<nvbench::int8_t>(data_size);
+  state.add_global_memory_writes<nvbench::int8_t>(input.size());
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync,
+             [&](nvbench::launch&) { cudf::strings::contains(input, target); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_find_string_skewed)
+  .set_name("find_string_skewed")
+  .add_int64_axis("short_length", {16, 32, 64, 96})
+  .add_int64_axis("long_tail_length", {1024, 4096, 16384})
+  .add_int64_axis("num_rows", {32768, 262144, 2097152})
+  .add_int64_axis("short_string_pct", {90, 95, 99})
+  .add_int64_axis("hit_rate", {20, 80});

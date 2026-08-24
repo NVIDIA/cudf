@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -880,26 +880,41 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Create a deep copy of the column while replacing the null mask. The resultant null mask is the
-   * bitwise merge of null masks in the columns given as arguments.
-   * The result will be sanitized to not contain any non-empty nulls in case of nested types
+   * Replace the null mask of a column. The resultant null mask is the bitwise {@code mergeOp} of
+   * null masks in the columns given as arguments, AND-ed with this column's existing null mask.
    *
-   * @param mergeOp binary operator (BITWISE_AND and BITWISE_OR only)
+   * If applying the null mask would be a no-op, the original column is returned with incremented
+   * refcount. Otherwise, a deep copy of the column is made (for a non-owning ColumnView, a deep copy
+   * must be made in either case).
+   *
+   * For STRUCT columns the new mask is also pushed down into every descendant column, to
+   * stay consistent with the parent. For LIST/STRING columns the resultant offsets are
+   * sanitized to not contain any non-empty nulls.
+   *
+   * If {@code columns} is empty, the column is returned unchanged (no-op).
+   *
+   * @param mergeOp binary operator (either BITWISE_AND or BITWISE_OR)
    * @param columns array of columns whose null masks are merged, must have identical number of rows.
    * @return the new ColumnVector with merged null mask.
+   * @deprecated Use {@link ColumnVector#mergeAndSetValidity(BinaryOp, ColumnView...)} instead.
    */
-  public final ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
+  @Deprecated
+  public ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
     assert mergeOp == BinaryOp.BITWISE_AND || mergeOp == BinaryOp.BITWISE_OR : "Only BITWISE_AND and BITWISE_OR supported right now";
     long[] columnViews = new long[columns.length];
     long size = getRowCount();
 
-    for(int i = 0; i < columns.length; i++) {
+    for (int i = 0; i < columns.length; i++) {
       assert columns[i] != null : "Column vectors passed may not be null";
       assert columns[i].getRowCount() == size : "Row count mismatch, all columns must be the same size";
       columnViews[i] = columns[i].getNativeView();
     }
 
-    return new ColumnVector(bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId));
+    long mergeOutput = bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId);
+    if (mergeOutput == 0) {  // no-op, the current column is unchanged
+      return copyToColumnVector();
+    }
+    return new ColumnVector(mergeOutput);
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -3330,7 +3345,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Applies a JSONPath string to an incoming strings column where each row in the column
    * is a valid json string.  The output is returned by row as a strings column.
    *
-   * For reference, https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+   * For reference, https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
    * Note: Only implements the operators: $ . [] *
    *
    * @param path The JSONPath string to be applied to each row
@@ -3348,7 +3363,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Applies a JSONPath string to an incoming strings column where each row in the column
    * is a valid json string.  The output is returned by row as a strings column.
    *
-   * For reference, https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+   * For reference, https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
    * Note: Only implements the operators: $ . [] *
    *
    * @param path The JSONPath string to be applied to each row
@@ -3503,19 +3518,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     assert regexProg != null : "regex program may not be null";
     return new ColumnVector(replaceRegex(getNativeView(), regexProg.pattern(), regexProg.combinedFlags(),
                                          regexProg.capture().nativeId, repl.getScalarHandle(), maxRepl));
-  }
-
-  /**
-   * For each string, replaces any character sequence matching any of the regular expression
-   * patterns with the corresponding replacement strings.
-   *
-   * @param patterns The regular expression patterns to search within each string.
-   * @param repls The string scalars to replace for each corresponding pattern match.
-   * @return A new column vector containing the string results.
-   */
-  public final ColumnVector replaceMultiRegex(String[] patterns, ColumnView repls) {
-    return new ColumnVector(replaceMultiRegex(getNativeView(), patterns,
-        repls.getNativeView()));
   }
 
   /**
@@ -4322,7 +4324,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Segmented sort of the elements within a list in each row of a list column.
-   * NOTICE: list columns with nested child are NOT supported yet.
+   * The list child may be of any type whose leaf elements are relationally comparable, including
+   * arbitrarily nested LIST and STRUCT children.
    *
    * @param isDescending   whether sorting each row with descending order (or ascending order)
    * @param isNullSmallest whether to regard the null value as the min value (or the max value)
@@ -4807,16 +4810,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
                                           long repl, long maxRepl) throws CudfException;
 
   /**
-   * Native method for multiple instance regular expression replacement.
-   * @param columnView native handle of the cudf::column_view being operated on.
-   * @param patterns native handle of the cudf::column_view containing the regex patterns.
-   * @param repls The replacement template for creating the output string.
-   * @return native handle of the resulting cudf column containing the string results.
-   */
-  private static native long replaceMultiRegex(long columnView, String[] patterns,
-                                               long repls) throws CudfException;
-
-  /**
    * Native method for replacing any character sequence matching the given regex program
    * pattern using the replace template for back-references.
    * @param columnView native handle of the cudf::column_view being operated on.
@@ -5203,15 +5196,17 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long normalizeNANsAndZeros(long viewHandle) throws CudfException;
 
   /**
-   * Native method to deep copy a column while replacing the null mask. The null mask is the
+   * Native method to replace a column's null mask. The null mask is the
    * bitwise merge of the null masks in the columns given as arguments.
    *
-   * @param baseHandle column view of the column that is deep copied.
+   * @param baseHandle column view of the column whose null mask is being replaced.
    * @param viewHandles array of views whose null masks are merged, must have identical row counts.
-   * @return native handle of the copied cudf column with replaced null mask.
+   * @param mergeOp native id of the binary op (BITWISE_AND or BITWISE_OR) used to merge the null masks.
+   * @return native handle of the resulting column, or 0 when the original is unchanged
+   *         (a no-op) and no copied column was produced.
    */
   private static native long bitwiseMergeAndSetValidity(long baseHandle, long[] viewHandles,
-                                                        int nullConfig) throws CudfException;
+                                                        int mergeOp) throws CudfException;
 
   ////////
   // Native cudf::column_view life cycle and metadata access methods. Life cycle methods

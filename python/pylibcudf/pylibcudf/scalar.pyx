@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cpython cimport bool as py_bool
 from cython cimport no_gc_clear
+from libc.math cimport isinf
 from libc.stdint cimport (
     int8_t,
     int16_t,
@@ -63,6 +64,10 @@ from .column cimport Column
 from .traits cimport is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from functools import singledispatch
 from ._interop_helpers import ArrowLike, ColumnMetadata
 
@@ -98,7 +103,7 @@ __all__ = ["Scalar"]
 # the best we can do is to grab the current memory resource at the time of
 # construction and keep it alive until the Scalar is destroyed (for potential
 # problems with this approach, see https://github.com/rapidsai/rmm/issues/1515;
-# the solution will be to address https://github.com/rapidsai/cudf/issues/15170
+# the solution will be to address https://github.com/NVIDIA/cudf/issues/15170
 # and also pass mrs all the way down to every rmm Python API to avoid its
 # default mrs). This is done in the `__cinit__` method below.
 #
@@ -152,7 +157,7 @@ cdef class Scalar:
         """The type of data in the column."""
         return self._data_type
 
-    cpdef bool is_valid(self, object stream = None):
+    cpdef bool is_valid(self, object stream: CudaStreamLike | None = None):
         """True if the scalar is valid, false if not"""
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
@@ -251,7 +256,7 @@ cdef class Scalar:
         dtype: DataType | None = None,
         stream: Stream | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a Python standard library object to a Scalar.
 
@@ -283,7 +288,7 @@ cdef class Scalar:
         np_val,
         stream: Stream | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a NumPy scalar to a Scalar.
 
@@ -306,7 +311,9 @@ cdef class Scalar:
         mr = _get_memory_resource(mr)
         return _from_numpy(np_val, _stream, mr)
 
-    def to_py(self, stream: Stream | None = None):
+    def to_py(
+        self, stream: Stream | None = None
+    ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.
 
@@ -425,7 +432,7 @@ def _(
     cdef type_id tid = c_dtype.id()
 
     if tid == type_id.FLOAT32:
-        if abs(py_val) > numeric_limits[float].max():
+        if not isinf(py_val) and abs(py_val) > numeric_limits[float].max():
             raise OverflowError(f"{py_val} out of range for FLOAT32 scalar")
         c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
         (<numeric_scalar[float]*>c_obj.get()).set_value(py_val, _cs)

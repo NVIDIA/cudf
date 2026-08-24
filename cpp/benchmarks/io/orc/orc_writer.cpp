@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,6 +39,8 @@ void BM_orc_write_encode(nvbench::state& state, nvbench::type_list<nvbench::enum
   cudf::size_type const run_length  = state.get_int64("run_length");
   auto const compression            = cudf::io::compression_type::SNAPPY;
   auto const sink_type              = io_type::VOID;
+  auto const stripe_size_bytes      = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows       = state.get_int64("stripe_size_rows");
 
   auto const tbl =
     create_random_table(cycle_dtypes(d_type, num_cols),
@@ -58,6 +60,9 @@ void BM_orc_write_encode(nvbench::state& state, nvbench::type_list<nvbench::enum
                cudf::io::orc_writer_options options =
                  cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view)
                    .compression(compression);
+               // Sentinel 0 == use cuDF default.
+               if (stripe_size_bytes > 0) options.set_stripe_size_bytes(stripe_size_bytes);
+               if (stripe_size_rows > 0) options.set_stripe_size_rows(stripe_size_rows);
                cudf::io::write_orc(options);
                timer.stop();
 
@@ -85,6 +90,8 @@ void BM_orc_write_io_compression(nvbench::state& state)
   cudf::size_type const run_length  = state.get_int64("run_length");
   auto const sink_type              = retrieve_io_type_enum(state.get_string("io_type"));
   auto const compression = retrieve_compression_type_enum(state.get_string("compression_type"));
+  auto const stripe_size_bytes = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows  = state.get_int64("stripe_size_rows");
 
   auto const tbl =
     create_random_table(cycle_dtypes(d_type, num_cols),
@@ -104,6 +111,8 @@ void BM_orc_write_io_compression(nvbench::state& state)
                cudf::io::orc_writer_options options =
                  cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view)
                    .compression(compression);
+               if (stripe_size_bytes > 0) options.set_stripe_size_bytes(stripe_size_bytes);
+               if (stripe_size_rows > 0) options.set_stripe_size_rows(stripe_size_rows);
                cudf::io::write_orc(options);
                timer.stop();
 
@@ -130,6 +139,8 @@ void BM_orc_write_statistics(nvbench::state& state,
 
   auto const compression = retrieve_compression_type_enum(state.get_string("compression_type"));
   auto const stats_freq  = Statistics;
+  auto const stripe_size_bytes = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows  = state.get_int64("stripe_size_rows");
 
   auto const tbl  = create_random_table(d_type, table_size_bytes{data_size});
   auto const view = tbl->view();
@@ -143,10 +154,12 @@ void BM_orc_write_statistics(nvbench::state& state,
                cuio_source_sink_pair source_sink(io_type::FILEPATH);
 
                timer.start();
-               cudf::io::orc_writer_options const options =
+               cudf::io::orc_writer_options options =
                  cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view)
                    .compression(compression)
                    .enable_statistics(stats_freq);
+               if (stripe_size_bytes > 0) options.set_stripe_size_bytes(stripe_size_bytes);
+               if (stripe_size_rows > 0) options.set_stripe_size_rows(stripe_size_rows);
                cudf::io::write_orc(options);
                timer.stop();
 
@@ -177,18 +190,24 @@ NVBENCH_BENCH_TYPES(BM_orc_write_encode, NVBENCH_TYPE_AXES(d_type_list))
   .set_type_axes_names({"data_type"})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
-  .add_int64_axis("run_length", {1, 32});
+  .add_int64_axis("run_length", {1, 32})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH(BM_orc_write_io_compression)
   .set_name("orc_write_io_compression")
   .add_string_axis("io_type", {"FILEPATH", "HOST_BUFFER", "VOID"})
-  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "NONE"})
+  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "LZ4", "NONE"})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
-  .add_int64_axis("run_length", {1, 32});
+  .add_int64_axis("run_length", {1, 32})
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});
 
 NVBENCH_BENCH_TYPES(BM_orc_write_statistics, NVBENCH_TYPE_AXES(stats_list))
   .set_name("orc_write_statistics")
   .set_type_axes_names({"statistics"})
-  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "NONE"})
-  .set_min_samples(4);
+  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "ZLIB", "LZ4", "NONE"})
+  .set_min_samples(4)
+  .add_int64_axis("stripe_size_bytes", {0})
+  .add_int64_axis("stripe_size_rows", {0});

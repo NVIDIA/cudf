@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,61 +11,24 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
+
+/**
+ * @file
+ * @brief Column APIs for transforming rows
+ */
 
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup transformation_transform
  * @{
- * @file
- * @brief Column APIs for transforming rows
  */
-
-/**
- * @brief Creates a new column by applying a transform function against every
- * element of the input columns.
- *
- * Computes:
- * `out[i] = F(inputs[i]...)`.
- *
- * Note that for every scalar in `inputs` (columns of size 1), `input[i] == input[0]`
- *
- *
- * @throws std::invalid_argument if any of the input columns have different sizes (except scalars of
- * size 1)
- * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string
- * types
- * @throws std::invalid_argument if any of the input columns have nulls
- * @throws std::logic_error if JIT is not supported by the runtime
- *
- * The size of the resulting column is the size of the largest column.
- *
- * @param inputs        Immutable views of the input columns to transform
- * @param transform_udf The PTX/CUDA string of the transform function to apply
- * @param output_type   The output type that is compatible with the output type in the UDF
- * @param is_ptx        true: the UDF is treated as PTX code; false: the UDF is treated as CUDA code
- * @param user_data     User-defined device data to pass to the UDF.
- * @param is_null_aware Signifies the UDF will receive row inputs as optional values
- * @param null_policy   Signifies if a null mask should be created for the output column
- * @param stream        CUDA stream used for device memory operations and kernel launches
- * @param mr            Device memory resource used to allocate the returned column's device memory
- * @return              The column resulting from applying the transform function to
- *                      every element of the input
- */
-[[deprecated("Use transform_extended instead")]] std::unique_ptr<column> transform(
-  std::vector<column_view> const& inputs,
-  std::string const& transform_udf,
-  data_type output_type,
-  bool is_ptx,
-  std::optional<void*> user_data    = std::nullopt,
-  null_aware is_null_aware          = null_aware::NO,
-  output_nullability null_policy    = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Typedef for inputs to the transform function. Each input can be either a column or a
@@ -87,39 +50,24 @@ struct transform_output {
 };
 
 /**
- * @brief Creates a new column by applying a transform function against every
- * element of the input columns.
+ * @brief Creates a new column by applying a transform function against every element of the input
+ * columns.
  *
- * Computes:
- * `out[i] = F(inputs[i]...)`.
+ * @deprecated in release 26.10. Use `transform` instead.
  *
- *
- * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
- * @throws std::invalid_argument if `output_type` or any of the input types are not supported.
- * CUDA-supported types are fixed-width and string types, while PTX-supported types are integral and
- * floating-point types.
- * @throws std::invalid_argument if the inputs only have a scalar with no column inputs and
- * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
- * this case.
- *
- * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
- * the input columns.
- *
- * @param inputs        Immutable views of the inputs to transform (columns and scalar columns)
+ * @param inputs Immutable views of the inputs to transform
  * @param udf The PTX/CUDA string of the transform function to apply
- * @param output_type   The output type that is compatible with the output type in the UDF
- * @param source_type   The source type of the UDF (CUDA or PTX)
- * @param user_data     User-defined device data to pass to the UDF.
+ * @param output_type The output type that is compatible with the output type in the UDF
+ * @param source_type The source type of the UDF (CUDA or PTX)
+ * @param user_data User-defined device data to pass to the UDF
  * @param is_null_aware Signifies the UDF will receive row inputs as optional values
- * @param null_policy   Signifies if a null mask should be created for the output column
- * @param row_size The row size of the transform operation. If not provided, it is inferred from the
- * input columns.
- * @param stream        CUDA stream used for device memory operations and kernel launches
- * @param mr            Device memory resource used to allocate the returned column's device memory
- * @return              The column resulting from applying the transform function to
- *                      every element of the input
+ * @param row_size The row size of the transform operation
+ * @param null_policy Signifies if a null mask should be created for the output column
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return The column resulting from applying the transform function
  */
-std::unique_ptr<column> transform_extended(
+[[deprecated("Use transform instead")]] std::unique_ptr<column> transform_extended(
   std::span<transform_input const> inputs,
   std::string const& udf,
   data_type output_type,
@@ -128,7 +76,7 @@ std::unique_ptr<column> transform_extended(
   null_aware is_null_aware          = null_aware::NO,
   std::optional<size_type> row_size = std::nullopt,
   output_nullability null_policy    = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -138,15 +86,20 @@ std::unique_ptr<column> transform_extended(
  * Computes:
  * `(outputs[i]...) =  UDF(inputs[i]...)`.
  *
- *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
  * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string
  * types
  * @throws std::invalid_argument if the inputs only have a scalar with no column inputs and
  * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
  * this case.
+ * @throws std::invalid_argument if any of the output or input types are not supported.
+ * CUDA-supported input types are fixed-width, string, and their dictionary types. PTX-supported
+ * input types are integrals, floats, and their dictionary types. CUDA-supported output types are
+ * fixed-width, string, and their dictionary types. PTX-supported output types are integrals,
+ * floats, and their dictionary types.
  * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
  * if the number of string offsets does not match the number of output columns.
+ * @throws cudf::evaluation_error if the UDF produces an error during execution.
  *
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
@@ -167,7 +120,7 @@ std::unique_ptr<column> transform_extended(
  * function to every element of the input according to the output specifications
  *
  */
-std::unique_ptr<table> multi_transform(
+std::unique_ptr<table> transform(
   std::string const& udf,
   udf_source_type source_type,
   null_aware is_null_aware,
@@ -176,7 +129,95 @@ std::unique_ptr<table> multi_transform(
   std::span<transform_output const> outputs,
   std::vector<std::unique_ptr<column>>&& string_offsets,
   std::optional<size_type> row_size,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Creates a new table by applying a transform function against every element of the input
+ * columns.
+ *
+ * @deprecated in release 26.10. Use `transform` instead.
+ *
+ * @param udf The PTX/CUDA string of the transform function to apply
+ * @param source_type The source type of the UDF (CUDA or PTX)
+ * @param is_null_aware Signifies the UDF will receive row inputs as optional values
+ * @param user_data User-defined device data to pass to the UDF
+ * @param inputs Immutable views of the inputs to transform (columns and scalar columns)
+ * @param outputs Specification of the output columns to be created
+ * @param string_offsets Pre-allocated offsets for string output columns
+ * @param row_size The row size of the transform operation
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return A table containing the transformed output columns
+ */
+[[deprecated("Use transform instead")]] std::unique_ptr<table> multi_transform(
+  std::string const& udf,
+  udf_source_type source_type,
+  null_aware is_null_aware,
+  std::optional<void*> user_data,
+  std::span<transform_input const> inputs,
+  std::span<transform_output const> outputs,
+  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::optional<size_type> row_size,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief The type of LTO Binary
+ */
+enum class lto_binary_type : uint8_t {
+  LTO_IR,  //< LTO-IR binary
+  FATBIN   //< FATBIN binary
+};
+
+/**
+ * @brief Creates a new table by applying a transform function against every
+ * element of the input columns.
+ *
+ * Computes:
+ * `(outputs[i]...) =  UDF(inputs[i]...)`.
+ *
+ *
+ * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
+ * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string
+ * types
+ * @throws std::invalid_argument if the inputs only have a scalar with no column inputs and
+ * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
+ * this case
+ * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
+ * if the number of string offsets does not match the number of output columns
+ * @throws cudf::evaluation_error if the UDF produces an error during execution
+ *
+ * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
+ * the input and pre-allocated output columns.
+ *
+ * @param udf           The LTO-IR fragment containing the transform function to apply. The UDF must
+ * be named `transform` and follow the CUDF UDF ABI
+ * @param binary_type   The type of the LTO binary provided in `udf`
+ * @param is_null_aware Signifies the UDF will receive row inputs as optional values
+ * @param user_data     User-defined device data to pass to the UDF
+ * @param inputs        Immutable views of the inputs to transform
+ * @param outputs       Specification of the output columns to be created
+ * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
+ * to prevent overhead of compacting string views into run-end strings column.
+ * @param row_size The row size of the transform operation. If not provided, it is inferred from the
+ * input columns
+ * @param stream        CUDA stream used for device memory operations and kernel launches
+ * @param mr            Device memory resource used to allocate the returned column's device memory
+ * @return              A table containing the columns resulting from applying the transform
+ * function to every element of the input according to the output specifications
+ *
+ */
+std::unique_ptr<table> transform_lto(
+  std::span<uint8_t const> udf,
+  lto_binary_type binary_type,
+  null_aware is_null_aware,
+  std::optional<void*> user_data,
+  std::span<transform_input const> inputs,
+  std::span<transform_output const> outputs,
+  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::optional<size_type> row_size,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -195,7 +236,7 @@ std::unique_ptr<table> multi_transform(
  */
 [[deprecated]] std::pair<std::unique_ptr<rmm::device_buffer>, size_type> nans_to_nulls(
   column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -211,7 +252,7 @@ std::unique_ptr<table> multi_transform(
  */
 std::unique_ptr<column> column_nans_to_nulls(
   column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -221,6 +262,10 @@ std::unique_ptr<column> column_nans_to_nulls(
  * transform.
  *
  * @throws cudf::logic_error if passed an expression operating on table_reference::RIGHT.
+ * @throws cudf::data_type_error if the expression applies a non-comparison binary operator to
+ * decimal128 operands.
+ * @throws cudf::evaluation_error if the evaluation of the expression results in an error during
+ * execution.
  *
  * @param table The table used for expression evaluation
  * @param expr The root of the expression tree
@@ -231,7 +276,7 @@ std::unique_ptr<column> column_nans_to_nulls(
 std::unique_ptr<column> compute_column(
   table_view const& table,
   ast::expression const& expr,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -242,6 +287,8 @@ std::unique_ptr<column> compute_column(
  * transform.
  *
  * @throws cudf::logic_error if passed an expression operating on table_reference::RIGHT.
+ * @throws cudf::evaluation_error if the evaluation of the expression results in an error during
+ * execution.
  *
  * @param table The table used for expression evaluation
  * @param expr The root of the expression tree
@@ -252,6 +299,34 @@ std::unique_ptr<column> compute_column(
 std::unique_ptr<column> compute_column_jit(
   table_view const& table,
   ast::expression const& expr,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Compute a new table by evaluating expression trees on a table using a JIT-compiled
+ * kernel.
+ *
+ * This evaluates expressions over a table to produce a new table. Also called an n-ary
+ * transform. Expressions are evaluated in the order supplied, and output column `i` contains the
+ * result of `expressions[i]`. Common subexpressions shared by multiple outputs are evaluated once
+ * by the generated function.
+ *
+ * @pre `expressions` must not be empty.
+ *
+ * @throws cudf::logic_error if passed an empty collection of expressions.
+ * @throws cudf::logic_error if passed an expression operating on table_reference::RIGHT.
+ * @throws cudf::evaluation_error if the evaluation of the expression results in an error during
+ * execution.
+ *
+ * @param table The table used for expression evaluation
+ * @param expressions Non-empty collection of expression-tree roots, one per output column
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource
+ * @return Table containing one output column per expression, in the same order as `expressions`
+ */
+std::unique_ptr<table> compute_table_jit(
+  table_view const& table,
+  std::span<std::reference_wrapper<ast::expression const> const> expressions,
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -273,7 +348,7 @@ std::unique_ptr<column> compute_column_jit(
  */
 std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
   column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -303,7 +378,7 @@ std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
  */
 std::pair<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::column>> encode(
   cudf::table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -337,7 +412,7 @@ std::pair<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::column>> encode(
 std::pair<std::unique_ptr<column>, table_view> one_hot_encode(
   column_view const& input,
   column_view const& categories,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -366,7 +441,7 @@ std::unique_ptr<column> mask_to_bools(
   bitmask_type const* bitmask,
   size_type begin_bit,
   size_type end_bit,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -397,7 +472,7 @@ std::unique_ptr<column> mask_to_bools(
  */
 std::unique_ptr<column> row_bit_count(
   table_view const& t,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -422,7 +497,7 @@ std::unique_ptr<column> row_bit_count(
 std::unique_ptr<column> segmented_row_bit_count(
   table_view const& t,
   size_type segment_length,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

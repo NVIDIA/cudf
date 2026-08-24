@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -20,7 +20,7 @@ rapids_cuda_init_architectures(CUDF)
 project(
   CUDF
   VERSION "${RAPIDS_VERSION}"
-  LANGUAGES C CXX CUDA
+  LANGUAGES C CXX CUDA ASM
 )
 
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.2)
@@ -38,7 +38,6 @@ option(USE_NVTX "Build with NVTX support" ON)
 option(BUILD_TESTS "Configure CMake to build tests" ON)
 option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
-option(JITIFY_USE_CACHE "Use a file cache for JIT compiled kernels" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
 option(CUDF_LARGE_STRINGS_DISABLED "Build with large string support disabled" OFF)
@@ -69,18 +68,23 @@ set(CUDF_BUILD_STATIC_DEPS
 )
 set_property(CACHE CUDF_BUILD_STATIC_DEPS PROPERTY STRINGS "ON" "OFF" "FORCE")
 
-# cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic linking
-option(CUDA_STATIC_RUNTIME "Statically link the CUDA runtime" OFF)
-# FORCE mode implies static CUDA runtime
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
-  set(CUDA_STATIC_RUNTIME
+  set(RTCX_STATIC_LINK_NVRTC
       ON
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
+      CACHE BOOL "Use static linking for NVRTC" FORCE
+  )
+  set(RTCX_STATIC_LINK_NVJITLINK
+      ON
+      CACHE BOOL "Use static linking for nvJitLink" FORCE
   )
 else()
-  set(CUDA_STATIC_RUNTIME
+  set(RTCX_STATIC_LINK_NVRTC
       OFF
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
+      CACHE BOOL "Use static linking for NVRTC" FORCE
+  )
+  set(RTCX_STATIC_LINK_NVJITLINK
+      OFF
+      CACHE BOOL "Use static linking for nvJitLink" FORCE
   )
 endif()
 
@@ -110,7 +114,6 @@ message(VERBOSE "CUDF: Build with NVTX support: ${USE_NVTX}")
 message(VERBOSE "CUDF: Configure CMake to build tests: ${BUILD_TESTS}")
 message(VERBOSE "CUDF: Configure CMake to build benchmarks: ${BUILD_BENCHMARKS}")
 message(VERBOSE "CUDF: Build cuDF shared libraries: ${BUILD_SHARED_LIBS}")
-message(VERBOSE "CUDF: Use a file cache for JIT compiled kernels: ${JITIFY_USE_CACHE}")
 message(VERBOSE "CUDF: Build with per-thread default stream: ${CUDF_USE_PER_THREAD_DEFAULT_STREAM}")
 message(
   VERBOSE
@@ -293,6 +296,16 @@ endfunction()
 rapids_cmake_support_conda_env(conda_env MODIFY_PREFIX_PATH)
 
 # ##################################################################################################
+# * find C++ libraries from RAPIDS wheels in in site-packages --------------------------------------
+find_package(Python COMPONENTS Interpreter)
+if(Python_FOUND)
+  include(${rapids-cmake-dir}/cython-core/find_prefix_paths.cmake)
+  rapids_cython_find_prefix_paths("${Python_EXECUTABLE}" wheel_prefix_paths)
+  set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS TRUE)
+  list(APPEND CMAKE_PREFIX_PATH ${wheel_prefix_paths})
+endif()
+
+# ##################################################################################################
 # * compiler options ------------------------------------------------------------------------------
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules ${CMAKE_MODULE_PATH})
 rapids_find_package(
@@ -326,7 +339,7 @@ endif()
 rapids_cpm_init()
 
 include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
-set(_rapids_logger_args BUILD_EXPORT_SET cudf-exports)
+set(_rapids_logger_args)
 if(NOT CUDF_BUILD_STATIC_DEPS STREQUAL "OFF")
   list(APPEND _rapids_logger_args ${CUDF_EXCLUDE_DEPS_FROM_ALL_FLAG} CPM_ARGS OPTIONS
        "BUILD_SHARED_LIBS OFF"
@@ -338,15 +351,16 @@ rapids_cpm_rapids_logger(${_rapids_logger_args})
 # must be in the installed config when CUDF_INSTALL_LIBRARY_DEPS is OFF. If it's ON then we always
 # export
 get_target_property(_rapids_logger_type rapids_logger::rapids_logger TYPE)
+if(NOT BUILD_SHARED_LIBS OR NOT _rapids_logger_type STREQUAL "STATIC_LIBRARY")
+  include("${rapids-cmake-dir}/export/package.cmake")
+  rapids_export_package(BUILD rapids_logger cudf-exports VERSION ${rapids_logger_VERSION})
+endif()
 if(CUDF_INSTALL_LIBRARY_DEPS OR NOT _rapids_logger_type STREQUAL "STATIC_LIBRARY")
   include("${rapids-cmake-dir}/export/package.cmake")
   rapids_export_package(INSTALL rapids_logger cudf-exports VERSION ${rapids_logger_VERSION})
 endif()
 
 create_logger_macros(CUDF "cudf::default_logger()" include/cudf)
-
-# find jitify
-include(cmake/thirdparty/get_jitify.cmake)
 
 # find NVTX
 include(cmake/thirdparty/get_nvtx.cmake)
@@ -360,8 +374,10 @@ include(cmake/thirdparty/get_cccl.cmake)
 # find rmm, should come after including CCCL to allow overriding the CCCL version used for testing
 include(cmake/thirdparty/get_rmm.cmake)
 
-# find croaring
-include(cmake/thirdparty/get_croaring.cmake)
+# find croaring, needed by tests and benchmarks
+if(CUDF_BUILD_TESTS OR CUDF_BUILD_BENCHMARKS)
+  include(cmake/thirdparty/get_croaring.cmake)
+endif()
 
 # find flatbuffers
 include(cmake/thirdparty/get_flatbuffers.cmake)
@@ -377,9 +393,6 @@ if(CUDF_BUILD_TESTUTIL)
   include(cmake/thirdparty/get_gtest.cmake)
 endif()
 
-# preprocess jitify-able kernels
-include(cmake/Modules/JitifyPreprocessKernels.cmake)
-
 # find KvikIO
 include(cmake/thirdparty/get_kvikio.cmake)
 
@@ -389,14 +402,23 @@ include(cmake/thirdparty/get_nanoarrow.cmake)
 # find thread_pool
 include(cmake/thirdparty/get_thread_pool.cmake)
 
+# find xxhash
+include(cmake/thirdparty/get_xxhash.cmake)
+
 # find zstd
 include(cmake/thirdparty/get_zstd.cmake)
+
+# Fetch librtcx via CPM (zstd and nvtx3 are already available at this point)
+include(cmake/thirdparty/get_rtcx.cmake)
+
+# Pre-compiled fragment management helper functions
+include(cmake/Modules/AddFragment.cmake)
 
 # Workaround until https://github.com/rapidsai/rapids-cmake/issues/176 is resolved
 if(NOT BUILD_SHARED_LIBS)
   include("${rapids-cmake-dir}/export/find_package_file.cmake")
   list(APPEND METADATA_KINDS BUILD INSTALL)
-  list(APPEND dependencies KvikIO ZLIB nvcomp nanoarrow zstd)
+  list(APPEND dependencies KvikIO ZLIB nvcomp nanoarrow zstd rtcx)
 
   foreach(METADATA_KIND IN LISTS METADATA_KINDS)
     foreach(dep IN LISTS dependencies)
@@ -409,6 +431,134 @@ if(NOT BUILD_SHARED_LIBS)
   endif()
 endif()
 
+rtcx_add_embed(cudf_cuda_embed)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${rtcx_SOURCE_DIR}/libcxx DEST_DIRECTORY librtcx/libcxx
+  INCLUDE_DIRECTORIES librtcx/libcxx
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/cudf DEST_DIRECTORY
+  cudf/cpp/include/cudf INCLUDE_DIRECTORIES cudf/cpp/include
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/jit DEST_DIRECTORY
+  cudf/cpp/src/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/binaryop/jit DEST_DIRECTORY
+  cudf/cpp/src/binaryop/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/join/jit DEST_DIRECTORY
+  cudf/cpp/src/join/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/rolling DEST_DIRECTORY
+  cudf/cpp/src/rolling INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/transform/jit DEST_DIRECTORY
+  cudf/cpp/src/transform/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
+get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)
+
+foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
+  cmake_path(GET INC_DIR FILENAME INC_DIR_NAME)
+
+  rtcx_embed_includes(
+    cudf_cuda_embed SOURCE_DIRECTORY ${INC_DIR} DEST_DIRECTORY CCCL/libcudacxx/${INC_DIR_NAME}
+    INCLUDE_DIRECTORIES CCCL/libcudacxx/${INC_DIR_NAME}
+  )
+endforeach()
+
+rtcx_embed(
+  cudf_cuda_embed COMPRESSION zstd OUTPUT_DIRECTORY "${CUDF_GENERATED_INCLUDE_DIR}/rtcx_embed"
+)
+
+rtcx_add_embed(cudf_fragments)
+
+list(APPEND CUDF_PRECOMPILE_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t numeric::decimal32
+     numeric::decimal64 numeric::decimal128
+)
+
+foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
+  set(FRAGMENT_NAME transform_kernel)
+  get_property(
+    FILE_INDEX
+    TARGET cudf_fragments__embed_props
+    PROPERTY EMBED_FILE_INDEX
+  )
+  set(VARIANT_NAME transform_kernel_${FILE_INDEX})
+  set(INSTANCE
+      "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+  )
+  add_fragment(
+    cudf_fragments
+    FRAGMENT
+    ${VARIANT_NAME}
+    SOURCE
+    src/transform/jit/kernel.cu
+    KERNEL_INSTANCE
+    ${INSTANCE}
+    UDF_TYPE
+    "int(${TYPE} *, ${TYPE})"
+    DEFINITIONS
+    CUDF_LTO_MODE
+    ARRAY_IDS
+    ${FRAGMENT_NAME}_FILE_INDEX
+    ${FRAGMENT_NAME}_INSTANCE
+    ARRAY_VALUES
+    ${FILE_INDEX}
+    "${INSTANCE}"
+  )
+endforeach()
+
+foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
+  foreach(RHS_IS_SCALAR IN ITEMS "false" "true")
+    set(FRAGMENT_NAME transform_kernel)
+    get_property(
+      FILE_INDEX
+      TARGET cudf_fragments__embed_props
+      PROPERTY EMBED_FILE_INDEX
+    )
+    set(VARIANT_NAME transform_kernel_${FILE_INDEX})
+    set(INSTANCE
+        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::jit::column_accessor<1ULL, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+    )
+    add_fragment(
+      cudf_fragments
+      FRAGMENT
+      ${VARIANT_NAME}
+      SOURCE
+      src/transform/jit/kernel.cu
+      KERNEL_INSTANCE
+      ${INSTANCE}
+      UDF_TYPE
+      "int(${TYPE} *, ${TYPE}, ${TYPE})"
+      DEFINITIONS
+      CUDF_LTO_MODE
+      ARRAY_IDS
+      ${FRAGMENT_NAME}_FILE_INDEX
+      ${FRAGMENT_NAME}_INSTANCE
+      ARRAY_VALUES
+      ${FILE_INDEX}
+      "${INSTANCE}"
+    )
+  endforeach()
+endforeach()
+
+rtcx_embed(
+  cudf_fragments COMPRESSION none OUTPUT_DIRECTORY "${CUDF_GENERATED_INCLUDE_DIR}/rtcx_embed"
+)
+
 # ##################################################################################################
 # * library targets -------------------------------------------------------------------------------
 add_library(
@@ -418,6 +568,7 @@ add_library(
   src/aggregation/result_cache.cpp
   src/ast/expression_parser.cpp
   src/ast/expressions.cpp
+  src/ast/jit/expressions.cpp
   src/ast/operators.cpp
   src/binaryop/binaryop.cpp
   src/binaryop/compiled/ATan2.cu
@@ -535,11 +686,13 @@ add_library(
   src/groupby/sort/group_replace_nulls.cu
   src/groupby/sort/group_std.cu
   src/groupby/sort/group_sum.cu
+  src/groupby/sort/group_sum_overflow.cu
   src/groupby/sort/group_sum_scan.cu
   src/groupby/sort/group_topk.cu
   src/groupby/sort/host_udf_aggregation.cpp
   src/groupby/sort/scan.cpp
   src/groupby/sort/sort_helper.cu
+  src/groupby/sort/sort_helper_nested.cu
   src/groupby/streaming_groupby.cpp
   src/groupby/streaming_groupby/aggregate.cu
   src/groupby/streaming_groupby/impl.cu
@@ -617,6 +770,7 @@ add_library(
   src/io/orc/writer_impl.cu
   src/io/parquet/arrow_schema_writer.cpp
   src/io/parquet/bloom_filter_reader.cu
+  src/io/parquet/column_path_helpers.cpp
   src/io/parquet/compact_protocol_reader.cpp
   src/io/parquet/compact_protocol_writer.cpp
   src/io/parquet/decode_preprocess.cu
@@ -627,9 +781,12 @@ add_library(
   src/io/parquet/experimental/hybrid_scan_chunking.cu
   src/io/parquet/experimental/hybrid_scan_helpers.cpp
   src/io/parquet/experimental/hybrid_scan_impl.cpp
+  src/io/parquet/experimental/hybrid_scan_multifile.cpp
   src/io/parquet/experimental/hybrid_scan_preprocess.cu
   src/io/parquet/experimental/page_index_filter.cu
   src/io/parquet/experimental/page_index_filter_utils.cu
+  src/io/parquet/experimental/variant_extract.cu
+  src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
   src/io/parquet/io_utils/parquet_io_utils.cpp
   src/io/parquet/page_data.cu
@@ -643,6 +800,7 @@ add_library(
   src/io/parquet/reader_impl.cpp
   src/io/parquet/reader_impl_chunking.cu
   src/io/parquet/reader_impl_chunking_utils.cu
+  src/io/parquet/reader_impl_dict_transcode.cu
   src/io/parquet/reader_impl_helpers.cpp
   src/io/parquet/reader_impl_preprocess.cu
   src/io/parquet/reader_impl_preprocess_utils.cu
@@ -650,6 +808,7 @@ add_library(
   src/io/parquet/writer_impl.cu
   src/io/parquet/writer_impl_helpers.cpp
   src/io/parquet/decode_fixed.cu
+  src/io/parquet/decode_pruned_pages.cu
   src/io/statistics/orc_column_statistics.cu
   src/io/statistics/parquet_column_statistics.cu
   src/io/text/byte_range_info.cpp
@@ -674,13 +833,23 @@ add_library(
   src/jit/util.cpp
   src/join/conditional_join.cu
   src/join/cross_join.cu
+  src/join/direct_join.cu
   src/join/distinct_hash_join.cu
-  src/join/filter_join_indices.cu
-  src/join/filter_join_indices_kernel_complex.cu
-  src/join/filter_join_indices_kernel_null_complex.cu
-  src/join/filter_join_indices_kernel_null_primitive.cu
-  src/join/filter_join_indices_kernel_primitive.cu
-  src/join/filtered_join.cu
+  src/join/filter_join_indices/filter_join_indices.cu
+  src/join/filter_join_indices/filter_join_indices_jit.cu
+  src/join/filter_join_indices/filter_join_indices_kernel_complex.cu
+  src/join/filter_join_indices/filter_join_indices_kernel_null_complex.cu
+  src/join/filter_join_indices/filter_join_indices_kernel_null_primitive.cu
+  src/join/filter_join_indices/filter_join_indices_kernel_primitive.cu
+  src/join/filter_join_indices/filter_join_indices_output_size_kernel_complex.cu
+  src/join/filter_join_indices/filter_join_indices_output_size_kernel_null_complex.cu
+  src/join/filter_join_indices/filter_join_indices_output_size_kernel_null_primitive.cu
+  src/join/filter_join_indices/filter_join_indices_output_size_kernel_primitive.cu
+  src/join/filtered_join/filtered_join.cu
+  src/join/filtered_join/filtered_join_flat.cu
+  src/join/filtered_join/filtered_join_nested.cu
+  src/join/filtered_join/filtered_join_nested_query.cu
+  src/join/filtered_join/filtered_join_primitive.cu
   src/join/hash_join/finalize_partitioned_full_join.cpp
   src/join/hash_join/full_join_match_context.cpp
   src/join/hash_join/full_join_retrieve.cu
@@ -702,18 +871,13 @@ add_library(
   src/join/hash_join/partitioned_left_join.cu
   src/join/hash_join/partitioned_retrieve.cu
   src/join/hash_join/partitioned_retrieve_outer.cu
-  src/join/mark_join.cu
-  src/join/filter_join_indices_jit.cu
   src/join/join.cu
   src/join/join_utils.cu
   src/join/key_remapping.cu
+  src/join/mark_join.cu
   src/join/mixed_join.cu
-  src/join/mixed_join_kernel.cu
-  src/join/mixed_join_kernel_nulls.cu
   src/join/mixed_join_kernels_semi.cu
   src/join/mixed_join_semi.cu
-  src/join/mixed_join_size_kernel.cu
-  src/join/mixed_join_size_kernel_nulls.cu
   src/join/sort_merge_join.cu
   src/json/json_path.cu
   src/lists/contains.cu
@@ -779,18 +943,16 @@ add_library(
   src/reductions/segmented/nunique.cu
   src/reductions/segmented/product.cu
   src/reductions/segmented/reductions.cpp
-  src/reductions/segmented/std.cu
+  src/reductions/segmented/std_var.cu
   src/reductions/segmented/sum.cu
   src/reductions/segmented/sum_of_squares.cu
   src/reductions/segmented/update_validity.cu
-  src/reductions/segmented/var.cu
-  src/reductions/std.cu
+  src/reductions/std_var.cu
   src/reductions/sum.cu
   src/reductions/sum_of_squares.cu
-  src/reductions/sum_with_overflow.cu
+  src/reductions/sum_overflow.cu
   src/reductions/unique_count.cu
   src/reductions/unique_count_column.cu
-  src/reductions/var.cu
   src/replace/clamp.cu
   src/replace/nans.cu
   src/replace/nulls.cu
@@ -806,6 +968,11 @@ add_library(
   src/rolling/detail/rolling_variable_window.cu
   src/rolling/grouped_rolling.cu
   src/rolling/range_rolling.cu
+  src/rolling/range_rolling_bounded_closed.cu
+  src/rolling/range_rolling_bounded_open.cu
+  src/rolling/range_rolling_current_row.cu
+  src/rolling/range_rolling_multi_column.cu
+  src/rolling/range_rolling_unbounded.cu
   src/rolling/range_window_bounds.cpp
   src/rolling/rolling.cpp
   src/round/round.cu
@@ -818,8 +985,6 @@ add_library(
   src/search/contains_scalar.cu
   src/search/contains_table.cu
   src/search/contains_table_impl.cu
-  src/search/contains_table_impl_nested.cu
-  src/search/contains_table_impl_primitive.cu
   src/search/search_ordered.cu
   src/sort/is_sorted.cu
   src/sort/rank.cu
@@ -836,6 +1001,14 @@ add_library(
   src/stream_compaction/apply_boolean_mask.cu
   src/stream_compaction/distinct.cu
   src/stream_compaction/distinct_helpers.cu
+  src/stream_compaction/distinct_helpers_flat_nan_equal_any.cu
+  src/stream_compaction/distinct_helpers_flat_nan_equal_ordered.cu
+  src/stream_compaction/distinct_helpers_flat_nan_unequal_any.cu
+  src/stream_compaction/distinct_helpers_flat_nan_unequal_ordered.cu
+  src/stream_compaction/distinct_helpers_nested_nan_equal_any.cu
+  src/stream_compaction/distinct_helpers_nested_nan_equal_ordered.cu
+  src/stream_compaction/distinct_helpers_nested_nan_unequal_any.cu
+  src/stream_compaction/distinct_helpers_nested_nan_unequal_ordered.cu
   src/stream_compaction/drop_nans.cu
   src/stream_compaction/drop_nulls.cu
   src/stream_compaction/filter/filter.cu
@@ -874,6 +1047,8 @@ add_library(
   src/strings/merge/merge.cu
   src/strings/padding.cu
   src/strings/positions.cu
+  src/strings/regex/gkexec.cpp
+  src/strings/regex/glushkov_regcomp.cpp
   src/strings/regex/regcomp.cpp
   src/strings/regex/regexec.cpp
   src/strings/regex/regex_program.cpp
@@ -881,7 +1056,6 @@ add_library(
   src/strings/replace/backref_re.cu
   src/strings/replace/find_replace.cu
   src/strings/replace/multi.cu
-  src/strings/replace/multi_re.cu
   src/strings/replace/replace.cu
   src/strings/replace/replace_nulls.cu
   src/strings/replace/replace_re.cu
@@ -963,20 +1137,11 @@ add_library(
   src/utilities/traits.cpp
   src/utilities/type_checks.cpp
   src/utilities/type_dispatcher.cpp
+  ${cudf_cuda_embed_SOURCE_DIR}/cudf_cuda_embed.s
+  ${cudf_fragments_SOURCE_DIR}/cudf_fragments.s
 )
 
-# Anything that includes jitify needs to be compiled with _FILE_OFFSET_BITS=64 due to a limitation
-# in how conda builds glibc
-set_source_files_properties(
-  src/binaryop/binaryop.cpp
-  src/jit/cache.cpp
-  src/rolling/detail/rolling_fixed_window.cu
-  src/rolling/detail/rolling_variable_window.cu
-  src/rolling/grouped_rolling.cu
-  src/rolling/rolling.cu
-  src/transform/transform.cu
-  PROPERTIES COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64"
-)
+add_dependencies(cudf cudf_cuda_embed cudf_fragments)
 
 set_property(
   SOURCE src/io/parquet/writer_impl.cu
@@ -1006,12 +1171,13 @@ set_target_properties(
 # and use them.
 set_target_properties(
   cudf
-  PROPERTIES EXPORT_PROPERTIES
-             "CUDF_CXX_FLAGS;CUDF_CUDA_FLAGS;CUDF_CXX_DEFINITIONS;CUDF_CUDA_DEFINITIONS"
-             CUDF_CXX_FLAGS "${CUDF_CXX_FLAGS}"
-             CUDF_CUDA_FLAGS "${CUDF_CUDA_FLAGS}"
-             CUDF_CXX_DEFINITIONS "${CUDF_CXX_DEFINITIONS}"
-             CUDF_CUDA_DEFINITIONS "${CUDF_CUDA_DEFINITIONS}"
+  PROPERTIES
+    EXPORT_PROPERTIES
+    "CUDF_CXX_FLAGS;CUDF_CUDA_FLAGS;CUDF_CXX_DEFINITIONS;CUDF_CUDA_DEFINITIONS;CUDF_STATIC_LINKED_PROJECTS"
+    CUDF_CXX_FLAGS "${CUDF_CXX_FLAGS}"
+    CUDF_CUDA_FLAGS "${CUDF_CUDA_FLAGS}"
+    CUDF_CXX_DEFINITIONS "${CUDF_CXX_DEFINITIONS}"
+    CUDF_CUDA_DEFINITIONS "${CUDF_CUDA_DEFINITIONS}"
 )
 
 # Note: This must come before the target_compile_options below so that the function can modify the
@@ -1040,14 +1206,14 @@ target_compile_options(
 # Specify include paths for the current target and dependents
 target_include_directories(
   cudf
-  PUBLIC "$<BUILD_INTERFACE:${DLPACK_INCLUDE_DIR}>"
-         "$<BUILD_INTERFACE:${JITIFY_INCLUDE_DIR}>"
-         "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/include>"
+  PUBLIC "$<BUILD_INTERFACE:${DLPACK_INCLUDE_DIR}>" "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/include>"
          "$<BUILD_INTERFACE:${CUDF_GENERATED_INCLUDE_DIR}/include>"
   PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
           "$<BUILD_INTERFACE:${nanoarrow_SOURCE_DIR}/src>"
           "$<BUILD_INTERFACE:${FlatBuffers_SOURCE_DIR}/include>"
           "$<BUILD_INTERFACE:${ZSTD_INCLUDE_DIR}>"
+          "$<BUILD_INTERFACE:${cudf_cuda_embed_INCLUDE_DIRS}>"
+          "$<BUILD_INTERFACE:${cudf_fragments_INCLUDE_DIRS}>"
   INTERFACE "$<INSTALL_INTERFACE:include>"
 )
 
@@ -1055,20 +1221,6 @@ target_compile_definitions(
   cudf PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_DEFINITIONS}>"
               "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_DEFINITIONS}>>"
 )
-
-# Disable Jitify log printing. See https://github.com/NVIDIA/jitify/issues/79
-target_compile_definitions(cudf PRIVATE "JITIFY_PRINT_LOG=0")
-
-if(JITIFY_USE_CACHE)
-  # Instruct src/jit/cache what version of cudf we are building so it can compute a cal-ver cache
-  # directory. We isolate this definition to the single source so it doesn't effect compiling
-  # caching for all of libcudf
-  set_property(
-    SOURCE src/jit/cache.cpp
-    APPEND
-    PROPERTY COMPILE_DEFINITIONS "JITIFY_USE_CACHE" "CUDF_VERSION=${PROJECT_VERSION}"
-  )
-endif()
 
 # Per-thread default stream
 if(CUDF_USE_PER_THREAD_DEFAULT_STREAM)
@@ -1099,92 +1251,141 @@ target_compile_definitions(cudf PRIVATE $<$<BOOL:${CUDF_KVIKIO_REMOTE_IO}>:CUDF_
 # https://github.com/NVIDIA/cccl/pull/2844
 target_compile_definitions(cudf PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1 CCCL_AVOID_SORT_UNROLL=1)
 
-# Compile stringified JIT sources first
-add_dependencies(cudf jitify_preprocess_run)
+# When rmm is a static library being absorbed via whole-archive, strip nvtx3 from its public
+# interface. We bundle nvtx3 headers directly into cudf's install tree, so consumers get them from
+# cudf's include path without needing the nvtx3 target or find_dependency(nvtx3).
+get_target_property(_rmm_type rmm::rmm TYPE)
+if(BUILD_SHARED_LIBS AND _rmm_type STREQUAL "STATIC_LIBRARY")
+  get_target_property(_rmm_real rmm::rmm ALIASED_TARGET)
+  if(_rmm_real)
+    get_target_property(_rmm_libs ${_rmm_real} INTERFACE_LINK_LIBRARIES)
+    if(_rmm_libs)
+      list(REMOVE_ITEM _rmm_libs nvtx3::nvtx3-cpp)
+      set_property(TARGET ${_rmm_real} PROPERTY INTERFACE_LINK_LIBRARIES ${_rmm_libs})
+    endif()
+  endif()
+endif()
 
-# Specify the target module library dependencies
+# When building a shared libcudf with static deps, we absorb them via whole-archive linking so that
+# their symbols are available to downstream users linking to libcudf.so without needing to link
+# against them directly. Public absorbed dependencies still promote their public transitive
+# dependencies and export set metadata into cudf's interface.
+set(_absorbed_deps rmm rapids_logger)
+set(_absorbed_nvcomp FALSE)
+foreach(_dep IN LISTS _absorbed_deps)
+  if(NOT TARGET "${_dep}::${_dep}")
+    continue()
+  endif()
+  get_target_property(_dep_link "${_dep}::${_dep}" NAME)
+  get_target_property(_target_type ${_dep_link} TYPE)
+  if(NOT BUILD_SHARED_LIBS OR NOT _target_type STREQUAL "STATIC_LIBRARY")
+    # If not building a shared library, or the dependency is not a static library, link normally.
+    target_link_libraries(cudf PUBLIC ${_dep_link})
+    continue()
+  endif()
+
+  # Promote the absorbed library's public transitive deps into cudf's public interface. Filter out
+  # deps that are themselves absorbed — they are already linked via whole-archive. Also filter
+  # LINK_ONLY entries — those are private link deps already statically linked in.
+  get_target_property(_iface_libs ${_dep_link} INTERFACE_LINK_LIBRARIES)
+  if(_iface_libs)
+    foreach(_absorbed IN LISTS _absorbed_deps)
+      list(REMOVE_ITEM _iface_libs ${_absorbed}::${_absorbed})
+    endforeach()
+    list(FILTER _iface_libs EXCLUDE REGEX "\\\$<LINK_ONLY:")
+    target_link_libraries(cudf PUBLIC ${_iface_libs})
+  endif()
+
+  # Promote the absorbed library's public include directories into cudf's public interface so that
+  # in-tree consumers (tests, Python bindings) can find the absorbed library's headers.
+  get_target_property(_dep_includes ${_dep_link} INTERFACE_INCLUDE_DIRECTORIES)
+  if(_dep_includes)
+    target_include_directories(cudf PUBLIC ${_dep_includes})
+  endif()
+
+  # Wrap with WHOLE_ARCHIVE + BUILD_INTERFACE so the static lib is absorbed into libcudf.so and
+  # hidden from the installed interface.
+  target_link_libraries(
+    cudf PRIVATE "$<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,${_dep_link}>>"
+  )
+  set_property(
+    TARGET cudf
+    APPEND
+    PROPERTY CUDF_STATIC_LINKED_PROJECTS "${_dep_link}"
+  )
+
+  # nvcomp_static has done a WHOLE_ARCHIVE on rmm and rapids_logger itself. Therefore it needs to
+  # come after our WHOLE_ARCHIVE otherwise we will get duplicate symbols for rmm and/or
+  # rapids_logger
+  if(TARGET nvcomp::nvcomp_static)
+    target_link_libraries(${_dep_link} INTERFACE $<BUILD_LOCAL_INTERFACE:nvcomp::nvcomp_static>)
+    set(_absorbed_nvcomp TRUE)
+  endif()
+
+  # Merge the absorbed library's export set metadata into cudf-exports so the installed config has
+  # find_dependency() calls for all transitive deps (e.g. nvtx3, CUDAToolkit from rmm).
+  foreach(_mode build install)
+    set(_src_target rapids_export_${_mode}_${_dep}-exports)
+    if(NOT TARGET ${_src_target})
+      continue()
+    endif()
+    get_property(
+      _pkg_names
+      TARGET ${_src_target}
+      PROPERTY "PACKAGE_NAMES"
+    )
+    get_property(
+      _global_tgts
+      TARGET ${_src_target}
+      PROPERTY "GLOBAL_TARGETS"
+    )
+    foreach(_pkg IN LISTS _pkg_names)
+      # Skip packages that are themselves absorbed into libcudf or bundled as headers — they won't
+      # be findable as separate packages.
+      if(_pkg IN_LIST _absorbed_deps OR _pkg STREQUAL "nvtx3")
+        continue()
+      endif()
+      rapids_export_package(${_mode} ${_pkg} cudf-exports GLOBAL_TARGETS ${_global_tgts})
+    endforeach()
+  endforeach()
+endforeach()
+
+if(TARGET spdlog::spdlog)
+  get_target_property(_spdlog_link spdlog::spdlog NAME)
+  get_target_property(_spdlog_type ${_spdlog_link} TYPE)
+  if(BUILD_SHARED_LIBS AND _spdlog_type STREQUAL "STATIC_LIBRARY")
+    target_link_libraries(
+      cudf PRIVATE "$<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,${_spdlog_link}>>"
+    )
+    set_property(
+      TARGET cudf
+      APPEND
+      PROPERTY CUDF_STATIC_LINKED_PROJECTS "${_spdlog_link}"
+    )
+  else()
+    target_link_libraries(cudf PRIVATE ${_spdlog_link})
+  endif()
+endif()
+
+# Specify the target module library dependencies We do this after all the WHOLE_ARCHIVES to protect
+# against any of these libraries ever adding a rapids_logger / rmm hidden dependency
 target_link_libraries(
   cudf
   PUBLIC CCCL::CCCL $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
   PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco> ZLIB::ZLIB
-          ${CUDF_nvcomp_TARGET} kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd
+          kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd $<BUILD_LOCAL_INTERFACE:xxhash> rtcx::rtcx
 )
 
-# When building a shared libcudf with static deps, we absorb them via whole-archive linking so that
-# their symbols are available to downstream users linking to libcudf.so without needing to link
-# against them directly. In this scenario, its public transitive dependencies must be promoted into
-# cudf's installed interface (consumers still need them at link time), and its export set metadata
-# (find_dependency calls, global targets) is merged into cudf-exports.
-set(_absorbed_deps rmm rapids_logger)
-foreach(_dep IN LISTS _absorbed_deps)
-  set(_${_dep}_link ${_dep}::${_dep})
-endforeach()
-if(BUILD_SHARED_LIBS)
-  # When rmm is a static library being absorbed via whole-archive, strip nvtx3 from its public
-  # interface. We bundle nvtx3 headers directly into cudf's install tree, so consumers get them from
-  # cudf's include path without needing the nvtx3 target or find_dependency(nvtx3).
-  get_target_property(_rmm_type rmm::rmm TYPE)
-  if(_rmm_type STREQUAL "STATIC_LIBRARY")
-    get_target_property(_rmm_real rmm::rmm ALIASED_TARGET)
-    if(_rmm_real)
-      get_target_property(_rmm_libs ${_rmm_real} INTERFACE_LINK_LIBRARIES)
-      if(_rmm_libs)
-        list(REMOVE_ITEM _rmm_libs nvtx3::nvtx3-cpp)
-        set_property(TARGET ${_rmm_real} PROPERTY INTERFACE_LINK_LIBRARIES ${_rmm_libs})
-      endif()
-    endif()
+if(NOT _absorbed_nvcomp)
+  target_link_libraries(cudf PRIVATE ${CUDF_nvcomp_TARGET})
+  if(CUDF_nvcomp_TARGET STREQUAL "nvcomp::nvcomp_static")
+    set_property(
+      TARGET cudf
+      APPEND
+      PROPERTY CUDF_STATIC_LINKED_PROJECTS "nvcomp"
+    )
   endif()
-  foreach(_dep IN LISTS _absorbed_deps)
-    get_target_property(_target_type ${_dep}::${_dep} TYPE)
-    if(NOT _target_type STREQUAL "STATIC_LIBRARY")
-      continue()
-    endif()
-
-    # Wrap with WHOLE_ARCHIVE + BUILD_INTERFACE so the static lib is absorbed into libcudf.so and
-    # hidden from the installed interface.
-    set(_${_dep}_link $<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,${_dep}::${_dep}>>)
-
-    # Promote the absorbed library's public transitive deps into cudf's public interface. Filter out
-    # deps that are themselves absorbed — they are already linked via whole-archive. Also filter
-    # LINK_ONLY entries — those are private link deps already statically linked in.
-    get_target_property(_iface_libs ${_dep}::${_dep} INTERFACE_LINK_LIBRARIES)
-    if(_iface_libs)
-      foreach(_absorbed IN LISTS _absorbed_deps)
-        list(REMOVE_ITEM _iface_libs ${_absorbed}::${_absorbed})
-      endforeach()
-      list(FILTER _iface_libs EXCLUDE REGEX "\\\$<LINK_ONLY:")
-      target_link_libraries(cudf PUBLIC ${_iface_libs})
-    endif()
-
-    # Merge the absorbed library's export set metadata into cudf-exports so the installed config has
-    # find_dependency() calls for all transitive deps (e.g. nvtx3, CUDAToolkit from rmm).
-    foreach(_mode build install)
-      set(_src_target rapids_export_${_mode}_${_dep}-exports)
-      if(NOT TARGET ${_src_target})
-        continue()
-      endif()
-      get_property(
-        _pkg_names
-        TARGET ${_src_target}
-        PROPERTY "PACKAGE_NAMES"
-      )
-      get_property(
-        _global_tgts
-        TARGET ${_src_target}
-        PROPERTY "GLOBAL_TARGETS"
-      )
-      foreach(_pkg IN LISTS _pkg_names)
-        # Skip packages that are themselves absorbed into libcudf or bundled as headers — they won't
-        # be installed as separate findable packages.
-        if(_mode STREQUAL "install" AND (_pkg IN_LIST _absorbed_deps OR _pkg STREQUAL "nvtx3"))
-          continue()
-        endif()
-        rapids_export_package(${_mode} ${_pkg} cudf-exports GLOBAL_TARGETS ${_global_tgts})
-      endforeach()
-    endforeach()
-  endforeach()
 endif()
-target_link_libraries(cudf PUBLIC ${_rapids_logger_link} ${_rmm_link})
 
 # Add Conda library, and include paths if specified
 if(TARGET conda_env)
@@ -1261,7 +1462,7 @@ if(CUDF_BUILD_TESTUTIL)
   )
 
   target_link_libraries(
-    cudftestutil INTERFACE $<BUILD_LOCAL_INTERFACE:cuco::cuco> Threads::Threads cudf
+    cudftestutil INTERFACE $<BUILD_LOCAL_INTERFACE:cuco::cuco> Threads::Threads cudf rmm::rmm
                            cudftest_default_stream $<TARGET_NAME_IF_EXISTS:conda_env>
   )
 
@@ -1276,18 +1477,21 @@ if(CUDF_BUILD_TESTUTIL)
   add_library(cudf::cudftestutil_impl ALIAS cudftestutil_impl)
   target_sources(
     cudftestutil_impl
-    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/io/metadata_utilities.cpp>
-              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/column_utilities.cu>
-              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/debug_utilities.cu>
-              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/random_seed.cpp>
-              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/table_utilities.cu>
-              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/tdigest_utilities.cpp>
-              $<INSTALL_INTERFACE:src/cudftestutil/io/metadata_utilities.cpp>
-              $<INSTALL_INTERFACE:src/cudftestutil/utilities/column_utilities.cu>
-              $<INSTALL_INTERFACE:src/cudftestutil/utilities/debug_utilities.cu>
-              $<INSTALL_INTERFACE:src/cudftestutil/utilities/random_seed.cpp>
-              $<INSTALL_INTERFACE:src/cudftestutil/utilities/table_utilities.cu>
-              $<INSTALL_INTERFACE:src/cudftestutil/utilities/tdigest_utilities.cpp>
+    INTERFACE
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/io/metadata_utilities.cpp>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/column_utilities.cu>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/debug_utilities.cu>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/memory_resource_utilities.cpp>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/random_seed.cpp>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/table_utilities.cu>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/utilities/tdigest_utilities.cpp>
+      $<INSTALL_INTERFACE:src/cudftestutil/io/metadata_utilities.cpp>
+      $<INSTALL_INTERFACE:src/cudftestutil/utilities/column_utilities.cu>
+      $<INSTALL_INTERFACE:src/cudftestutil/utilities/debug_utilities.cu>
+      $<INSTALL_INTERFACE:src/cudftestutil/utilities/memory_resource_utilities.cpp>
+      $<INSTALL_INTERFACE:src/cudftestutil/utilities/random_seed.cpp>
+      $<INSTALL_INTERFACE:src/cudftestutil/utilities/table_utilities.cu>
+      $<INSTALL_INTERFACE:src/cudftestutil/utilities/tdigest_utilities.cpp>
   )
   target_link_libraries(cudftestutil_impl INTERFACE cudf::cudftestutil)
   target_compile_features(cudftestutil_impl INTERFACE cxx_std_20)
@@ -1307,6 +1511,7 @@ if(CUDF_BUILD_TESTUTIL)
   install(
     FILES tests/utilities/column_utilities.cu
           tests/utilities/debug_utilities.cu
+          tests/utilities/memory_resource_utilities.cpp
           tests/utilities/random_seed.cpp
           tests/utilities/table_utilities.cu
           tests/utilities/tdigest_utilities.cpp

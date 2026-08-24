@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -159,5 +159,13 @@ TEST_F(XXHash_64_Test, TestFixedPoint)
                                                                     4122185689695768261ul,
                                                                     3249245648192442585ul,
                                                                     8009575895491381648ul});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
+}
+
+TEST_F(XXHash_64_Test, ZeroColumns)
+{
+  auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
+  auto const output = cudf::hashing::xxhash_64(input, 42);
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected({42ul, 42ul, 42ul, 42ul, 42ul});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }

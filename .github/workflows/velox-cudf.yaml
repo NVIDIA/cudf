@@ -30,6 +30,14 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.cudf-ref }}
           path: cudf-local
+      - name: Install gha-tools
+        run: |
+          dnf -y install jq
+          curl -fsSL https://github.com/rapidsai/gha-tools/releases/download/v0.0.211/tools.tar.gz -o /tmp/gha-tools.tar.gz
+          echo "e015ee3de514eaabf98834202e6d885ec702b4b062f099b7bc3cab486565f1c6  /tmp/gha-tools.tar.gz" | sha256sum --check
+          tar -xzf /tmp/gha-tools.tar.gz -C /usr/local/bin
+      - name: Setup sccache-dist
+        uses: rapidsai/shared-actions/setup-sccache-dist@fe4a4d1798db2cdf1723feee49bf2986ed8a0254 # main
       - uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -43,41 +51,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          ###
-          # Setup sccache client
-          ###
-
-          # Install jq
-          dnf -y install jq
-
-          # Download gha-tools
-          wget https://github.com/rapidsai/gha-tools/releases/latest/download/tools.tar.gz -O - | tar -xz -C /usr/local/bin
-
-          # Build cluster endpoint
-          export SCCACHE_DIST_SCHEDULER_URL="https://$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/').linux.sccache.rapids.nvidia.com"
-
-          export SCCACHE_DIST_AUTH_TOKEN="$(
-            curl -fsSL -H "Authorization: Bearer $(
-              curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-                "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=token.rapids.nvidia.com" \
-            | jq -r '.value'
-            )" https://token.rapids.nvidia.com/gh/token/exchange \
-          | jq -r '.token')"
-
-          # Install sccache client
+          # Install and configure the sccache client
           . rapids-install-sccache
-
-          # Configure sccache
           . rapids-configure-sccache
 
           export CPP_PARALLEL_LEVEL="$PARALLEL_LEVEL"
-
-          echo "------------------------"
-          env | sort
-          echo "------------------------"
-
-          # Increase the nofile ulimit to build with as much parallelism as possible
-          ulimit -n $(ulimit -Hn)
 
           # Start the sccache daemon
           sccache --start-server

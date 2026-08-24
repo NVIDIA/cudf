@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import polars as pl
-from polars.exceptions import ComputeError
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -211,10 +211,37 @@ def _apply_ambiguous(
             return plc.copying.copy_if_else(
                 utc_earliest, utc_latest, is_ambiguous, stream=stream
             )
-        return plc.copying.copy_if_else(
-            null_scalar, utc_latest, is_ambiguous, stream=stream
+        if ambiguous_scalar == "null":
+            return plc.copying.copy_if_else(
+                null_scalar, utc_latest, is_ambiguous, stream=stream
+            )
+        raise InvalidOperationError(
+            f"Invalid argument {ambiguous_scalar}, expected one of: "
+            '"earliest", "latest", "null", "raise"'
         )
     string_type = plc.DataType(plc.TypeId.STRING)
+    allowed = plc.Column.from_iterable_of_py(
+        ["earliest", "latest", "null", "raise"],
+        dtype=string_type,
+        stream=stream,
+    )
+    is_valid = plc.search.contains(allowed, ambiguous_column, stream=stream)
+    is_invalid = plc.unary.unary_operation(
+        is_valid, plc.unary.UnaryOperator.NOT, stream=stream
+    )
+    if bool(
+        plc.reduce.reduce(
+            is_invalid, plc.aggregation.any(), bool_type, stream=stream
+        ).to_py(stream=stream)
+    ):
+        (invalid_values,) = plc.stream_compaction.apply_boolean_mask(
+            plc.Table([ambiguous_column]), is_invalid, stream=stream
+        ).columns()
+        invalid = invalid_values.to_scalar(stream=stream).to_py(stream=stream)
+        raise InvalidOperationError(
+            f"Invalid argument {invalid}, expected one of: "
+            '"earliest", "latest", "null", "raise"'
+        )
     is_raise = plc.binaryop.binary_operation(
         is_ambiguous,
         plc.binaryop.binary_operation(
@@ -266,7 +293,39 @@ def _apply_ambiguous(
         bool_type,
         stream=stream,
     )
-    return plc.copying.copy_if_else(null_scalar, result, is_null, stream=stream)
+    result = plc.copying.copy_if_else(null_scalar, result, is_null, stream=stream)
+    return plc.copying.copy_if_else(
+        null_scalar,
+        result,
+        plc.unary.is_null(ambiguous_column, stream=stream),
+        stream=stream,
+    )
+
+
+def _apply_ambiguous_without_transitions(
+    local: plc.Column,
+    ambiguous_scalar: str | None,
+    ambiguous_column: plc.Column,
+    stream: Stream,
+) -> plc.Column:
+    unit = local.type()
+    return _apply_ambiguous(
+        local,
+        local,
+        plc.Column.from_scalar(
+            plc.Scalar.from_py(
+                py_val=False,
+                dtype=plc.DataType(plc.TypeId.BOOL8),
+                stream=stream,
+            ),
+            local.size(),
+            stream=stream,
+        ),
+        ambiguous_scalar,
+        ambiguous_column,
+        plc.Scalar.from_py(None, unit, stream=stream),
+        stream,
+    )
 
 
 def _apply_nonexistent(
@@ -305,7 +364,9 @@ def _localize(
     """Interpret naive wall-clock timestamps as local times in ``to_zone``."""
     data = _tz_transition_columns(to_zone, tzif_dir, stream)
     if data is None:
-        return local
+        return _apply_ambiguous_without_transitions(
+            local, ambiguous_scalar, ambiguous_column, stream
+        )
     transition_times, offsets = data
     size = offsets.size()
     unit = local.type()
@@ -547,6 +608,16 @@ class TemporalFunction(Expr):
             ambiguous = self.children[1]
             if isinstance(ambiguous, Literal):
                 self.ambiguous_scalar = ambiguous.value
+                if self.ambiguous_scalar is not None and self.ambiguous_scalar not in {
+                    "earliest",
+                    "latest",
+                    "null",
+                    "raise",
+                }:
+                    raise InvalidOperationError(
+                        f"Invalid argument {self.ambiguous_scalar}, expected one of: "
+                        '"earliest", "latest", "null", "raise"'
+                    )
             from_zone = cast(
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
@@ -619,7 +690,12 @@ class TemporalFunction(Expr):
                 )
             local = _local_wall_clock(column.obj, from_zone, from_dir, stream)
             if to_dir is None:
-                return Column(local, dtype=self.dtype)
+                return Column(
+                    _apply_ambiguous_without_transitions(
+                        local, self.ambiguous_scalar, ambiguous.obj, stream
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 _localize(
                     local,

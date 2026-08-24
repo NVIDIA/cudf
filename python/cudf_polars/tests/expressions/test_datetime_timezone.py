@@ -148,6 +148,45 @@ def test_replace_time_zone_ambiguous_per_row(engine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("target", ["Europe/Amsterdam", "Etc/GMT"])
+def test_replace_time_zone_nullable_ambiguous_per_row(engine, target):
+    q = pl.LazyFrame(
+        {
+            "a": [
+                datetime.datetime(2020, 1, 1),
+                datetime.datetime(2018, 10, 28, 2, 30),
+                datetime.datetime(2020, 1, 2),
+            ],
+            "ambiguous": [None, "earliest", "null"],
+        }
+    ).select(pl.col("a").dt.replace_time_zone(target, ambiguous=pl.col("ambiguous")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("target", ["Europe/Amsterdam", "Etc/GMT"])
+def test_replace_time_zone_invalid_ambiguous_scalar_raises(engine, target):
+    q = pl.LazyFrame({"a": [datetime.datetime(2020, 1, 1)]}).select(
+        pl.col("a").dt.replace_time_zone(target, ambiguous="bogus")
+    )
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
+
+
+@pytest.mark.parametrize("target", ["Europe/Amsterdam", "Etc/GMT"])
+def test_replace_time_zone_invalid_ambiguous_per_row_raises(engine, target):
+    q = pl.LazyFrame(
+        {
+            "a": [datetime.datetime(2020, 1, 1)],
+            "ambiguous": ["bogus"],
+        }
+    ).select(pl.col("a").dt.replace_time_zone(target, ambiguous=pl.col("ambiguous")))
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+
+
 def test_replace_time_zone_same_zone_ambiguous_instant(engine):
     q = (
         pl.LazyFrame({"a": [datetime.datetime(2018, 10, 28, 2, 30)]})

@@ -9,8 +9,10 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/iterator>
+
 #include <jit/cache.hpp>
-#include <rtcx.hpp>
+#include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
 #include <format>
@@ -54,8 +56,8 @@ size_type get_projection_size(std::span<std::variant<column_view, scalar_column_
     return std::visit([](auto& a) { return get_projection_size(a); }, var);
   };
 
-  return *std::max_element(thrust::make_transform_iterator(inputs.begin(), get_size),
-                           thrust::make_transform_iterator(inputs.end(), get_size));
+  return *std::max_element(cuda::transform_iterator(inputs.begin(), get_size),
+                           cuda::transform_iterator(inputs.end(), get_size));
 }
 
 std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> output_typenames,

@@ -14,7 +14,7 @@ import pandas as pd
 # cuGraph third party integration test, test_cugraph_from_pandas_adjacency,
 # fails without this pyarrow.dataset import
 # I suspect it relates to pyarrow's pandas-shim that gets imported
-# with this module https://github.com/rapidsai/cudf/issues/14521#issue-2015198786
+# with this module https://github.com/NVIDIA/cudf/issues/14521#issue-2015198786
 import pyarrow.dataset as ds  # noqa: F401
 from pandas._libs.tslibs import offsets as liboffsets
 from pandas._testing import at, getitem, iat, iloc, loc, setitem
@@ -536,6 +536,7 @@ SparseDtype = make_final_proxy_type(
     pd.SparseDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -606,6 +607,7 @@ CategoricalDtype = make_final_proxy_type(
     pd.CategoricalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -653,6 +655,7 @@ DatetimeTZDtype = make_final_proxy_type(
     pd.DatetimeTZDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "__from_arrow__": _FastSlowAttribute("__from_arrow__"),
@@ -769,6 +772,7 @@ PeriodDtype = make_final_proxy_type(
     pd.PeriodDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
     },
@@ -895,6 +899,7 @@ StringDtype = make_final_proxy_type(
     pd.StringDtype,
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "storage": _FastSlowAttribute("storage"),
@@ -1104,6 +1109,7 @@ IntervalDtype = make_final_proxy_type(
     pd.IntervalDtype,
     fast_to_slow=lambda fast: fast.to_pandas(),
     slow_to_fast=cudf.from_pandas,
+    bases=(pd.api.extensions.ExtensionDtype,),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         # ``_closed`` is a pandas-private attribute; source it from the slow
@@ -2636,7 +2642,7 @@ def wrap_init(original_init):
                 # proxy object of the same type.
                 # It is a common case in `cuml` and `xgboost`.
                 # For perf impact see:
-                # https://github.com/rapidsai/cudf/pull/17878/files#r1936469215
+                # https://github.com/NVIDIA/cudf/pull/17878/files#r1936469215
                 self.__dict__.update(data.__dict__)
                 return
         original_init(self, data, *args, **kwargs)

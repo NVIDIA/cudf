@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,13 +11,12 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/iterator>
-#include <thrust/iterator/zip_iterator.h>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
@@ -59,7 +58,7 @@ struct sorted_order_radix_fn {
   column_view const& input;      // keys to sort
   mutable_column_view& indices;  // output of sort
   bool ascending;                // true for ascending sort
-  rmm::cuda_stream_view stream;  // for allocation and kernel launches
+  cuda::stream_ref stream;       // for allocation and kernel launches
 
   template <typename T>
   void radix_sort()
@@ -76,7 +75,7 @@ struct sorted_order_radix_fn {
     auto dv_out = indices.begin<cudf::size_type>();
 
     auto const n       = input.size();
-    auto const sv      = stream.value();
+    auto const sv      = stream.get();
     auto const end_bit = sizeof(T) * 8;
 
     // cub radix sort implementation is always stable
@@ -109,7 +108,7 @@ struct sorted_order_radix_fn {
     auto dv_in    = vals.begin();
     auto dv_out   = indices.begin<cudf::size_type>();
 
-    auto zip_out = thrust::make_zip_iterator(d_in, dv_in);
+    auto zip_out = cuda::make_zip_iterator(d_in, dv_in);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
@@ -118,7 +117,7 @@ struct sorted_order_radix_fn {
 
     auto const decomposer = float_decomposer<T>{};
     auto const end_bit    = sizeof(float_pair<T>) * 8;
-    auto const sv         = stream.value();
+    auto const sv         = stream.get();
     auto const n          = input.size();
     // cub radix sort implementation is always stable
     std::size_t tmp_bytes = 0;
@@ -174,7 +173,7 @@ struct sorted_order_radix_fn {
 void sorted_order_radix(column_view const& input,
                         mutable_column_view& indices,
                         bool ascending,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   cudf::type_dispatcher<dispatch_storage_type>(
     input.type(), sorted_order_radix_fn{input, indices, ascending, stream});

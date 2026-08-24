@@ -33,7 +33,6 @@ from cudf_polars.streaming.base import (
     SerializedDataSourceInfo,
 )
 from cudf_polars.streaming.dispatch import lower_ir_node
-from cudf_polars.streaming.utils import _dynamic_planning_on
 from cudf_polars.utils.config import Cluster
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 from cudf_polars.utils.versions import POLARS_VERSION_LT_137
@@ -500,67 +499,6 @@ def _(
     return ir, {ir: PartitionInfo(count=2)}
 
 
-def can_use_native_parquet_node(
-    ir: Scan,
-    *,
-    plan: IOPartitionPlan,
-    count: int,
-    nranks: int,
-    parquet_options: ParquetOptions,
-    config_options: ConfigOptions[StreamingExecutor],
-) -> bool:
-    """
-    Determine whether we should use rapidsmpf's native parquet node.
-
-    Parameters
-    ----------
-    ir
-        The Scan node that might need to fall back.
-    plan
-        The IO partitioning plan.
-    count
-        The number of partitions associated with this Scan node.
-    nranks
-        The number of ranks.
-    parquet_options
-        The parquet options.
-    config_options
-        The configuration options.
-
-    Returns
-    -------
-    bool
-        Whether to use rapidsmpf's native parquet node.
-
-    Notes
-    -----
-    Native parquet node is used under the following conditions:
-
-    - Our plan indicates we should split the file into multiple partitions
-    - We have more than one rank
-    - There's more than one partition or dynamic planning is enabled
-    - The file type is parquet
-    - The row index is not set
-    - File paths are not included
-    - The number of rows is not set
-    - The skip rows is not set
-    """
-    distributed_split_files = (
-        plan.flavor == IOPartitionFlavor.SPLIT_FILES and nranks > 1
-    )
-
-    return (
-        parquet_options.use_rapidsmpf_native
-        and (count > 1 or _dynamic_planning_on(config_options))
-        and ir.typ == "parquet"
-        and ir.row_index is None
-        and ir.include_file_paths is None
-        and ir.n_rows == -1
-        and ir.skip_rows == 0
-        and not distributed_split_files
-    )
-
-
 @lower_ir_node.register(Scan)
 def _(
     ir: Scan, rec: LowerIRTransformer
@@ -590,15 +528,7 @@ def _(
         )
         count = 1
 
-    if not can_use_native_parquet_node(
-        ir,
-        plan=plan,
-        count=count,
-        nranks=rec.state["nranks"],
-        parquet_options=parquet_options,
-        config_options=config_options,
-    ):
-        parquet_options = dataclasses.replace(parquet_options, chunked=False)
+    parquet_options = dataclasses.replace(parquet_options, chunked=False)
 
     new_ir = expand_scan_for_rank(
         ir,
@@ -895,12 +825,8 @@ def _columnchunk_metadata_from_footers(
 ) -> dict[str, list[int]]:
     columnchunk_metadata: dict[str, list[int]] = {}
     for fmd in footers:
-        for rg in fmd.row_groups:
-            for col in rg.columns:
-                name = ".".join(col.meta_data.path_in_schema)
-                columnchunk_metadata.setdefault(name, []).append(
-                    col.meta_data.total_uncompressed_size
-                )
+        for name, uncompressed_sizes in fmd.columnchunk_metadata.items():
+            columnchunk_metadata.setdefault(name, []).extend(uncompressed_sizes)
     return columnchunk_metadata
 
 
@@ -987,7 +913,7 @@ class ParquetMetadata:
             row_count = num_rows_per_sampled_file * self.total_file_count
 
         num_row_groups_per_sampled_file = [
-            len(fmd.row_groups) for fmd in sample_footers
+            len(fmd.row_group_num_rows) for fmd in sample_footers
         ]
         rowgroup_offsets_per_file = list(
             itertools.accumulate(num_row_groups_per_sampled_file, initial=0)

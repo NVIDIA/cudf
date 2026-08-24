@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,9 @@
 #include <cudf/io/json.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -30,20 +31,20 @@ std::unique_ptr<column> make_escaped_json_strings(column_device_view const& d_co
                                                   rmm::device_buffer null_mask,
                                                   bool append_colon,
                                                   bool escaped_utf8,
-                                                  rmm::cuda_stream_view stream,
+                                                  cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> string_to_strings(column_view const& column,
                                           bool escaped_utf8,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> timestamp_to_strings(column_view const& column,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> duration_to_strings(column_view const& column,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
@@ -54,7 +55,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
                                           string_view value_separator,
                                           string_scalar const& narep,
                                           bool include_nulls,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_strings,
@@ -62,12 +63,12 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
                                              string_view list_suffix,
                                              string_view element_separator,
                                              string_view element_narep,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> leaf_column_to_strings(column_view const& column,
                                                json_writer_options const& options,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr);
 
 }  // namespace io::json::detail

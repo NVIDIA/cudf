@@ -178,6 +178,22 @@ def test_array_interface_with_data_none():
         plc.Column.from_array(ArrayInterfaceWithNone())
 
 
+def test_array_interface_with_mask_raises():
+    class ArrayInterfaceWithMask:
+        def __init__(self):
+            self.values = np.array([1, 2, 3], dtype=np.int32)
+
+        @property
+        def __array_interface__(self):
+            return {**self.values.__array_interface__, "mask": object()}
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Masked array-interface inputs are not supported",
+    ):
+        plc.Column.from_array_interface(ArrayInterfaceWithMask())
+
+
 def test_from_zero_dimensional_array():
     arr = np.array(0)
     with pytest.raises(

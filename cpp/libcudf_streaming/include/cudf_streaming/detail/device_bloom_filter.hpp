@@ -28,39 +28,57 @@ struct device_bloom_filter {
   /**
    * @brief Create a filter.
    *
-   * @param num_blocks Number of blocks in the filter.
+   * @param filter_size Filter storage size in bytes. Must be a positive multiple of the filter
+   * block size and no greater than the maximum supported by the filter policy.
    * @param seed Seed used for hashing each value.
    * @param storage Storage to view as a bloom filter, must be appropriately
    * initialized.
    */
-  device_bloom_filter(std::size_t num_blocks, std::uint64_t seed, void* storage);
+  device_bloom_filter(std::size_t filter_size, std::uint64_t seed, void* storage);
 
   /**
    * @brief Create a read-only filter.
    *
-   * @param num_blocks Number of blocks in the filter.
+   * @param filter_size Filter storage size in bytes. Must be a positive multiple of the filter
+   * block size and no greater than the maximum supported by the filter policy.
    * @param seed Seed used for hashing each value.
    * @param storage View of storage, must be appropriately initialized.
    *
    * @return A const-qualified bloom filter viewing the underlying storage.
    */
-  static device_bloom_filter const view(std::size_t num_blocks,
+  static device_bloom_filter const view(std::size_t filter_size,
                                         std::uint64_t seed,
                                         void const* storage);
 
   /**
    * @brief Create uninitialized storage for a filter.
    *
-   * @param num_blocks Number of blocks in the filter.
+   * @param filter_size Filter storage size in bytes. Must be a positive multiple of the filter
+   * block size and no greater than the maximum supported by the filter policy.
    * @param stream CUDA stream for device operations.
    * @param mr Memory resource for allocations.
    *
    * @return Unique pointer to a device buffer containing storage for the requested
-   * number of filter blocks.
+   * filter size.
    */
-  static std::unique_ptr<rmm::device_buffer> storage(std::size_t num_blocks,
+  static std::unique_ptr<rmm::device_buffer> storage(std::size_t filter_size,
                                                      rmm::cuda_stream_view stream,
                                                      rmm::device_async_resource_ref mr);
+
+  /**
+   * @brief Find the largest valid filter size no greater than a byte count.
+   *
+   * @param size Byte count to align.
+   * @return Largest valid filter size less than or equal to `size`.
+   */
+  [[nodiscard]] static std::size_t aligned_size(std::size_t size) noexcept;
+
+  /**
+   *  Return the largest storage size supported by the filter policy.
+   *
+   *  Maximum valid filter size in bytes.
+   */
+  [[nodiscard]] static std::size_t max_size() noexcept;
 
   /**
    * @brief Add values to the filter.
@@ -110,14 +128,6 @@ struct device_bloom_filter {
    * @brief @return Size in bytes of the underlying storage.
    */
   [[nodiscard]] std::size_t size() const noexcept;
-
-  /**
-   * @brief @return Number of blocks to use if the filter should fit in a given L2 cache
-   * size.
-   *
-   * @param l2size Size of the L2 cache in bytes.
-   */
-  [[nodiscard]] static std::size_t fitting_num_blocks(std::size_t l2size) noexcept;
 
  private:
   std::size_t num_blocks_;  ///< Number of blocks used in the filter.

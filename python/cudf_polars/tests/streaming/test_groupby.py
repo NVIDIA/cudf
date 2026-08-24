@@ -83,6 +83,25 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
     assert tracer.decision == "shuffle"
 
 
+@pytest.mark.parametrize(
+    "nranks,npartitions,expected",
+    [
+        (2, 5, [3, 2]),
+        (3, 5, [2, 2, 1]),
+        (4, 10, [3, 2, 3, 2]),
+    ],
+)
+def test_partition_count_for_rank_uses_contiguous_ownership(
+    nranks, npartitions, expected
+):
+    """GroupBy metadata uses the same uneven partition ownership as adjust_ordering."""
+    counts = [
+        groupby_actor_graph._partition_count_for_rank(rank, nranks, npartitions)
+        for rank in range(nranks)
+    ]
+    assert counts == expected
+
+
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])
 @pytest.mark.parametrize("agg", ["sum", "mean", "len", "min", "max"])
 def test_dynamic_groupby_basic(df, streaming_engine, keys, agg):
@@ -109,6 +128,27 @@ def test_dynamic_groupby_shuffle_strategy(streaming_engine_factory):
     df = pl.LazyFrame({"key": range(1000), "value": range(1000)})
     q = df.group_by("key").agg(pl.col("value").sum())
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("group_keys", [("key", "subkey"), ("key",)])
+def test_dynamic_groupby_after_sort_on_group_keys(spmd_engine_factory, group_keys):
+    """Group sorted data by the full sort key set or a sorted-key prefix."""
+    streaming_engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=128),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": [0] * 16 + [1] * 16 + [2] * 16 + [3] * 16,
+            "subkey": ([0] * 8 + [1] * 8) * 4,
+            "value": range(64),
+        }
+    )
+    q = (
+        df.sort("key", "subkey")
+        .group_by(*group_keys, maintain_order=True)
+        .agg(pl.col("value").sum())
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_dynamic_groupby_single_group(streaming_engine):
@@ -171,6 +211,92 @@ def test_groupby_agg(df, streaming_engine, op, keys):
     agg = getattr(pl.col("x"), op)()
     q = df.group_by(*keys).agg(agg)
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_groupby_sort_by_first_last(streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "g": ["B", "A", "C", "A", "B", "C", "A", "B"],
+            "idx": [2, 3, 2, 1, 1, 1, 2, 3],
+            "val": [40, 30, 60, 10, 30, 50, 20, 50],
+        }
+    )
+
+    q = df.group_by("g").agg(
+        pl.col("val").sum().alias("volume"),
+        pl.col("val").sort_by("idx").first().alias("open"),
+        pl.col("val").sort_by("idx").last().alias("close"),
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_groupby_sort_by_first_last_stable_ties(streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "B", "A", "B", "A", "B"],
+            "idx": [1, 1, 1, 1, 1, 1],
+            "val": [10, 40, 20, 50, 30, 60],
+        }
+    )
+
+    q = df.group_by("g").agg(
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("first_tie"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("last_tie"),
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_groupby_sort_by_stable_ties_with_preshuffle_fallback(
+    streaming_engine_factory,
+):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "B", "A", "B", "A", "B", "A", "B"],
+            "idx": [1, 1, 1, 1, 1, 1, 1, 1],
+            "val": [10, 100, 20, 200, 30, 300, 40, 400],
+            "u": [1, 1, 2, 2, 3, 3, 4, 4],
+        }
+    )
+
+    q = df.group_by("g").agg(
+        pl.col("u").n_unique().alias("nu"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("first_tie"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("last_tie"),
+    )
+    with pytest.raises(NotImplementedError, match="input-order ties"):
+        q.collect(engine=streaming_engine)
+
+
+def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "B", "B", "C", "C"],
+            "idx": [1, 2, 1, 2, 1, 2],
+            "val": [10, 20, 30, 40, 50, 60],
+        }
+    )
+
+    q = (
+        df.sort("g", descending=True)
+        .group_by("g", maintain_order=True)
+        .agg(
+            pl.col("val").sort_by("idx").first().alias("open"),
+            pl.col("val").sort_by("idx").last().alias("close"),
+        )
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=True)
 
 
 @pytest.mark.parametrize("ddof", [0, 2, 50])
@@ -266,7 +392,7 @@ def test_groupby_then_slice(streaming_engine, zlice: tuple[int, int]) -> None:
 
 
 def test_groupby_on_equality(streaming_engine) -> None:
-    # See: https://github.com/rapidsai/cudf/issues/19152
+    # See: https://github.com/NVIDIA/cudf/issues/19152
     df = pl.LazyFrame(
         {
             "key1": [1, 1, 1, 2, 3, 1, 4, 6, 7],

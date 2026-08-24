@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,11 +20,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -122,7 +123,7 @@ struct join_gather_fn : public join_base_fn {
 std::unique_ptr<column> join_strings(strings_column_view const& input,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -157,13 +158,9 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
                std::overflow_error);
 
   // build the offsets: single string output has offsets [0,chars-size]
-  auto offsets_column = [&] {
-    auto h_offsets = cudf::detail::make_host_vector<size_type>(2, stream);
-    h_offsets[0]   = 0;
-    h_offsets[1]   = chars.size();
-    auto offsets   = cudf::detail::make_device_uvector_async(h_offsets, stream, mr);
-    return std::make_unique<column>(std::move(offsets), rmm::device_buffer{}, 0);
-  }();
+  auto sizes_itr      = cuda::constant_iterator(static_cast<size_type>(chars.size()));
+  auto offsets_column = std::get<0>(
+    cudf::strings::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr));
 
   // build the null mask: only one output row so it is either all-valid or all-null
   auto const null_count =
@@ -184,7 +181,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
 std::unique_ptr<column> join_strings(strings_column_view const& strings,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

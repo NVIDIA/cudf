@@ -33,7 +33,9 @@ DESELECTED_TESTS=(
     "tests/unit/io/test_write.py::test_write_async[read_parquet-<lambda>]" # kvikio file creation error in CI
     "tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>0]" # kvikio file creation error in CI
     "tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>2]" # kvikio file creation error in CI
-    "tests/unit/operations/test_random.py::test_shuffle_group_by_reseed" # https://github.com/rapidsai/cudf/issues/22964
+    "tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[schema0]" # polars bug: decompresses entire stream instead of stopping at slice limit, see https://github.com/pola-rs/polars/issues/28954
+    "tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[None]" # polars bug: decompresses entire stream instead of stopping at slice limit, see https://github.com/pola-rs/polars/issues/28954
+    "tests/unit/operations/test_random.py::test_shuffle_group_by_reseed" # https://github.com/NVIDIA/cudf/issues/22964
 )
 
 if [[ $(arch) == "aarch64" ]]; then
@@ -62,9 +64,9 @@ DESELECTED_TESTS_STR=$(printf -- " --deselect %s" "${DESELECTED_TESTS[@]}")
 # Don't quote the `DESELECTED_...` variable because `pytest` can't handle
 # multiple quoted arguments inline
 # shellcheck disable=SC2086
-# Fail fast (-x) because failed tests pollute the state
+# Fail fast (-x) rather than trying to continue because failed tests pollute the state
 echo "Run polars tests with injected in-memory GPU engine"
-python "${TIMEOUT_TOOL_PATH}" --enable-python 3600 \
+python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
    python -m pytest \
        --import-mode=importlib \
        --cache-clear \
@@ -75,22 +77,20 @@ python "${TIMEOUT_TOOL_PATH}" --enable-python 3600 \
        --dist=worksteal \
        --tb=native \
        --durations 10 --durations-min 10 \
-       -ra \
        $DESELECTED_TESTS_STR \
        "$@" \
        py-polars/tests \
        --inject-gpu-engine in-memory
 
-# TODO(ResourceWarning): https://github.com/rapidsai/cudf/issues/22181
+# TODO(ResourceWarning): https://github.com/NVIDIA/cudf/issues/22181
 echo "Run polars tests with injected SPMD GPU engine, small blocksize"
 CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
 CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
-python "${TIMEOUT_TOOL_PATH}" --enable-python 3600 \
+python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
    python -m pytest \
        --import-mode=importlib \
        --cache-clear \
        -x \
-       -v \
        -m "" \
        -p cudf_polars.testing.inject_gpu_engine \
        -W ignore::ResourceWarning \
@@ -98,7 +98,6 @@ python "${TIMEOUT_TOOL_PATH}" --enable-python 3600 \
        --dist=worksteal \
        --tb=native \
        --durations 10 --durations-min 10 \
-       -ra \
        $DESELECTED_TESTS_STR \
        "$@" \
        py-polars/tests \

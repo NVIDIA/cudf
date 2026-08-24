@@ -14,6 +14,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -54,6 +56,58 @@ void set_encoding_recursive(cudf::io::column_in_metadata& col_meta,
   }
 }
 
+data_profile make_profile(cudf::size_type cardinality, cudf::size_type run_length)
+{
+  return data_profile_builder().cardinality(cardinality).avg_run_length(run_length);
+}
+
+data_profile make_list_profile(cudf::size_type cardinality,
+                               cudf::size_type run_length,
+                               cudf::size_type nesting,
+                               cudf::type_id leaf_type)
+{
+  return data_profile_builder()
+    .cardinality(cardinality)
+    .avg_run_length(run_length)
+    .list_depth(nesting)
+    .list_type(leaf_type);
+}
+
+std::unique_ptr<cudf::table> create_nested_table(std::vector<cudf::type_id> const& leaf_types,
+                                                 size_t data_size,
+                                                 cudf::size_type cardinality,
+                                                 cudf::size_type run_length,
+                                                 cudf::size_type nesting)
+{
+  auto const target_column_size = std::max<size_t>(data_size / leaf_types.size(), 1);
+  std::vector<cudf::size_type> row_counts;
+  row_counts.reserve(leaf_types.size());
+
+  for (auto const leaf_type : leaf_types) {
+    auto const profile = make_list_profile(0, run_length, nesting, leaf_type);
+    row_counts.push_back(
+      create_random_table({cudf::type_id::LIST}, table_size_bytes{target_column_size}, profile)
+        ->num_rows());
+  }
+
+  auto const num_rows = *std::min_element(row_counts.cbegin(), row_counts.cend());
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.reserve(leaf_types.size());
+  for (std::size_t col_idx = 0; col_idx < leaf_types.size(); col_idx++) {
+    // Keep the requested leaf cardinality, but avoid the top-level LIST distinct-row path when
+    // small smoke runs have fewer rows than the cardinality axis. That path appends an INT32 list
+    // suffix and is only type-compatible with INT32 leaves.
+    auto const list_cardinality =
+      cardinality == 0 ? 0 : std::min<cudf::size_type>(cardinality, num_rows - 1);
+    auto const profile =
+      make_list_profile(list_cardinality, run_length, nesting, leaf_types[col_idx]);
+    columns.push_back(create_random_column(
+      cudf::type_id::LIST, row_count{num_rows}, profile, static_cast<unsigned>(col_idx + 1)));
+  }
+
+  return std::make_unique<cudf::table>(std::move(columns));
+}
+
 void bench_read_encoding(nvbench::state& state, std::vector<cudf::type_id> const& d_types)
 {
   auto const encoding    = retrieve_column_encoding_enum(state.get_string("encoding"));
@@ -65,15 +119,12 @@ void bench_read_encoding(nvbench::state& state, std::vector<cudf::type_id> const
   cuio_source_sink_pair source_sink(source_type);
 
   auto const num_rows_written = [&]() {
-    auto profile = data_profile_builder().cardinality(cardinality).avg_run_length(run_length);
-    auto types   = d_types;
-    if (nesting > 0) {
-      // one LIST column per leaf type, so the flat and nested variants stay comparable
-      profile.list_depth(nesting).list_type(d_types.front());
-      types = std::vector<cudf::type_id>(d_types.size(), cudf::type_id::LIST);
-    }
+    auto const leaf_types = cycle_dtypes(d_types, num_cols);
     auto const tbl =
-      create_random_table(cycle_dtypes(types, num_cols), table_size_bytes{data_size}, profile);
+      nesting > 0
+        ? create_nested_table(leaf_types, data_size, cardinality, run_length, nesting)
+        : create_random_table(
+            leaf_types, table_size_bytes{data_size}, make_profile(cardinality, run_length));
     auto const view = tbl->view();
 
     cudf::io::table_input_metadata metadata(view);

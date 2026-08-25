@@ -221,7 +221,7 @@ def test_groupby_namedagg_mean_decimal128_keeps_columns():
     expected = cudf.DataFrame(
         {
             "g": [0, 1],
-            "sum_qty": cudf.Series([4, 12], dtype=cudf.Decimal128Dtype(15, 2)),
+            "sum_qty": cudf.Series([4, 12], dtype=cudf.Decimal128Dtype(38, 2)),
             "avg_qty": [2.0, 6.0],
             "avg_price": [20.0, 60.0],
         }

@@ -198,6 +198,16 @@ def _make_default_factory(
     return default_factory
 
 
+def resolve_kvikio_statistics(executor_options: dict[str, Any]) -> bool:
+    """Resolve whether kvikio I/O statistics are collected, with env var fallback."""
+    value = executor_options.get("kvikio_statistics")
+    if value is None:
+        value = os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS")
+        if value is None:
+            return False
+    return value if isinstance(value, bool) else _bool_converter(value)
+
+
 def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
     """Resolve kvikio thread count from executor options with env var fallback."""
     return int(
@@ -833,6 +843,11 @@ class StreamingExecutor:
     kvikio_nthreads: int = dataclasses.field(
         default_factory=lambda: resolve_kvikio_nthreads({})
     )
+    kvikio_statistics: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__KVIKIO_STATISTICS", _bool_converter, default=False
+        )
+    )
 
     min_device_size: int | None = None
     spmd_context: SPMDContext | None = None
@@ -1001,6 +1016,27 @@ class ConfigOptions(Generic[ExecutorType]):
     )
     device: int | None = None
     memory_resource_config: MemoryResourceConfig | None = None
+
+    @staticmethod
+    def dict_factory(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        """
+        ``dict_factory`` for :func:`dataclasses.asdict`.
+
+        Converts any :data:`UNSPECIFIED` value to ``None``
+        (e.g. ParquetOptions.prefetch_file_metadata) so the resulting
+        dict can be serialized with :func:`json.dumps`.
+
+        Parameters
+        ----------
+        items
+            The ``(key, value)`` pairs for a single dataclass level, as passed
+            by :func:`dataclasses.asdict`.
+
+        Returns
+        -------
+        A dict with :data:`UNSPECIFIED` values replaced by ``None``.
+        """
+        return {k: (None if isinstance(v, Unspecified) else v) for k, v in items}
 
     def drop_unserializable(self) -> ConfigOptions[ExecutorType]:
         """

@@ -1780,7 +1780,7 @@ def test_concat_list_column(
 
 
 def test_concat_categorical_ordering():
-    # https://github.com/rapidsai/cudf/issues/11486
+    # https://github.com/NVIDIA/cudf/issues/11486
     sr = pd.Series(
         ["a", "b", "c", "d", "e", "a", "b", "c", "d", "e"], dtype="category"
     )

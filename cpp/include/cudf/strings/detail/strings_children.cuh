@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -14,15 +14,17 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/utilities.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
+#include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <stdexcept>
@@ -30,6 +32,21 @@
 namespace cudf {
 namespace strings {
 namespace detail {
+
+/**
+ * @brief Create an offsets column from already-materialized string sizes.
+ *
+ * This overload centralizes the common size_type input case so callers do not each
+ * instantiate the same CUB scan kernels.
+ *
+ * @param sizes The per-string byte sizes
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return Offsets column and total bytes
+ * @throw std::overflow_error if the output exceeds the column size limit
+ */
+CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
+  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 template <typename Iter>
 struct string_offsets_fn {
@@ -64,32 +81,32 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
                                             int64_t chars_size,
                                             IndexPairIterator begin,
                                             size_type strings_count,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   auto chars_data      = rmm::device_uvector<char>(chars_size, stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
 
-  auto const src_ptrs = thrust::make_transform_iterator(
-    cuda::counting_iterator<uint32_t>{0},
-    cuda::proclaim_return_type<void*>([begin] __device__(uint32_t idx) {
+  auto const src_ptrs = cuda::transform_iterator(
+    begin, cuda::proclaim_return_type<void*>([] __device__(auto const& index_pair) {
       // Due to a bug in cub (https://github.com/NVIDIA/cccl/issues/586),
-      // we have to use `const_cast` to remove `const` qualifier from the source pointer.
-      // This should be fine as long as we only read but not write anything to the source.
-      return reinterpret_cast<void*>(const_cast<char*>(begin[idx].first));
+      // we have to use `const_cast` to remove `const` qualifier from the
+      // source pointer. This should be fine as long as we only read but
+      // not write anything to the source.
+      return reinterpret_cast<void*>(const_cast<char*>(index_pair.first));
     }));
-  auto const src_sizes = thrust::make_transform_iterator(
-    cuda::counting_iterator<uint32_t>{0},
-    cuda::proclaim_return_type<size_type>(
-      [begin] __device__(uint32_t idx) { return begin[idx].second; }));
-  auto const dst_ptrs = thrust::make_transform_iterator(
-    cuda::counting_iterator<uint32_t>{0},
-    cuda::proclaim_return_type<char*>([offsets = d_offsets, output = chars_data.data()] __device__(
-                                        uint32_t idx) { return output + offsets[idx]; }));
+  auto const src_sizes = cuda::transform_iterator(
+    begin, cuda::proclaim_return_type<size_type>([] __device__(auto const& index_pair) {
+      return index_pair.second;
+    }));
+  auto const dst_ptrs = cuda::transform_iterator(
+    d_offsets,
+    cuda::proclaim_return_type<char*>(
+      [output = chars_data.data()] __device__(auto offset) { return output + offset; }));
 
   size_t temp_storage_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
-    nullptr, temp_storage_bytes, src_ptrs, dst_ptrs, src_sizes, strings_count, stream.value()));
+    nullptr, temp_storage_bytes, src_ptrs, dst_ptrs, src_sizes, strings_count, stream.get()));
   rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(d_temp_storage.data(),
                                            temp_storage_bytes,
@@ -97,7 +114,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
                                            dst_ptrs,
                                            src_sizes,
                                            strings_count,
-                                           stream.value()));
+                                           stream.get()));
 
   return chars_data;
 }
@@ -122,7 +139,7 @@ template <typename InputIterator>
 std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   InputIterator begin,
   InputIterator end,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto constexpr size_type_max = static_cast<int64_t>(std::numeric_limits<size_type>::max());
@@ -223,7 +240,7 @@ template <typename SizeAndExecuteFunction>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type exec_size,
                            size_type strings_count,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   // This is called twice -- once for computing sizes and once for writing chars.
@@ -231,8 +248,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   auto for_each_fn = [exec_size, stream](SizeAndExecuteFunction& size_and_exec_fn) {
     auto constexpr block_size = 256;
     auto grid                 = cudf::detail::grid_1d{exec_size, block_size};
-    strings_children_kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(size_and_exec_fn,
-                                                                                exec_size);
+    strings_children_kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(size_and_exec_fn,
+                                                                              exec_size);
   };
 
   // Compute the output sizes
@@ -242,8 +259,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   for_each_fn(size_and_exec_fn);
 
   // Convert the sizes to offsets
-  auto [offsets_column, bytes] = cudf::strings::detail::make_offsets_child_column(
-    output_sizes.begin(), output_sizes.end(), stream, mr);
+  auto [offsets_column, bytes] =
+    cudf::strings::detail::make_offsets_child_column(output_sizes, stream, mr);
   size_and_exec_fn.d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
@@ -303,7 +320,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
 template <typename SizeAndExecuteFunction>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type strings_count,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   return make_strings_children(size_and_exec_fn, strings_count, strings_count, stream, mr);

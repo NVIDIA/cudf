@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,10 +11,9 @@
 
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cub/cub.cuh>
 #include <cuda/std/type_traits>
+#include <cuda/stream>
 
 #endif
 
@@ -88,9 +87,9 @@ CUDF_KERNEL void single_thread_kernel(F f)
  * @param stream CUDA stream used for the kernel launch
  */
 template <class Functor>
-void device_single_thread(Functor functor, rmm::cuda_stream_view stream)
+void device_single_thread(Functor functor, cuda::stream_ref stream)
 {
-  single_thread_kernel<<<1, 1, 0, stream.value()>>>(functor);
+  single_thread_kernel<<<1, 1, 0, stream.get()>>>(functor);
 }
 
 #endif

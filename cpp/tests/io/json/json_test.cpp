@@ -3360,12 +3360,12 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       auto empty_string_col = cudf::test::strings_column_wrapper{};
       cudf::test::structs_column_wrapper expected_structs{{}, cudf::test::iterators::all_nulls()};
       // make all null column of list of struct of string
-      auto wrapped = make_lists_column(
-        4,
-        cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0}.release(),
-        expected_structs.release(),
-        4,
-        cudf::create_null_mask(4, cudf::mask_state::ALL_NULL));
+      auto wrapped =
+        make_lists_column(4,
+                          cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0}.release(),
+                          expected_structs.release(),
+                          4,
+                          cudf::create_null_mask(4, cudf::mask_state::ALL_NULL));
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(2), *wrapped);
     }
   }
@@ -3420,11 +3420,12 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       auto const valids = std::vector<bool>{1, 0};
       auto [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valids.begin(), valids.end());
-      return cudf::make_lists_column(2,
-                                     size_type_wrapper{0, 1, 1}.release(),
-                                     int64_wrapper{1}.release(),
-                                     null_count,
-                                     std::move(null_mask));
+      return cudf::make_lists_column(
+        2,
+        cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 1}.release(),
+        int64_wrapper{1}.release(),
+        null_count,
+        std::move(null_mask));
     }();
 
     auto const expected1 = [&] {
@@ -3435,11 +3436,12 @@ TEST_F(JsonReaderTest, JsonNestedDtypeFilterWithOrder)
       auto const valids = std::vector<bool>{0, 0};
       auto [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valids.begin(), valids.end());
-      return cudf::make_lists_column(2,
-                                     size_type_wrapper{0, 0, 0}.release(),
-                                     get_structs().release(),
-                                     null_count,
-                                     std::move(null_mask));
+      return cudf::make_lists_column(
+        2,
+        cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0}.release(),
+        get_structs().release(),
+        null_count,
+        std::move(null_mask));
     }();
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected0, result.tbl->get_column(0).view());
@@ -3504,7 +3506,7 @@ TEST_F(JsonReaderTest, NullifyMixedList)
     cudf::test::detail::make_null_mask(list_nulls.cbegin(), list_nulls.cend());
   auto const expected = cudf::make_lists_column(
     7,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 1, 1, 1, 1, 3, 3}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 1, 1, 1, 1, 3, 3}.release(),
     get_structs(),
     null_count,
     std::move(null_mask));
@@ -3681,7 +3683,7 @@ TEST_F(JsonReaderTest, DeviceWriteAsyncThrows)
 // schema. cuDF itself does NOT change the column contents on mismatch (existing
 // CHILD_NULL_ONLY behavior); the diagnostic is reported on a separate side channel so the
 // public `column_name_info`/`table_metadata` ABI is unaffected.
-// See https://github.com/rapidsai/cudf/issues/22423.
+// See https://github.com/NVIDIA/cudf/issues/22423.
 
 // Build schema for: struct<c1: int64, c2: list<struct<c3: int64, c4: string>>>.
 // Pin column order so cuDF emits columns in (c1, c2) regardless of JSON-encounter order.

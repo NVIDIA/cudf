@@ -18,9 +18,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
@@ -35,7 +34,7 @@ template <typename Tokenizer, typename DelimiterFn>
 std::unique_ptr<column> split_record_fn(strings_column_view const& input,
                                         Tokenizer tokenizer,
                                         DelimiterFn delimiter_fn,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) {
@@ -56,7 +55,7 @@ std::unique_ptr<column> split_record_fn(strings_column_view const& input,
                "Size of output exceeds the column size limit",
                std::overflow_error);
 
-  auto strings_child = make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  auto strings_child = cudf::make_strings_column(tokens, stream, mr);
   return make_lists_column(input.size(),
                            std::move(offsets),
                            std::move(strings_child),
@@ -69,7 +68,7 @@ template <bool Forward>
 std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input,
                                                 string_view const d_delimiter,
                                                 size_type const max_tokens,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) {
@@ -92,7 +91,7 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
                "Size of output exceeds the column size limit",
                std::overflow_error);
 
-  auto strings_child = make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  auto strings_child = cudf::make_strings_column(tokens, stream, mr);
   return make_lists_column(input.size(),
                            std::move(offsets),
                            std::move(strings_child),
@@ -105,7 +104,7 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
 std::unique_ptr<column> split_record(strings_column_view const& input,
                                      string_scalar const& delimiter,
                                      size_type maxsplit,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -136,7 +135,7 @@ std::unique_ptr<column> split_record(strings_column_view const& input,
 std::unique_ptr<column> rsplit_record(strings_column_view const& input,
                                       string_scalar const& delimiter,
                                       size_type maxsplit,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -171,7 +170,7 @@ std::unique_ptr<column> rsplit_record(strings_column_view const& input,
 std::unique_ptr<column> split_record(strings_column_view const& input,
                                      string_scalar const& delimiter,
                                      size_type maxsplit,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -181,7 +180,7 @@ std::unique_ptr<column> split_record(strings_column_view const& input,
 std::unique_ptr<column> rsplit_record(strings_column_view const& input,
                                       string_scalar const& delimiter,
                                       size_type maxsplit,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

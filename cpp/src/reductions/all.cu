@@ -13,7 +13,6 @@
 #include <cuda/atomic>
 #include <cuda/iterator>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 
 namespace cudf {
@@ -54,7 +53,7 @@ struct all_fn {
       auto null_iter = op::min{}.template get_null_replacing_element_transformer<bool>();
       auto pair_iter =
         cudf::dictionary::detail::make_dictionary_pair_iterator<T>(*d_dict, input.has_nulls());
-      return thrust::make_transform_iterator(pair_iter, null_iter);
+      return cuda::transform_iterator(pair_iter, null_iter);
     }();
     auto d_result =
       cudf::detail::device_scalar<int32_t>(1, stream, cudf::get_current_device_resource_ref());

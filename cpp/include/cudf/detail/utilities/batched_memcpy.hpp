@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,11 +8,11 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
@@ -36,13 +36,13 @@ void batched_memcpy_async(SrcIterator src_iter,
                           DstIterator dst_iter,
                           SizeIterator size_iter,
                           size_t num_buffs,
-                          rmm::cuda_stream_view stream)
+                          cuda::stream_ref stream)
 {
   size_t temp_storage_bytes = 0;
   cub::DeviceMemcpy::Batched(
-    nullptr, temp_storage_bytes, src_iter, dst_iter, size_iter, num_buffs, stream.value());
+    nullptr, temp_storage_bytes, src_iter, dst_iter, size_iter, num_buffs, stream.get());
 
-  rmm::device_buffer d_temp_storage{temp_storage_bytes, stream.value()};
+  rmm::device_buffer d_temp_storage{temp_storage_bytes, stream.get()};
 
   cub::DeviceMemcpy::Batched(d_temp_storage.data(),
                              temp_storage_bytes,
@@ -50,7 +50,7 @@ void batched_memcpy_async(SrcIterator src_iter,
                              dst_iter,
                              size_iter,
                              num_buffs,
-                             stream.value());
+                             stream.get());
 }
 
 }  // namespace detail

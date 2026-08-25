@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -32,7 +33,6 @@
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/iterator_categories.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
@@ -437,7 +437,7 @@ OutputIter setup_src_buf_data(InputIter begin, InputIter end, OutputIter out_buf
 template <typename InputIter>
 size_type count_src_bufs(InputIter begin, InputIter end)
 {
-  auto buf_iter = thrust::make_transform_iterator(begin, [](column_view const& col) {
+  auto buf_iter = cuda::transform_iterator(begin, [](column_view const& col) {
     auto const children_counts = count_src_bufs(col.child_begin(), col.child_end());
     return 1 + (col.nullable() ? 1 : 0) + children_counts;
   });
@@ -1367,7 +1367,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
 
   partition_buf_size_and_dst_buf_info->copy_to_host();
 
-  stream.sync();
+  cudf::detail::sync_stream(stream);
 
   return partition_buf_size_and_dst_buf_info;
 }
@@ -1658,6 +1658,7 @@ std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
           d_batched_dst_buf_info[i].dst_offset -= *prior_iteration_size;
         });
     }
+    cudf::detail::sync_stream(stream);
     return std::make_unique<chunk_iteration_state>(std::move(d_batched_dst_buf_info),
                                                    std::move(d_batch_offsets),
                                                    std::move(num_batches_per_iteration),
@@ -1876,7 +1877,7 @@ struct contiguous_split_state {
     auto const keys = cudf::detail::make_counting_transform_iterator(
       0, out_to_in_index_function{chunk_iter_state->d_batch_offsets.begin(), (int)num_bufs});
 
-    auto values = thrust::make_transform_iterator(
+    auto values = cuda::transform_iterator(
       chunk_iter_state->d_batched_dst_buf_info.begin(),
       cuda::proclaim_return_type<size_type>(
         [] __device__(dst_buf_info const& info) { return info.valid_count; }));

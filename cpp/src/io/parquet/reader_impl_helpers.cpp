@@ -956,8 +956,6 @@ aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&&
                                                      bool use_arrow_schema,
                                                      bool has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(not parquet_metadatas.empty(), "At least one source must be provided");
-
   per_file_metadata.reserve(parquet_metadatas.size());
   std::transform(std::make_move_iterator(parquet_metadatas.begin()),
                  std::make_move_iterator(parquet_metadatas.end()),

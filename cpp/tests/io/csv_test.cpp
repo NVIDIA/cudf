@@ -3084,7 +3084,8 @@ TEST_F(CsvWriterTest, ZstdCompressionBlockSize)
 
   auto const expected = roundtrip_csv(input_table, names, {});
 
-  for (auto const block_size : {size_t{1}, size_t{4096}, size_t{64} * 1024, size_t{1} << 30}) {
+  for (auto const block_size :
+       {size_t{1}, size_t{4095}, size_t{4096}, size_t{64} * 1024, size_t{1} << 30}) {
     auto const result = roundtrip_csv(
       input_table,
       names,

@@ -49,6 +49,7 @@
 #include <thrust/tabulate.h>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -66,7 +67,7 @@ using namespace cudf::io;
 namespace {
 
 /**
- * @brief Writes a device memory buffer to the sink, on the device if the sink prefers it.
+ * @brief Writes a device memory buffer to the sink, from the device if the sink prefers it.
  */
 void write_to_sink(data_sink* out_sink, device_span<char const> data, cuda::stream_ref stream)
 {
@@ -128,17 +129,16 @@ void write_compressed_to_sink(data_sink* out_sink,
     h_inputs[num_blocks - 1] = device_span<uint8_t const>{as_bytes(tail), tail.size()};
   }
 
-  // the blocks are not all the same size, so the output buffer is laid out using the maximum
-  // compressed size of each individual block, padded to keep every block aligned for the codec
+  // the output buffer is laid out using the maximum compressed size of each block, since the
+  // compressed sizes are not known yet, with padding to keep every block aligned for the codec
   auto const alignment = io::detail::compress_required_chunk_alignment(compression);
   auto out_offsets     = cudf::detail::make_host_vector<size_t>(num_blocks + 1, stream);
   out_offsets[0]       = 0;
-  for (size_t block = 0; block < num_blocks; ++block) {
-    out_offsets[block + 1] =
-      out_offsets[block] +
-      cudf::util::round_up_safe(
-        io::detail::max_compressed_size(compression, h_inputs[block].size()), alignment);
-  }
+  std::transform_inclusive_scan(
+    h_inputs.begin(), h_inputs.end(), out_offsets.begin() + 1, std::plus{}, [&](auto const& input) {
+      return cudf::util::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
+                                       alignment);
+    });
   rmm::device_uvector<uint8_t> comp_buffer(out_offsets.back(), stream);
 
   for (size_t block = 0; block < num_blocks; ++block) {
@@ -163,7 +163,7 @@ void write_compressed_to_sink(data_sink* out_sink,
                            [](auto const& result) {
                              return result.status == io::detail::codec_status::SUCCESS;
                            }),
-               "Error in ZSTD compression of CSV data");
+               "Error in compression of CSV data");
 
   // The frames are padded to the maximum compressed block size, so they are packed into a
   // contiguous buffer to be written as a single frame sequence
@@ -190,9 +190,7 @@ void write_compressed_to_sink(data_sink* out_sink,
     d_sources.begin(), d_dests.begin(), d_sizes.begin(), num_blocks, stream);
 
   write_to_sink(
-    out_sink,
-    device_span<char const>{reinterpret_cast<char const*>(packed_buffer.data()), total_comp_size},
-    stream);
+    out_sink, {reinterpret_cast<char const*>(packed_buffer.data()), total_comp_size}, stream);
 }
 
 /**

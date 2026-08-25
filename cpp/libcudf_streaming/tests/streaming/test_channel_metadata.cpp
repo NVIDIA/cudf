@@ -167,6 +167,7 @@ class StreamingChannelMetadataGPU : public ::testing::Test {
   std::shared_ptr<table_chunk> make_chunk(std::vector<int32_t> vals)
   {
     rmm::device_buffer buf(vals.data(), vals.size() * sizeof(int32_t), stream);
+    stream.synchronize();
     auto col = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                               static_cast<cudf::size_type>(vals.size()),
                                               std::move(buf),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -64,7 +64,7 @@ std::unique_ptr<cudf::column> compute_row_index_column(
   cudf::host_span<size_type const> row_group_num_rows,
   std::optional<size_t> start_row,
   size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const num_row_groups = static_cast<size_type>(row_group_num_rows.size());
@@ -132,6 +132,7 @@ std::unique_ptr<cudf::column> compute_row_index_column(
     row_indices_iter,
     row_indices_iter);
 
+  stream.sync();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::UINT64},
                                         num_rows,
                                         std::move(row_indices),
@@ -145,7 +146,7 @@ std::unique_ptr<cudf::column> compute_partial_row_index_column(
   size_t start_row,
   size_type num_rows,
   bool is_unspecified_row_group_data,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (is_unspecified_row_group_data) {
@@ -195,7 +196,7 @@ void query_deletion_vectors(
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
   cudf::mutable_column_view const& output,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto const num_rows             = row_index_column.size();
   auto const num_deletion_vectors = static_cast<cudf::size_type>(deletion_vector_refs.size());
@@ -252,7 +253,7 @@ std::unique_ptr<cudf::column> compute_row_mask_column(
   cudf::column_view const& row_index_column,
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const num_rows  = row_index_column.size();
@@ -270,7 +271,7 @@ size_t compute_deleted_row_count(
   cudf::column_view const& row_index_column,
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> deletion_vector_row_counts,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto row_mask_column = compute_row_mask_column(row_index_column,
                                                  deletion_vector_refs,
@@ -355,7 +356,7 @@ std::unique_ptr<cudf::column> compute_partial_row_mask_column(
   cudf::column_view const& row_index_column,
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto [_, dv_refs, dv_row_counts] =
@@ -366,7 +367,7 @@ std::unique_ptr<cudf::column> compute_partial_row_mask_column(
 size_t compute_partial_deleted_row_count(cudf::column_view const& row_index_column,
                                          std::queue<cudf::roaring_bitmap>& deletion_vectors,
                                          std::queue<size_type>& deletion_vector_row_counts,
-                                         rmm::cuda_stream_view stream)
+                                         cuda::stream_ref stream)
 {
   auto [_, dv_refs, dv_row_counts] =
     consume_deletion_vectors(row_index_column.size(), deletion_vectors, deletion_vector_row_counts);

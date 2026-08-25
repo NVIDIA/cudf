@@ -17,7 +17,7 @@ from cudf_polars.engine.options import (
     Unspecified,
     _parse_memory_resource_config,
 )
-from cudf_polars.utils.config import MemoryResourceConfig
+from cudf_polars.utils.config import DynamicPlanningOptions, MemoryResourceConfig
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -78,6 +78,11 @@ def test_executor_options_max_concurrent_io_tasks() -> None:
     assert result["max_concurrent_io_tasks"] == 6
 
 
+def test_executor_options_kvikio_nthreads() -> None:
+    result = StreamingOptions(kvikio_nthreads=128).to_executor_options()
+    assert result["kvikio_nthreads"] == 128
+
+
 @pytest.mark.parametrize("value", [True, False])
 def test_executor_options_sink_to_directory(*, value: bool) -> None:
     result = StreamingOptions(sink_to_directory=value).to_executor_options()
@@ -118,6 +123,7 @@ def test_rapidsmpf_options_serialized() -> None:
         statistics=True,
         pinned_memory=False,
         num_streaming_threads=8,
+        ucxx_progress_mode="thread-polling",
         log="DEBUG",
         pinned_max_pool_size="4GiB",
         unbounded_file_read_cache="host",
@@ -126,6 +132,7 @@ def test_rapidsmpf_options_serialized() -> None:
     assert strings["statistics"] == "True"
     assert strings["pinned_memory"] == "False"
     assert strings["num_streaming_threads"] == "8"
+    assert strings["ucxx_progress_mode"] == "thread-polling"
     assert strings["log"] == "DEBUG"
     assert strings["pinned_max_pool_size"] == "4GiB"
     assert strings["unbounded_file_read_cache"] == "host"
@@ -157,6 +164,32 @@ def test_rapidsmpf_options_explicit_overrides_env_var(
 def test_rapidsmpf_options_env_var_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RAPIDSMPF_LOG", raising=False)
     assert "log" not in StreamingOptions().to_rapidsmpf_options().get_strings()
+
+
+def test_ucxx_progress_mode_picks_up_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAPIDSMPF_UCXX_PROGRESS_MODE", "polling")
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["ucxx_progress_mode"] == "polling"
+
+
+def test_ucxx_progress_mode_explicit_overrides_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAPIDSMPF_UCXX_PROGRESS_MODE", "polling")
+    strings = (
+        StreamingOptions(ucxx_progress_mode="thread-polling")
+        .to_rapidsmpf_options()
+        .get_strings()
+    )
+    assert strings["ucxx_progress_mode"] == "thread-polling"
+
+
+def test_ucxx_progress_mode_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RAPIDSMPF_UCXX_PROGRESS_MODE", raising=False)
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert "ucxx_progress_mode" not in strings
 
 
 def test_pinned_max_pool_size_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,9 +312,15 @@ def test_from_argparse_renames() -> None:
 def test_from_argparse_dynamic_planning() -> None:
     assert isinstance(
         StreamingOptions._from_argparse(
-            argparse.Namespace(dynamic_planning=True)
+            argparse.Namespace(dynamic_planning=None)
         ).dynamic_planning,
         Unspecified,
+    )
+    assert (
+        StreamingOptions._from_argparse(
+            argparse.Namespace(dynamic_planning=True)
+        ).dynamic_planning
+        == DynamicPlanningOptions()
     )
     assert (
         StreamingOptions._from_argparse(
@@ -323,6 +362,22 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert opts.max_concurrent_io_tasks == 6
     # Unprovided args default to None → UNSPECIFIED
     assert isinstance(opts.fallback_mode, Unspecified)
+
+
+def test_from_argparse_omitted_flag_still_picks_up_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", "16")
+    monkeypatch.setenv("RAPIDSMPF_NUM_STREAMING_THREADS", "16")
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    args = parser.parse_args([])
+    opts = StreamingOptions._from_argparse(args)
+
+    assert opts.num_py_executors == 16
+    assert opts.to_executor_options()["num_py_executors"] == 16
+    assert opts.num_streaming_threads == 16
 
 
 # ---------------------------------------------------------------------------

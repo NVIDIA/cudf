@@ -22,12 +22,12 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 #include <functional>
@@ -45,7 +45,7 @@ namespace {
  * `XXHash_64` (so that `cudf::string_view` and other cudf types are hashed by content, matching the
  * Apache Parquet/Arrow bloom filter specification).
  *
- * Uses cuco's `parametric_filter_policy` with the Apache Arrow layout: 256-bit blocks (8 x
+ * Uses cuco's `bloom_filter_policy` with the Apache Arrow layout: 256-bit blocks (8 x
  * `uint32_t`), 8 fingerprint bits per key, fully horizontal add (Theta=8) and fully vertical
  * contains (Phi=8). This layout is bit-compatible with Apache Arrow, as verified by cuCollections
  * `tests/bloom_filter/arrow_compat_test.cu`.
@@ -53,7 +53,8 @@ namespace {
  * @tparam Key The type of the values to generate a fingerprint for.
  */
 template <class Key>
-using arrow_filter_policy = cudf::arrow_filter_policy<cudf::hashing::detail::XXHash_64<Key>>;
+using arrow_filter_policy =
+  cudf::arrow_bloom_filter_policy<Key, cudf::hashing::detail::XXHash_64<Key>>;
 
 /**
  * @brief Converts bloom filter membership results (for each column chunk) to a device column.
@@ -71,7 +72,7 @@ struct bloom_filter_caster {
   std::unique_ptr<cudf::column> query_bloom_filter(cudf::size_type equality_col_idx,
                                                    cudf::data_type dtype,
                                                    ast::literal const* const literal,
-                                                   rmm::cuda_stream_view stream) const
+                                                   cuda::stream_ref stream) const
     requires(not std::is_same_v<T, bool> and
              not(cudf::is_compound<T>() and not std::is_same_v<T, string_view>))
   {
@@ -151,7 +152,7 @@ struct bloom_filter_caster {
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type dtype,
                                            ast::literal const* const literal,
-                                           rmm::cuda_stream_view stream) const
+                                           cuda::stream_ref stream) const
   {
     // Boolean, List, Struct, Dictionary types are not supported
     if constexpr (std::is_same_v<T, bool> or
@@ -183,7 +184,7 @@ class bloom_filter_expression_converter : public equality_literals_collector {
     ast::expression const& expr,
     cudf::host_span<cudf::data_type const> output_dtypes,
     cudf::host_span<std::vector<ast::literal*> const> equality_literals,
-    rmm::cuda_stream_view stream)
+    cuda::stream_ref stream)
     : _equality_literals{equality_literals},
       _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
       _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
@@ -225,13 +226,11 @@ class bloom_filter_expression_converter : public equality_literals_collector {
     auto const input_op       = expr.get_operator();
     auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
 
-    // Unary operation
+    // Membership filters cannot evaluate unary operations. Visit operands and push always true
     if (operator_arity == 1) {
-      auto visit_operands_fn = [this](auto const& operands) {
-        return this->visit_operands(operands);
-      };
-      return parquet::detail::apply_unary_membership_transform(
-        expr, _bloom_filter_expr, *_always_true, *this, visit_operands_fn);
+      std::ignore = this->visit_operands(expr.get_operands());
+      _bloom_filter_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+      return *_always_true;
     }
 
     // Binary operation
@@ -326,7 +325,7 @@ aggregate_reader_metadata::read_bloom_filters(
   host_span<std::vector<size_type> const> row_group_indices,
   host_span<int const> column_schemas,
   size_type total_row_groups,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   // Descriptors for all the chunks that make up the selected columns
@@ -408,7 +407,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   host_span<data_type const> output_dtypes,
   host_span<cudf::size_type const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Number of input table columns
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());
@@ -554,18 +553,6 @@ std::reference_wrapper<ast::expression const> equality_literals_collector::visit
 std::vector<std::vector<ast::literal*>> equality_literals_collector::get_literals() &&
 {
   return std::move(_literals);
-}
-
-std::vector<std::reference_wrapper<ast::expression const>>
-equality_literals_collector::visit_operands(
-  cudf::host_span<std::reference_wrapper<ast::expression const> const> operands)
-{
-  std::vector<std::reference_wrapper<ast::expression const>> transformed_operands;
-  for (auto const& operand : operands) {
-    auto const new_operand = operand.get().accept(*this);
-    transformed_operands.push_back(new_operand);
-  }
-  return transformed_operands;
 }
 
 }  // namespace cudf::io::parquet::detail

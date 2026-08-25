@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -16,14 +16,20 @@ from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
 from cuda.bindings.cyruntime cimport cudaStream_t
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.types import NullOrder, Order
+    from pylibcudf.typing import CudaStreamLike
+
 __all__ = ["merge"]
 
 cpdef Table merge (
-    list tables_to_merge,
-    list key_cols,
-    list column_order,
-    list null_precedence,
-    object stream=None,
+    list tables_to_merge: list[Table],
+    list key_cols: list[int],
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Merge a set of sorted tables.

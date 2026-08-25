@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -599,7 +599,7 @@ class metadata {
   std::vector<orc_stripe_info> stripe_info;
 
  public:
-  explicit metadata(datasource* const src, rmm::cuda_stream_view stream);
+  explicit metadata(datasource* const src, cuda::stream_ref stream);
 
   metadata(metadata const&)            = delete;
   metadata& operator=(metadata const&) = delete;

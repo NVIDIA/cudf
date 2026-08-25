@@ -24,7 +24,7 @@ Mitigation: Review and scan skill before deployment. <br>
 - [dask-cuDF Patterns](references/dask-cudf-patterns.md) <br>
 - [cuDF Documentation](https://docs.rapids.ai/api/cudf/stable/) <br>
 - [dask-cuDF API Reference](https://docs.rapids.ai/api/dask-cudf/stable/api/) <br>
-- [cuDF GitHub Repository](https://github.com/rapidsai/cudf) <br>
+- [cuDF GitHub Repository](https://github.com/NVIDIA/cudf) <br>
 
 
 ## Skill Output: <br>

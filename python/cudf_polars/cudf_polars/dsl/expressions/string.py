@@ -149,6 +149,7 @@ class StringFunction(Expr):
         Name.StripCharsEnd,
         Name.StripPrefix,
         Name.StripSuffix,
+        Name.ToDecimal,
         Name.ToInteger,
         Name.Uppercase,
         Name.Reverse,
@@ -161,7 +162,7 @@ class StringFunction(Expr):
     # backslash via a back-reference replacement template.
     _ESCAPE_REGEX_PATTERN: ClassVar[str] = r"([#$&()*+\-.?\[\\\]\^{|}~])"
     _ESCAPE_REGEX_REPLACEMENT: ClassVar[str] = r"\\1"
-    __slots__ = ("_regex_program", "name", "options")
+    __slots__ = ("_empty_regex", "_invalid_regex", "_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
     def __init__(
@@ -176,6 +177,8 @@ class StringFunction(Expr):
         self.name = name
         self.children = children
         self.is_pointwise = self.name != StringFunction.Name.ConcatVertical
+        self._empty_regex = False
+        self._invalid_regex = False
         self._validate_input()
 
     def _validate_input(self) -> None:
@@ -183,36 +186,45 @@ class StringFunction(Expr):
             raise NotImplementedError(f"String function {self.name!r}")
         if self.name is StringFunction.Name.CountMatches:
             (literal,) = self.options
-            if literal:
-                raise NotImplementedError(
-                    f"{literal=} is not supported for count_matches"
-                )
             literal_expr = self.children[1]
             assert isinstance(literal_expr, Literal)
             pattern = literal_expr.value
+            if literal:
+                # libcudf has no literal count; escape the pattern so the
+                # regex engine matches it verbatim.
+                pattern = re.escape(pattern)
             self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.Contains:
             literal, strict = self.options
             if not literal:
-                if not strict:
-                    raise NotImplementedError(
-                        f"{strict=} is not supported for regex contains"
-                    )
                 if not isinstance(self.children[1], Literal):
                     raise NotImplementedError(
                         "Regex contains only supports a scalar pattern"
                     )
                 pattern = self.children[1].value
-                self._regex_program = self._create_regex_program(pattern)
+                if pattern == "":
+                    self._empty_regex = True
+                elif strict:
+                    self._regex_program = self._create_regex_program(pattern)
+                else:
+                    try:
+                        re.compile(pattern)
+                    except re.error:
+                        self._invalid_regex = True
+                    else:
+                        self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.EscapeRegex:
             self._regex_program = self._create_regex_program(self._ESCAPE_REGEX_PATTERN)
         elif self.name is StringFunction.Name.Extract:
             (group_index,) = self.options
-            if group_index == 0:
-                raise NotImplementedError(f"{group_index=} is not supported")
             literal_expr = self.children[1]
             assert isinstance(literal_expr, Literal)
             pattern = literal_expr.value
+            if group_index == 0:
+                # libcudf can only extract capture groups, so wrap the whole
+                # pattern in an outer group to emulate extracting group 0
+                # (the entire match).
+                pattern = f"({pattern})"
             self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.ExtractGroups:
             (_, pattern) = self.options
@@ -220,16 +232,22 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Find:
             literal, strict = self.options
             if not literal:
-                if not strict:
-                    raise NotImplementedError(
-                        f"{strict=} is not supported for regex contains"
-                    )
                 if not isinstance(self.children[1], Literal):
                     raise NotImplementedError(
                         "Regex contains only supports a scalar pattern"
                     )
                 pattern = self.children[1].value
-                self._regex_program = self._create_regex_program(pattern)
+                if pattern == "":
+                    self._empty_regex = True
+                elif strict:
+                    self._regex_program = self._create_regex_program(pattern)
+                else:
+                    try:
+                        re.compile(pattern)
+                    except re.error:
+                        self._invalid_regex = True
+                    else:
+                        self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.Replace:
             _, literal = self.options
             if not literal:
@@ -462,6 +480,28 @@ class StringFunction(Expr):
                     plc.strings.find.contains(column.obj, pattern, stream=df.stream),
                     dtype=self.dtype,
                 )
+            elif self._invalid_regex:
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            elif self._empty_regex:
+                result = plc.Column.from_scalar(
+                    plc.Scalar.from_py(
+                        py_val=True, dtype=self.dtype.plc_type, stream=df.stream
+                    ),
+                    column.size,
+                    stream=df.stream,
+                )
+                if column.obj.null_mask():
+                    result = result.with_mask(
+                        column.obj.null_mask(), column.obj.null_count()
+                    )
+                return Column(result, dtype=self.dtype)
             else:
                 return Column(
                     plc.strings.contains.contains_re(
@@ -516,9 +556,12 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Extract:
             (group_index,) = self.options
             plc_column = self.children[0].evaluate(df, context=context).obj
+            # group_index 0 wraps the pattern in an outer group (see __init__),
+            # so the whole match is the first (0-indexed) libcudf capture group.
+            group = 0 if group_index == 0 else group_index - 1
             return Column(
                 plc.strings.extract.extract_single(
-                    plc_column, self._regex_program, group_index - 1, stream=df.stream
+                    plc_column, self._regex_program, group, stream=df.stream
                 ),
                 dtype=self.dtype,
             )
@@ -535,6 +578,8 @@ class StringFunction(Expr):
             literal, _ = self.options
             (child, expr) = self.children
             plc_column = child.evaluate(df, context=context).obj
+            input_null_mask = plc_column.null_mask()
+            input_null_count = plc_column.null_count()
             if literal:
                 assert isinstance(expr, Literal)
                 plc_column = plc.strings.find.find(
@@ -544,6 +589,21 @@ class StringFunction(Expr):
                     ),
                     stream=df.stream,
                 )
+            elif self._invalid_regex:
+                plc_column = plc.Column.from_scalar(
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    plc_column.size(),
+                    stream=df.stream,
+                )
+                return Column(plc_column, dtype=self.dtype)
+            elif self._empty_regex:
+                plc_column = plc.Column.from_scalar(
+                    plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream),
+                    plc_column.size(),
+                    stream=df.stream,
+                )
+                plc_column = plc_column.with_mask(input_null_mask, input_null_count)
+                return Column(plc_column, dtype=self.dtype)
             else:
                 plc_column = plc.strings.findall.find_re(
                     plc_column, self._regex_program, stream=df.stream
@@ -604,8 +664,6 @@ class StringFunction(Expr):
                 plc_column, self.dtype.plc_type, stream=df.stream
             )
             if parse_ok.null_count() > 0:
-                # is_integer marks null inputs as null; treat them as
-                # non-parseable so they map to null in the output.
                 parse_ok = plc.replace.replace_nulls(
                     parse_ok,
                     plc.Scalar.from_py(
@@ -659,6 +717,23 @@ class StringFunction(Expr):
                         plc_column, stream=df.stream
                     ),
                     self.dtype.plc_type,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        elif self.name is StringFunction.Name.ToDecimal:
+            plc_column = self.children[0].evaluate(df, context=context).obj
+            valid = plc.strings.convert.convert_fixed_point.is_fixed_point(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            decimal_column = plc.strings.convert.convert_fixed_point.to_fixed_point(
+                plc_column, self.dtype.plc_type, stream=df.stream
+            )
+            return Column(
+                plc.copying.copy_if_else(
+                    decimal_column,
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    valid,
                     stream=df.stream,
                 ),
                 dtype=self.dtype,
@@ -816,11 +891,106 @@ class StringFunction(Expr):
                 dtype=self.dtype,
             )
 
-        elif self.name is StringFunction.Name.Tail:
+        elif self.name in {StringFunction.Name.Head, StringFunction.Name.Tail}:
             column = self.children[0].evaluate(df, context=context)
+            n_expr = self.children[1]
 
-            assert isinstance(self.children[1], Literal)
-            if self.children[1].value is None:
+            if not isinstance(n_expr, Literal):
+                n_col = n_expr.evaluate(df, context=context)
+                if column.size == 0 or column.null_count == column.size:
+                    return column
+                if n_col.null_count == n_col.size:
+                    return Column(
+                        plc.Column.from_scalar(
+                            plc.Scalar.from_py(
+                                None, self.dtype.plc_type, stream=df.stream
+                            ),
+                            column.size,
+                            stream=df.stream,
+                        ),
+                        self.dtype,
+                    )
+
+                zero = plc.Scalar.from_py(0, n_col.obj.type(), stream=df.stream)
+                n = (
+                    plc.replace.replace_nulls(n_col.obj, zero, stream=df.stream)
+                    if n_col.null_count > 0
+                    else n_col.obj
+                )
+                char_count = plc.unary.cast(
+                    plc.strings.attributes.count_characters(
+                        column.obj, stream=df.stream
+                    ),
+                    n_col.obj.type(),
+                    stream=df.stream,
+                )
+                if column.null_count > 0:
+                    char_count = plc.replace.replace_nulls(
+                        char_count, zero, stream=df.stream
+                    )
+                n_is_negative = plc.binaryop.binary_operation(
+                    n,
+                    zero,
+                    plc.binaryop.BinaryOperator.LESS,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                if self.name is StringFunction.Name.Tail:
+                    start = plc.binaryop.binary_operation(
+                        char_count,
+                        n,
+                        plc.binaryop.BinaryOperator.SUB,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    negative_start = plc.binaryop.binary_operation(
+                        zero,
+                        n,
+                        plc.binaryop.BinaryOperator.SUB,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    start = plc.copying.copy_if_else(
+                        negative_start, start, n_is_negative, stream=df.stream
+                    )
+                    start = plc.binaryop.binary_operation(
+                        start,
+                        zero,
+                        plc.binaryop.BinaryOperator.NULL_MAX,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    stop = char_count
+                else:
+                    stop = plc.binaryop.binary_operation(
+                        char_count,
+                        n,
+                        plc.binaryop.BinaryOperator.ADD,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    stop = plc.copying.copy_if_else(
+                        stop, n, n_is_negative, stream=df.stream
+                    )
+                    stop = plc.binaryop.binary_operation(
+                        stop,
+                        zero,
+                        plc.binaryop.BinaryOperator.NULL_MAX,
+                        n_col.obj.type(),
+                        stream=df.stream,
+                    )
+                    start = plc.Column.from_scalar(zero, n_col.size, stream=df.stream)
+                result = plc.strings.slice.slice_strings(
+                    column.obj, start, stop, stream=df.stream
+                )
+                if n_col.null_count > 0:
+                    combined_mask, null_count = plc.null_mask.bitmask_and(
+                        [column.obj, n_col.obj], stream=df.stream
+                    )
+                    result = result.with_mask(combined_mask, null_count)
+                return Column(result, self.dtype)
+
+            if n_expr.value is None:
                 return Column(
                     plc.Column.from_scalar(
                         plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
@@ -829,7 +999,7 @@ class StringFunction(Expr):
                     ),
                     self.dtype,
                 )
-            elif self.children[1].value == 0:
+            if n_expr.value == 0:
                 result = plc.Column.from_scalar(
                     plc.Scalar.from_py("", self.dtype.plc_type, stream=df.stream),
                     column.size,
@@ -841,46 +1011,20 @@ class StringFunction(Expr):
                     )
                 return Column(result, self.dtype)
 
+            if self.name is StringFunction.Name.Tail:
+                start = -n_expr.value
+                stop = 2**31 - 1
             else:
-                start = -(self.children[1].value)
-                end = 2**31 - 1
-                return Column(
-                    plc.strings.slice.slice_strings(
-                        column.obj,
-                        plc.Scalar.from_py(
-                            start, plc.DataType(plc.TypeId.INT32), stream=df.stream
-                        ),
-                        plc.Scalar.from_py(
-                            end, plc.DataType(plc.TypeId.INT32), stream=df.stream
-                        ),
-                        None,
-                        stream=df.stream,
-                    ),
-                    self.dtype,
-                )
-        elif self.name is StringFunction.Name.Head:
-            column = self.children[0].evaluate(df, context=context)
-
-            assert isinstance(self.children[1], Literal)
-
-            end = self.children[1].value
-            if end is None:
-                return Column(
-                    plc.Column.from_scalar(
-                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
-                        column.size,
-                        stream=df.stream,
-                    ),
-                    self.dtype,
-                )
+                start = 0
+                stop = n_expr.value
             return Column(
                 plc.strings.slice.slice_strings(
                     column.obj,
                     plc.Scalar.from_py(
-                        0, plc.DataType(plc.TypeId.INT32), stream=df.stream
+                        start, plc.DataType(plc.TypeId.INT32), stream=df.stream
                     ),
                     plc.Scalar.from_py(
-                        end, plc.DataType(plc.TypeId.INT32), stream=df.stream
+                        stop, plc.DataType(plc.TypeId.INT32), stream=df.stream
                     ),
                     stream=df.stream,
                 ),
@@ -954,7 +1098,7 @@ class StringFunction(Expr):
                         plc_col, 0, stream=df.stream
                     ).to_py(stream=df.stream)
 
-                # See https://github.com/rapidsai/cudf/issues/20202 for we type ignore
+                # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
                 format = _infer_datetime_format(first_valid_data)  # type: ignore[arg-type]
                 if not format:
                     raise InvalidOperationError(
@@ -1013,7 +1157,7 @@ class StringFunction(Expr):
             (char,) = self.options
             # TODO: Maybe accept a string scalar in
             # cudf::strings::pad to avoid DtoH transfer
-            # See https://github.com/rapidsai/cudf/issues/20202
+            # See https://github.com/NVIDIA/cudf/issues/20202
             width_py = width_col.obj.to_scalar(stream=df.stream).to_py(stream=df.stream)
             assert width_py is not None
             pad_width = int(width_py)

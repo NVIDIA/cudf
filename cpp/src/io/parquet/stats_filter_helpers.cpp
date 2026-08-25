@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -89,22 +89,10 @@ std::pair<thrust::host_vector<bool>, bool> stats_columns_collector::get_stats_co
   return {std::move(_columns_mask), _has_is_null_operator};
 }
 
-std::vector<std::reference_wrapper<ast::expression const>> stats_columns_collector::visit_operands(
-  cudf::host_span<std::reference_wrapper<ast::expression const> const> operands)
-{
-  std::vector<std::reference_wrapper<ast::expression const>> transformed_operands;
-  std::transform(operands.begin(),
-                 operands.end(),
-                 std::back_inserter(transformed_operands),
-                 [t = this](auto& operand) { return operand.get().accept(*t); });
-
-  return transformed_operands;
-}
-
 stats_expression_converter::stats_expression_converter(ast::expression const& expr,
                                                        size_type num_columns,
                                                        bool has_is_null_operator,
-                                                       rmm::cuda_stream_view stream)
+                                                       cuda::stream_ref stream)
   : _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
     _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
 {

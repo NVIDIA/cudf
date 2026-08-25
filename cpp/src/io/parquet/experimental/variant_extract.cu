@@ -307,11 +307,13 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
  *
  * @param val The object value bytes
  * @param id The dictionary index of the field to locate
+ * @param is_sorted Whether `field_ids` is known to be sorted in ascending order, allowing a
+ *        binary search instead of a linear scan
  * @return The encoded bytes of the field value, or an empty span if `val` is not an object, the
  *         field is absent, or the blob is malformed
  */
 __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_field(
-  device_span<uint8_t const> val, int id)
+  device_span<uint8_t const> val, int id, bool is_sorted)
 {
   auto const val_len = static_cast<size_type>(val.size());
   if (val_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
@@ -326,6 +328,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
   size_type pos         = 1;
   auto const num_fields = narrow_cast(read_uint64(val, pos, num_elements_size));
   if (!num_fields.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+  if (num_fields.value() == 0) { return {{}, op_status::MISSING_PATH}; }
   pos += num_elements_size;
 
   auto const ids_start = pos;
@@ -349,21 +352,50 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
   }
   auto const values_region = static_cast<size_type>(sentinel_raw.value());
 
+  // Find the matching field ID and its start offset.
+  // When is_sorted, field_ids[0..N-1] are monotonically increasing (the metadata dictionary is
+  // sorted by key name, so ID order == name order), enabling binary search.
+  // Not using thrust::lower_bound since it does not propagate entry read failures.
   bool found           = false;
   uint64_t match_start = 0;
-  for (size_type i = 0; i < num_fields.value(); ++i) {
-    auto const current_id = read_uint64(val, ids_start + i * id_size, id_size);
-    if (!current_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
-    if (cuda::std::cmp_not_equal(current_id.value(), id)) { continue; }
-
-    auto const match_offset = read_uint64(val, offsets_start + i * offset_size, offset_size);
-    if (!match_offset.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
-    if (match_offset.value() > static_cast<uint64_t>(values_region)) {
-      return {{}, op_status::MALFORMED_VARIANT};
+  if (is_sorted) {
+    size_type lo = 0;
+    size_type hi = num_fields.value();
+    while (lo < hi) {
+      size_type const mid   = lo + (hi - lo) / 2;
+      auto const current_id = read_uint64(val, ids_start + mid * id_size, id_size);
+      if (!current_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+      if (cuda::std::cmp_equal(current_id.value(), id)) {
+        auto const match_offset = read_uint64(val, offsets_start + mid * offset_size, offset_size);
+        if (!match_offset.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+        if (match_offset.value() > static_cast<uint64_t>(values_region)) {
+          return {{}, op_status::MALFORMED_VARIANT};
+        }
+        match_start = match_offset.value();
+        found       = true;
+        break;
+      }
+      if (cuda::std::cmp_less(current_id.value(), id)) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
     }
-    match_start = match_offset.value();
-    found       = true;
-    break;
+  } else {
+    for (size_type i = 0; i < num_fields.value(); ++i) {
+      auto const current_id = read_uint64(val, ids_start + i * id_size, id_size);
+      if (!current_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+      if (cuda::std::cmp_not_equal(current_id.value(), id)) { continue; }
+
+      auto const match_offset = read_uint64(val, offsets_start + i * offset_size, offset_size);
+      if (!match_offset.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+      if (match_offset.value() > static_cast<uint64_t>(values_region)) {
+        return {{}, op_status::MALFORMED_VARIANT};
+      }
+      match_start = match_offset.value();
+      found       = true;
+      break;
+    }
   }
   if (!found) { return {{}, op_status::MISSING_PATH}; }
 
@@ -575,6 +607,7 @@ __device__ cuda::std::optional<size_type> parse_index_step(cudf::string_view ste
 __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
   device_span<uint8_t const> meta, device_span<uint8_t const> val, column_device_view path)
 {
+  bool const is_sorted               = !meta.empty() && ((meta[0] >> 4) & 0x01);
   device_span<uint8_t const> sub_val = val;
   for (size_type i = 0; i < path.size(); ++i) {
     auto const step = path.element<cudf::string_view>(i);
@@ -588,7 +621,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
       auto const [field_id, meta_st] = find_key_in_metadata(meta, step);
       if (meta_st == op_status::MALFORMED_VARIANT) { return {{}, op_status::MALFORMED_VARIANT}; }
       if (!field_id.has_value()) { return {{}, op_status::MISSING_PATH}; }
-      auto const [span, st] = locate_object_field(sub_val, field_id.value());
+      auto const [span, st] = locate_object_field(sub_val, field_id.value(), is_sorted);
       if (st != op_status::SUCCESS) { return {{}, st}; }
       sub_val = span;
     }

@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -68,17 +68,21 @@ std::vector<cudf::size_type> apply_row_group_filters(
     current_row_group_indices = stats_filtered_row_groups;
   }
 
-  // Get bloom filter and dictionary page byte ranges from the reader
+  if (not filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) and
+      not filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
+    return std::vector<cudf::size_type>(current_row_group_indices.begin(),
+                                        current_row_group_indices.end());
+  }
+
+  // Get bloom filter and dictionary page byte ranges from the reader, only for the enabled filters
   auto bloom_filter_byte_ranges = std::vector<cudf::io::text::byte_range_info>{};
   auto dict_page_byte_ranges    = std::vector<cudf::io::text::byte_range_info>{};
 
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) or
-      filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
-    std::tie(bloom_filter_byte_ranges, dict_page_byte_ranges) =
-      reader.secondary_filters_byte_ranges(current_row_group_indices, options);
-  } else {
-    return std::vector<cudf::size_type>(current_row_group_indices.begin(),
-                                        current_row_group_indices.end());
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
+    bloom_filter_byte_ranges = reader.bloom_filters_byte_ranges(current_row_group_indices, options);
+  }
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
+    dict_page_byte_ranges = reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
   }
 
   // Filter row groups with dictionary pages

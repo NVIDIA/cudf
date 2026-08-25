@@ -216,13 +216,13 @@ def test_hybrid_scan_filter_row_groups_with_stats(
     assert filtered == expected_row_groups
 
 
-def test_hybrid_scan_secondary_filters_byte_ranges(
+def test_hybrid_scan_bloom_filter_and_dictionary_page_byte_ranges(
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
     num_rows: int,
 ) -> None:
     """Test getting bloom filter and dictionary page byte ranges."""
-    # Need to set a filter for secondary filters to work
+    # Need to set a filter for the secondary filter ranges to be populated
     # Filter: col0 >= num_rows // 10
     filter_threshold = num_rows // 10
     filter_expression = Operation(
@@ -240,15 +240,21 @@ def test_hybrid_scan_secondary_filters_byte_ranges(
         simple_parquet_options
     )
 
-    bloom_ranges, dict_ranges = (
-        simple_hybrid_scan_reader.secondary_filters_byte_ranges(
-            all_row_groups, simple_parquet_options
-        )
+    bloom_ranges = simple_hybrid_scan_reader.bloom_filters_byte_ranges(
+        all_row_groups, simple_parquet_options
+    )
+    dict_ranges = simple_hybrid_scan_reader.dictionary_pages_byte_ranges(
+        all_row_groups, simple_parquet_options
     )
 
     # These should be lists of ByteRangeInfo
     assert isinstance(bloom_ranges, list)
     assert isinstance(dict_ranges, list)
+
+    # Any range that is reported must be addressable within the file
+    for r in bloom_ranges + dict_ranges:
+        assert r.offset >= 0
+        assert r.size >= 0
 
 
 def test_hybrid_scan_column_chunk_byte_ranges(
@@ -864,7 +870,7 @@ def test_hybrid_scan_filter_row_groups_with_dictionary_pages_negation(
         reader.reset_column_selection()
         simple_parquet_options.set_filter(filter_expression)
         all_row_groups = reader.all_row_groups(simple_parquet_options)
-        _, dictionary_ranges = reader.secondary_filters_byte_ranges(
+        dictionary_ranges = reader.dictionary_pages_byte_ranges(
             all_row_groups, simple_parquet_options
         )
         dictionary_data = [

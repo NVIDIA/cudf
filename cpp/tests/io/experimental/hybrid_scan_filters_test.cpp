@@ -1919,7 +1919,7 @@ TEST_P(DictionaryFilterGapTest, FilterRowGroupsWithMissingDictPages)
     ASSERT_EQ(row_group_indices.size(), 2);
 
     auto const dict_page_byte_ranges =
-      reader->secondary_filters_byte_ranges(row_group_indices, options).second;
+      reader->dictionary_pages_byte_ranges(row_group_indices, options);
     ASSERT_EQ(dict_page_byte_ranges.size(), 2);
     EXPECT_GT(dict_page_byte_ranges[0].size(), 0);
     EXPECT_EQ(dict_page_byte_ranges[1].size(), 0);

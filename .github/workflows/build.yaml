@@ -160,9 +160,9 @@ jobs:
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
-      docs-projects: cudf,libcudf
+      docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
-      version-map: '{"26.04": "legacy", "26.06": "stable"}'
+      version-map: ${{ vars.VERSION_MAP }}
   wheel-build-libcudf:
     needs: [build-details, telemetry-setup]
     permissions:
@@ -543,8 +543,15 @@ jobs:
   java-gather:
     needs: [java-build]
     runs-on: linux-amd64-cpu4
+    # The container image is only used to make rapids-is-release-build
+    # available for the release-flag check below. The artifact assembly
+    # itself does not depend on any image-specific tooling.
+    container:
+      image: "rapidsai/ci-wheel:26.10-latest"
     permissions:
       contents: read
+    outputs:
+      is_release: ${{ steps.release-check.outputs.is_release }}
     steps:
       - name: Checkout code repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -568,3 +575,33 @@ jobs:
           name: cudf_java_maven_repo
           path: ${{ runner.temp }}/maven-repo
           if-no-files-found: error
+      - name: Determine release-build status
+        id: release-check
+        run: |
+          if rapids-is-release-build; then
+            echo "is_release=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "is_release=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  # Publish tagged release candidates to Maven Central via the Sonatype
+  # Central Publisher Portal. Release path only (vYY.MM.PP tags). Does not
+  # publish nightlies.
+  # TODO: add nightly Sonatype snapshot publishing.
+  java-publish:
+    needs: [java-gather]
+    if: ${{ needs.java-gather.outputs.is_release == 'true' && (inputs.build_type || 'branch') == 'branch' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/maven-publish.yaml@main
+    secrets:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      MAVEN_DEPLOY_TOKEN: ${{ secrets.MAVEN_DEPLOY_TOKEN }}
+    with:
+      publication-type: 'rc'
+      artifact-name: cudf_java_maven_repo
+      source-git-sha: ${{ inputs.sha || github.sha }}
+      # false = validate + drop (safe). true = stage PENDING for manual publish.
+      stage-for-maven-central-publish: true

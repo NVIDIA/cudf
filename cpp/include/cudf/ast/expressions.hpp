@@ -13,6 +13,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/stream>
+
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
@@ -101,7 +103,7 @@ struct [[nodiscard]] expression {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return `true` if the expression may evaluate to null, otherwise false
    */
-  [[nodiscard]] bool may_evaluate_null(table_view const& left, rmm::cuda_stream_view stream) const
+  [[nodiscard]] bool may_evaluate_null(table_view const& left, cuda::stream_ref stream) const
   {
     return may_evaluate_null(left, left, stream);
   }
@@ -116,7 +118,7 @@ struct [[nodiscard]] expression {
    */
   [[nodiscard]] virtual bool may_evaluate_null(table_view const& left,
                                                table_view const& right,
-                                               rmm::cuda_stream_view stream) const = 0;
+                                               cuda::stream_ref stream) const = 0;
 
   virtual ~expression() {}
 };
@@ -384,7 +386,7 @@ class literal : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override
+                                       cuda::stream_ref stream) const override
   {
     return !is_valid(stream);
   }
@@ -395,7 +397,7 @@ class literal : public expression {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return true if the underlying scalar is valid
    */
-  [[nodiscard]] bool is_valid(rmm::cuda_stream_view stream) const
+  [[nodiscard]] bool is_valid(cuda::stream_ref stream) const
   {
     if (auto* s = std::get_if<ast_scalar>(&scalar)) {
       return s->scalar.get().is_valid(stream);
@@ -477,7 +479,7 @@ class column_reference : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override
+                                       cuda::stream_ref stream) const override
   {
     return (table_source == table_reference::LEFT ? left : right).column(column_index).has_nulls();
   }
@@ -552,7 +554,7 @@ class operation : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override;
+                                       cuda::stream_ref stream) const override;
 
   /**
    * @copydoc expression::accept
@@ -592,7 +594,7 @@ class predicate : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override;
+                                       cuda::stream_ref stream) const override;
 
   /**
    * @copydoc expression::accept
@@ -645,7 +647,7 @@ class column_name_reference : public expression {
 
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
-                                       rmm::cuda_stream_view stream) const override
+                                       cuda::stream_ref stream) const override
   {
     return true;
   }

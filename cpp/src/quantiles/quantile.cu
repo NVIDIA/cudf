@@ -21,12 +21,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 #include <memory>
@@ -41,7 +42,7 @@ struct quantile_functor {
   std::vector<double> const& q;
   interpolation interp;
   bool retain_types;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename T>
@@ -132,7 +133,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  std::vector<double> const& q,
                                  interpolation interp,
                                  bool retain_types,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto functor = quantile_functor<exact, SortMapIterator>{
@@ -150,7 +151,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  column_view const& indices,
                                  bool exact,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (indices.is_empty()) {
@@ -181,7 +182,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  column_view const& ordered_indices,
                                  bool exact,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

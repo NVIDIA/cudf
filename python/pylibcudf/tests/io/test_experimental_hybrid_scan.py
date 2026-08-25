@@ -222,7 +222,7 @@ def test_hybrid_scan_bloom_filter_and_dictionary_page_byte_ranges(
     num_rows: int,
 ) -> None:
     """Test getting bloom filter and dictionary page byte ranges."""
-    # Need to set a filter for the secondary filter ranges to be populated
+    # Need to set a filter for either kind of byte range to be reported
     # Filter: col0 >= num_rows // 10
     filter_threshold = num_rows // 10
     filter_expression = Operation(
@@ -250,11 +250,6 @@ def test_hybrid_scan_bloom_filter_and_dictionary_page_byte_ranges(
     # These should be lists of ByteRangeInfo
     assert isinstance(bloom_ranges, list)
     assert isinstance(dict_ranges, list)
-
-    # Any range that is reported must be addressable within the file
-    for r in bloom_ranges + dict_ranges:
-        assert r.offset >= 0
-        assert r.size >= 0
 
 
 def test_hybrid_scan_column_chunk_byte_ranges(

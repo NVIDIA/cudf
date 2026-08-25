@@ -749,37 +749,26 @@ custom_memory_resource *mr...;
 rmm::device_buffer custom_buff(100, mr, stream);
 ```
 
-#### rmm::device_scalar<T>
-Allocates a single element of the specified type initialized to the specified value. Use this for
-scalar input/outputs into device kernels, e.g., reduction results, null count, etc. This is
-effectively a convenience wrapper around a `rmm::device_vector<T>` of length 1.
+#### cudf::detail::device_scalar<T>
+A self-contained device scalar for internal libcudf code that needs a single trivially copyable
+value in device memory, such as a reduction result, temporary counter, or kernel status value.
+
+Use this for internal scalar input/output with device kernels. Public libcudf APIs should use
+`cudf::scalar` and derived public scalar classes instead of this detail type.
+
+It exposes `data()` for kernels and `value()`/`set_value_async()` for stream-ordered host/device
+transfers.
 
 ```c++
 // Allocates device memory for a single int using the specified resource and stream
 // and initializes the value to 42
-rmm::device_scalar<int> int_scalar{42, stream, mr};
+cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
 
 // scalar.data() returns pointer to value in device memory
-kernel<<<...>>>(int_scalar.data(),...);
+kernel<<<..., stream>>>(int_scalar.data(), ...);
 
-// scalar.value() synchronizes the scalar's stream and copies the
-// value from device to host and returns the value
-int host_value = int_scalar.value();
-```
-
-##### cudf::detail::device_scalar<T>
-Acts as a drop-in replacement for `rmm::device_scalar<T>`, with the key difference
-being the use of pinned host memory as a bounce buffer for data transfers.
-It is recommended for internal use to avoid the implicit synchronization overhead caused by
-memcpy operations on pageable host memory.
-
-```c++
-// Same as the case with rmm::device_scalar<T> above
-cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
-kernel<<<...>>>(int_scalar.data(),...);
-
-// Note: This device-to-host transfer uses host-pinned bounce buffer for efficient memcpy
-int host_value = int_scalar.value();
+// value() copies the device value to the host on the specified stream
+int host_value = int_scalar.value(stream);
 ```
 
 #### rmm::device_vector<T>

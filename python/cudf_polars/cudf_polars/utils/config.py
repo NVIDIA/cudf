@@ -200,13 +200,12 @@ def _make_default_factory(
 
 def resolve_kvikio_statistics(executor_options: dict[str, Any]) -> bool:
     """Resolve whether kvikio I/O statistics are collected, with env var fallback."""
-    value = executor_options.get(
-        "kvikio_statistics",
-        os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", "False"),
-    )
-    if isinstance(value, bool):
-        return value
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    value = executor_options.get("kvikio_statistics")
+    if value is None:
+        value = os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS")
+        if value is None:
+            return False
+    return value if isinstance(value, bool) else _bool_converter(value)
 
 
 def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
@@ -845,7 +844,9 @@ class StreamingExecutor:
         default_factory=lambda: resolve_kvikio_nthreads({})
     )
     kvikio_statistics: bool = dataclasses.field(
-        default_factory=lambda: resolve_kvikio_statistics({})
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__KVIKIO_STATISTICS", _bool_converter, default=False
+        )
     )
 
     min_device_size: int | None = None

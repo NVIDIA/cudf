@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf_test/timestamp_utilities.cuh>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/timestamps.hpp>
-
-#include <rmm/device_scalar.hpp>
 
 #include <cuda/std/limits>
 
@@ -264,7 +263,7 @@ class Atomic128Test : public cudf::test::BaseFixture {
                            __int128_t add_value,
                            __int128_t expected_result)
   {
-    rmm::device_scalar<__int128_t> d_target(initial_value, cudf::get_default_stream());
+    cudf::detail::device_scalar<__int128_t> d_target(initial_value, cudf::get_default_stream());
     test_single_atomic_add_kernel<<<32, 256, 0, cudf::get_default_stream().value()>>>(
       d_target.data(), add_value);
     CUDF_CHECK_CUDA(cudf::get_default_stream().value());

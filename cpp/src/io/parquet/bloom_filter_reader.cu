@@ -45,7 +45,7 @@ namespace {
  * `XXHash_64` (so that `cudf::string_view` and other cudf types are hashed by content, matching the
  * Apache Parquet/Arrow bloom filter specification).
  *
- * Uses cuco's `parametric_filter_policy` with the Apache Arrow layout: 256-bit blocks (8 x
+ * Uses cuco's `bloom_filter_policy` with the Apache Arrow layout: 256-bit blocks (8 x
  * `uint32_t`), 8 fingerprint bits per key, fully horizontal add (Theta=8) and fully vertical
  * contains (Phi=8). This layout is bit-compatible with Apache Arrow, as verified by cuCollections
  * `tests/bloom_filter/arrow_compat_test.cu`.
@@ -53,7 +53,8 @@ namespace {
  * @tparam Key The type of the values to generate a fingerprint for.
  */
 template <class Key>
-using arrow_filter_policy = cudf::arrow_filter_policy<cudf::hashing::detail::XXHash_64<Key>>;
+using arrow_filter_policy =
+  cudf::arrow_bloom_filter_policy<Key, cudf::hashing::detail::XXHash_64<Key>>;
 
 /**
  * @brief Converts bloom filter membership results (for each column chunk) to a device column.

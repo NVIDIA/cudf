@@ -1,11 +1,34 @@
 name: velox-cudf
 
 on:
+  workflow_dispatch:
+    inputs:
+      cudf_repository: &cudf_repository
+        description: 'cuDF repository'
+        type: string
+        required: false
+        default: 'NVIDIA/cudf'
+      cudf_commit: &cudf_commit
+        description: 'cuDF commit SHA or branch'
+        type: string
+        required: false
+        default: 'main'
+      velox_repository: &velox_repository
+        description: 'Velox repository'
+        type: string
+        required: false
+        default: 'facebookincubator/velox'
+      velox_commit: &velox_commit
+        description: 'Velox commit SHA or branch'
+        type: string
+        required: false
+        default: 'main'
   workflow_call:
     inputs:
-      cudf-ref:
-        required: true
-        type: string
+      cudf_repository: *cudf_repository
+      cudf_commit: *cudf_commit
+      velox_repository: *velox_repository
+      velox_commit: *velox_commit
 
 jobs:
   velox-cudf-build:
@@ -20,12 +43,13 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-          repository: facebookincubator/velox
-          ref: main
+          repository: ${{ inputs.velox_repository }}
+          ref: ${{ inputs.velox_commit }}
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.cudf-ref }}
+          repository: ${{ inputs.cudf_repository }}
+          ref: ${{ inputs.cudf_commit }}
           path: cudf-local
       - name: Install gha-tools
         run: |
@@ -56,8 +80,8 @@ jobs:
           g++ --version
 
           # Install and configure the sccache client
-          . rapids-install-sccache
-          . rapids-configure-sccache
+          rapids-install-sccache
+          rapids-configure-sccache
 
           # Align RAPIDS dependencies with the selected cudf branch
           scripts/update-cudf-deps.sh --branch "$(cat "${GITHUB_WORKSPACE}/cudf-local/RAPIDS_BRANCH")"
@@ -65,7 +89,7 @@ jobs:
           # The adapters image defaults CC and CXX to GCC 12; override them after enabling GCC 14.
           CC=gcc \
           CXX=g++ \
-          CUDA_ARCHITECTURES=90 \
+          CUDA_ARCHITECTURES=75 \
           CUDA_FLAGS="-ccbin /opt/rh/gcc-toolset-14/root/usr/bin" \
           EXTRA_CMAKE_FLAGS="-DFETCHCONTENT_SOURCE_DIR_CUDF=$GITHUB_WORKSPACE/cudf-local" \
           make cudf

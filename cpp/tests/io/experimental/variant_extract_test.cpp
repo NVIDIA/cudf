@@ -576,20 +576,30 @@ inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
 
 // Build a V1 VARIANT metadata blob for the given ordered string dictionary.
 // Uses 2-byte offsets when total string length exceeds 255 bytes; 1-byte otherwise.
-// Header bits [7:6] = offset_size_minus_one; bits [3:0] = version (1).
-inline std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
+// Header bits [7:6] = offset_size_minus_one; bit [4] = sorted-strings flag; bits [3:0] = version
+// (1). `sorted` must only be set to true when `keys` is actually in ascending byte order, since
+// the sorted-dictionary binary search assumes that invariant.
+inline std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys,
+                                           bool sorted = false)
 {
-  constexpr uint8_t kVariantMetadataVersion  = 0x01;
-  constexpr int kMetadataOffsetSizeShift     = 6;
-  constexpr uint32_t kMaxSingleByteOffsetSum = 255u;
+  constexpr uint8_t kVariantMetadataVersion   = 0x01;
+  constexpr uint8_t kVariantMetadataSortedBit = 0x10;
+  constexpr int kMetadataOffsetSizeShift      = 6;
+  constexpr uint32_t kMaxSingleByteOffsetSum  = 255u;
+  constexpr uint32_t kMaxSingleByteCount      = 255u;
 
   uint32_t total_key_bytes = 0;
   for (auto const& key : keys) {
     total_key_bytes += static_cast<uint32_t>(key.size());
   }
 
-  int const offset_size = (total_key_bytes > kMaxSingleByteOffsetSum) ? 2 : 1;
+  // The dictionary size (keys.size()) is itself written using offset_size bytes, so it must also
+  // be accounted for when choosing the offset width -- otherwise a large all-empty-string
+  // dictionary (small total_key_bytes, but >255 entries) would have its entry count truncated.
+  int const offset_size =
+    (total_key_bytes > kMaxSingleByteOffsetSum || keys.size() > kMaxSingleByteCount) ? 2 : 1;
   std::vector<uint8_t> out{static_cast<uint8_t>(kVariantMetadataVersion |
+                                                (sorted ? kVariantMetadataSortedBit : 0) |
                                                 ((offset_size - 1) << kMetadataOffsetSizeShift))};
 
   auto write_little_endian_offset = [&](uint32_t value) {
@@ -889,6 +899,31 @@ TEST_F(ExtractVariantFieldTest, LargeDictionary100FieldsExtractLast)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
 }
 
+TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
+{
+  // 50-entry sorted dictionary ("k00".."k49"); the binary search must find a key beyond the
+  // midpoint and correctly report a miss for a key that is present in the dictionary but has no
+  // corresponding field id in the object (as opposed to a key absent from the dictionary
+  // altogether, which would be rejected earlier by find_key_in_metadata and never reach
+  // locate_object_field's sorted lookup).
+  auto const keys = make_numeric_keys(50);
+  auto const meta = build_metadata(keys, /*sorted=*/true);
+  // Only 49 fields (ids 0..48); dictionary index 49 ("k49") has no matching field id.
+  auto const val         = build_sequential_int32_object(49);
+  auto col               = wrap_single_variant(meta, val);
+  auto stream            = cudf::test::get_default_stream();
+  auto const int32_dtype = cudf::data_type{cudf::type_id::INT32};
+
+  auto hit = cudf::io::parquet::experimental::extract_variant_field(
+    col, "k37", int32_dtype, std::nullopt, stream);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hit, cudf::test::fixed_width_column_wrapper<int32_t>{37});
+
+  auto miss = cudf::io::parquet::experimental::extract_variant_field(
+    col, "k49", int32_dtype, std::nullopt, stream);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*miss,
+                                 cudf::test::fixed_width_column_wrapper<int32_t>({0}, {false}));
+}
+
 TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeThresholdBoundary)
 {
   // Verifies build_metadata selects 1-byte offsets when total string bytes == 255 (still fits)
@@ -944,6 +979,49 @@ TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeThresholdBoundary)
       col, "long", int32_dtype, std::nullopt, stream);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got,
                                    cudf::test::fixed_width_column_wrapper<int32_t>{kExpected});
+  }
+}
+
+TEST_F(ExtractVariantFieldTest, MetadataOffsetSizeEntryCountBoundary)
+{
+  // Verifies build_metadata selects 2-byte offsets once the *entry count* crosses 255, even when
+  // total_key_bytes stays tiny -- the dictionary size (keys.size()) is itself written using
+  // offset_size bytes, so a 256-entry dictionary of mostly-empty keys must not have its count
+  // truncated by staying at 1-byte offsets.
+  auto stream                 = cudf::test::get_default_stream();
+  auto const int32_dtype      = cudf::data_type{cudf::type_id::INT32};
+  constexpr int32_t kExpected = 42;
+
+  // Dictionary of `entry_count` keys, all empty except the last, which is "target" at field id
+  // `entry_count - 1`. The value object references only that single field, so field_count / field
+  // ids stay within the 1-byte encoding used by make_variant_object_header() regardless of
+  // dictionary size.
+  auto const test_entry_count = [&](int entry_count, int expected_offset_size) {
+    std::vector<std::string> keys(entry_count - 1, std::string{});
+    keys.emplace_back("target");
+    auto const meta = build_metadata(keys);
+    // Header bits [7:6] encode offset_size_minus_one; verify build_metadata actually picked the
+    // offset width this test case is exercising, rather than relying solely on successful
+    // extraction to imply it.
+    int const actual_offset_size = ((meta[0] >> 6) & 0x03) + 1;
+    EXPECT_EQ(actual_offset_size, expected_offset_size);
+
+    auto const val =
+      build_single_field_object(static_cast<uint8_t>(entry_count - 1), enc_int32(kExpected));
+    auto col = wrap_single_variant(meta, val);
+    auto got = cudf::io::parquet::experimental::extract_variant_field(
+      col, "target", int32_dtype, std::nullopt, stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got,
+                                   cudf::test::fixed_width_column_wrapper<int32_t>{kExpected});
+  };
+
+  {
+    SCOPED_TRACE("count=255, 1-byte offsets");
+    test_entry_count(255, /*expected_offset_size=*/1);
+  }
+  {
+    SCOPED_TRACE("count=256, 2-byte offsets");
+    test_entry_count(256, /*expected_offset_size=*/2);
   }
 }
 

@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -112,6 +113,30 @@ struct row_group_size_info {
  * @return The derived input pass byte limit
  */
 [[nodiscard]] std::size_t derive_pass_read_limit(std::size_t chunk_read_limit);
+
+/**
+ * @brief Synthesizes a source-index column.
+ *
+ * @param num_rows_per_source Number of rows per source
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for device memory allocation
+ * @return Synthesized source-index column
+ */
+[[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
+  std::span<std::size_t const> num_rows_per_source,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Synthesizes row-group indices from a sorted source-index column.
+ *
+ * @param source_indices Source-index column containing one row per row group
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for device memory allocation
+ * @return Synthesized row-group index column
+ */
+[[nodiscard]] std::unique_ptr<column> synthesize_row_group_index_column(
+  column_view const& source_indices, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
 /**
  * @brief Find the offset of the column chunk with the given schema index in the specified row group
@@ -515,6 +540,19 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::unordered_map<std::string, std::vector<int64_t>> get_column_chunk_metadata()
     const;
+
+  /**
+   * @brief Decodes min/max statistics for selected column chunks.
+   *
+   * @param column_names Dotted leaf-column paths to decode statistics for
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Device memory resource to use for device memory allocation
+   * @return Table of row-group identifiers and decoded min/max bounds
+   */
+  [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
+    std::span<std::string const> column_names,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr) const;
 
   /**
    * @brief Get total number of rows across all files

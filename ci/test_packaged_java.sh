@@ -5,11 +5,15 @@
 # Run the Java tests against an already-packaged classifier JAR.
 #
 # Activates -Ppackaged-jar-tests so the surefire classpath uses the JAR at
-# JAVA_JAR instead of a locally compiled target/classes tree. Caller places
-# the JAR (e.g. via actions/download-artifact) before invoking this script.
+# JAVA_JAR instead of a locally compiled target/classes tree.
+#
+# When JAVA_JAR is unset, download the java-build artifact via
+# rapids-download-from-github (pr.yaml for PRs, build.yaml otherwise).
 #
 # Inputs (environment variables):
-#   JAVA_JAR                       Absolute path to the classifier JAR (required).
+#   JAVA_JAR                       Optional. Absolute path to the classifier JAR.
+#                                  If unset, the JAR is downloaded from the
+#                                  matching java-build artifact.
 #   LIBCUDF_LARGE_STRINGS_ENABLED  Optional; defaults to 0 (same as ci/test_java.sh).
 
 set -euo pipefail
@@ -17,8 +21,34 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-if [[ -z ${JAVA_JAR:-} || ! -f ${JAVA_JAR} ]]; then
-  echo "Error: JAVA_JAR must point to an existing classifier JAR" >&2
+# shellcheck disable=SC1091
+. "${REPO_ROOT}/java/ci/java_classifier.sh"
+
+if [[ -z ${JAVA_JAR:-} ]]; then
+  if [[ -z ${RAPIDS_CUDA_VERSION:-} ]]; then
+    echo "Error: RAPIDS_CUDA_VERSION must be set when JAVA_JAR is unset" >&2
+    exit 1
+  fi
+  cuda_major="${RAPIDS_CUDA_VERSION%%.*}"
+
+  # matrix.ARCH values are amd64/arm64; $(arch) / uname -m return x86_64/aarch64.
+  case "$(uname -m)" in
+    x86_64)  java_arch=amd64 ;;
+    aarch64|arm64) java_arch=arm64 ;;
+    *)
+      echo "Error: unsupported host arch '$(uname -m)'" >&2
+      exit 1
+      ;;
+  esac
+
+  rapids-logger "Downloading cudf_java_${java_arch}_cu${cuda_major}"
+  JAVA_PKG="$(rapids-download-from-github "cudf_java_${java_arch}_cu${cuda_major}")"
+  JAVA_JAR="$(cudf_java_resolve_artifact_jar "${JAVA_PKG}")"
+  export JAVA_JAR
+fi
+
+if [[ ! -f ${JAVA_JAR} ]]; then
+  echo "Error: JAVA_JAR='${JAVA_JAR}' does not point to an existing file" >&2
   exit 1
 fi
 

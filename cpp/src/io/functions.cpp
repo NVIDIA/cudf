@@ -683,6 +683,23 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
   return detail_parquet::read_parquet_footers(sources);
 }
 
+std::unique_ptr<table> read_parquet_column_chunk_bounds(
+  std::span<parquet::FileMetaData const> parquet_metadatas,
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+
+  auto metadata = detail_parquet::aggregate_reader_metadata{
+    std::vector<parquet::FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
+    false,  // use_arrow_schema
+    false   // has_cols_from_mismatched_srcs
+  };
+
+  return metadata.read_column_chunk_bounds(column_names, stream, mr.get_output_mr());
+}
+
 /**
  * @copydoc cudf::io::merge_row_group_metadata
  */

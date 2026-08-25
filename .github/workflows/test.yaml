@@ -161,6 +161,37 @@ jobs:
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_java.sh"
+  # Test the packaged cuDF Java JAR built by build.yaml java-build for every Maven classifier.
+  java-build-matrix:
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
+  java-tests:
+    needs: [java-build-matrix]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      arch: ${{ matrix.ARCH }}
+      node_type: "gpu-l4-latest-1"
+      container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
     permissions:
       actions: read

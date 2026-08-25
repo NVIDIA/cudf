@@ -34,39 +34,67 @@ def _make_boundaries(context: Context, table: plc.Table) -> TableChunk:
     )
 
 
+def _column_from_values(
+    values: list[int | str | None],
+    dtype: plc.DataType,
+    non_null_value: int | str,
+) -> plc.Column:
+    if values and all(value is None for value in values):
+        return plc.Column.all_null_like(
+            plc.Column.from_iterable_of_py([non_null_value], dtype),
+            len(values),
+        )
+    return plc.Column.from_iterable_of_py(values, dtype)
+
+
+def _two_key_ordering_from_boundary_values(
+    context: Context,
+    int_values: list[int | None],
+    string_values: list[str | None],
+    *,
+    strict_boundaries: bool = False,
+) -> Ordering:
+    """Two-key Ordering with mixed INT64/STRING boundary columns."""
+    return Ordering(
+        [
+            OrderKey(
+                0,
+                plc.types.Order.ASCENDING,
+                plc.types.NullOrder.BEFORE,
+            ),
+            OrderKey(
+                1,
+                plc.types.Order.DESCENDING,
+                plc.types.NullOrder.AFTER,
+            ),
+        ],
+        _make_boundaries(
+            context,
+            plc.Table(
+                [
+                    _column_from_values(
+                        int_values, plc.DataType(plc.TypeId.INT64), 0
+                    ),
+                    _column_from_values(
+                        string_values, plc.DataType(plc.TypeId.STRING), "x"
+                    ),
+                ]
+            ),
+        ),
+        strict_boundaries=strict_boundaries,
+    )
+
+
 def _two_key_order_scheme(
     context: Context, *, strict_boundaries: bool = False
 ) -> OrderScheme:
     """Two-key OrderScheme with a 1-row boundary table (2 partitions)."""
-    boundaries = _make_boundaries(
-        context,
-        plc.Table(
-            [
-                plc.Column.from_iterable_of_py(
-                    [100], plc.DataType(plc.TypeId.INT64)
-                ),
-                plc.Column.from_iterable_of_py(
-                    ["abc"], plc.DataType(plc.TypeId.STRING)
-                ),
-            ]
-        ),
-    )
     return OrderScheme(
         [
-            Ordering(
-                [
-                    OrderKey(
-                        0,
-                        plc.types.Order.ASCENDING,
-                        plc.types.NullOrder.BEFORE,
-                    ),
-                    OrderKey(
-                        1,
-                        plc.types.Order.DESCENDING,
-                        plc.types.NullOrder.AFTER,
-                    ),
-                ],
-                boundaries,
+            _two_key_ordering_from_boundary_values(
+                context,
+                [100],
+                ["abc"],
                 strict_boundaries=strict_boundaries,
             )
         ]
@@ -229,6 +257,39 @@ def test_ordering_with_keys(context: Context) -> None:
     assert ordering2.strict_boundaries == ordering.strict_boundaries
     # Schemes with different key indices but shared boundaries are boundary-aligned
     assert ordering.boundaries_aligned_with(ordering2, context.br())
+
+
+@pytest.mark.parametrize(
+    "int_values,string_values",
+    [
+        ([100], ["abc"]),
+        ([], []),
+        ([None], [None]),
+    ],
+)
+def test_ordering_as_strict(
+    context: Context,
+    int_values: list[int | None],
+    string_values: list[str | None],
+) -> None:
+    """as_strict shares boundaries and marks them strict."""
+    ordering = _two_key_ordering_from_boundary_values(
+        context, int_values, string_values
+    )
+    strict_ordering = ordering.as_strict()
+    strict_ordering2 = _two_key_ordering_from_boundary_values(
+        context,
+        int_values,
+        string_values,
+        strict_boundaries=True,
+    )
+    assert strict_ordering.keys == ordering.keys
+    assert strict_ordering.num_boundaries == ordering.num_boundaries
+    assert strict_ordering.strict_boundaries
+    assert not ordering.boundaries_aligned_with(strict_ordering, context.br())
+    assert strict_ordering.boundaries_aligned_with(
+        strict_ordering2, context.br()
+    )
 
 
 def test_ordering_boundaries_aligned_with(context: Context) -> None:

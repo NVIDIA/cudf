@@ -567,11 +567,11 @@ class reader_impl {
     bool output_dict_columns = false;
   } _options;
 
-  // name to reference converter to extract AST output filter
-  named_to_reference_converter _expr_conv{std::nullopt, table_metadata{}, true};
+  // Converts the input filter to AST output filter.
+  parquet_filter_normalizer _expr_conv{std::nullopt, table_metadata{}, true};
 
   std::vector<std::unique_ptr<datasource>> _sources;
-  std::unique_ptr<aggregate_reader_metadata> _metadata;
+  std::shared_ptr<aggregate_reader_metadata> _metadata;
 
   // Number of sources
   size_t _num_sources{0};

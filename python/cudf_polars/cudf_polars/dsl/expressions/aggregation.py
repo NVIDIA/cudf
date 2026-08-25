@@ -598,17 +598,6 @@ class Skew(Expr):
             return biased
         return math.sqrt(n * (n - 1)) / (n - 2) * biased
 
-    @staticmethod
-    def _scalar_column(value: float | None, dtype: DataType, stream: Stream) -> Column:
-        return Column(
-            plc.Column.from_scalar(
-                plc.Scalar.from_py(value, dtype.plc_type, stream=stream),
-                1,
-                stream=stream,
-            ),
-            dtype=dtype,
-        )
-
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:
@@ -624,7 +613,14 @@ class Skew(Expr):
                 casted.obj, self.dtype.plc_type, stream=df.stream
             )
             value = self._finalize(n, mean, m2, m3, bias=self.bias)
-        return self._scalar_column(value, self.dtype, df.stream)
+        return Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(value, self.dtype.plc_type, stream=df.stream),
+                1,
+                stream=df.stream,
+            ),
+            dtype=self.dtype,
+        )
 
 
 class Kurtosis(Expr):
@@ -717,17 +713,6 @@ class Kurtosis(Expr):
             out = nm1_nm2 * (np1_nm3 * biased - 3.0 * nm1_nm3) + 3.0
         return out - 3.0 if fisher else out
 
-    @staticmethod
-    def _scalar_column(value: float | None, dtype: DataType, stream: Stream) -> Column:
-        return Column(
-            plc.Column.from_scalar(
-                plc.Scalar.from_py(value, dtype.plc_type, stream=stream),
-                1,
-                stream=stream,
-            ),
-            dtype=dtype,
-        )
-
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:
@@ -743,4 +728,11 @@ class Kurtosis(Expr):
                 casted.obj, self.dtype.plc_type, stream=df.stream
             )
             value = self._finalize(n, mean, m2, m4, fisher=self.fisher, bias=self.bias)
-        return self._scalar_column(value, self.dtype, df.stream)
+        return Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(value, self.dtype.plc_type, stream=df.stream),
+                1,
+                stream=df.stream,
+            ),
+            dtype=self.dtype,
+        )

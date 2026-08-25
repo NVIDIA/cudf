@@ -53,7 +53,7 @@ def _make_rolling_kernel(device_func):
             begin = start[i]
             stop = end[i]
             count = stop - begin
-            if count >= min_periods and count > 0:
+            if count >= min_periods:
                 out[i] = device_func(data[begin:stop])
                 valid[i] = True
             else:

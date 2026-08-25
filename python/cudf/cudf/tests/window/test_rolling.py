@@ -412,6 +412,22 @@ def test_rolling_numba_udf_base_indexer():
     )
 
 
+def test_rolling_numba_udf_empty_window_min_periods_zero():
+    indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=0)
+    pdf = pd.DataFrame({"a": [1.0, 2.0, 4.0, 9.0, 9.0, 4.0]})
+    gdf = cudf.from_pandas(pdf)
+
+    def window_sum(window):
+        total = 0.0
+        for value in window:
+            total += value
+        return total
+
+    expected = pdf.rolling(window=indexer, min_periods=0).apply(window_sum)
+    actual = gdf.rolling(window=indexer, min_periods=0).apply(window_sum)
+    assert_eq(expected, actual)
+
+
 def test_rolling_groupby_simple(supported_rolling_reductions):
     pdf = pd.DataFrame(
         {

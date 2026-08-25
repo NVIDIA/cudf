@@ -608,7 +608,7 @@ class Skew(Expr):
         if n == 0 or (not self.bias and n <= 2):
             value: float | None = None
         else:
-            casted = _as_float_for_moments(column, self.dtype, df.stream)
+            casted = column.astype(self.dtype, stream=df.stream)
             mean, m2, m3 = self._central_moments(
                 casted.obj, self.dtype.plc_type, stream=df.stream
             )
@@ -723,7 +723,7 @@ class Kurtosis(Expr):
         if n == 0 or (not self.bias and n <= 3):
             value: float | None = None
         else:
-            casted = _as_float_for_moments(column, self.dtype, df.stream)
+            casted = column.astype(self.dtype, stream=df.stream)
             mean, m2, m4 = self._central_moments(
                 casted.obj, self.dtype.plc_type, stream=df.stream
             )

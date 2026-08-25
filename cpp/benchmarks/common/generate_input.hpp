@@ -21,8 +21,7 @@
  * The create_random_table functions take a data profile, the information about table size and a
  * seed to deterministically generate a table with given parameters.
  *
- * The input data generation happens on device, in contrast to any `column_wrapper` where data
- * generation happens on the host.
+ * The input data generation happens on device.
  */
 
 /**

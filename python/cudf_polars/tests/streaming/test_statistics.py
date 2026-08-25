@@ -32,9 +32,11 @@ pytestmark = [
 def engine(
     streaming_engine_factory: Callable[..., StreamingEngine],
 ) -> StreamingEngine:
-    """Yield each supported streaming engine with statistics enabled."""
+    """Yield each supported streaming engine with both kinds of statistics on."""
     return streaming_engine_factory(
-        StreamingOptions(statistics=True, max_rows_per_partition=10),
+        StreamingOptions(
+            statistics=True, kvikio_statistics=True, max_rows_per_partition=10
+        ),
     )
 
 
@@ -105,30 +107,30 @@ def test_io_summary_clear_starts_a_new_span(
     assert sum(s.bytes_transferred for s in after.values()) == 0
 
 
-def test_io_summary_is_off_without_statistics(
+def test_io_summary_is_independent_of_rapidsmpf_statistics(
     streaming_engine_factory: Callable[..., StreamingEngine],
     scan_query: pl.LazyFrame,
 ) -> None:
-    """No monitor is created when statistics are off. One is created again when they are turned back on."""
+    """``kvikio_statistics`` gates I/O counting on its own, and can be reset."""
+    # RapidsMPF statistics on, kvikio off. One does not imply the other.
     engine = streaming_engine_factory(
-        StreamingOptions(statistics=False, max_rows_per_partition=10)
+        StreamingOptions(
+            statistics=True, kvikio_statistics=False, max_rows_per_partition=10
+        )
     )
     scan_query.collect(engine=engine)
-
+    assert engine.gather_statistics()[0].enabled
     # An absent rank is "this rank was not counting", which is not the same as
     # a zeroed summary meaning "this rank did no I/O".
     assert engine.gather_io_summary() == {}
 
-    # A reset leaves `rapidsmpf_options` describing the reset, which is what
-    # callers read to decide whether anything is being counted.
-    assert not Statistics.from_options(engine.rapidsmpf_options).enabled
-
-    # Turning statistics back on has to build a fresh monitor, the previous one
-    # having been stopped rather than paused.
+    # Turning it on has to build a fresh monitor, the previous one having been
+    # stopped rather than paused.
     engine = streaming_engine_factory(
-        StreamingOptions(statistics=True, max_rows_per_partition=10)
+        StreamingOptions(
+            statistics=False, kvikio_statistics=True, max_rows_per_partition=10
+        )
     )
-    assert Statistics.from_options(engine.rapidsmpf_options).enabled
     scan_query.collect(engine=engine)
     summaries = engine.gather_io_summary()
     assert sorted(summaries) == list(range(engine.nranks))

@@ -41,7 +41,7 @@ from cudf_polars.engine.core import (
     drop_if_replicated,
     evaluate_on_rank,
     make_kvikio_monitor,
-    reset_kvikio_monitor_from_options,
+    reset_kvikio_monitor,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
     take_io_summary,
@@ -60,6 +60,7 @@ from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
     resolve_kvikio_nthreads,
+    resolve_kvikio_statistics,
 )
 
 if TYPE_CHECKING:
@@ -337,6 +338,7 @@ def _setup_worker(
     engine_id: uuid.UUID,
     num_py_executors: int,
     kvikio_nthreads: int,
+    kvikio_statistics: bool,
     quent_context: cudf_polars.quent.QuentContext | None,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
@@ -374,6 +376,8 @@ def _setup_worker(
         Number of Python executors to use for this worker.
     kvikio_nthreads
         Number of kvikio threads to configure on this worker process.
+    kvikio_statistics
+        Whether to collect KvikIO I/O statistics on this worker.
     quent_context
         Quent context to use for this worker, if quent is enabled.
 
@@ -441,7 +445,7 @@ def _setup_worker(
         quent_worker=quent_worker,
         quent_logger=quent_logger,
         statistics=statistics,
-        kvikio_monitor=make_kvikio_monitor(options),
+        kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
     setattr(dask_worker, attr, mp_ctx)
     if mp_ctx.quent_logger is not None:
@@ -503,6 +507,7 @@ def _reset_worker(
     *,
     uid: str,
     kvikio_nthreads: int,
+    kvikio_statistics: bool,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -519,6 +524,8 @@ def _reset_worker(
         Cluster instance identifier used to look up the per-worker context.
     kvikio_nthreads
         Number of kvikio threads to configure on this worker process.
+    kvikio_statistics
+        Whether to collect KvikIO I/O statistics on this worker.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     """
@@ -545,8 +552,8 @@ def _reset_worker(
     options = Options.deserialize(rapidsmpf_options_as_bytes)
     mp_ctx.statistics = reset_statistics_from_options(mp_ctx.statistics, options)
     mp_ctx.statistics.clear()
-    mp_ctx.kvikio_monitor = reset_kvikio_monitor_from_options(
-        mp_ctx.kvikio_monitor, options
+    mp_ctx.kvikio_monitor = reset_kvikio_monitor(
+        mp_ctx.kvikio_monitor, enabled=kvikio_statistics
     )
     mp_ctx.ctx = Context.from_options(
         mp_ctx.comm.logger, mp_ctx.base_mr, options, mp_ctx.statistics
@@ -944,6 +951,9 @@ class DaskEngine(StreamingEngine):
         executor_options.setdefault(
             "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
         )
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -1059,6 +1069,7 @@ class DaskEngine(StreamingEngine):
             quent_context=quent_context,
             num_py_executors=executor_options.get("num_py_executors", 8),
             kvikio_nthreads=executor_options["kvikio_nthreads"],
+            kvikio_statistics=executor_options["kvikio_statistics"],
         )
 
         dask_ctx = DaskContext(
@@ -1103,6 +1114,9 @@ class DaskEngine(StreamingEngine):
             existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
@@ -1118,6 +1132,7 @@ class DaskEngine(StreamingEngine):
                 _reset_worker,
                 uid=ctx.rapidsmpf_id,
                 kvikio_nthreads=executor_options["kvikio_nthreads"],
+                kvikio_statistics=executor_options["kvikio_statistics"],
             ),
             rapidsmpf_options_as_bytes,
         )

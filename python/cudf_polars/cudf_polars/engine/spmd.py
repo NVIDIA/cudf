@@ -42,7 +42,7 @@ from cudf_polars.engine.core import (
     check_reserved_keys,
     evaluate_on_rank,
     make_kvikio_monitor,
-    reset_kvikio_monitor_from_options,
+    reset_kvikio_monitor,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
     take_io_summary,
@@ -65,6 +65,7 @@ from cudf_polars.utils.config import (
     SPMDContext,
     StreamingExecutor,
     resolve_kvikio_nthreads,
+    resolve_kvikio_statistics,
 )
 
 if TYPE_CHECKING:
@@ -417,6 +418,9 @@ class SPMDEngine(StreamingEngine):
         executor_options.setdefault(
             "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
         )
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -467,7 +471,9 @@ class SPMDEngine(StreamingEngine):
         self._py_executor: ThreadPoolExecutor | None = None
         self._store_uid = uuid.uuid4().hex
         exit_stack = contextlib.ExitStack()
-        self._kvikio_monitor = make_kvikio_monitor(self.rapidsmpf_options)
+        self._kvikio_monitor = make_kvikio_monitor(
+            enabled=executor_options["kvikio_statistics"]
+        )
         exit_stack.callback(self._stop_kvikio_monitor)
 
         # TODO: there's no reason our API needs a plain dict[str, Any] rather than
@@ -623,6 +629,9 @@ class SPMDEngine(StreamingEngine):
             existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         kvikio.defaults.set("num_threads", executor_options["kvikio_nthreads"])
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -645,8 +654,8 @@ class SPMDEngine(StreamingEngine):
             self._comm.progress_thread.statistics, rapidsmpf_options
         )
         statistics.clear()
-        self._kvikio_monitor = reset_kvikio_monitor_from_options(
-            self._kvikio_monitor, rapidsmpf_options
+        self._kvikio_monitor = reset_kvikio_monitor(
+            self._kvikio_monitor, enabled=executor_options["kvikio_statistics"]
         )
 
         self._ctx = Context.from_options(

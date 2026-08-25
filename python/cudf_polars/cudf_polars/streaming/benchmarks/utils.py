@@ -67,8 +67,6 @@ except ImportError:
     pynvml = None
 
 try:
-    from rapidsmpf.statistics import Statistics
-
     import cudf_polars.dsl.tracing
     import cudf_polars.quent
     from cudf_polars.dsl.ir import IRExecutionContext
@@ -995,13 +993,13 @@ def _collect_io_summaries(
         return None
     if not isinstance(engine, StreamingEngine):
         return None
-    if not Statistics.from_options(engine.rapidsmpf_options).enabled:
-        return None
-    # String keys, since the record is written as JSON.
-    return {
+    # String keys, since the record is written as JSON. Empty when no rank is
+    # counting, which the report reads as "not collected".
+    summaries = {
         str(rank): dataclasses.asdict(summary)
         for rank, summary in engine.gather_io_summary(clear=True).items()
     }
+    return summaries or None
 
 
 def run_polars_query_iteration(

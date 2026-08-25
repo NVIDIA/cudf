@@ -97,15 +97,14 @@ def reset_statistics_from_options(
     return statistics
 
 
-def make_kvikio_monitor(options: Options) -> kvikio.SummaryMonitor | None:
+def make_kvikio_monitor(*, enabled: bool) -> kvikio.SummaryMonitor | None:
     """
-    Create a kvikio I/O monitor if statistics are enabled in ``options``.
+    Create a kvikio I/O monitor if ``enabled``.
 
     Parameters
     ----------
-    options
-        Options providing the enabled setting. The same
-        ``RAPIDSMPF_STATISTICS`` knob that gates rapidsmpf statistics.
+    enabled
+        Whether to count, from the ``kvikio_statistics`` executor option.
 
     Returns
     -------
@@ -123,23 +122,23 @@ def make_kvikio_monitor(options: Options) -> kvikio.SummaryMonitor | None:
     thread's kvikio I/O in the script's process, so user code performing kvikio
     reads is counted too. It cannot attribute I/O to a particular query.
     """
-    if not Statistics.from_options(options).enabled:
+    if not enabled:
         return None
     return kvikio.SummaryMonitor()
 
 
-def reset_kvikio_monitor_from_options(
-    monitor: kvikio.SummaryMonitor | None, options: Options
+def reset_kvikio_monitor(
+    monitor: kvikio.SummaryMonitor | None, *, enabled: bool
 ) -> kvikio.SummaryMonitor | None:
     """
-    Bring a kvikio I/O monitor into line with ``options``.
+    Bring a kvikio I/O monitor into line with a new ``enabled`` setting.
 
     Parameters
     ----------
     monitor
         The rank's existing monitor, if it has one.
-    options
-        Options providing the new enabled setting.
+    enabled
+        Whether to count, from the ``kvikio_statistics`` executor option.
 
     Returns
     -------
@@ -148,7 +147,7 @@ def reset_kvikio_monitor_from_options(
     None
         If they are not, in which case any existing monitor has been stopped.
     """
-    if not Statistics.from_options(options).enabled:
+    if not enabled:
         if monitor is not None:
             monitor.stop()
         return None

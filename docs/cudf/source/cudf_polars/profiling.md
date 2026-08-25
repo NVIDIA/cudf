@@ -60,16 +60,16 @@ print(total)
 
 ## I/O Statistics
 
-The same `statistics=True` also turns on [KvikIO I/O statistics][kvikio-stats] on every rank,
-which report what storage did. `gather_io_summary()` returns one `kvikio.Summary` per rank,
-keyed by rank index:
+`kvikio_statistics=True` turns on [KvikIO I/O statistics][kvikio-stats] on every rank, which
+report what storage did. It is separate from `statistics`, so you can collect either on its own.
+`gather_io_summary()` returns one `kvikio.Summary` per rank, keyed by rank index:
 
 ```python
 import polars as pl
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.ray import RayEngine
 
-opts = StreamingOptions(statistics=True)
+opts = StreamingOptions(kvikio_statistics=True)
 
 with RayEngine.from_options(opts) as engine:
     pl.scan_parquet("/data/*.parquet").collect(engine=engine)
@@ -81,8 +81,8 @@ with RayEngine.from_options(opts) as engine:
 
 `clear=True` restarts each rank's measured span after reading, scoping the next gather to
 whatever follows. A rank that is not counting is absent, so the result is empty unless
-`statistics=True` is set. That is distinct from a zeroed summary, which means the rank was
-counting and did no I/O.
+`kvikio_statistics=True` is set. That is distinct from a zeroed summary, which means the rank
+was counting and did no I/O.
 
 Printing a summary gives KvikIO's own report:
 

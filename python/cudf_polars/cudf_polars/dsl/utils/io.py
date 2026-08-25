@@ -70,18 +70,15 @@ class CachedParquetInfo:
             self._hybrid_scan_metadata[0]
         )
 
-
-def _default_reader_options(
-    info: CachedParquetInfo,
-) -> plc.io.parquet.ParquetReaderOptions:
-    """Return baseline ``ParquetReaderOptions`` for a cached parquet file."""
-    return (
-        plc.io.parquet.ParquetReaderOptions.builder(
-            plc.io.SourceInfo([plc.io.types.FilepathSource(info.path, info.size)])
+    def default_reader_options(self) -> plc.io.parquet.ParquetReaderOptions:
+        """Return baseline ``ParquetReaderOptions`` for this cached parquet file."""
+        return (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo([plc.io.types.FilepathSource(self.path, self.size)])
+            )
+            .decimal_width(plc.TypeId.DECIMAL128)
+            .build()
         )
-        .decimal_width(plc.TypeId.DECIMAL128)
-        .build()
-    )
 
 
 @nvtx_annotate_cudf_polars(message="fetch_parquet_footers_for_paths")
@@ -138,7 +135,7 @@ def _prefetch_parquet_footers_for_paths(
     ]
     if parse_hybrid_metadata:
         for info in infos:
-            info.hybrid_scan_reader(_default_reader_options(info))
+            info.hybrid_scan_reader(info.default_reader_options())
     return infos
 
 

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import distributed
 import distributed.system
+import kvikio
 import kvikio.defaults
 import pynvml
 import ucxx._lib.libucxx as ucx_api
@@ -39,8 +40,11 @@ from cudf_polars.engine.core import (
     check_reserved_keys,
     drop_if_replicated,
     evaluate_on_rank,
+    make_kvikio_monitor,
+    reset_kvikio_monitor,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
+    take_io_summary,
 )
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
@@ -56,6 +60,7 @@ from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
     resolve_kvikio_nthreads,
+    resolve_kvikio_statistics,
 )
 
 if TYPE_CHECKING:
@@ -136,6 +141,7 @@ class _WorkerContext:
     quent_worker: cudf_polars.quent._types.Worker
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
+    kvikio_monitor: kvikio.SummaryMonitor | None = None
 
 
 def _worker_evaluate_persisted(
@@ -332,6 +338,7 @@ def _setup_worker(
     engine_id: uuid.UUID,
     num_py_executors: int,
     kvikio_nthreads: int,
+    kvikio_statistics: bool,
     quent_context: cudf_polars.quent.QuentContext | None,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
@@ -369,6 +376,8 @@ def _setup_worker(
         Number of Python executors to use for this worker.
     kvikio_nthreads
         Number of kvikio threads to configure on this worker process.
+    kvikio_statistics
+        Whether to collect KvikIO I/O statistics on this worker.
     quent_context
         Quent context to use for this worker, if quent is enabled.
 
@@ -436,6 +445,7 @@ def _setup_worker(
         quent_worker=quent_worker,
         quent_logger=quent_logger,
         statistics=statistics,
+        kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
     setattr(dask_worker, attr, mp_ctx)
     if mp_ctx.quent_logger is not None:
@@ -463,6 +473,11 @@ def _teardown_worker(
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
     traces = []
     if mp_ctx is not None:
+        # First, so that a failure below cannot leave it counting. The monitor is
+        # process-global and the worker outlives this teardown.
+        if mp_ctx.kvikio_monitor is not None:
+            mp_ctx.kvikio_monitor.stop()
+            mp_ctx.kvikio_monitor = None
         if mp_ctx.quent_worker is not None and mp_ctx.quent_logger is not None:
             mp_ctx.quent_logger.emit(mp_ctx.quent_worker._exit())
             traces = mp_ctx.quent_logger.drain()
@@ -492,6 +507,7 @@ def _reset_worker(
     *,
     uid: str,
     kvikio_nthreads: int,
+    kvikio_statistics: bool,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -508,6 +524,8 @@ def _reset_worker(
         Cluster instance identifier used to look up the per-worker context.
     kvikio_nthreads
         Number of kvikio threads to configure on this worker process.
+    kvikio_statistics
+        Whether to collect KvikIO I/O statistics on this worker.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     """
@@ -534,6 +552,9 @@ def _reset_worker(
     options = Options.deserialize(rapidsmpf_options_as_bytes)
     mp_ctx.statistics = reset_statistics_from_options(mp_ctx.statistics, options)
     mp_ctx.statistics.clear()
+    mp_ctx.kvikio_monitor = reset_kvikio_monitor(
+        mp_ctx.kvikio_monitor, enabled=kvikio_statistics
+    )
     mp_ctx.ctx = Context.from_options(
         mp_ctx.comm.logger, mp_ctx.base_mr, options, mp_ctx.statistics
     )
@@ -629,6 +650,34 @@ def _get_statistics(
         stats.clear()
         return mp_ctx.comm.rank, detached
     return mp_ctx.comm.rank, stats
+
+
+def _get_io_summary(
+    *, clear: bool, uid: str, dask_worker: distributed.Worker | None = None
+) -> tuple[int, kvikio.Summary | None]:
+    """
+    Return this worker's ``(rank, Summary)`` pair of kvikio I/O totals.
+
+    The rank is used on the client to produce a rank-ordered list.
+
+    Parameters
+    ----------
+    clear
+        If ``True``, restart this worker's measured span after reading.
+    uid
+        Cluster instance identifier used to look up the per-worker context.
+    dask_worker
+        Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
+
+    Returns
+    -------
+    Pair of ``(rank, Summary)``, the summary being ``None`` if this worker is
+    not counting.
+    """
+    assert dask_worker is not None
+    mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
+    assert mp_ctx.comm is not None
+    return mp_ctx.comm.rank, take_io_summary(mp_ctx.kvikio_monitor, clear=clear)
 
 
 def _worker_evaluate(
@@ -902,6 +951,9 @@ class DaskEngine(StreamingEngine):
         executor_options.setdefault(
             "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
         )
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -1017,6 +1069,7 @@ class DaskEngine(StreamingEngine):
             quent_context=quent_context,
             num_py_executors=executor_options.get("num_py_executors", 8),
             kvikio_nthreads=executor_options["kvikio_nthreads"],
+            kvikio_statistics=executor_options["kvikio_statistics"],
         )
 
         dask_ctx = DaskContext(
@@ -1061,11 +1114,13 @@ class DaskEngine(StreamingEngine):
             existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
 
-        rapidsmpf_options_as_bytes = resolve_rapidsmpf_options(
-            rapidsmpf_options
-        ).serialize()
+        self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
+        rapidsmpf_options_as_bytes = self.rapidsmpf_options.serialize()
 
         ctx = self._dask_context
         # Reset all worker Contexts collectively. ``client.run`` blocks
@@ -1077,6 +1132,7 @@ class DaskEngine(StreamingEngine):
                 _reset_worker,
                 uid=ctx.rapidsmpf_id,
                 kvikio_nthreads=executor_options["kvikio_nthreads"],
+                kvikio_statistics=executor_options["kvikio_statistics"],
             ),
             rapidsmpf_options_as_bytes,
         )
@@ -1169,6 +1225,25 @@ class DaskEngine(StreamingEngine):
         ordered by rank index.
         """
         return list(self._run_by_rank(_get_statistics, clear=clear).values())
+
+    def gather_io_summary(self, *, clear: bool = False) -> dict[int, kvikio.Summary]:
+        """
+        Collect kvikio I/O statistics from every rank via ``client.run``.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart each rank's measured span after reading.
+
+        Returns
+        -------
+        A :class:`kvikio.Summary` per rank, keyed by rank index, omitting
+        ranks that are not counting.
+        """
+        summaries = self._run_by_rank(_get_io_summary, clear=clear)
+        return {
+            rank: summary for rank, summary in summaries.items() if summary is not None
+        }
 
     def shutdown(self) -> None:
         """

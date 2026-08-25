@@ -203,16 +203,6 @@ def expand_scan_for_rank(
         )
 
 
-def _fetch_byte_ranges(
-    source_info: plc.io.SourceInfo,
-    byte_ranges: list[plc.io.text.ByteRangeInfo],
-    stream: Stream,
-) -> list[plc.gpumemoryview]:
-    return plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
-        source_info, byte_ranges, stream=stream
-    )
-
-
 def hybrid_scan_eligible(
     parquet_options: ParquetOptions,
     *,
@@ -272,7 +262,9 @@ def _read_with_hybrid_scan(
                     row_group_indices, options
                 )
                 if bloom_ranges:
-                    bloom_chunks = _fetch_byte_ranges(source_info, bloom_ranges, stream)
+                    bloom_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+                        source_info, bloom_ranges, stream=stream
+                    )
                     row_group_indices = reader.filter_row_groups_with_bloom_filters(
                         bloom_chunks, row_group_indices, options, stream=stream
                     )
@@ -299,10 +291,10 @@ def _read_with_hybrid_scan(
         # the page index for all files, which may be too expensive.
         row_mask = reader.build_all_true_row_mask(row_group_indices, stream=stream)
 
-        filter_chunks = _fetch_byte_ranges(
+        filter_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
             source_info,
             reader.filter_column_chunks_byte_ranges(row_group_indices, options),
-            stream,
+            stream=stream,
         )
         filter_tbl_w_meta = reader.materialize_filter_columns(
             row_group_indices,
@@ -324,10 +316,10 @@ def _read_with_hybrid_scan(
         requested_columns = with_columns if with_columns is not None else list(schema)
         columns = filter_df.columns
         if set(requested_columns) - set(filter_names):
-            payload_chunks = _fetch_byte_ranges(
+            payload_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
                 source_info,
                 reader.payload_column_chunks_byte_ranges(row_group_indices, options),
-                stream,
+                stream=stream,
             )
             payload_tbl_w_meta = reader.materialize_payload_columns(
                 row_group_indices,

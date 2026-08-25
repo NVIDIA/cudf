@@ -201,6 +201,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS``.
         Default: ``8``.
         Category: executor.
+    kvikio_statistics
+        Collect KvikIO I/O statistics, reachable through
+        :meth:`~cudf_polars.engine.core.StreamingEngine.gather_io_summary`.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS``.
+        Default: ``False``.
+        Category: executor.
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
@@ -328,6 +334,9 @@ class StreamingOptions:
     )
     kvikio_nthreads: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", int
+    )
+    kvikio_statistics: bool | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", parse_boolean
     )
     max_concurrent_io_tasks: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", int
@@ -695,6 +704,16 @@ class StreamingOptions:
                 Max workers for the Python ThreadPoolExecutor inside RapidsMPF.
                 Env: CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS.
                 Built-in default: 8."""),
+        )
+        g.add_argument(
+            "--kvikio-statistics",
+            dest="kvikio_statistics",
+            default=None,
+            action=argparse.BooleanOptionalAction,
+            help=textwrap.dedent("""\
+                Collect KvikIO I/O statistics, reported per rank.
+                Env: CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS.
+                Built-in default: false."""),
         )
         g.add_argument(
             "--max-concurrent-io-tasks",

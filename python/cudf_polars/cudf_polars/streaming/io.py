@@ -235,7 +235,6 @@ def _read_with_hybrid_scan(
     stats_pruning: bool = True,
 ) -> DataFrame:
     """Two-pass parquet read via HybridScanReader for a row-group-aligned split."""
-    assert plc_filter is not None
     assert len(paths) == 1, (
         "hybrid scan only supported for SplitScan; one physical file"
     )

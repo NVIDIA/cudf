@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 namespace cudf::jni {
 
@@ -25,7 +25,7 @@ namespace cudf::jni {
  * @return The column represents list offsets.
  */
 std::unique_ptr<cudf::column> generate_list_offsets(
-  cudf::column_view const& list_length, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cudf::column_view const& list_length, cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Perform a special treatment for the results of `cudf::lists::have_overlap` to produce the
@@ -48,7 +48,7 @@ std::unique_ptr<cudf::column> generate_list_offsets(
 void post_process_list_overlap(cudf::column_view const& lhs,
                                cudf::column_view const& rhs,
                                std::unique_ptr<cudf::column> const& overlap_result,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream());
+                               cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Generates lists column by copying elements that are distinct by key from each input list
@@ -64,6 +64,6 @@ void post_process_list_overlap(cudf::column_view const& lhs,
  * @return A new list columns in which the elements in each list are distinct by key.
  */
 std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view const& input,
-                                                    rmm::cuda_stream_view stream);
+                                                    cuda::stream_ref stream);
 
 }  // namespace cudf::jni

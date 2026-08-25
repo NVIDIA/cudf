@@ -37,6 +37,7 @@ repos:
     rev: v0.21.0
     hooks:
       - id: cython-lint
+        additional_dependencies: ["cython>=3.2.2,<3.3.0a0"]
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: 'v2.3.0'
     hooks:

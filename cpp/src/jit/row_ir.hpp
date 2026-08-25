@@ -17,8 +17,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <cstdint>
 #include <functional>
@@ -116,8 +117,7 @@ struct [[nodiscard]] instance_context {
   std::vector<var_info> input_vars_;           ///< The input variables for the IR
   std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
   std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
-  rmm::cuda_stream_view
-    stream_;  ///< The CUDA stream for any device operations during IR generation
+  cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
   rmm::device_async_resource_ref
     mr_;  ///< The device memory resource for any device memory allocation during IR generation
 
@@ -125,7 +125,7 @@ struct [[nodiscard]] instance_context {
   friend struct ast_converter;
   friend struct node;
 
-  instance_context(rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  instance_context(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
     : stream_(stream), mr_(mr)
   {
   }
@@ -226,7 +226,7 @@ struct [[nodiscard]] instance_context {
    * @brief Get the CUDA stream for device operations during IR generation
    * @return The CUDA stream for device operations during IR generation
    */
-  [[nodiscard]] rmm::cuda_stream_view get_stream() const { return stream_; }
+  [[nodiscard]] cuda::stream_ref get_stream() const { return stream_; }
 
   /**
    * @brief Get the device memory resource for device memory allocation during IR generation
@@ -470,8 +470,7 @@ struct [[nodiscard]] node {
 struct [[nodiscard]] ast_converter {
  private:
   std::vector<std::unique_ptr<row_ir::node>> output_irs_;  ///< The output IR nodes
-  rmm::cuda_stream_view
-    stream_;  ///< CUDA stream used for device memory operations and kernel launches.
+  cuda::stream_ref stream_;  ///< CUDA stream used for device memory operations and kernel launches.
   rmm::device_async_resource_ref
     mr_;  ///< Device memory resource used to allocate the returned table's device memory
   instance_context instance_;  ///< The instance context used during the IR generation
@@ -486,7 +485,7 @@ struct [[nodiscard]] ast_converter {
    * @param left_table Left input table referenced by expressions
    * @param right_table Right input table referenced by expressions
    */
-  ast_converter(rmm::cuda_stream_view stream,
+  ast_converter(cuda::stream_ref stream,
                 rmm::device_async_resource_ref mr,
                 table_view left_table,
                 table_view right_table)
@@ -550,7 +549,7 @@ struct [[nodiscard]] ast_converter {
     table_view const& left_table,
     table_view const& right_table,
     std::string_view function_name,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   /**
@@ -569,7 +568,7 @@ struct [[nodiscard]] ast_converter {
                                table_view const& left_table,
                                table_view const& right_table,
                                std::string_view function_name,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 };
 

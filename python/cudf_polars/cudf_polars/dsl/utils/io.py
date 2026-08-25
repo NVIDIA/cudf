@@ -43,31 +43,45 @@ class CachedParquetInfo:
     file_metadata
         The ``FileMetaData`` object for the parquet file returned from
         ``read_parquet_footers``.
+    parse_hybrid_metadata
+        Whether to eagerly parse ``HybridScanMetadata`` for this file.
+        Otherwise it's parsed lazily, on first use.
     """
 
     path: str
     size: int | None
     file_metadata: plc.io.parquet_metadata.FileMetaData
-    # Pre-created during footer prefetch; shared across all splits and scans of this file.
-    # HybridScanReader is not cached: it holds mutable per-read state so each worker
-    # creates its own from the shared metadata.
-    _hybrid_scan_metadata: list[plc.io.experimental.HybridScanMetadata] = field(
-        default_factory=list, compare=False, repr=False
+    parse_hybrid_metadata: bool = field(default=False, compare=False, repr=False)
+    # For splits of the same file, the metadata is parsed once and shared.
+    _hybrid_scan_metadata: plc.io.experimental.HybridScanMetadata | None = field(
+        default=None, init=False, compare=False, repr=False
     )
+
+    def __post_init__(self) -> None:  # noqa: D105
+        if self.parse_hybrid_metadata:
+            object.__setattr__(
+                self,
+                "_hybrid_scan_metadata",
+                plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
+                    self.file_metadata, self.default_reader_options()
+                ),
+            )
 
     def hybrid_scan_reader(
         self,
         options: plc.io.parquet.ParquetReaderOptions,
     ) -> plc.io.experimental.HybridScanReader:
         """Return a fresh HybridScanReader backed by shared pre-parsed file metadata."""
-        if not self._hybrid_scan_metadata:
-            self._hybrid_scan_metadata.append(
+        if self._hybrid_scan_metadata is None:
+            object.__setattr__(
+                self,
+                "_hybrid_scan_metadata",
                 plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
                     self.file_metadata, options
-                )
+                ),
             )
         return plc.io.experimental.HybridScanReader.from_metadata(
-            self._hybrid_scan_metadata[0]
+            self._hybrid_scan_metadata
         )
 
     def default_reader_options(self) -> plc.io.parquet.ParquetReaderOptions:
@@ -129,14 +143,12 @@ def _prefetch_parquet_footers_for_paths(
         )
     )
 
-    infos = [
-        CachedParquetInfo(path, size, file_metadata)
+    return [
+        CachedParquetInfo(
+            path, size, file_metadata, parse_hybrid_metadata=parse_hybrid_metadata
+        )
         for path, size, file_metadata in zip(paths, sizes, metadata, strict=True)
     ]
-    if parse_hybrid_metadata:
-        for info in infos:
-            info.hybrid_scan_reader(info.default_reader_options())
-    return infos
 
 
 @nvtx_annotate_cudf_polars(message="prefetch_parquet_file_metadata_for_ir")

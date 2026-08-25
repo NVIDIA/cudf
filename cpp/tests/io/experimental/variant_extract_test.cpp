@@ -515,21 +515,25 @@ inline std::vector<uint8_t> build_single_field_object(uint8_t fid,
   return out;
 }
 
-// Build a VARIANT object blob with `n_fields` fields.  Field ids are 0..n_fields-1
-// (in ascending order, matching the dictionary positions) and each field holds a bare INT32 equal
-// to its field id.  Uses 1-byte field_id_size and 1-byte field_off_size; n_fields must be
-// <= 51 so the total value bytes (5 * n_fields) still fit in 1-byte offsets.
-inline std::vector<uint8_t> build_sequential_int32_object(int n_fields)
+// Build a VARIANT object blob with `n_fields` fields, each holding a bare INT32 equal to its own
+// field id.  Per the VARIANT spec, an object's field_ids are ordered by name, not by numeric id,
+// so `descending_ids` selects which id order to emit: ascending (0..n_fields-1) when the
+// dictionary was built in ascending name order, or descending (n_fields-1..0) when the dictionary
+// was built in descending name order -- either way the emitted id order matches name order, as
+// real VARIANT data requires.  Uses 1-byte field_id_size and 1-byte field_off_size; n_fields must
+// be <= 51 so the total value bytes (5 * n_fields) still fit in 1-byte offsets.
+inline std::vector<uint8_t> build_sequential_int32_object(int n_fields, bool descending_ids = false)
 {
+  auto const id_at = [&](int i) { return descending_ids ? (n_fields - 1 - i) : i; };
   std::vector<uint8_t> out{make_variant_object_header(), static_cast<uint8_t>(n_fields)};
-  for (int fid = 0; fid < n_fields; ++fid) {
-    out.push_back(static_cast<uint8_t>(fid));
+  for (int i = 0; i < n_fields; ++i) {
+    out.push_back(static_cast<uint8_t>(id_at(i)));
   }
   for (int i = 0; i <= n_fields; ++i) {
     out.push_back(static_cast<uint8_t>(i * 5));
   }
-  for (int fid = 0; fid < n_fields; ++fid) {
-    auto const v = enc_int32(fid);
+  for (int i = 0; i < n_fields; ++i) {
+    auto const v = enc_int32(id_at(i));
     out.insert(out.end(), v.begin(), v.end());
   }
   return out;
@@ -836,23 +840,31 @@ TEST_F(ExtractVariantFieldTest, MixedObjectArrayTraversal)
 
 TEST_F(ExtractVariantFieldTest, LargeDictionaryAndObjectScan)
 {
-  auto const keys        = make_numeric_keys(50);
+  // Dictionary keys are inserted in descending name order ("k49" gets id 0, ..., "k00" gets id
+  // 49), the reverse of their lexicographic order. This decouples dictionary id order from name
+  // order, so the lookup can't get by on ids happening to already be name-ordered -- it must
+  // genuinely translate each probed id to a name via `name_for_id` and compare, exercising the
+  // O(1) id-to-name lookup this test targets. The object's field_ids are therefore emitted in
+  // descending order (`descending_ids=true`) to stay ordered by name, per the VARIANT spec.
+  auto const ascending_keys = make_numeric_keys(50);
+  std::vector<std::string> const keys(ascending_keys.rbegin(), ascending_keys.rend());
   auto const meta        = build_metadata(keys);
-  auto const val         = build_sequential_int32_object(50);
+  auto const val         = build_sequential_int32_object(50, /*descending_ids=*/true);
   auto col               = wrap_single_variant(meta, val);
   auto stream            = cudf::test::get_default_stream();
   auto const int32_dtype = cudf::data_type{cudf::type_id::INT32};
 
-  // First, middle, and last keys each decode to their own field id.
+  // First, middle, and last keys (by name) now decode to the last, middle, and first
+  // dictionary/field ids respectively.
   auto first = cudf::io::parquet::experimental::extract_variant_field(
     col, "k00", int32_dtype, std::nullopt, stream);
   auto mid = cudf::io::parquet::experimental::extract_variant_field(
     col, "k24", int32_dtype, std::nullopt, stream);
   auto last = cudf::io::parquet::experimental::extract_variant_field(
     col, "k49", int32_dtype, std::nullopt, stream);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*first, cudf::test::fixed_width_column_wrapper<int32_t>{0});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*mid, cudf::test::fixed_width_column_wrapper<int32_t>{24});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*last, cudf::test::fixed_width_column_wrapper<int32_t>{49});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*first, cudf::test::fixed_width_column_wrapper<int32_t>{49});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*mid, cudf::test::fixed_width_column_wrapper<int32_t>{25});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*last, cudf::test::fixed_width_column_wrapper<int32_t>{0});
 }
 
 TEST_F(ExtractVariantFieldTest, LargeDictionary100FieldsExtractLast)
@@ -904,8 +916,7 @@ TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
   // 50-entry sorted dictionary ("k00".."k49"); the binary search must find a key beyond the
   // midpoint and correctly report a miss for a key that is present in the dictionary but has no
   // corresponding field id in the object (as opposed to a key absent from the dictionary
-  // altogether, which would be rejected earlier by find_key_in_metadata and never reach
-  // locate_object_field's sorted lookup).
+  // altogether).
   auto const keys = make_numeric_keys(50);
   auto const meta = build_metadata(keys, /*sorted=*/true);
   // Only 49 fields (ids 0..48); dictionary index 49 ("k49") has no matching field id.
@@ -1069,6 +1080,41 @@ TEST_F(ExtractVariantFieldTest, MalformedVariantDataYieldsNull)
     ASSERT_EQ(got->size(), 1);
     EXPECT_EQ(got->null_count(), 1);
   }
+}
+
+TEST_F(ExtractVariantFieldTest, ObjectFieldIdBeyondDictionarySizeIsRejected)
+{
+  // Regression test: locate_object_field's name_for_id lookup must reject an object field id
+  // that is out of range for the metadata dictionary instead of computing an out-of-bounds
+  // offset position. The dictionary here has a single key "x" (meta_num_entries == 1); the
+  // object below claims field id INT32_MAX for its single field, which is both out of range and
+  // large enough that `field_id * meta_offset_size` would overflow if computed in `size_type`
+  // (32-bit) arithmetic rather than being bounds-checked first.
+  auto const meta = build_metadata({"x"});
+
+  // Object header: field_id_size = 4 bytes, field_offset_size = 1 byte, is_large = false.
+  auto const object_header = make_variant_header(variant_basic_type::OBJECT, 0x0C);
+  auto const payload       = enc_int32(1);
+  std::vector<uint8_t> val{object_header, 0x01};  // num_elements = 1
+  constexpr uint32_t huge_fid = 0x7FFFFFFFu;      // INT32_MAX: in-range for size_type, out of
+                                                  // range for the 1-entry dictionary.
+  for (int i = 0; i < 4; ++i) {
+    val.push_back(static_cast<uint8_t>((huge_fid >> (8 * i)) & 0xFF));
+  }
+  val.push_back(0x00);                                  // offsets[0]
+  val.push_back(static_cast<uint8_t>(payload.size()));  // offsets[1] (sentinel)
+  val.insert(val.end(), payload.begin(), payload.end());
+
+  auto col = wrap_single_variant(meta, val);
+  auto got =
+    cudf::io::parquet::experimental::extract_variant_field(col,
+                                                           "x",
+                                                           cudf::data_type{cudf::type_id::INT32},
+                                                           std::nullopt,
+                                                           cudf::test::get_default_stream());
+
+  ASSERT_EQ(got->size(), 1);
+  EXPECT_EQ(got->null_count(), 1);
 }
 
 TEST_F(ExtractVariantFieldTest, NullsAtDifferentDepths)
@@ -2292,7 +2338,7 @@ TEST_F(GetVariantFieldStatusTest, VariantNullBeforeEndIsMissingPath)
 
 TEST_F(GetVariantFieldStatusTest, MixedRows)
 {
-  // Mixed rows: success / missing / variant_null / malformed / SQL null
+  // Mixed rows: success / variant_null / malformed / SQL null
   auto stream = cudf::test::get_default_stream();
 
   auto const dict = build_metadata({"x"});
@@ -2301,7 +2347,10 @@ TEST_F(GetVariantFieldStatusTest, MixedRows)
   auto const v0 = build_single_field_object(/*fid=*/0, enc_int32(5));
   // Row 1: {x: NULLVAL}   → variant_null
   auto const v1 = build_single_field_object(/*fid=*/0, enc_null());
-  // Row 2: {} (no x key)  → missing_path
+  // Row 2: object references field id 0, but the dictionary is empty → malformed_variant.
+  // locate_object_field resolves field ids to names directly (no separate dictionary lookup for
+  // "x" up front), so an out-of-range id is caught while parsing the object itself, rather than
+  // short-circuiting to missing_path before the object is ever examined.
   auto const m2 = build_metadata({});
   auto const v2 = build_single_field_object(/*fid=*/0, enc_int32(0));  // fid 0 but dict empty
   // Row 3: SQL null        → row_null status (status column is always non-nullable)
@@ -2321,7 +2370,7 @@ TEST_F(GetVariantFieldStatusTest, MixedRows)
     col, "x", status->mutable_view(), stream, cmr());
 
   ASSERT_EQ(status->null_count(), 0);
-  expect_status_values(*status, {ST_SUCCESS, ST_VNULL, ST_MISSING, ST_ROW_NULL});
+  expect_status_values(*status, {ST_SUCCESS, ST_VNULL, ST_MALFORMED, ST_ROW_NULL});
 
   // Row 0: valid (INT32 bytes), Row 1: valid (VARIANT null bytes preserved), Row 2+3: null
   EXPECT_EQ(got->null_count(), 2);

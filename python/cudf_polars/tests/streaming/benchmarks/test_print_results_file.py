@@ -132,12 +132,6 @@ def test_io_summaries_keys(raw: Any, expected: list[int]) -> None:
     assert sorted(_io_summaries(record)) == expected
 
 
-def test_an_incompatible_run_is_rejected(report: Callable[..., str]) -> None:
-    """Older files keyed I/O summaries differently, and are not read."""
-    with pytest.raises(ValueError, match="incompatible version"):
-        report(_run(_record(io_summaries=[{}])))
-
-
 def test_an_unreadable_older_run_does_not_stop_the_report(
     report: Callable[..., str],
 ) -> None:

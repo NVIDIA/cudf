@@ -482,23 +482,17 @@ def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
     Raises
     ------
     ValueError
-        If the status is unrecognized, or the summaries predate rank keying.
+        If the status is unrecognized.
     """
     status = data["status"]
     if status == "success":
-        io_summaries = data.get("io_summaries")
-        if io_summaries is not None and not isinstance(io_summaries, dict):
-            raise ValueError(
-                "An iteration's io_summaries is not keyed by rank. This results "
-                "file was written by an incompatible version of the benchmarks."
-            )
         validation = data.get("validation_result")
         return SuccessRecord(
             query=data["query"],
             iteration=data["iteration"],
             duration=data["duration"],
             statistics=data.get("statistics"),
-            io_summaries=io_summaries,
+            io_summaries=data.get("io_summaries"),
             traces=data.get("traces"),
             validation_result=(
                 ValidationResult(**validation) if validation is not None else None

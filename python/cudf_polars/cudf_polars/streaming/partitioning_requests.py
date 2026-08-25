@@ -148,7 +148,6 @@ def _propagated_child_requests(
         remapping = {
             output_name: binding.name
             for output_name, binding in column_domain_bindings(node).items()
-            if binding.child_index == 0
         }
         child_requests.extend(
             (node.children[0], remapped)
@@ -172,6 +171,8 @@ def _merge_candidate_request(
         else:
             new_request = merged
             if insertion_index is None:
+                # Candidate order is not a priority. Keep the first compatible
+                # merge in place so request collection remains deterministic.
                 insertion_index = len(candidates)
     if insertion_index is None:
         candidates.append(new_request)
@@ -194,6 +195,7 @@ def _order_request(
 
 
 def _column_names(named_exprs: tuple[expr.NamedExpr, ...]) -> tuple[str, ...] | None:
+    """Return column names when every expression is a direct column reference."""
     names = []
     for named_expr in named_exprs:
         if not isinstance(named_expr.value, expr.Col):
@@ -268,8 +270,7 @@ def _merge_order_with_strict(
 
 
 def _merge_strict_key_count(*counts: int | None) -> int | None:
-    count = max((count for count in counts if count is not None), default=0)
-    return count or None
+    return max((count for count in counts if count is not None), default=None)
 
 
 def _is_prefix(left: tuple[object, ...], right: tuple[object, ...]) -> bool:

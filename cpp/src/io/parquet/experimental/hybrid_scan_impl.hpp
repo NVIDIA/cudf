@@ -621,6 +621,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
 
   std::optional<std::vector<std::string>> _filter_columns_names;
 
+  std::vector<bool> _buffers_with_pruned_pages;
+
   cudf::size_type _row_mask_offset{0};
   bool _output_chunk_produced{false};
 

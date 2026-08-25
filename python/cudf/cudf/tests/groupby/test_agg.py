@@ -222,7 +222,7 @@ def test_groupby_agg_decimal(groupby_reduction_methods, request):
 
     # The unique is necessary because otherwise if there are duplicates idxmin
     # and idxmax may return different results than pandas (see
-    # https://github.com/rapidsai/cudf/issues/7756). This is not relevant to
+    # https://github.com/NVIDIA/cudf/issues/7756). This is not relevant to
     # the current version of the test, because idxmin and idxmax simply don't
     # work with pandas Series composed of Decimal objects (see
     # https://github.com/pandas-dev/pandas/issues/40685). However, if that is
@@ -804,3 +804,32 @@ def test_groupby_idxminmax_all_na_group_raises(op):
         getattr(pdf.groupby("key"), op)()
     with pytest.raises(ValueError):
         getattr(gdf.groupby("key"), op)()
+
+
+def test_agg_multiindex_columns_preserved():
+    # aggregating a MultiIndex-column frame keeps hierarchical columns
+    pdf = pd.DataFrame(
+        [[1, 2, 3], [1, 5, 6], [2, 8, 9]],
+        columns=pd.MultiIndex.from_tuples(
+            [("k", ""), ("x", "a"), ("x", "b")], names=["l0", "l1"]
+        ),
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby(("k", "")).agg("sum")
+    got = gdf.groupby(("k", "")).agg("sum")
+    assert_eq(expect, got)
+
+
+def test_agg_relabel_flat_columns_from_multiindex():
+    # relabeling aggregations emit new flat labels; the source's
+    # multi-level column metadata must not be attached to them
+    pdf = pd.DataFrame(
+        [[1, 2], [1, 5], [2, 8]],
+        columns=pd.MultiIndex.from_tuples([("k", ""), ("x", "a")]),
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby(("k", "")).agg(total=(("x", "a"), "sum"))
+    got = gdf.groupby(("k", "")).agg(total=(("x", "a"), "sum"))
+    assert_eq(expect, got)

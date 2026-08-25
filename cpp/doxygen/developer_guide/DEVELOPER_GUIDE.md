@@ -749,37 +749,26 @@ custom_memory_resource *mr...;
 rmm::device_buffer custom_buff(100, mr, stream);
 ```
 
-#### rmm::device_scalar<T>
-Allocates a single element of the specified type initialized to the specified value. Use this for
-scalar input/outputs into device kernels, e.g., reduction results, null count, etc. This is
-effectively a convenience wrapper around a `rmm::device_vector<T>` of length 1.
+#### cudf::detail::device_scalar<T>
+A self-contained device scalar for internal libcudf code that needs a single trivially copyable
+value in device memory, such as a reduction result, temporary counter, or kernel status value.
+
+Use this for internal scalar input/output with device kernels. Public libcudf APIs should use
+`cudf::scalar` and derived public scalar classes instead of this detail type.
+
+It exposes `data()` for kernels and `value()`/`set_value_async()` for stream-ordered host/device
+transfers.
 
 ```c++
 // Allocates device memory for a single int using the specified resource and stream
 // and initializes the value to 42
-rmm::device_scalar<int> int_scalar{42, stream, mr};
+cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
 
 // scalar.data() returns pointer to value in device memory
-kernel<<<...>>>(int_scalar.data(),...);
+kernel<<<..., stream>>>(int_scalar.data(), ...);
 
-// scalar.value() synchronizes the scalar's stream and copies the
-// value from device to host and returns the value
-int host_value = int_scalar.value();
-```
-
-##### cudf::detail::device_scalar<T>
-Acts as a drop-in replacement for `rmm::device_scalar<T>`, with the key difference
-being the use of pinned host memory as a bounce buffer for data transfers.
-It is recommended for internal use to avoid the implicit synchronization overhead caused by
-memcpy operations on pageable host memory.
-
-```c++
-// Same as the case with rmm::device_scalar<T> above
-cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
-kernel<<<...>>>(int_scalar.data(),...);
-
-// Note: This device-to-host transfer uses host-pinned bounce buffer for efficient memcpy
-int host_value = int_scalar.value();
+// value() copies the device value to the host on the specified stream
+int host_value = int_scalar.value(stream);
 ```
 
 #### rmm::device_vector<T>
@@ -881,6 +870,13 @@ temporary host staging buffers to avoid the sync:
 ```
 
 The same stream-safety requirements apply to `memcpy_async` and `memcpy_batch_async`.
+
+If CUDA memory copy APIs must be called directly, always use `cudaMemcpyDefault` instead of an
+explicit host/device copy policy. Copy correctness depends on whether the source and destination
+pointers are accessible from the host or device, not where the memory is resident. For example,
+pinned host memory may be device-accessible despite residing on the host. `cudaMemcpyDefault` allows
+CUDA to infer the valid copy direction from the pointers rather than rejecting such copies based on
+an explicit policy.
 
 ## Default Parameters
 
@@ -1578,7 +1574,7 @@ the null masks of both struct fields.
 ## Dictionary columns
 
 Dictionaries provide an efficient way to represent low-cardinality data by storing a single copy
-of each value. A dictionary comprises a column of distinct keys and a column containing an index into
+of each value. A dictionary comprises a column of keys and a column containing an index into
 the keys column for each row of the parent column. The keys column may have any fixed-width data_type
 or STRING data_type. The indices represent the corresponding positions of each
 element's value in the keys. The indices child column can have any signed integer type
@@ -1589,8 +1585,11 @@ input column will produce equivalent dictionary columns but the keys may be in a
 and therefore the indices will not match as well. Using `cudf::dictionary::decode()` on both dictionary
 columns should produce the same result.
 
-Although `cudf::make_dictionary_column()` expects distinct keys, the API does not enforce this constraint.
-Using a dictionary column with non-distinct keys in libcudf APIs may result in undefined behavior.
+The libcudf APIs also accept dictionary columns with non-unique keys.
+However, output dictionary columns will generally contain unique keys in an unspecified order.
+The exceptions are `cudf::make_dictionary_column()`, which accepts keys and indices without
+changing them, and `cudf::dictionary::set_keys()`, which strictly honors the given keys
+(both order and duplicates).
 
 ## Nested column challenges
 

@@ -64,14 +64,6 @@ public final class ReductionAggregation {
   }
 
   /**
-   * @deprecated Use {@link #sumOverflow()} instead.
-   */
-  @Deprecated
-  public static ReductionAggregation sumWithOverflow() {
-    return sumOverflow();
-  }
-
-  /**
    * Product Aggregation.
    */
   public static ReductionAggregation product() {

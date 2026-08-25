@@ -492,7 +492,7 @@ def _build_order_scheme(
     strict_boundaries = (
         n_rows == 0
         # TODO: Use unique_count_table
-        # Requires https://github.com/rapidsai/cudf/pull/22487
+        # Requires https://github.com/NVIDIA/cudf/pull/22487
         or plc.stream_compaction.unique(
             by_table,
             list(range(n_keys)),
@@ -608,7 +608,10 @@ async def sort_actor(
         partitioning = NormalizedPartitioning.from_keys(
             metadata_in.partitioning, comm.nranks, keys=order_keys
         )
-        if partitioning.is_strictly_sorted(order_keys):
+        if partitioning.is_ordered(
+            order_keys,
+            level="local" if metadata_in.duplicated else "flat",
+        ):
             if tracer is not None:
                 tracer.decision = "already_sorted"
             await chunkwise_evaluate(

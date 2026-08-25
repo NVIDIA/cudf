@@ -12,9 +12,13 @@ from polars import GPUEngine
 from polars.testing import assert_frame_equal
 
 from cudf_polars import Translator
+from cudf_polars.dsl.ir import Cache, Join
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.base import StatsCollector
+from cudf_polars.streaming.parallel import optimize_with_stats
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.utils.config import ConfigOptions
 
 
 @pytest.mark.parametrize("column", ["a", "b"])
@@ -40,7 +44,7 @@ def test_rename_multi(mapping, streaming_engine):
 
 
 def test_rename_concat(streaming_engine) -> None:
-    # https://github.com/rapidsai/cudf/pull/19121#issuecomment-2959305678
+    # https://github.com/NVIDIA/cudf/pull/19121#issuecomment-2959305678
     q = pl.concat(
         [
             pl.LazyFrame({"a": [1, 2, 3]}).rename({"a": "A"}),
@@ -77,7 +81,7 @@ def test_evaluate_streaming(streaming_engine):
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [3, 4, 5], "c": [5, 6, 7], "d": [7, 9, 8]})
     q = df.select(pl.col("a") - (pl.col("b") + pl.col("c") * 2), pl.col("d")).sort("d")
 
-    expected = q.collect(engine="cpu")
+    expected = q.collect(engine="in-memory")
     # Use the in-memory executor for the GPU comparison: a vanilla
     # ``pl.GPUEngine(raise_on_fail=True)`` defaults to ``executor="streaming"``,
     # which routes through ``DefaultSingletonEngine`` and would fail while the
@@ -88,9 +92,28 @@ def test_evaluate_streaming(streaming_engine):
     assert_frame_equal(expected, got_streaming)
 
 
-# ---------------------------------------------------------------------------
-# Tests migrated from tests/streaming/test_parallel.py (round 3)
-# ---------------------------------------------------------------------------
+def test_optimize_removes_cache_nodes() -> None:
+    source = pl.LazyFrame({"key": [1, 1, 2], "value": [10, 20, 30]})
+    query = source.join(source, on="key", suffix="_right")
+    engine = GPUEngine(
+        executor="streaming",
+        executor_options={"join_filter_pushdown": None},
+    )
+    ir = Translator(query._ldf.visit(), engine).translate_ir()
+
+    assert isinstance(ir, Join)
+    assert isinstance(ir.children[0], Cache)
+    assert ir.children[0] is ir.children[1]
+
+    optimized = optimize_with_stats(
+        ir,
+        ConfigOptions.from_polars_engine(engine),
+        StatsCollector(),
+    )
+
+    assert isinstance(optimized, Join)
+    assert optimized.children[0] is optimized.children[1]
+    assert not any(isinstance(node, Cache) for node in traversal([optimized]))
 
 
 @pytest.mark.parametrize(

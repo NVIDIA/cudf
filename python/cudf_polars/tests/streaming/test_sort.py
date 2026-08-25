@@ -87,7 +87,6 @@ def large_frames():
     )
 
 
-@pytest.mark.timeout(120)
 def test_sort(df, engine):
     q = df.sort(by=["y", "z"])
     assert_gpu_result_equal(q, engine=engine)

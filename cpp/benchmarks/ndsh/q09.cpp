@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#include <array>
+#include <utility>
 
 enum class engine_type : int32_t { BINARYOP = 0, AST = 1, TRANSFORM = 2 };
 
@@ -150,16 +153,20 @@ struct q9_data {
 
   cudf::transform_input transform_inputs[] = {discount, extendedprice, supplycost, quantity};
 
-  return cudf::transform_extended(transform_inputs,
-                                  udf,
-                                  cudf::data_type{cudf::type_id::FLOAT64},
-                                  cudf::udf_source_type::CUDA,
-                                  std::nullopt,
-                                  cudf::null_aware::NO,
-                                  std::nullopt,
-                                  cudf::output_nullability::PRESERVE,
-                                  stream,
-                                  mr);
+  return std::move(
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    transform_inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT64},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
+                    stream,
+                    mr)
+      ->release()
+      .front());
 }
 
 [[nodiscard]] std::unique_ptr<cudf::column> compute_amount_ast(

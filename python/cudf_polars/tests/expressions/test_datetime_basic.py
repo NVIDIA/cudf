@@ -253,6 +253,25 @@ def test_century_millennium_date_extreme_years(engine: pl.GPUEngine, method, day
 
 
 @pytest.mark.parametrize(
+    "dtype", [pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
+)
+def test_datetime_date(engine: pl.GPUEngine, dtype):
+    data = pl.Series(
+        [
+            datetime.datetime(1978, 1, 1, 1, 1, 1),
+            datetime.datetime(1969, 12, 31, 23, 59, 59),  # pre-epoch (floors down)
+            datetime.datetime(2024, 10, 13, 5, 30, 14, 500_000),
+            datetime.datetime(2065, 1, 1, 10, 20, 30, 60_000),
+            None,
+        ],
+        dtype=dtype,
+    )
+    ldf = pl.LazyFrame({"datetimes": data})
+    q = ldf.select(pl.col("datetimes").dt.date())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
     "dtype", [pl.Date(), pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
 )
 def test_datetime_month_start(engine: pl.GPUEngine, dtype):

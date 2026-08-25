@@ -353,7 +353,7 @@ class StringColumn(ColumnBase, Scannable):
             if target_unit != "s" and len(without_nat):
                 # libcudf parses directly into int64 values of the
                 # target unit and silently wraps on overflow
-                # (see https://github.com/rapidsai/cudf/issues/23247).
+                # (see https://github.com/NVIDIA/cudf/issues/23247).
                 # Parse to seconds first (which cannot realistically
                 # overflow) and reject values whose whole-second part
                 # falls outside the target unit's range, like pandas

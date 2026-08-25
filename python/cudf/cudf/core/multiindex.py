@@ -1738,21 +1738,18 @@ class MultiIndex(Index):
             ('aa', 'b')],
            )
         """
-        name_i = self._column_names[i] if isinstance(i, int) else i
-        name_j = self._column_names[j] if isinstance(j, int) else j
-        to_swap = {name_i, name_j}
-        new_data = {}
+        lvl_i = self._level_index_from_level(i)
+        lvl_j = self._level_index_from_level(j)
+        order = list(range(self.nlevels))
+        order[lvl_i], order[lvl_j] = order[lvl_j], order[lvl_i]
+        keys = self._column_names
+        columns = self._columns
         # TODO: Preserve self._codes and self._levels if set
-        for k, v in self._column_labels_and_values:
-            if k not in to_swap:
-                new_data[k] = v
-            elif k == name_i:
-                new_data[name_j] = self._data[name_j]
-            elif k == name_j:
-                new_data[name_i] = self._data[name_i]
-        midx = type(self)._from_data(new_data)
-        if all(n is None for n in self.names):
-            midx = midx.set_names(self.names)
+        midx = type(self)._from_data({keys[k]: columns[k] for k in order})
+        # the accessor keys may be positional stand-ins (e.g. for
+        # duplicated or unset level names), so carry the level names
+        # over from ``self.names`` rather than deriving them from keys
+        midx.names = [self.names[k] for k in order]
         return midx
 
     @_performance_tracking
@@ -2104,19 +2101,30 @@ class MultiIndex(Index):
         """
         Return level index from given level name or index
         """
+        if self.names.count(level) > 1 and not is_integer(level):
+            raise ValueError(
+                f"The name {level} occurs multiple times, use a level number"
+            )
         try:
             return self.names.index(level)
         except ValueError:
             if not is_integer(level):
-                raise KeyError(f"Level {level} not found")
-            if level < 0:
-                level += self.nlevels
-            if level >= self.nlevels:
+                raise KeyError(f"Level {level} not found") from None
+            # matches pandas MultiIndex._get_level_number, which words the
+            # underflow and overflow errors differently
+            norm = level + self.nlevels if level < 0 else level
+            if norm < 0:
                 raise IndexError(
-                    f"Level {level} out of bounds. "
-                    f"Index has {self.nlevels} levels."
+                    f"Too many levels: Index has only {self.nlevels} "
+                    f"levels, {level} is not a valid level number"
                 ) from None
-            return level
+            elif norm >= self.nlevels:
+                # Note: levels are zero-based
+                raise IndexError(
+                    f"Too many levels: Index has only {self.nlevels} levels, "
+                    f"not {norm + 1}"
+                ) from None
+            return norm
 
     @_performance_tracking
     def get_indexer(self, target, method=None, limit=None, tolerance=None):
@@ -2368,16 +2376,12 @@ class MultiIndex(Index):
 
     @_performance_tracking
     def _split_columns_by_levels(
-        self, levels: tuple, *, in_levels: bool
+        self, levels: tuple[int, ...], *, in_levels: bool
     ) -> Generator[tuple[Any, ColumnBase], None, None]:
-        # This function assumes that for levels with duplicate names, they are
-        # specified by indices, not name by ``levels``. E.g. [None, None] can
-        # only be specified by 0, 1, not "None".
-        level_names = list(self.names)
-        level_indices = {
-            lv if isinstance(lv, int) else level_names.index(lv)
-            for lv in levels
-        }
+        # ``levels`` are level *numbers*, already normalized by
+        # ``_level_index_from_level`` (so names and negative positions have
+        # been resolved by the caller).
+        level_indices = set(levels)
         for i, (name, col) in enumerate(
             zip(self.names, self._columns, strict=True)
         ):

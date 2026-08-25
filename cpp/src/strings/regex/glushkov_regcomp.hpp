@@ -102,6 +102,8 @@ struct gkprog {
  *   - Pattern has more than GLUSHKOV_MAX_STATES character-consuming positions.
  *   - Pattern is nullable (matches the empty string): priority semantics cannot
  *     be faithfully represented without an ε-position for the empty match.
+ *   - Pattern has a Thompson-priority frontier that Glushkov's bit ordering
+ *     cannot represent faithfully.
  *
  * @param prog  Compiled Thompson NFA (after reprog::finalize()).
  * @return      Host-side Glushkov program, or nullptr on failure.

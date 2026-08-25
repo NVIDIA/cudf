@@ -75,7 +75,7 @@ def _make_hash_join(
         partition_info,
         output_count,
     )
-    # Always reconstruct in case children contain Cache nodes
+    # Reconstruct with the lowered and possibly shuffled children.
     ir = ir.reconstruct([left, right])
 
     # Record new partitioning info

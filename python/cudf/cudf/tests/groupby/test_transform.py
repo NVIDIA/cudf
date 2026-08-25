@@ -119,3 +119,30 @@ def test_transform_cumcount_series(dropna):
     expect = pdf.groupby("A", dropna=dropna).transform("cumcount")
     got = gdf.groupby("A", dropna=dropna).transform("cumcount")
     assert_eq(expect, got)
+
+
+def test_transform_scan_lambda():
+    # a named-aggregation lambda resolving to a scan must scan per group,
+    # not broadcast the group total
+    pdf = pd.DataFrame({"key": [0, 0, 1, 1], "val": [1.0, 2.0, 3.0, 4.0]})
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("key")["val"].transform(lambda x: x.cumsum())
+    got = gdf.groupby("key")["val"].transform(lambda x: x.cumsum())
+
+    assert_eq(expect, got)
+
+
+def test_transform_singleton_groups_index():
+    # every group a singleton with sort=True: the result must still be
+    # relabeled with the original index, not the group keys
+    pdf = pd.DataFrame(
+        {"id": [3.0, 1.0, 2.0], "val": [10.0, 20.0, 30.0]},
+        index=["r0", "r1", "r2"],
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby("id", sort=True)["val"].transform("mean")
+    got = gdf.groupby("id", sort=True)["val"].transform("mean")
+
+    assert_eq(expect, got)

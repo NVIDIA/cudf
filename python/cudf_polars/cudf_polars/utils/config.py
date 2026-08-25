@@ -342,6 +342,7 @@ class ParquetOptions:
             default=True,
         ),
         init=False,
+        repr=False,
     )
     use_jit_filter: bool = dataclasses.field(
         default_factory=_make_default_factory(

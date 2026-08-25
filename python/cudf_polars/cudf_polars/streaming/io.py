@@ -337,7 +337,6 @@ def _read_with_hybrid_scan(
             )
             columns = [*columns, *payload_df.columns]
 
-        stream.synchronize()
         return DataFrame(columns, stream=stream).select(list(schema.keys()))
 
 

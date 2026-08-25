@@ -10,13 +10,16 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     FileMetaData as cpp_FileMetaData,
     RowGroup as cpp_RowGroup,
     SortingColumn as cpp_SortingColumn,
+    Statistics as cpp_Statistics,
 )
 from pylibcudf.libcudf.io.parquet_metadata cimport(
     parquet_metadata,
     parquet_schema,
     parquet_column_schema,
 )
+from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
+from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 cdef class ParquetColumnSchema:
     cdef parquet_column_schema column_schema
@@ -78,6 +81,12 @@ cdef class SortingColumn:
     @staticmethod
     cdef SortingColumn from_cpp(cpp_SortingColumn sorting_column)
 
+cdef class ColumnChunkStatistics:
+    cdef cpp_Statistics c_obj
+
+    @staticmethod
+    cdef ColumnChunkStatistics from_cpp(cpp_Statistics statistics)
+
 cdef class ColumnChunk:
     cdef cpp_ColumnChunk c_obj
 
@@ -98,3 +107,9 @@ cdef class RowGroup:
 
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info)
 cpdef list read_parquet_footers(SourceInfo src_info)
+cpdef Table read_parquet_column_chunk_bounds(
+    object file_metadatas,
+    object columns,
+    object stream=*,
+    DeviceMemoryResource mr=*,
+)

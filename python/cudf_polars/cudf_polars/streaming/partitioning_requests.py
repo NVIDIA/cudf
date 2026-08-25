@@ -19,8 +19,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-import pylibcudf as plc
-
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
     Filter,
@@ -34,20 +32,23 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.traversal import post_traversal
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
+from cudf_polars.utils.sorting import sort_order
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+
+    import pylibcudf as plc
 
     from cudf_polars.dsl.ir import IR
 
 
 @dataclass(frozen=True)
 class NamedOrderKey:
-    """Named sort key with logical Polars ordering options."""
+    """Named sort key with pylibcudf ordering options."""
 
     name: str
-    descending: bool
-    nulls_last: bool
+    order: plc.types.Order
+    null_order: plc.types.NullOrder
 
 
 @dataclass(frozen=True)
@@ -95,27 +96,14 @@ def _direct_child_requests(ir: IR) -> list[tuple[IR, PartitioningRequest]]:
     if isinstance(ir, Sort):
         names = _column_names(ir.by)
         if names is not None:
-            return [
-                (
-                    ir.children[0],
-                    _order_request(
-                        names,
-                        tuple(
-                            order == plc.types.Order.DESCENDING for order in ir.order
-                        ),
-                        tuple(
-                            (order == plc.types.Order.ASCENDING)
-                            == (null_order == plc.types.NullOrder.AFTER)
-                            for order, null_order in zip(
-                                ir.order, ir.null_order, strict=True
-                            )
-                        ),
-                    ),
-                )
-            ]
+            return [(ir.children[0], _order_request(names, ir.order, ir.null_order))]
 
     if isinstance(ir, MapFunction) and ir.name == "hint_sorted":
-        return [(ir.children[0], _order_request(*ir.options))]
+        column_names, descending, nulls_last = ir.options
+        order, null_order = sort_order(
+            descending, nulls_last=nulls_last, num_keys=len(column_names)
+        )
+        return [(ir.children[0], _order_request(column_names, order, null_order))]
 
     if isinstance(ir, Join) and ir.options[0] != "Cross":
         left_keys = _column_names(ir.left_on)
@@ -183,13 +171,13 @@ def _merge_candidate_request(
 
 def _order_request(
     names: tuple[str, ...],
-    descending: tuple[bool, ...],
-    nulls_last: tuple[bool, ...],
+    orders: Sequence[plc.types.Order],
+    null_orders: Sequence[plc.types.NullOrder],
 ) -> OrderPartitioningRequest:
     return OrderPartitioningRequest(
         tuple(
-            NamedOrderKey(name, desc, null_last)
-            for name, desc, null_last in zip(names, descending, nulls_last, strict=True)
+            NamedOrderKey(name, order, null_order)
+            for name, order, null_order in zip(names, orders, null_orders, strict=True)
         )
     )
 
@@ -221,7 +209,7 @@ def _remap_request(
         new_name = remapping.get(key.name)
         if new_name is None:
             return None
-        remapped_keys.append(NamedOrderKey(new_name, key.descending, key.nulls_last))
+        remapped_keys.append(NamedOrderKey(new_name, key.order, key.null_order))
     return OrderPartitioningRequest(tuple(remapped_keys), request.strict_key_count)
 
 

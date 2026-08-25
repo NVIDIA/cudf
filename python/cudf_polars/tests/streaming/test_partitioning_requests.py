@@ -41,6 +41,16 @@ def named_col(name: str) -> expr.NamedExpr:
     return expr.NamedExpr(name, expr.Col(I64, name))
 
 
+def named_order_key(
+    name: str, *, descending: bool = False, nulls_last: bool = False
+) -> NamedOrderKey:
+    """Build a NamedOrderKey from the bool options used by Polars APIs."""
+    (order,), (null_order,) = sort_order(
+        (descending,), nulls_last=(nulls_last,), num_keys=1
+    )
+    return NamedOrderKey(name, order, null_order)
+
+
 def make_sort(
     child: IR,
     *names: str,
@@ -106,8 +116,8 @@ def test_sort_creates_order_partition_request() -> None:
     assert requests[scan] == (
         OrderPartitioningRequest(
             (
-                NamedOrderKey("a", descending=False, nulls_last=True),
-                NamedOrderKey("b", descending=True, nulls_last=False),
+                named_order_key("a", nulls_last=True),
+                named_order_key("b", descending=True),
             )
         ),
     )
@@ -125,11 +135,7 @@ def test_select_remaps_order_partition_request() -> None:
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
-    )
+    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
 
 
 def test_non_column_sort_does_not_create_request() -> None:
@@ -157,9 +163,7 @@ def test_hint_sorted_creates_order_partition_request() -> None:
     requests = collect_partitioning_requests(hint_sorted)
 
     assert requests[scan] == (
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=True, nulls_last=False),)
-        ),
+        OrderPartitioningRequest((named_order_key("a", descending=True),)),
     )
 
 
@@ -225,11 +229,7 @@ def test_select_drops_order_request_on_non_column_output() -> None:
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[select] == (
-        OrderPartitioningRequest(
-            (NamedOrderKey("x", descending=False, nulls_last=False),)
-        ),
-    )
+    assert requests[select] == (OrderPartitioningRequest((named_order_key("x"),)),)
     assert scan not in requests
 
 
@@ -265,11 +265,7 @@ def test_hint_sorted_keeps_declared_order_with_compatible_downstream_sort() -> N
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
-    )
+    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
 
 
 def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> None:
@@ -279,11 +275,7 @@ def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> Non
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
-    )
+    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
 
 
 def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() -> None:
@@ -294,9 +286,7 @@ def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() ->
     requests = collect_partitioning_requests(sort)
 
     assert requests[scan] == (
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=True, nulls_last=False),)
-        ),
+        OrderPartitioningRequest((named_order_key("a", descending=True),)),
     )
 
 
@@ -317,7 +307,7 @@ def test_groupby_remaps_order_partition_request() -> None:
 
     assert requests[scan] == (
         OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),),
+            (named_order_key("a"),),
             strict_key_count=1,
         ),
     )
@@ -338,8 +328,8 @@ def test_fanout_keeps_more_specific_compatible_order_request() -> None:
     assert requests[scan] == (
         OrderPartitioningRequest(
             (
-                NamedOrderKey("a", descending=False, nulls_last=False),
-                NamedOrderKey("b", descending=False, nulls_last=False),
+                named_order_key("a"),
+                named_order_key("b"),
             )
         ),
     )
@@ -369,8 +359,8 @@ def test_fanout_marks_compatible_order_request_as_strict() -> None:
     assert requests[scan] == (
         OrderPartitioningRequest(
             (
-                NamedOrderKey("a", descending=False, nulls_last=False),
-                NamedOrderKey("b", descending=False, nulls_last=False),
+                named_order_key("a"),
+                named_order_key("b"),
             ),
             strict_key_count=1,
         ),
@@ -424,9 +414,7 @@ def test_fanout_keeps_incompatible_order_and_strict_candidates() -> None:
     requests = collect_partitioning_requests(root)
 
     assert set(requests[scan]) == {
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
+        OrderPartitioningRequest((named_order_key("a"),)),
         StrictPartitioningRequest(("b",)),
     }
 
@@ -454,9 +442,7 @@ def test_compatible_request_merging_is_not_directional() -> None:
     )
     assert set(collect_partitioning_requests(root)[scan]) == {
         StrictPartitioningRequest(("b",)),
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
+        OrderPartitioningRequest((named_order_key("a"),)),
     }
 
     scan = make_scan("a", "b")
@@ -470,8 +456,8 @@ def test_compatible_request_merging_is_not_directional() -> None:
     assert collect_partitioning_requests(root)[scan] == (
         OrderPartitioningRequest(
             (
-                NamedOrderKey("a", descending=False, nulls_last=False),
-                NamedOrderKey("b", descending=False, nulls_last=False),
+                named_order_key("a"),
+                named_order_key("b"),
             )
         ),
     )
@@ -490,12 +476,8 @@ def test_conflicting_fanout_keeps_candidate_requests() -> None:
     requests = collect_partitioning_requests(root)
 
     assert set(requests[scan]) == {
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
-        OrderPartitioningRequest(
-            (NamedOrderKey("b", descending=False, nulls_last=False),)
-        ),
+        OrderPartitioningRequest((named_order_key("a"),)),
+        OrderPartitioningRequest((named_order_key("b"),)),
     }
 
 
@@ -514,10 +496,6 @@ def test_repeated_fanout_candidate_is_merged() -> None:
 
     assert len(requests[scan]) == 2
     assert set(requests[scan]) == {
-        OrderPartitioningRequest(
-            (NamedOrderKey("a", descending=False, nulls_last=False),)
-        ),
-        OrderPartitioningRequest(
-            (NamedOrderKey("b", descending=False, nulls_last=False),)
-        ),
+        OrderPartitioningRequest((named_order_key("a"),)),
+        OrderPartitioningRequest((named_order_key("b"),)),
     }

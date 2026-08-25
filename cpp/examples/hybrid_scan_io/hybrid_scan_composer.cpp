@@ -143,8 +143,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   // Filter row groups with dictionary pages
   std::vector<cudf::size_type> dictionary_page_filtered_row_group_indices;
   dictionary_page_filtered_row_group_indices.reserve(current_row_group_indices.size());
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) and
-      dict_page_byte_ranges.size()) {
+  if (not dict_page_byte_ranges.empty()) {
     if (verbose) { std::cout << "READER: Filter row groups with dictionary pages...\n"; }
     timer.reset();
 
@@ -179,8 +178,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   // Filter row groups with bloom filters
   std::vector<cudf::size_type> bloom_filtered_row_group_indices;
   bloom_filtered_row_group_indices.reserve(current_row_group_indices.size());
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS) and
-      bloom_filter_byte_ranges.size()) {
+  if (not bloom_filter_byte_ranges.empty()) {
     // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
     auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
     auto aligned_mr = rmm::mr::aligned_resource_adaptor(temp_mr, bloom_filter_alignment);

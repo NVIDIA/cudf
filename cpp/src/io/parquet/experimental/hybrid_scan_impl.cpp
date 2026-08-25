@@ -118,6 +118,25 @@ namespace {
 
 }  // namespace
 
+void hybrid_scan_reader_impl::mark_buffers_nullable_for_pruned_pages()
+{
+  if (std::all_of(_pass_page_mask.begin(), _pass_page_mask.end(), std::identity{})) { return; }
+
+  auto const mark_buffers_nullable = [](auto const& self, std::span<inline_column_buffer> buffers) {
+    for (auto& buffer : buffers) {
+      // Page pruning synthesizes null rows at every nesting level except list elements.
+      if ((buffer.user_data & parquet::detail::PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT) == 0) {
+        buffer.is_nullable = true;
+      }
+      self(self, buffer.children);
+    }
+  };
+
+  // Mark both the output and template buffers nullable when page pruning synthesizes null rows
+  mark_buffers_nullable(mark_buffers_nullable, _output_buffers);
+  mark_buffers_nullable(mark_buffers_nullable, _output_buffers_template);
+}
+
 hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   parquet_reader_options const& options)
@@ -1439,6 +1458,9 @@ void hybrid_scan_reader_impl::set_pass_page_mask(std::span<bool const> data_page
   // Make sure we inserted exactly the number of pages for this pass
   CUDF_EXPECTS(_pass_page_mask.size() == pass->pages.size(),
                "Encountered mismatch in number of pass pages and page mask size");
+
+  // Mark output buffers nullable when page pruning produces nulls
+  mark_buffers_nullable_for_pruned_pages();
 }
 
 void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
@@ -1487,6 +1509,9 @@ void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
   // Make sure we inserted exactly the number of pages for this pass.
   CUDF_EXPECTS(_pass_page_mask.size() == pass->pages.size(),
                "Encountered mismatch in number of pass pages and page mask size");
+
+  // Mark output buffers nullable when page pruning produces nulls
+  mark_buffers_nullable_for_pruned_pages();
 }
 
 }  // namespace cudf::io::parquet::experimental::detail

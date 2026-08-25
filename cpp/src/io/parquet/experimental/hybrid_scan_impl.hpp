@@ -395,6 +395,11 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   void set_sparse_pass_page_mask(std::span<cudf::device_span<uint8_t const> const> page_data);
 
   /**
+   * @brief Mark output buffers nullable when page pruning synthesizes null rows
+   */
+  void mark_buffers_nullable_for_pruned_pages();
+
+  /**
    * @brief Select the columns to be read based on the read mode
    *
    * @param read_columns_mode Read mode indicating if we are reading filter or payload columns

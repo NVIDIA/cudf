@@ -106,14 +106,8 @@ def jit_rolling_apply(
     out = cp.empty(n, dtype=return_dtype)
     valid = cp.zeros(n, dtype=np.bool_)
 
-    threads_per_block = 128
-    blocks = (n + threads_per_block - 1) // threads_per_block
-
     with _MLIRNumbaCudaConfig():
-        kernel[blocks, threads_per_block](
-            data, start, end, out, valid, min_periods
-        )
-        cuda.synchronize()
+        kernel.forall(n)(data, start, end, out, valid, min_periods)
 
     result = as_column(out)
     valid_col = as_column(valid)

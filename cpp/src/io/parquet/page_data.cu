@@ -103,8 +103,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto* const rep    = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::REPETITION]);
 
   // Capture initial valid_map_offset before any processing that might modify it
-  int const init_valid_map_offset =
-    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+  int const init_valid_map_offset = init_null_fill_valid_map_offset(s);
 
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
@@ -223,16 +222,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // Zero-fill null positions after decoding valid values
   if (has_repetition) {
-    int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-    auto const& ni             = s->nesting.nesting_info[leaf_level_index];
-    if (ni.valid_map != nullptr) {
-      int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(s,
-                                                         s->output_cvt.dtype_len,
-                                                         init_valid_map_offset,
-                                                         num_values,
-                                                         static_cast<int>(block.thread_rank()));
-    }
+    zero_fill_null_positions<decode_block_size>(
+      s, s->output_cvt.dtype_len, init_valid_map_offset, static_cast<int>(block.thread_rank()));
   }
 
   if (s->setup.error != 0) {
@@ -299,8 +290,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Capture initial valid_map_offset before any processing that might modify it
-  int const init_valid_map_offset =
-    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+  int const init_valid_map_offset = init_null_fill_valid_map_offset(s);
 
   if (s->stream.dict_base) {
     out_warp_id = (s->stream.dict_bits > 0) ? 2 : 1;
@@ -475,15 +465,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const is_string =
     ((dtype == Type::BYTE_ARRAY) && !is_decimal) || (dtype == Type::FIXED_LEN_BYTE_ARRAY);
   if (is_string || has_repetition) {
-    auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
-    if (ni.valid_map != nullptr) {
-      int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(s,
-                                                         s->output_cvt.dtype_len,
-                                                         init_valid_map_offset,
-                                                         num_values,
-                                                         static_cast<int>(block.thread_rank()));
-    }
+    zero_fill_null_positions<decode_block_size>(
+      s, s->output_cvt.dtype_len, init_valid_map_offset, static_cast<int>(block.thread_rank()));
   }
 
   if (s->setup.error != 0) {

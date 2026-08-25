@@ -1187,11 +1187,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   // - valid_count: number of non-null values we have decoded so far. In each iteration of the
   //   loop below, we look at the number of valid items (which could be all for non-nullable),
   //   and valid_count is that running count.
-  int processed_count         = 0;
-  int valid_count             = 0;
-  size_t string_output_offset = 0;
-  int const init_valid_map_offset =
-    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+  int processed_count             = 0;
+  int valid_count                 = 0;
+  size_t string_output_offset     = 0;
+  int const init_valid_map_offset = init_null_fill_valid_map_offset(s);
 
   // Skip ahead in the decoding so that we don't repeat work
   skip_ahead_in_decoding<decode_block_size_t,
@@ -1310,16 +1309,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
         if constexpr (has_strings_t) { return sizeof(cudf::size_type); }
         return s->output_cvt.dtype_len;
       }();
-      int const num_values = [&]() {
-        if constexpr (has_lists_t) {
-          auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
-          return ni.valid_map_offset - init_valid_map_offset;
-        } else {
-          return s->setup.num_rows;
-        }
-      }();
-      zero_fill_null_positions_shared<decode_block_size_t>(
-        s, dtype_len, init_valid_map_offset, num_values, t);
+      zero_fill_null_positions<decode_block_size_t>(s, dtype_len, init_valid_map_offset, t);
     }
   }
 

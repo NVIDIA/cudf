@@ -1456,6 +1456,49 @@ inline __device__ bool setup_local_page_info(auto* const s,
 }
 
 /**
+ * @brief Determine which nesting level's validity bitmap should be used to identify null
+ * positions when zero-filling the leaf's output data.
+ *
+ * A required Parquet leaf can be absent from its own nesting level's validity buffer because
+ * one of its ancestors is optional; in that case cudf does not allocate a validity buffer for
+ * the (non-nullable) leaf, so the nearest optional ancestor's bitmap is used instead. This
+ * substitution is only correct when there is no repetition (no list ancestor), since only then
+ * does a bit position in the ancestor's bitmap map 1:1 to a row position in the leaf's output.
+ *
+ * This resolution only depends on state that is fixed for the page (validity buffer pointers
+ * and the column's repetition level), not on decode progress, so it is safe to call both before
+ * and after decoding a batch and get a consistent answer.
+ *
+ * @param s Page state containing all necessary information
+ * @return The nesting level whose validity bitmap should be used
+ */
+__device__ auto& get_null_fill_nesting_info(auto* s)
+{
+  int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
+  auto& leaf_ni              = s->nesting.nesting_info[leaf_level_index];
+  if (leaf_ni.valid_map != nullptr) { return leaf_ni; }
+  if (s->setup.col.max_level[level_type::REPETITION] != 0) { return leaf_ni; }
+  for (int idx = leaf_level_index - 1; idx >= 0; --idx) {
+    auto& ancestor_ni = s->nesting.nesting_info[idx];
+    if (ancestor_ni.valid_map != nullptr) { return ancestor_ni; }
+  }
+  return leaf_ni;
+}
+
+/**
+ * @brief Capture the validity-map bit offset of the nesting level that will later be used to
+ * zero-fill null positions in the leaf output (see get_null_fill_nesting_info()), before that
+ * level's offset advances further while decoding the current batch.
+ *
+ * @param s Page state containing all necessary information
+ * @return The bit offset to later pass to zero_fill_null_positions() as init_valid_map_offset
+ */
+__device__ int init_null_fill_valid_map_offset(auto* s)
+{
+  return get_null_fill_nesting_info(s).valid_map_offset;
+}
+
+/**
  * @brief Zero-fill null positions in output data using parallel per-validity-block processing
  *
  * This function processes the validity bitmap and zero-fills all positions in the output
@@ -1480,24 +1523,7 @@ __device__ void zero_fill_null_positions_shared(
   // nesting level that is storing actual leaf values
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
   auto const& leaf_ni        = s->nesting.nesting_info[leaf_level_index];
-
-  // A required Parquet leaf can be absent because one of its ancestors is optional. Since with RMM,
-  // the reader reader can leave the validity map associated w/the ancestor unwritten, this code
-  // zero-fills the gap rows by borrowing the nearest ancestor's validity bitmap instead.
-  auto const& ni = [&]() -> PageNestingDecodeInfo const& {
-    if (leaf_ni.valid_map != nullptr) { return leaf_ni; }
-    if (s->setup.col.max_level[level_type::REPETITION] != 0) { return leaf_ni; }
-    for (int idx = leaf_level_index - 1; idx >= 0; --idx) {
-      auto const& ancestor_ni = s->nesting.nesting_info[idx];
-      if (ancestor_ni.valid_map != nullptr) { return ancestor_ni; }
-    }
-    return leaf_ni;
-  }();
-
-  // Check if we have nulls to fill
-  if ((ni.valid_map == nullptr) || (num_values == 0)) { return; }
-
-  if (&ni != &leaf_ni) { valid_map_offset = ni.valid_map_offset; }
+  auto const& ni             = get_null_fill_nesting_info(s);
 
   auto const data_out = leaf_ni.data_out;
 
@@ -1577,6 +1603,35 @@ __device__ void zero_fill_null_positions_shared(
   }
 
   __syncthreads();
+}
+
+/**
+ * @brief Zero-fill null positions in the leaf's output data for values decoded since
+ * @p init_valid_map_offset was captured by init_null_fill_valid_map_offset().
+ *
+ * This resolves the correct validity bitmap via get_null_fill_nesting_info() (the leaf's own,
+ * or the nearest optional ancestor's if the leaf itself is required and therefore has no
+ * validity buffer of its own) and derives the number of newly-decoded values from how far that
+ * bitmap's offset has advanced since @p init_valid_map_offset was captured, so that callers do
+ * not need to duplicate this resolution logic themselves.
+ *
+ * @tparam block_size CUDA block size for the kernel
+ * @param s Page state containing all necessary information
+ * @param dtype_len Size of each data element in bytes
+ * @param init_valid_map_offset Bit offset captured before decoding the current batch, via
+ * init_null_fill_valid_map_offset()
+ * @param t Thread index within the block
+ */
+template <int block_size>
+__device__ void zero_fill_null_positions(auto* s,
+                                         uint32_t dtype_len,
+                                         int init_valid_map_offset,
+                                         int t)
+{
+  auto const& ni       = get_null_fill_nesting_info(s);
+  int const num_values = ni.valid_map_offset - init_valid_map_offset;
+  if (ni.valid_map == nullptr || num_values == 0) { return; }
+  zero_fill_null_positions_shared<block_size>(s, dtype_len, init_valid_map_offset, num_values, t);
 }
 
 }  // namespace cudf::io::parquet::detail

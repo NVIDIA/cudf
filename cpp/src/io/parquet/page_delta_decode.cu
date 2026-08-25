@@ -370,8 +370,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   bool const process_nulls  = should_process_nulls(s);
 
   // Capture initial valid_map_offset before any processing that might modify it
-  int const init_valid_map_offset =
-    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+  int const init_valid_map_offset = init_null_fill_valid_map_offset(s);
 
   // copying logic from gpuDecodePageData.
   PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
@@ -480,15 +479,8 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
   if (has_repetition) {
     // Zero-fill null positions after decoding valid values
-    auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
-    if (ni.valid_map != nullptr) {
-      int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(s,
-                                                         s->output_cvt.dtype_len,
-                                                         init_valid_map_offset,
-                                                         num_values,
-                                                         static_cast<int>(block.thread_rank()));
-    }
+    zero_fill_null_positions<decode_block_size>(
+      s, s->output_cvt.dtype_len, init_valid_map_offset, static_cast<int>(block.thread_rank()));
   }
 
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
@@ -549,8 +541,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const process_nulls  = should_process_nulls(s);
 
   // Capture initial valid_map_offset before any processing that might modify it
-  int const init_valid_map_offset =
-    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+  int const init_valid_map_offset = init_null_fill_valid_map_offset(s);
 
   // choose a character parallel string copy when the average string is longer than a warp
   auto const use_char_ll =
@@ -689,15 +680,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   }
 
   // Zero-fill null positions after decoding valid values
-  auto const& ni = s->nesting.nesting_info[leaf_level_index];
-  if (ni.valid_map != nullptr) {
-    int const num_values = ni.valid_map_offset - init_valid_map_offset;
-    zero_fill_null_positions_shared<decode_block_size>(s,
-                                                       sizeof(size_type),
-                                                       init_valid_map_offset,
-                                                       num_values,
-                                                       static_cast<int>(block.thread_rank()));
-  }
+  zero_fill_null_positions<decode_block_size>(
+    s, sizeof(size_type), init_valid_map_offset, static_cast<int>(block.thread_rank()));
 
   // For large strings, update the initial string buffer offset to be used during large string
   // column construction. Otherwise, convert string sizes to final offsets.
@@ -772,8 +756,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const process_nulls  = should_process_nulls(s);
 
   // Capture initial valid_map_offset before any processing that might modify it
-  int const init_valid_map_offset =
-    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+  int const init_valid_map_offset = init_null_fill_valid_map_offset(s);
 
   // copying logic from gpuDecodePageData.
   PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
@@ -906,15 +889,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   }
 
   // Zero-fill null positions after decoding valid values
-  auto const& ni = nesting_info_base[leaf_level_index];
-  if (ni.valid_map != nullptr) {
-    int const num_values = ni.valid_map_offset - init_valid_map_offset;
-    zero_fill_null_positions_shared<decode_block_size>(s,
-                                                       sizeof(size_type),
-                                                       init_valid_map_offset,
-                                                       num_values,
-                                                       static_cast<int>(block.thread_rank()));
-  }
+  zero_fill_null_positions<decode_block_size>(
+    s, sizeof(size_type), init_valid_map_offset, static_cast<int>(block.thread_rank()));
 
   // For large strings, update the initial string buffer offset to be used during large string
   // column construction. Otherwise, convert string sizes to final offsets.

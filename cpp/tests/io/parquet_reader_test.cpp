@@ -1759,6 +1759,57 @@ TEST_F(ParquetReaderTest, StructByteArray)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+TEST_F(ParquetReaderTest, StructRequiredChildNullGaps)
+{
+  // A REQUIRED leaf column nested under an OPTIONAL struct ancestor has no validity buffer of
+  // its own in cudf, so when the struct is null the leaf has no encoded value for that row.
+  // The reader must zero-fill the resulting output gaps using the struct's own validity bitmap
+  // rather than leaving them as garbage/stale data. Use enough rows to span multiple 32-bit
+  // validity blocks and warps in the zero-fill kernel, with nulls at irregular offsets so gaps
+  // straddle block/warp boundaries.
+  constexpr auto num_rows = 200;
+
+  auto child_values = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int32_t>(i); });
+  column_wrapper<int32_t> child_col{
+    child_values, child_values + num_rows, cudf::test::iterators::no_nulls()};
+
+  std::vector<bool> struct_validity(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    struct_validity[i] = (i % 7) != 0;
+  }
+  auto struct_col = cudf::test::structs_column_wrapper{{child_col}, struct_validity};
+
+  auto const written = table_view{{struct_col}};
+  cudf::io::table_input_metadata output_metadata(written);
+  output_metadata.column_metadata[0].child(0).set_nullability(false);
+
+  auto filepath = temp_env->get_temp_filepath("StructRequiredChildNullGaps.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written)
+      .metadata(std::move(output_metadata));
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+
+  // the child column has no validity buffer of its own; its raw values at struct-null rows must
+  // be zero-filled, so comparing raw values (not just the struct's own null mask) exercises the
+  // fix
+  ASSERT_FALSE(result.tbl->view().column(0).child(0).nullable());
+
+  auto expected_child_values = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return (i % 7) == 0 ? 0 : static_cast<int32_t>(i); });
+  column_wrapper<int32_t> expected_child_col{
+    expected_child_values, expected_child_values + num_rows, cudf::test::iterators::no_nulls()};
+  auto expected_struct_col =
+    cudf::test::structs_column_wrapper{{expected_child_col}, struct_validity};
+  auto const expected = table_view{{expected_struct_col}};
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetReaderTest, NestingOptimizationTest)
 {
   // test nesting levels > cudf::io::parquet::detail::max_cacheable_nesting_decode_info deep.

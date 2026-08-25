@@ -125,15 +125,15 @@ def union_distinct(
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
-def apply_boolean_mask(
-    input: Column,
-    boolean_mask: Column,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Column: ...
 def apply_retention_mask(
     input: Column,
     retention_mask: Column,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...
+def apply_boolean_mask(
+    input: Column,
+    boolean_mask: Column,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...

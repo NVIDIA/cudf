@@ -144,7 +144,7 @@ TEST_F(ListTest, StableSortLists)
     list_col, cudf::order::DESCENDING, cudf::null_order::AFTER, cudf::test::get_default_stream());
 }
 
-TEST_F(ListTest, ApplyBooleanMask)
+TEST_F(ListTest, ApplyRetentionMask)
 {
   cudf::test::lists_column_wrapper<int> list_col{{0, 1}, {2, 3, 7, 8}, {4, 5}};
   cudf::test::lists_column_wrapper<bool> boolean_mask{

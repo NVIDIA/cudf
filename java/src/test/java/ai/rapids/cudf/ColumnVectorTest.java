@@ -6927,8 +6927,8 @@ void testGetJSONObjectWithInvalidQueries() {
         );
         ColumnVector listOfBoolCv = boolCv.makeListFromOffsets(5, offsetsCv);
 
-        // apply boolean mask
-        ColumnVector actualCv = listOfStructCv.applyBooleanMask(listOfBoolCv);
+        // apply retention mask
+        ColumnVector actualCv = listOfStructCv.applyRetentionMask(listOfBoolCv);
 
         ColumnVector expectedKeyCv = ColumnVector.fromBoxedInts(
             11, // list1

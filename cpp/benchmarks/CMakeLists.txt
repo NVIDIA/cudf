@@ -138,7 +138,7 @@ ConfigureNVBench(FILTER_NVBENCH filter/minmax_filter.cpp)
 # * stream_compaction benchmark -------------------------------------------------------------------
 ConfigureNVBench(
   STREAM_COMPACTION_NVBENCH
-  stream_compaction/apply_boolean_mask.cpp
+  stream_compaction/apply_mask.cpp
   stream_compaction/distinct.cpp
   stream_compaction/stable_distinct.cpp
   stream_compaction/stream_compaction_common.cpp

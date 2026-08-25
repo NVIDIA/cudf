@@ -42,13 +42,16 @@ namespace lists {
  * `true`.
  * An output row is invalid only if the input row is invalid.
  *
+ * @note @p input and @p retention_mask must have the same number of rows. The output column has the
+ * same number of rows as the input column.
+ *
  * @throws cudf::logic_error if @p retention_mask is not a "lists of bools" column
- * @throws cudf::logic_error if @p input` and @p retention_mask have different number of rows
+ * @throws cudf::logic_error if @p input and @p retention_mask have different number of rows
  *
  * @param input The input list column view to be filtered
  * @param retention_mask A nullable list of bools column used to filter `input` elements
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Device memory resource used to allocate the returned column's device memory
  * @return List column of the same type as `input`, containing filtered list rows
  */
 std::unique_ptr<column> apply_retention_mask(

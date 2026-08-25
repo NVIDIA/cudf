@@ -143,14 +143,14 @@ cpdef Column union_distinct(
     DeviceMemoryResource mr=*,
 )
 
-cpdef Column apply_boolean_mask(
+cpdef Column apply_retention_mask(
     Column,
     Column,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
 
-cpdef Column apply_retention_mask(
+cpdef Column apply_boolean_mask(
     Column,
     Column,
     object stream = *,

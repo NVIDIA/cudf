@@ -110,7 +110,8 @@ std::unique_ptr<table> apply_boolean_mask(table_view const& input,
                                           cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
-  return apply_retention_mask(input, boolean_mask, stream, mr);
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(input, boolean_mask, detail::mask_type::RETENTION, stream, mr);
 }
 
 std::unique_ptr<table> apply_deletion_mask(table_view const& input,

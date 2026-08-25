@@ -197,10 +197,10 @@ std::unique_ptr<table> drop_nans(
  * if the corresponding element `i` in the mask is non-null and `true`.
  * This operation is stable: the input order is preserved.
  *
- * @note if @p input.num_rows() is zero, there is no error, and an empty table
- * is returned.
+ * @note If @p retention_mask is empty, or @p input has zero rows, an empty table is returned.
  *
- * @throws cudf::logic_error if `input.num_rows() != retention_mask.size()`.
+ * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
+ * retention_mask.
  * @throws cudf::logic_error if @p retention_mask is not `type_id::BOOL8` type.
  *
  * @param[in] input The input table_view to filter

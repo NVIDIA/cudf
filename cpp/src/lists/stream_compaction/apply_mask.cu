@@ -117,7 +117,8 @@ std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
-  return apply_retention_mask(input, boolean_mask, stream, mr);
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(input, boolean_mask, cudf::detail::mask_type::RETENTION, stream, mr);
 }
 
 std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,

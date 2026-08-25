@@ -31,15 +31,15 @@ def drop_nans(
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...
-def apply_boolean_mask(
-    source_table: Table,
-    boolean_mask: Column,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Table: ...
 def apply_retention_mask(
     source_table: Table,
     retention_mask: Column,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Table: ...
+def apply_boolean_mask(
+    source_table: Table,
+    boolean_mask: Column,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...

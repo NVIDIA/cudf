@@ -30,18 +30,18 @@ cpdef Table drop_nans(
     DeviceMemoryResource mr = *,
 )
 
+cpdef Table apply_retention_mask(
+    Table source_table,
+    Column retention_mask,
+    object stream = *,
+    DeviceMemoryResource mr = *,
+)
+
 cpdef Table apply_boolean_mask(
     Table source_table,
     Column boolean_mask,
     object stream = *,
     DeviceMemoryResource mr = *,
-)
-
-cpdef Table apply_retention_mask(
-  Table source_table,
-  Column retention_mask,
-  object stream = *,
-  DeviceMemoryResource mr = *,
 )
 
 cpdef Table apply_deletion_mask(

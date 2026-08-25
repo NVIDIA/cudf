@@ -28,14 +28,14 @@ using strings = strings_column_wrapper;
 
 auto constexpr X = int32_t{0};  // Placeholder for NULL.
 
-struct ApplyBooleanMaskTest : public BaseFixture {};
+struct ApplyRetentionMaskTest : public BaseFixture {};
 
 template <typename T>
-struct ApplyBooleanMaskTypedTest : ApplyBooleanMaskTest {};
+struct ApplyRetentionMaskTypedTest : ApplyRetentionMaskTest {};
 
-TYPED_TEST_SUITE(ApplyBooleanMaskTypedTest, cudf::test::NumericTypes);
+TYPED_TEST_SUITE(ApplyRetentionMaskTypedTest, cudf::test::NumericTypes);
 
-TYPED_TEST(ApplyBooleanMaskTypedTest, StraightLine)
+TYPED_TEST(ApplyRetentionMaskTypedTest, StraightLine)
 {
   using T    = TypeParam;
   auto input = lists<T>{{0, 1, 2, 3}, {4, 5}, {6, 7, 8, 9}, {0, 1}, {2, 3, 4, 5}, {6, 7}}.release();
@@ -58,7 +58,7 @@ TYPED_TEST(ApplyBooleanMaskTypedTest, StraightLine)
   }
 }
 
-TYPED_TEST(ApplyBooleanMaskTypedTest, NullElementsInTheListRows)
+TYPED_TEST(ApplyRetentionMaskTypedTest, NullElementsInTheListRows)
 {
   using T = TypeParam;
   auto input =
@@ -95,7 +95,7 @@ TYPED_TEST(ApplyBooleanMaskTypedTest, NullElementsInTheListRows)
   }
 }
 
-TYPED_TEST(ApplyBooleanMaskTypedTest, NullListRowsInTheInputColumn)
+TYPED_TEST(ApplyRetentionMaskTypedTest, NullListRowsInTheInputColumn)
 {
   using T = TypeParam;
   auto input =
@@ -129,7 +129,7 @@ TYPED_TEST(ApplyBooleanMaskTypedTest, NullListRowsInTheInputColumn)
   }
 }
 
-TYPED_TEST(ApplyBooleanMaskTypedTest, StructInput)
+TYPED_TEST(ApplyRetentionMaskTypedTest, StructInput)
 {
   using T    = TypeParam;
   using fwcw = fwcw<T>;
@@ -191,7 +191,7 @@ TYPED_TEST(ApplyBooleanMaskTypedTest, StructInput)
   }
 }
 
-TYPED_TEST(ApplyBooleanMaskTypedTest, NullsInBooleanMask)
+TYPED_TEST(ApplyRetentionMaskTypedTest, NullsInBooleanMask)
 {
   using T    = TypeParam;
   auto input = lists<T>{{10, 20, 30}, {40, 50}, {60, 70, 80, 90}};
@@ -206,7 +206,7 @@ TYPED_TEST(ApplyBooleanMaskTypedTest, NullsInBooleanMask)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
 }
 
-TEST_F(ApplyBooleanMaskTest, Trivial)
+TEST_F(ApplyRetentionMaskTest, Trivial)
 {
   auto const input  = lists<int32_t>{};
   auto const filter = filter_t{};
@@ -214,7 +214,7 @@ TEST_F(ApplyBooleanMaskTest, Trivial)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, lists<int32_t>{});
 }
 
-TEST_F(ApplyBooleanMaskTest, Failure)
+TEST_F(ApplyRetentionMaskTest, Failure)
 {
   {
     // Invalid mask type.

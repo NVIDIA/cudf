@@ -343,7 +343,7 @@ TEST_F(StreamCompactionTest, Distinct)
   }
 }
 
-TEST_F(StreamCompactionTest, ApplyBooleanMask)
+TEST_F(StreamCompactionTest, ApplyRetentionMask)
 {
   auto const col = int32s_col{
     9668, 9590, 9526, 9205, 9434, 9347, 9160, 9569, 9143, 9807, 9606, 9446, 9279, 9822, 9691};

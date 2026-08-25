@@ -2383,7 +2383,7 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
                                               std::optional<cudf::size_type> expected_row_groups =
                                                 std::nullopt) {
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options const read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);

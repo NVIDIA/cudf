@@ -121,6 +121,7 @@ def test_from_py_int_with_decimal_dtype(val, tid, scale):
     result = plc.Scalar.from_py(val, dtype)
     assert result.to_py() == decimal.Decimal(val)
     assert result.type().id() == TypeId.DECIMAL128
+    assert result.type().scale() == 0
 
 
 @pytest.mark.parametrize(

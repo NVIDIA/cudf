@@ -15,6 +15,21 @@ namespace cudf {
 namespace reduction {
 namespace detail {
 
+// variance is intentionally co-located with standard_deviation in this translation unit. Both
+// reductions use the same var_std intermediate and CUB reduction shape; keeping them together
+// avoids emitting duplicate device kernel instantiations.
+std::unique_ptr<cudf::scalar> standard_deviation(column_view const& col,
+                                                 cudf::data_type const output_dtype,
+                                                 size_type ddof,
+                                                 cuda::stream_ref stream,
+                                                 rmm::device_async_resource_ref mr)
+{
+  using reducer = compound::detail::element_type_dispatcher<op::standard_deviation>;
+  auto col_type =
+    cudf::is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
+  return cudf::type_dispatcher(col_type, reducer(), col, output_dtype, ddof, stream, mr);
+}
+
 std::unique_ptr<cudf::scalar> variance(column_view const& col,
                                        cudf::data_type const output_dtype,
                                        size_type ddof,

@@ -30,6 +30,17 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         YES
         NO
 
+    cdef cppclass hybrid_scan_metadata:
+        hybrid_scan_metadata(
+            host_span[const_uint8_t] footer_bytes,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        hybrid_scan_metadata(
+            const FileMetaData& parquet_metadata,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
     cdef cppclass hybrid_scan_reader:
         hybrid_scan_reader(
             host_span[const_uint8_t] footer_bytes,
@@ -39,6 +50,10 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         hybrid_scan_reader(
             const FileMetaData& parquet_metadata,
             const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        hybrid_scan_reader(
+            hybrid_scan_metadata metadata
         ) except +libcudf_exception_handler
 
         FileMetaData parquet_metadata() except +libcudf_exception_handler
@@ -84,6 +99,12 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             std_span[const_size_type] row_group_indices,
             const parquet_reader_options& options,
             cudaStream_t stream
+        ) except +libcudf_exception_handler
+
+        unique_ptr[column] build_all_true_row_mask(
+            std_span[const_size_type] row_group_indices,
+            cudaStream_t stream,
+            device_async_resource_ref mr
         ) except +libcudf_exception_handler
 
         unique_ptr[column] build_row_mask_with_page_index_stats(

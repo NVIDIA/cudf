@@ -153,7 +153,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     });
   }();
 
-  auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto strings_output = cudf::make_strings_column(indices, stream, mr);
 
   // Build the lists column from the offsets and the strings
   return make_lists_column(input.size(),

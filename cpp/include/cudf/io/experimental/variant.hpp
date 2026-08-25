@@ -15,6 +15,7 @@
 #include <cuda/stream>
 
 #include <memory>
+#include <optional>
 #include <string_view>
 
 /**
@@ -49,6 +50,9 @@ namespace io::parquet::experimental {
  * @param variant_column Struct column (VARIANT materialization) with `list<uint8>` children
  *                       (`metadata`, `value`), plus optional shredded siblings
  * @param path JSONPath-like path string identifying the target field
+ * @param status Optional. When provided, filled with `variant_operation_status` values, one per
+ *               row. Must be non-nullable, `UINT8`, and have the same row count as
+ *               `variant_column`
  * @param stream CUDA stream
  * @param mr Device memory resource
  * @return `list<uint8>` column with the extracted value's encoded bytes. A row is null when the
@@ -56,13 +60,16 @@ namespace io::parquet::experimental {
  *         the current value.
  *
  * @throws std::invalid_argument on empty path or malformed syntax (`[*]` wildcards, negative
- *         indices, out-of-range indices, and quoted names inside `[...]` are not supported)
+ *         indices, out-of-range indices, and quoted names inside `[...]` are not supported); or if
+ *         `status` is provided but is nullable, not `UINT8`, or has a different row count than
+ *         `variant_column`
  */
 [[nodiscard]] std::unique_ptr<column> get_variant_field(
   column_view const& variant_column,
   std::string_view path,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::optional<mutable_column_view> status = std::nullopt,
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Decode a VARIANT value column's blobs into a typed cuDF column.
@@ -73,19 +80,27 @@ namespace io::parquet::experimental {
  * @param values `list<uint8>` column of VARIANT-encoded value bytes
  * @param desired_type Target cuDF type (`STRING`, `INT8`/`INT16`/`INT32`/`INT64`,
  *        `FLOAT32`/`FLOAT64`, or `BOOL8`)
+ * @param status Optional in-out parameter, `variant_operation_status` values, one per row. Must be
+ *        non-nullable, `UINT8`, and have the same row count as `values`. On input, its existing
+ *        values are treated as status from a prior `get_variant_field` call: rows already marked
+ *        non-success are propagated directly to the output without decoding. It is then
+ *        overwritten in place with the final per-row status. Callers with no prior status to
+ *        propagate must initialize every row to `variant_operation_status::SUCCESS` before calling
  * @param stream CUDA stream
  * @param mr Device memory resource
  * @return Typed column decoded from the VARIANT value blobs
  *
- * @throws std::invalid_argument if `values` is not a `list<uint8>` column, or if `desired_type`
+ * @throws std::invalid_argument if `values` is not a `list<uint8>` column; if `desired_type`
  *         is not one of the supported types (`STRING`, `INT8`/`INT16`/`INT32`/`INT64`,
- *         `FLOAT32`/`FLOAT64`, or `BOOL8`)
+ *         `FLOAT32`/`FLOAT64`, or `BOOL8`); or if `status` is provided but is nullable, not
+ *         `UINT8`, or has a different row count than `values`
  */
 [[nodiscard]] std::unique_ptr<column> cast_variant(
   column_view const& values,
   data_type desired_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::optional<mutable_column_view> status = std::nullopt,
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Convenience wrapper: extract a nested object value by path and decode into a typed column.
@@ -97,18 +112,23 @@ namespace io::parquet::experimental {
  * @param path JSONPath-like path string (see `get_variant_field` for syntax)
  * @param desired_type Target type: `STRING`, `INT8`/`INT16`/`INT32`/`INT64`,
  *        `FLOAT32`/`FLOAT64`, or `BOOL8`
+ * @param status Optional. When provided, filled with `variant_operation_status` values, one per
+ *               row. Must be non-nullable, `UINT8`, and have the same row count as
+ *               `variant_column`
  * @param stream CUDA stream
  * @param mr Device memory resource
  * @return Column of `desired_type`
  *
- * @throws std::invalid_argument on empty path or malformed syntax
+ * @throws std::invalid_argument on empty path or malformed syntax; or if `status` is provided but
+ *         is nullable, not `UINT8`, or has a different row count than `variant_column`
  */
 [[nodiscard]] std::unique_ptr<column> extract_variant_field(
   column_view const& variant_column,
   std::string_view path,
   data_type desired_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::optional<mutable_column_view> status = std::nullopt,
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Return the logical type of each VARIANT value blob in a `list<uint8>` column.

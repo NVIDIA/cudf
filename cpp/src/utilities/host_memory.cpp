@@ -4,7 +4,6 @@
  */
 
 #include <cudf/detail/utilities/getenv_or.hpp>
-#include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
@@ -15,6 +14,8 @@
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream_ref>
 
 #include <algorithm>
 #include <atomic>
@@ -90,7 +91,6 @@ class pinned_pool_with_fallback_memory_resource {
   size_t max_pool_size_{0};
   // Raw pointer to avoid a segfault when the pool is destroyed on exit
   host_pooled_mr* pool_{nullptr};
-  cuda::stream_ref stream_{cudf::detail::global_cuda_stream_pool().get_stream().value()};
 
   // Wrapped in shared_ptr so the outer class is copyable (required by any_resource)
   std::shared_ptr<fallback_state> fallback_{std::make_shared<fallback_state>()};
@@ -187,7 +187,7 @@ class pinned_pool_with_fallback_memory_resource {
 
   bool operator==(pinned_pool_with_fallback_memory_resource const& other) const noexcept
   {
-    return pool_ == other.pool_ && stream_ == other.stream_;
+    return pool_ == other.pool_;
   }
 
   bool operator!=(pinned_pool_with_fallback_memory_resource const& other) const noexcept

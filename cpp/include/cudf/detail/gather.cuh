@@ -104,7 +104,7 @@ struct gather_bitmask_functor {
  * @param gather_map_end End of the gather map
  * @param nullify_out_of_bounds True if map values are checked against `source_size`
  * @param stream CUDA stream used for kernel launches.
- * @param mr Memory resources used for temporary allocations
+ * @param mr Memory resources used for temporary device allocations.
  */
 template <typename InputItr, typename OutputItr, typename MapIterator>
 void gather_helper(InputItr source_itr,
@@ -320,7 +320,7 @@ struct column_gatherer_impl<list_view> {
    * @param gather_map_end iterator representing the end of the range to gather from
    * @param nullify_out_of_bounds Nullify values in the gather map that are out of bounds
    * @param stream CUDA stream on which to execute kernels
-   * @param mr Memory resource to use for all allocations
+   * @param mr Memory resources to use. Output MR will be used for all allocations.
    *
    * @returns column with elements gathered based on the gather map
    *
@@ -340,8 +340,9 @@ struct column_gatherer_impl<list_view> {
     // if the gather map is empty, return an empty column
     if (gather_map_size == 0) { return empty_like(column); }
 
-    // List gather helpers still take a single resource ref on this branch; use the output
-    // resource until the dedicated list/segmented gather MR port lands.
+    // List gather helpers still take a single resource ref; use the output
+    // resource until the dedicated list/segmented gather is ported to use memory_resources. See
+    // https://github.com/NVIDIA/cudf/issues/20780.
     // generate gather_data for the next level (N+1)
     lists::detail::gather_data gd =
       nullify_out_of_bounds ? lists::detail::make_gather_data<true>(

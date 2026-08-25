@@ -340,7 +340,8 @@ TEST_F(GatherNullableTest, NullableNoNulls)
   std::unique_ptr<cudf::table> result;
   {
     auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    result = cudf::gather(source_table, gather_map->view(), cudf::out_of_bounds_policy::DONT_CHECK, st, mr);
+    result               = cudf::gather(
+      source_table, gather_map->view(), cudf::out_of_bounds_policy::DONT_CHECK, st, mr);
     this->_harness.synchronize(st);
   }
 

@@ -839,33 +839,24 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
     auto const split_m = cudf::split(gather_map_col, {1, 4}, stream);
     auto const split_e = cudf::split(expected_col, {1, 4}, stream);
 
-    auto const result0 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[0]},
-                                                       cudf::lists_column_view{split_m[0]},
-                                                       NULLIFY,
-                                                       stream,
-                                                       mr);
+    auto const result0 = cudf::lists::segmented_gather(
+      cudf::lists_column_view{sliced[0]}, cudf::lists_column_view{split_m[0]}, NULLIFY, stream, mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[0],
                                         result0->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
                                         cudf::test::default_ulp,
                                         stream,
                                         mr);
-    auto const result1 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[1]},
-                                                       cudf::lists_column_view{split_m[1]},
-                                                       NULLIFY,
-                                                       stream,
-                                                       mr);
+    auto const result1 = cudf::lists::segmented_gather(
+      cudf::lists_column_view{sliced[1]}, cudf::lists_column_view{split_m[1]}, NULLIFY, stream, mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[1],
                                         result1->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,
                                         cudf::test::default_ulp,
                                         stream,
                                         mr);
-    auto const result2 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[2]},
-                                                       cudf::lists_column_view{split_m[2]},
-                                                       NULLIFY,
-                                                       stream,
-                                                       mr);
+    auto const result2 = cudf::lists::segmented_gather(
+      cudf::lists_column_view{sliced[2]}, cudf::lists_column_view{split_m[2]}, NULLIFY, stream, mr);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[2],
                                         result2->view(),
                                         cudf::test::debug_output_level::FIRST_ERROR,

@@ -108,12 +108,12 @@ TEST_F(GatherTestStr, Gather)
   std::unique_ptr<cudf::table> results;
   {
     auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    results = cudf::gather(source_table,
-                              gather_map,
-                              cudf::out_of_bounds_policy::NULLIFY,
-                              cudf::negative_index_policy::NOT_ALLOWED,
-                              st,
-                              mr);
+    results              = cudf::gather(source_table,
+                           gather_map,
+                           cudf::out_of_bounds_policy::NULLIFY,
+                           cudf::negative_index_policy::NOT_ALLOWED,
+                           st,
+                           mr);
     this->_harness.synchronize(st);
   }
 
@@ -148,12 +148,12 @@ TEST_F(GatherTestStr, GatherDontCheckOutOfBounds)
   std::unique_ptr<cudf::table> results;
   {
     auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    results = cudf::gather(source_table,
-                              gather_map,
-                              cudf::out_of_bounds_policy::DONT_CHECK,
-                              cudf::negative_index_policy::NOT_ALLOWED,
-                              st,
-                              mr);
+    results              = cudf::gather(source_table,
+                           gather_map,
+                           cudf::out_of_bounds_policy::DONT_CHECK,
+                           cudf::negative_index_policy::NOT_ALLOWED,
+                           st,
+                           mr);
     this->_harness.synchronize(st);
   }
 
@@ -176,12 +176,12 @@ TEST_F(GatherTestStr, GatherEmptyMapStringsColumn)
   std::unique_ptr<cudf::table> results;
   {
     auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    results = cudf::gather(cudf::table_view({zero_size_strings_column->view()}),
-                              gather_map,
-                              cudf::out_of_bounds_policy::NULLIFY,
-                              cudf::negative_index_policy::NOT_ALLOWED,
-                              st,
-                              mr);
+    results              = cudf::gather(cudf::table_view({zero_size_strings_column->view()}),
+                           gather_map,
+                           cudf::out_of_bounds_policy::NULLIFY,
+                           cudf::negative_index_policy::NOT_ALLOWED,
+                           st,
+                           mr);
     this->_harness.synchronize(st);
   }
   cudf::test::expect_column_empty(results->get_column(0).view());
@@ -198,12 +198,12 @@ TEST_F(GatherTestStr, GatherZeroSizeStringsColumn)
   std::unique_ptr<cudf::table> results;
   {
     auto fail_on_current = this->_harness.fail_on_current_device_resource_use();
-    results = cudf::gather(cudf::table_view({zero_size_strings_column->view()}),
-                              gather_map,
-                              cudf::out_of_bounds_policy::NULLIFY,
-                              cudf::negative_index_policy::NOT_ALLOWED,
-                              st,
-                              mr);
+    results              = cudf::gather(cudf::table_view({zero_size_strings_column->view()}),
+                           gather_map,
+                           cudf::out_of_bounds_policy::NULLIFY,
+                           cudf::negative_index_policy::NOT_ALLOWED,
+                           st,
+                           mr);
     this->_harness.synchronize(st);
   }
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(

@@ -320,7 +320,8 @@ TYPED_TEST(TypedStructGatherTest, TestNullifyOnNonNullInput)
 
 TYPED_TEST(TypedStructGatherTest, TestGatherStructOfLists)
 {
-  // TODO: enable fail_on_current after list gather transitive deps (valid_if, get_sliced_child, nested LCW) are ported
+  // TODO: enable fail_on_current after list gather transitive deps (valid_if, get_sliced_child,
+  // nested LCW) are ported
   auto const st = this->stream();
   auto const mr = this->resources();
 

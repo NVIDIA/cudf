@@ -176,7 +176,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   hash_set_ref_type const row_set_ref = row_set.ref(cuco::contains).rebind_hash_function(hash_left);
 
   // Vector used to indicate indices from the left table which are present in output
-  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream);
+  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
 
   launch_mixed_join_semi(has_nulls,
                          *left_conditional_view,

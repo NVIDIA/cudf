@@ -546,13 +546,10 @@ class Skew(Expr):
         (``SkewState::from_iter`` in ``polars-compute/src/moment.rs``), which
         also centers on the mean before summing. This numerically stable
         two-pass computation reduces the mean first, then reduces the centered
-        powers ``sum((x - mean)**k) / n``, avoiding the catastrophic
-        cancellation of raw power sums (``sum(x**2) - sum(x)**2 / n``).
+        powers ``sum((x - mean)**k) / n``.
 
-        The centered powers ``(x - mean)**2`` and ``(x - mean)**3`` are each
-        evaluated by a single fused ``compute_column`` AST kernel instead of a
-        chain of ``binary_operation`` calls, avoiding materialization of the
-        intermediate ``x - mean`` column.
+        Could be done in a single pass with https://www.osti.gov/servlets/purl/1028931
+        and in a single kernel with https://github.com/NVIDIA/cudf/pull/23621.
         """
 
         def total(col: plc.Column) -> float:
@@ -663,13 +660,10 @@ class Kurtosis(Expr):
         (``KurtosisState::from_iter`` in ``polars-compute/src/moment.rs``),
         which also centers on the mean before summing. This numerically stable
         two-pass computation reduces the mean first, then reduces the centered
-        powers ``sum((x - mean)**k) / n``, avoiding the catastrophic
-        cancellation of raw power sums (``sum(x**2) - sum(x)**2 / n``).
+        powers ``sum((x - mean)**k) / n``.
 
-        The centered powers ``(x - mean)**2`` and ``(x - mean)**4`` are each
-        evaluated by a single fused ``compute_column`` AST kernel instead of a
-        chain of ``binary_operation`` calls, avoiding materialization of the
-        intermediate ``x - mean`` column.
+        Could be done in a single pass with https://www.osti.gov/servlets/purl/1028931
+        and in a single kernel with https://github.com/NVIDIA/cudf/pull/23621.
         """
 
         def total(col: plc.Column) -> float:

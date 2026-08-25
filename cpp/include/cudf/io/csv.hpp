@@ -1610,9 +1610,8 @@ class csv_writer_options {
   /**
    * @brief Sets the compression type for the output.
    *
-   * Only ZSTD compression is supported for CSV writer because it allows
-   * concatenated frames, enabling progressive chunk-based compression
-   * compatible with standard decompression tools.
+   * Only ZSTD is supported: concatenated frames let the chunks be compressed as they are written
+   * while keeping the output readable by standard tools.
    *
    * @param comp The compression type (NONE or ZSTD only)
    * @throw cudf::logic_error if compression type is not NONE or ZSTD
@@ -1627,9 +1626,8 @@ class csv_writer_options {
   /**
    * @brief Sets the size of the blocks that the output is compressed in.
    *
-   * The output is split into blocks of this size, each compressed into its own frame, so that the
-   * codec can compress them in parallel. The block size is independent of `rows_per_chunk`, and is
-   * capped at the maximum input size the codec supports.
+   * Each block becomes its own frame, so the codec can compress them in parallel. Independent of
+   * `rows_per_chunk`, and capped at the codec's maximum input size.
    *
    * @param size The compression block size, in bytes
    * @throw cudf::logic_error if the block size is zero
@@ -1779,9 +1777,8 @@ class csv_writer_options_builder {
   /**
    * @brief Sets the compression type for the output.
    *
-   * Only ZSTD compression is supported for CSV writer because it allows
-   * concatenated frames, enabling progressive chunk-based compression
-   * compatible with standard decompression tools.
+   * Only ZSTD is supported: concatenated frames let the chunks be compressed as they are written
+   * while keeping the output readable by standard tools.
    *
    * @param comp The compression type (NONE or ZSTD only)
    * @return this for chaining
@@ -1795,9 +1792,8 @@ class csv_writer_options_builder {
   /**
    * @brief Sets the size of the blocks that the output is compressed in.
    *
-   * The output is split into blocks of this size, each compressed into its own frame, so that the
-   * codec can compress them in parallel. The block size is independent of `rows_per_chunk`, and is
-   * capped at the maximum input size the codec supports.
+   * Each block becomes its own frame, so the codec can compress them in parallel. Independent of
+   * `rows_per_chunk`, and capped at the codec's maximum input size.
    *
    * @param size The compression block size, in bytes
    * @return this for chaining

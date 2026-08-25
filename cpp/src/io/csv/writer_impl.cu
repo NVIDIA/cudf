@@ -66,11 +66,7 @@ using namespace cudf::io;
 namespace {
 
 /**
- * @brief Writes a device memory buffer to the sink.
- *
- * @param out_sink Output data sink
- * @param data Device data to write
- * @param stream CUDA stream
+ * @brief Writes a device memory buffer to the sink, on the device if the sink prefers it.
  */
 void write_to_sink(data_sink* out_sink, device_span<char const> data, cuda::stream_ref stream)
 {
@@ -94,21 +90,11 @@ size_t compression_block_size(compression_type compression, size_t requested_siz
 /**
  * @brief Compresses device data and writes it to the sink.
  *
- * Only ZSTD is supported for the CSV writer because it allows concatenated frames, which is
- * required for progressive compression that standard tools can decompress. Decompressing
- * concatenated frames yields the concatenation of their payloads, so the data is split into
- * fixed-size blocks at arbitrary byte offsets, each compressed into its own frame by a single
- * batched call.
- *
- * `tail` is compressed as one more block in the same batched call, so appending it does not
- * require copying `data`.
- *
- * @param out_sink Output data sink
- * @param data Uncompressed device data
- * @param tail Uncompressed device data to write after `data`; may be empty
- * @param compression Compression type (only ZSTD is supported)
- * @param requested_block_size Size of the blocks the data is split into
- * @param stream CUDA stream
+ * Only ZSTD is supported, because decompressing concatenated frames yields the concatenation of
+ * their payloads: the data can be split into fixed-size blocks at arbitrary byte offsets, each
+ * compressed into its own frame by a single batched call, and standard tools still read the
+ * result. `tail`, which may be empty, is compressed as one more block in that same call, so
+ * appending it does not require copying `data`.
  */
 void write_compressed_to_sink(data_sink* out_sink,
                               device_span<char const> data,

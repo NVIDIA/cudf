@@ -40,9 +40,6 @@ namespace {
 [[nodiscard]] std::vector<FileMetaData> parquet_metadatas_from_footer_bytes(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes)
 {
-  CUDF_EXPECTS(
-    not footer_bytes.empty(), "At least one source must be provided", std::invalid_argument);
-
   std::vector<FileMetaData> parquet_metadatas;
   parquet_metadatas.reserve(footer_bytes.size());
   std::transform(footer_bytes.begin(),
@@ -139,6 +136,8 @@ aggregate_reader_metadata::aggregate_reader_metadata(
                                    use_arrow_schema,
                                    has_cols_from_mismatched_srcs)
 {
+  CUDF_EXPECTS(
+    not footer_bytes.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(

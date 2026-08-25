@@ -10,7 +10,7 @@ import math
 import sys
 from decimal import Decimal
 from functools import partial
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import polars as pl
 from polars.exceptions import ComputeError
@@ -533,12 +533,12 @@ class Skew(Expr):
 
     @staticmethod
     def _central_moments(
-        column: plc.Column, plc_type: plc.DataType, n: int, *, stream: Stream
+        column: plc.Column, plc_type: plc.DataType, *, stream: Stream
     ) -> tuple[float, float, float]:
         """
         Compute the ``mean`` and central moments ``m2``, ``m3``.
 
-        Nulls are excluded by the ``sum`` reductions.
+        Nulls are excluded by the ``mean`` reductions.
 
         Notes
         -----
@@ -546,21 +546,14 @@ class Skew(Expr):
         (``SkewState::from_iter`` in ``polars-compute/src/moment.rs``), which
         also centers on the mean before summing. This numerically stable
         two-pass computation reduces the mean first, then reduces the centered
-        powers ``sum((x - mean)**k) / n``.
+        powers ``mean((x - mean)**k)``.
 
         Could be done in a single pass with https://www.osti.gov/servlets/purl/1028931
         and in a single kernel with https://github.com/NVIDIA/cudf/pull/23621.
         """
-
-        def total(col: plc.Column) -> float:
-            return cast(
-                "float",
-                plc.reduce.reduce(
-                    col, plc.aggregation.sum(), plc_type, stream=stream
-                ).to_py(stream=stream),
-            )
-
-        mean = total(column) / n
+        mean = plc.reduce.reduce(
+            column, plc.aggregation.mean(), plc_type, stream=stream
+        ).to_py(stream=stream)
         table = plc.Table([column])
         dev = plc.expressions.Operation(
             plc.expressions.ASTOperator.SUB,
@@ -572,7 +565,15 @@ class Skew(Expr):
         dev3 = plc.expressions.Operation(mul, dev2, dev)
         d2 = plc.transform.compute_column(table, dev2, stream=stream)
         d3 = plc.transform.compute_column(table, dev3, stream=stream)
-        return mean, total(d2) / n, total(d3) / n
+        return (  # type: ignore[return-value]
+            mean,
+            plc.reduce.reduce(
+                d2, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+            plc.reduce.reduce(
+                d3, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+        )
 
     @staticmethod
     def _finalize(n: int, mean: float, m2: float, m3: float, *, bias: bool) -> float:
@@ -620,7 +621,7 @@ class Skew(Expr):
         else:
             casted = _as_float_for_moments(column, self.dtype, df.stream)
             mean, m2, m3 = self._central_moments(
-                casted.obj, self.dtype.plc_type, n, stream=df.stream
+                casted.obj, self.dtype.plc_type, stream=df.stream
             )
             value = self._finalize(n, mean, m2, m3, bias=self.bias)
         return self._scalar_column(value, self.dtype, df.stream)
@@ -647,12 +648,12 @@ class Kurtosis(Expr):
 
     @staticmethod
     def _central_moments(
-        column: plc.Column, plc_type: plc.DataType, n: int, *, stream: Stream
+        column: plc.Column, plc_type: plc.DataType, *, stream: Stream
     ) -> tuple[float, float, float]:
         """
         Compute the ``mean`` and central moments ``m2``, ``m4``.
 
-        Nulls are excluded by the ``sum`` reductions.
+        Nulls are excluded by the ``mean`` reductions.
 
         Notes
         -----
@@ -660,21 +661,14 @@ class Kurtosis(Expr):
         (``KurtosisState::from_iter`` in ``polars-compute/src/moment.rs``),
         which also centers on the mean before summing. This numerically stable
         two-pass computation reduces the mean first, then reduces the centered
-        powers ``sum((x - mean)**k) / n``.
+        powers ``mean((x - mean)**k)``.
 
         Could be done in a single pass with https://www.osti.gov/servlets/purl/1028931
         and in a single kernel with https://github.com/NVIDIA/cudf/pull/23621.
         """
-
-        def total(col: plc.Column) -> float:
-            return cast(
-                "float",
-                plc.reduce.reduce(
-                    col, plc.aggregation.sum(), plc_type, stream=stream
-                ).to_py(stream=stream),
-            )
-
-        mean = total(column) / n
+        mean = plc.reduce.reduce(
+            column, plc.aggregation.mean(), plc_type, stream=stream
+        ).to_py(stream=stream)
         table = plc.Table([column])
         dev = plc.expressions.Operation(
             plc.expressions.ASTOperator.SUB,
@@ -686,7 +680,15 @@ class Kurtosis(Expr):
         dev4 = plc.expressions.Operation(mul, dev2, dev2)
         d2 = plc.transform.compute_column(table, dev2, stream=stream)
         d4 = plc.transform.compute_column(table, dev4, stream=stream)
-        return mean, total(d2) / n, total(d4) / n
+        return (  # type: ignore[return-value]
+            mean,
+            plc.reduce.reduce(
+                d2, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+            plc.reduce.reduce(
+                d4, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+        )
 
     @staticmethod
     def _finalize(
@@ -738,7 +740,7 @@ class Kurtosis(Expr):
         else:
             casted = _as_float_for_moments(column, self.dtype, df.stream)
             mean, m2, m4 = self._central_moments(
-                casted.obj, self.dtype.plc_type, n, stream=df.stream
+                casted.obj, self.dtype.plc_type, stream=df.stream
             )
             value = self._finalize(n, mean, m2, m4, fisher=self.fisher, bias=self.bias)
         return self._scalar_column(value, self.dtype, df.stream)

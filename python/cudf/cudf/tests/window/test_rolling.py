@@ -428,6 +428,21 @@ def test_rolling_numba_udf_empty_window_min_periods_zero():
     assert_eq(expected, actual)
 
 
+def test_rolling_numba_udf_with_nulls_raises():
+    def some_func(A):
+        b = 0
+        for a in A:
+            b = b + a
+        return b
+
+    gsr = cudf.Series([1.0, None, 3.0, 4.0])
+    with pytest.raises(
+        NotImplementedError,
+        match="Handling UDF with null values is not yet supported",
+    ):
+        gsr.rolling(2).apply(some_func)
+
+
 def test_rolling_groupby_simple(supported_rolling_reductions):
     pdf = pd.DataFrame(
         {

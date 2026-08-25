@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <iterator>
 #include <numeric>
+#include <ranges>
 #include <tuple>
 #include <utility>
 
@@ -120,9 +121,24 @@ namespace {
 
 void hybrid_scan_reader_impl::mark_buffers_nullable_for_pruned_pages()
 {
-  if (std::all_of(_pass_page_mask.begin(), _pass_page_mask.end(), std::identity{})) { return; }
+  auto const& pass               = *_pass_itm_data;
+  auto buffers_with_pruned_pages = std::vector<bool>(_output_buffers.size(), false);
 
-  auto const mark_buffers_nullable = [](auto const& self, std::span<inline_column_buffer> buffers) {
+  // Helper to get pruned page indices
+  auto pruned_page_indices =
+    std::views::iota(std::size_t{0}, _pass_page_mask.size()) |
+    std::views::filter([&](auto page_idx) { return not _pass_page_mask[page_idx]; });
+
+  // Mark buffers with pruned pages
+  std::ranges::for_each(pruned_page_indices, [&](auto page_idx) {
+    auto const& chunk        = pass.chunks[pass.pages[page_idx].chunk_idx];
+    auto const& input_column = _input_columns[chunk.src_col_index];
+    buffers_with_pruned_pages[input_column.nesting.front()] = true;
+  });
+
+  // Helper to mark a buffer and its children nullable
+  auto const mark_buffers_nullable = [](auto const& self,
+                                        std::span<inline_column_buffer> buffers) -> void {
     for (auto& buffer : buffers) {
       // Page pruning synthesizes null rows at every nesting level except list elements.
       if ((buffer.user_data & parquet::detail::PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT) == 0) {
@@ -132,9 +148,17 @@ void hybrid_scan_reader_impl::mark_buffers_nullable_for_pruned_pages()
     }
   };
 
-  // Mark both the output and template buffers nullable when page pruning synthesizes null rows
-  mark_buffers_nullable(mark_buffers_nullable, _output_buffers);
-  mark_buffers_nullable(mark_buffers_nullable, _output_buffers_template);
+  // Mark buffers with pruned pages as nullable
+  auto buffers_with_pruned_page_indices =
+    std::views::iota(std::size_t{0}, _output_buffers.size()) |
+    std::views::filter([&](auto buffer_idx) { return buffers_with_pruned_pages[buffer_idx]; });
+  std::ranges::for_each(buffers_with_pruned_page_indices, [&](auto buffer_idx) {
+    mark_buffers_nullable(mark_buffers_nullable,
+                          std::span<inline_column_buffer>{&_output_buffers[buffer_idx], 1});
+    mark_buffers_nullable(
+      mark_buffers_nullable,
+      std::span<inline_column_buffer>{&_output_buffers_template[buffer_idx], 1});
+  });
 }
 
 hybrid_scan_reader_impl::hybrid_scan_reader_impl(

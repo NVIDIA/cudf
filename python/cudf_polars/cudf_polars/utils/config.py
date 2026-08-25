@@ -368,8 +368,6 @@ class ParquetOptions:
             raise TypeError("prefetch_file_metadata must be a bool when specified")
         if not isinstance(self.use_hybrid_scan, bool):
             raise TypeError("use_hybrid_scan must be a bool")
-        if not isinstance(self._hybrid_scan_stats_pruning, bool):
-            raise TypeError("_hybrid_scan_stats_pruning must be a bool")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 

@@ -1968,6 +1968,56 @@ TEST_P(DictionaryFilterGapTest, FilterRowGroupsWithMissingDictPages)
     EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
               expected);
   }
+
+  // The cases below give a column more than `MAX_INLINE_LITERALS` literals, which builds a hash set
+  // per dictionary instead of evaluating the literals inline. A row group with no dictionary page
+  // has no hash set built for it, so that path has to recognize it and keep the row group.
+
+  // Filtering - col0 equals any of three plain values: row group 0 is pruned as its dictionary
+  // holds none of them, row group 1 cannot be pruned
+  {
+    auto literal_value0 = cudf::string_scalar("plain_value_5", true, stream);
+    auto literal_value1 = cudf::string_scalar("plain_value_6", true, stream);
+    auto literal_value2 = cudf::string_scalar("plain_value_7", true, stream);
+    auto literal0       = cudf::ast::literal(literal_value0);
+    auto literal1       = cudf::ast::literal(literal_value1);
+    auto literal2       = cudf::ast::literal(literal_value2);
+    auto const equal0   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal0);
+    auto const equal1   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal1);
+    auto const equal2   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal2);
+    auto const either   = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, equal0, equal1);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, either, equal2);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    auto const expected = std::vector<cudf::size_type>{1};
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  }
+
+  // Filtering - col0 equals any of three values, one of which is in row group 0's dictionary: both
+  // row groups survive
+  {
+    auto literal_value0 = cudf::string_scalar("dict_value", true, stream);
+    auto literal_value1 = cudf::string_scalar("plain_value_5", true, stream);
+    auto literal_value2 = cudf::string_scalar("plain_value_6", true, stream);
+    auto literal0       = cudf::ast::literal(literal_value0);
+    auto literal1       = cudf::ast::literal(literal_value1);
+    auto literal2       = cudf::ast::literal(literal_value2);
+    auto const equal0   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal0);
+    auto const equal1   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal1);
+    auto const equal2   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal2);
+    auto const either   = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, equal0, equal1);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, either, equal2);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    auto const expected = std::vector<cudf::size_type>{0, 1};
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Compression,

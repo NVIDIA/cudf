@@ -11,6 +11,7 @@ from functools import partial, reduce
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import polars as pl
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -106,12 +107,6 @@ class BooleanFunction(Expr):
             BooleanFunction.Name.IsSorted,
             BooleanFunction.Name.IsUnique,
         )
-        if self.name in {
-            BooleanFunction.Name.IsClose,
-        }:
-            raise NotImplementedError(
-                f"Boolean function {self.name}"
-            )  # pragma: no cover
         if self.name is BooleanFunction.Name.IsIn and len(children) == 2:
             # TODO: Polars should raise an error ahead of time
             # for us for these kind of shape mismatches
@@ -127,6 +122,18 @@ class BooleanFunction(Expr):
                 if needles_level != haystack_level:
                     raise NotImplementedError(
                         f"arguments for `is_in` have different lengths ({len(needles.value)} != {len(haystack.value)})"
+                    )
+        if self.name is BooleanFunction.Name.IsClose:
+            abs_tol, rel_tol, _ = self.options
+            if abs_tol < 0.0:
+                raise ComputeError(f"`abs_tol` must be non-negative but got {abs_tol}")
+            if rel_tol < 0.0:
+                raise ComputeError(f"`rel_tol` must be non-negative but got {rel_tol}")
+            for child in self.children:
+                typ = child.dtype.polars_type
+                if not typ.is_numeric():
+                    raise InvalidOperationError(
+                        f"is_close operation not supported for dtype `{typ}`"
                     )
 
     @staticmethod
@@ -164,6 +171,137 @@ class BooleanFunction(Expr):
             dtype=dtype,
         )
 
+    def _is_close(self, df: DataFrame, *, context: ExecutionContext) -> Column:
+        # Matches polars' PEP 485 semantics (see
+        # crates/polars-ops/src/series/ops/is_close.rs):
+        #   |x - y| <= max(rel_tol * max(|x|, |y|), abs_tol)
+        # with special handling for non-finite values. The whole predicate is
+        # evaluated as a single fused libcudf AST expression via
+        # ``compute_column`` to minimize kernel launches. Nulls propagate
+        # through the (non-Kleene) AST logical ops, so the result is null iff
+        # either input is null, matching polars.
+        abs_tol, rel_tol, nans_equal = self.options
+        left, right = (child.evaluate(df, context=context) for child in self.children)
+        f64 = plc.DataType(plc.TypeId.FLOAT64)
+        stream = df.stream
+
+        table_columns: list[plc.Column] = []
+        both_scalar = left.is_scalar and right.is_scalar
+
+        def prep(col: Column) -> plc.expressions.Expression:
+            obj = col.obj
+            if obj.type().id() != plc.TypeId.FLOAT64:
+                obj = plc.unary.cast(obj, f64, stream=stream)
+            if col.is_scalar and not both_scalar:
+                return plc.expressions.Literal(obj.to_scalar(stream=stream))
+            table_columns.append(obj)
+            return plc.expressions.ColumnReference(len(table_columns) - 1)
+
+        x = prep(left)
+        y = prep(right)
+        table = plc.Table(table_columns)
+
+        def maximum_nonnegative(
+            lhs: plc.expressions.Expression, rhs: plc.expressions.Expression
+        ) -> plc.expressions.Operation:
+            half = plc.expressions.Literal(plc.Scalar.from_py(0.5, f64, stream=stream))
+            return plc.expressions.Operation(
+                plc.expressions.ASTOperator.ADD,
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.ADD,
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.MUL, lhs, half
+                    ),
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.MUL, rhs, half
+                    ),
+                ),
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.MUL,
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.ABS,
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.SUB, lhs, rhs
+                        ),
+                    ),
+                    half,
+                ),
+            )
+
+        inf = plc.expressions.Literal(
+            plc.Scalar.from_py(float("inf"), f64, stream=stream)
+        )
+        absx = plc.expressions.Operation(plc.expressions.ASTOperator.ABS, x)
+        absy = plc.expressions.Operation(plc.expressions.ASTOperator.ABS, y)
+        absdiff = plc.expressions.Operation(
+            plc.expressions.ASTOperator.ABS,
+            plc.expressions.Operation(plc.expressions.ASTOperator.SUB, x, y),
+        )
+
+        tol = maximum_nonnegative(
+            plc.expressions.Operation(
+                plc.expressions.ASTOperator.MUL,
+                plc.expressions.Literal(
+                    plc.Scalar.from_py(rel_tol, f64, stream=stream)
+                ),
+                maximum_nonnegative(absx, absy),
+            ),
+            plc.expressions.Literal(plc.Scalar.from_py(abs_tol, f64, stream=stream)),
+        )
+        cmp = plc.expressions.Operation(
+            plc.expressions.ASTOperator.LESS_EQUAL, absdiff, tol
+        )
+
+        # NaN iff value != itself; Inf iff |value| == inf.
+        nan_x = plc.expressions.Operation(plc.expressions.ASTOperator.NOT_EQUAL, x, x)
+        nan_y = plc.expressions.Operation(plc.expressions.ASTOperator.NOT_EQUAL, y, y)
+        inf_x = plc.expressions.Operation(plc.expressions.ASTOperator.EQUAL, absx, inf)
+        inf_y = plc.expressions.Operation(plc.expressions.ASTOperator.EQUAL, absy, inf)
+        finite_x = plc.expressions.Operation(
+            plc.expressions.ASTOperator.NOT,
+            plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOGICAL_OR, nan_x, inf_x
+            ),
+        )
+        finite_y = plc.expressions.Operation(
+            plc.expressions.ASTOperator.NOT,
+            plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOGICAL_OR, nan_y, inf_y
+            ),
+        )
+        both_finite = plc.expressions.Operation(
+            plc.expressions.ASTOperator.LOGICAL_AND, finite_x, finite_y
+        )
+        part_finite = plc.expressions.Operation(
+            plc.expressions.ASTOperator.LOGICAL_AND, both_finite, cmp
+        )
+
+        # Infinities are close iff both are infinite with the same sign.
+        part_inf = plc.expressions.Operation(
+            plc.expressions.ASTOperator.LOGICAL_AND,
+            plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOGICAL_AND, inf_x, inf_y
+            ),
+            plc.expressions.Operation(plc.expressions.ASTOperator.EQUAL, x, y),
+        )
+
+        predicate = plc.expressions.Operation(
+            plc.expressions.ASTOperator.LOGICAL_OR, part_finite, part_inf
+        )
+        if nans_equal:
+            predicate = plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOGICAL_OR,
+                predicate,
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.LOGICAL_AND, nan_x, nan_y
+                ),
+            )
+
+        return Column(
+            plc.transform.compute_column(table, predicate, stream=stream),
+            dtype=self.dtype,
+        )
+
     _BETWEEN_OPS: ClassVar[
         dict[
             pl_types.ClosedInterval,
@@ -192,6 +330,8 @@ class BooleanFunction(Expr):
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
+        if self.name is BooleanFunction.Name.IsClose:
+            return self._is_close(df, context=context)
         if self.name in (BooleanFunction.Name.IsEmpty, BooleanFunction.Name.HasNulls):
             (child,) = self.children
             column = child.evaluate(df, context=context)

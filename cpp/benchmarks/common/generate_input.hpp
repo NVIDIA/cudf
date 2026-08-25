@@ -212,16 +212,18 @@ std::vector<cudf::type_id> get_type_or_group(int32_t id);
 std::vector<cudf::type_id> get_type_or_group(std::vector<int32_t> const& ids);
 
 /**
- * @brief Rounds a floating point bound to an integer value, clamping to the largest double that
- * still rounds into a long long and mapping NaN to zero so that the conversion is always defined.
- * Bounds beyond this are unreachable through floating point for unsigned 64-bit targets only;
- * every signed target's full range is representable.
+ * @brief Rounds a floating point bound to an integer value and mapping NaN to zero so that the
+ * conversion is always defined. The lower clamp is exactly -2^63, which is representable both as a
+ * double and as a long long; the upper clamp is the largest double that still rounds into a long
+ * long, since `std::llround` of anything closer to 2^63 overflows. Bounds beyond these are
+ * unreachable through floating point for unsigned 64-bit targets only.
  */
 inline long long bounded_llround(double value)
 {
-  constexpr double int64_clamp_bound = 9223372036854774784.0;  // 2^63 - 1024
+  constexpr double int64_lower_bound = -9223372036854775808.0;  // -2^63, exact in double
+  constexpr double int64_upper_bound = 9223372036854774784.0;   // largest double below 2^63
   if (std::isnan(value)) { return 0; }
-  return std::llround(std::clamp(value, -int64_clamp_bound, int64_clamp_bound));
+  return std::llround(std::clamp(value, int64_lower_bound, int64_upper_bound));
 }
 
 /**
@@ -367,17 +369,19 @@ class data_profile {
   {
     for (auto tid : get_type_or_group(static_cast<int32_t>(type_or_group))) {
       if (tid == cudf::type_id::STRING) {
-        string_dist_desc.length_params = {dist,
-                                          static_cast<uint32_t>(std::clamp<__int128_t>(
-                                            static_cast<__int128_t>(lower_bound), 0, UINT32_MAX)),
-                                          static_cast<uint32_t>(std::clamp<__int128_t>(
-                                            static_cast<__int128_t>(upper_bound), 0, UINT32_MAX))};
+        string_dist_desc.length_params = {
+          dist,
+          static_cast<uint32_t>(std::clamp<__int128_t>(
+            static_cast<__int128_t>(lower_bound), 0, std::numeric_limits<uint32_t>::max())),
+          static_cast<uint32_t>(std::clamp<__int128_t>(
+            static_cast<__int128_t>(upper_bound), 0, std::numeric_limits<uint32_t>::max()))};
       } else if (tid == cudf::type_id::LIST) {
-        list_dist_desc.length_params = {dist,
-                                        static_cast<uint32_t>(std::clamp<__int128_t>(
-                                          static_cast<__int128_t>(lower_bound), 0, UINT32_MAX)),
-                                        static_cast<uint32_t>(std::clamp<__int128_t>(
-                                          static_cast<__int128_t>(upper_bound), 0, UINT32_MAX))};
+        list_dist_desc.length_params = {
+          dist,
+          static_cast<uint32_t>(std::clamp<__int128_t>(
+            static_cast<__int128_t>(lower_bound), 0, std::numeric_limits<uint32_t>::max())),
+          static_cast<uint32_t>(std::clamp<__int128_t>(
+            static_cast<__int128_t>(upper_bound), 0, std::numeric_limits<uint32_t>::max()))};
       } else if (cudf::is_floating_point(cudf::data_type{tid})) {
         float_params[tid] = {
           dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};

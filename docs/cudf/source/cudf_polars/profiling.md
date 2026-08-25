@@ -103,12 +103,8 @@ KvikIO I/O summary
 ```
 
 Every row is also an attribute, `s.bytes_read`, `s.busy_ns` and so on. See the
-[KvikIO reference][kvikio-stats] for the full set.
-
-**Busy time** is the one worth explaining. It counts only the stretches with at least one read in
-flight, so overlapping reads count once and the gaps between them count as idle. Rates divided by
-it measure the storage rather than the query, which is why a query that reads for 10 ms and then
-computes for 90 ms is not reported as ten times slower than its disks really are.
+[KvikIO reference][kvikio-stats] for the full set, and [busy time and bandwidth][kvikio-busy]
+for how the busy figures are measured.
 
 ### What is and is not counted
 
@@ -127,17 +123,6 @@ invisible.
     Dask work, against one cluster. Neither is a recommended setup, and the summaries would be
     mixed together.
 
-
-### In the benchmarks
-
-The PDS benchmark runners record per-rank I/O summaries alongside the streaming statistics when
-`--rapidsmpf-statistics` is passed. Each record carries an `io_summaries` dict keyed by rank, so I/O skew stays queryable across a whole sweep:
-
-```bash
-python -m cudf_polars.streaming.benchmarks.pdsh \
-    --path /data/tpch/ --output results.json --frontend ray \
-    --rapidsmpf-statistics
-```
 
 ## GPU Profiling
 
@@ -266,6 +251,7 @@ shape: (2, 3)
 [nsight]: https://developer.nvidia.com/nsight-systems
 [nvtx]: https://nvidia.github.io/NVTX/
 [kvikio-stats]: https://docs.rapids.ai/api/kvikio/nightly/statistics/
+[kvikio-busy]: https://docs.rapids.ai/api/kvikio/nightly/statistics/#busy-time-and-bandwidth
 [rapidsmpf-stats]: https://docs.rapids.ai/api/rapidsmpf/nightly/statistics/
 [structlog]: https://www.structlog.org/en/stable/
 [structlog-configure]: https://www.structlog.org/en/stable/configuration.html

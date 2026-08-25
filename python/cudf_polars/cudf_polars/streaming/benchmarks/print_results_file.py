@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 from rapidsmpf.utils.string import format_bytes
 
+from cudf_polars.streaming.benchmarks.utils import SuccessRecord, record_from_dict
+
 _DESCRIPTION = (
     "Read a saved benchmark results file and print the query timings, and the "
     "per-rank I/O summaries when the run was made with --rapidsmpf-statistics."
@@ -29,10 +31,12 @@ _DESCRIPTION = (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from cudf_polars.streaming.benchmarks.utils import FailedRecord
+
 
 def load_runs(path: Path) -> list[dict[str, Any]]:
     """
-    Read every run from a results file.
+    Read every run from a results file, without interpreting it.
 
     Parameters
     ----------
@@ -41,12 +45,12 @@ def load_runs(path: Path) -> list[dict[str, Any]]:
 
     Returns
     -------
-    One dictionary per run, in the order they were appended.
+    One decoded line per run, in the order they were appended.
 
     Raises
     ------
     ValueError
-        If the file contains no runs.
+        If the file holds no runs.
     """
     with path.open() as f:
         runs = [json.loads(line) for line in f if line.strip()]
@@ -55,7 +59,7 @@ def load_runs(path: Path) -> list[dict[str, Any]]:
     return runs
 
 
-def iter_records(run: dict[str, Any]) -> Iterator[dict[str, Any]]:
+def iter_records(run: dict[str, Any]) -> Iterator[SuccessRecord | FailedRecord]:
     """
     Yield every per-iteration record of a run, ordered by query then iteration.
 
@@ -68,8 +72,8 @@ def iter_records(run: dict[str, Any]) -> Iterator[dict[str, Any]]:
     ------
     The run's per-iteration records.
     """
-    for _, records in sorted(run.get("records", {}).items(), key=lambda kv: int(kv[0])):
-        yield from records
+    for _, records in sorted(run["records"].items(), key=lambda kv: int(kv[0])):
+        yield from map(record_from_dict, records)
 
 
 def print_header(run: dict[str, Any]) -> None:
@@ -99,10 +103,12 @@ def print_timings(run: dict[str, Any]) -> None:
     print("\nTimings")
     print(f"  {'query':>6}  {'iters':>5}  {'min':>9}  {'max':>9}  {'mean':>9}")
     total = 0.0
-    for query, records in sorted(
-        run.get("records", {}).items(), key=lambda kv: int(kv[0])
-    ):
-        durations = [r["duration"] for r in records if r.get("status") == "success"]
+    for query, records in sorted(run["records"].items(), key=lambda kv: int(kv[0])):
+        durations = [
+            r.duration
+            for r in map(record_from_dict, records)
+            if isinstance(r, SuccessRecord)
+        ]
         if not durations:
             print(f"  {query:>6}  {'-':>5}  {'no successful iterations':>31}")
             continue
@@ -115,7 +121,9 @@ def print_timings(run: dict[str, Any]) -> None:
         print(f"  {'total':>6}  {'':>5}  {'':>9}  {'':>9}  {total:>8.4f}s")
 
 
-def _io_summaries(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
+def _io_summaries(
+    record: SuccessRecord | FailedRecord,
+) -> dict[int, dict[str, Any]]:
     """
     Return a record's I/O summaries keyed by rank.
 
@@ -128,12 +136,9 @@ def _io_summaries(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
     -------
     The summaries, empty if the iteration recorded none.
     """
-    raw = record.get("io_summaries")
-    if not isinstance(raw, dict):
-        # Absent, or written by a version that shaped it differently. The file
-        # comes from disk, so an unexpected shape is skipped rather than raised.
+    if not isinstance(record, SuccessRecord) or record.io_summaries is None:
         return {}
-    return {int(rank): s for rank, s in raw.items()}
+    return {int(rank): s for rank, s in record.io_summaries.items()}
 
 
 def print_io_summaries(run: dict[str, Any]) -> None:
@@ -149,13 +154,12 @@ def print_io_summaries(run: dict[str, Any]) -> None:
         A single run, as returned by :func:`load_runs`.
     """
     rows = [
-        (r["query"], r["iteration"], rank, s)
+        (r.query, r.iteration, rank, s)
         for r in iter_records(run)
         for rank, s in sorted(_io_summaries(r).items())
     ]
     if not rows:
-        # Either the run predates I/O statistics, or it was made without
-        # `--rapidsmpf-statistics`, in which case no rank counts anything.
+        # The run was made without `--rapidsmpf-statistics`, so no rank counted.
         print("\nI/O: not collected (run with --rapidsmpf-statistics)")
         return
 
@@ -260,4 +264,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    main(parse_args())
+    try:
+        main(parse_args())
+    except ValueError as e:
+        raise SystemExit(f"error: {e}") from None

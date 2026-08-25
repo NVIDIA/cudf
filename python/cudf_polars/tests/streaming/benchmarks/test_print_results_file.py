@@ -16,6 +16,7 @@ from cudf_polars.streaming.benchmarks.print_results_file import (
     main,
     parse_args,
 )
+from cudf_polars.streaming.benchmarks.utils import SuccessRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,6 +43,17 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "iteration": 0,
         "duration": 0.25,
         "status": "success",
+        **overrides,
+    }
+
+
+def _failed(**overrides: Any) -> dict[str, Any]:
+    """One failed iteration."""
+    return {
+        "query": 1,
+        "iteration": 0,
+        "status": "error",
+        "traceback": "boom",
         **overrides,
     }
 
@@ -98,7 +110,7 @@ def test_load_runs_rejects_an_empty_file(tmp_path: Path) -> None:
 def test_iter_records_orders_by_query() -> None:
     """Records come out grouped by query, whatever order the keys are in."""
     run = _run(_record(query=3), _record(query=1), _record(query=1, iteration=1))
-    assert [(r["query"], r["iteration"]) for r in iter_records(run)] == [
+    assert [(r.query, r.iteration) for r in iter_records(run)] == [
         (1, 0),
         (1, 1),
         (3, 0),
@@ -109,16 +121,29 @@ def test_iter_records_orders_by_query() -> None:
     "raw, expected",
     [
         # JSON object keys are strings, so they are cast back to ranks.
-        ({"0": None, "1": None}, [0, 1]),
-        # A run without statistics has nothing to report.
+        ({"0": {}, "1": {}}, [0, 1]),
+        # A run made without statistics has nothing to report.
         (None, []),
-        # The file comes from disk, so a surprise is skipped rather than raised.
-        ([{}], []),
     ],
 )
 def test_io_summaries_keys(raw: Any, expected: list[int]) -> None:
-    """Rank keys are integers, and anything unexpected yields nothing."""
-    assert sorted(_io_summaries({"io_summaries": raw})) == expected
+    """Rank keys are integers, and a run without statistics yields nothing."""
+    record = SuccessRecord(query=1, iteration=0, duration=0.5, io_summaries=raw)
+    assert sorted(_io_summaries(record)) == expected
+
+
+def test_an_incompatible_run_is_rejected(report: Callable[..., str]) -> None:
+    """Older files keyed I/O summaries differently, and are not read."""
+    with pytest.raises(ValueError, match="incompatible version"):
+        report(_run(_record(io_summaries=[{}])))
+
+
+def test_an_unreadable_older_run_does_not_stop_the_report(
+    report: Callable[..., str],
+) -> None:
+    """The default path shows the last run, so an older bad one is not touched."""
+    out = report(_run(_record(io_summaries=[{}]), run_id="old"), _run(run_id="new"))
+    assert "new" in out
 
 
 def test_prints_timings_and_io(report: Callable[..., str]) -> None:
@@ -141,7 +166,7 @@ def test_failed_iterations_are_left_out_of_the_timings(
     report: Callable[..., str],
 ) -> None:
     """A query whose every iteration failed has no min, max or mean to report."""
-    assert "no successful iterations" in report(_run(_record(status="error")))
+    assert "no successful iterations" in report(_run(_failed()))
 
 
 def test_a_rank_that_read_nothing_is_called_out(report: Callable[..., str]) -> None:

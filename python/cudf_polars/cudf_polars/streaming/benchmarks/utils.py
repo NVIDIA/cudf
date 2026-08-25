@@ -468,6 +468,53 @@ def _infer_scale_factor(name: str, path: str | Path, suffix: str) -> int | float
         raise ValueError(f"Invalid benchmark script name: '{name}'.")
 
 
+def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
+    """
+    Read one iteration record back from its serialized form.
+
+    Parameters
+    ----------
+    data
+        One entry of a run's ``records``.
+
+    Returns
+    -------
+    The record, typed by its ``status``.
+
+    Raises
+    ------
+    ValueError
+        If the status is unrecognized, or the summaries predate rank keying.
+    """
+    status = data["status"]
+    if status == "success":
+        io_summaries = data.get("io_summaries")
+        if io_summaries is not None and not isinstance(io_summaries, dict):
+            raise ValueError(
+                "An iteration's io_summaries is not keyed by rank. This results "
+                "file was written by an incompatible version of the benchmarks."
+            )
+        validation = data.get("validation_result")
+        return SuccessRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            duration=data["duration"],
+            statistics=data.get("statistics"),
+            io_summaries=io_summaries,
+            traces=data.get("traces"),
+            validation_result=(
+                ValidationResult(**validation) if validation is not None else None
+            ),
+        )
+    if status == "error":
+        return FailedRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            traceback=data["traceback"],
+        )
+    raise ValueError(f"Unrecognized iteration status: {status!r}")
+
+
 @dataclasses.dataclass(kw_only=True)
 class RunConfig:
     """Benchmark run configuration for SPMD / Ray / DuckDB frontends."""

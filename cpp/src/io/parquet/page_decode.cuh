@@ -1496,7 +1496,6 @@ __device__ void zero_fill_null_positions_shared(
   // Check if we have nulls to fill
   if ((ni.valid_map == nullptr) || (num_values == 0)) { return; }
 
-  if (&ni != &leaf_ni) { valid_map_offset = ni.valid_map_offset; }
 
   auto const data_out = leaf_ni.data_out;
 

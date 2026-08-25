@@ -1,12 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
+
+#include <cuda/stream_ref>
 
 namespace cudf {
 namespace java {
@@ -18,6 +19,6 @@ namespace java {
 bool check_nvcomp_output_sizes(std::size_t const* dev_uncompressed_sizes,
                                std::size_t const* dev_actual_uncompressed_sizes,
                                std::size_t num_chunks,
-                               rmm::cuda_stream_view stream);
+                               cuda::stream_ref stream);
 }  // namespace java
 }  // namespace cudf

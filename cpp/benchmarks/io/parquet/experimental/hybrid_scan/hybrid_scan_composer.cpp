@@ -1,4 +1,3 @@
-
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
@@ -74,13 +73,9 @@ std::vector<cudf::size_type> apply_row_group_filters(
                                         current_row_group_indices.end());
   }
 
-  // Get bloom filter and dictionary page byte ranges from the reader, only for the enabled filters
-  auto bloom_filter_byte_ranges = std::vector<cudf::io::text::byte_range_info>{};
-  auto dict_page_byte_ranges    = std::vector<cudf::io::text::byte_range_info>{};
+  // Get dictionary page byte ranges from the reader
+  auto dict_page_byte_ranges = std::vector<cudf::io::text::byte_range_info>{};
 
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
-    bloom_filter_byte_ranges = reader.bloom_filters_byte_ranges(current_row_group_indices, options);
-  }
   if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
     dict_page_byte_ranges = reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
   }
@@ -100,6 +95,13 @@ std::vector<cudf::size_type> apply_row_group_filters(
       dictionary_page_data, current_row_group_indices, options, stream);
 
     current_row_group_indices = dict_page_filtered_row_groups;
+  }
+
+  // Get bloom filter byte ranges from the reader
+  auto bloom_filter_byte_ranges = std::vector<cudf::io::text::byte_range_info>{};
+
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
+    bloom_filter_byte_ranges = reader.bloom_filters_byte_ranges(current_row_group_indices, options);
   }
 
   // Filter row groups with bloom filters

@@ -129,15 +129,8 @@ std::vector<cudf::size_type> apply_row_group_filters(
     }
   }
 
-  // Get bloom filter and dictionary page byte ranges from the reader, only for the enabled filters
-  std::vector<cudf::io::text::byte_range_info> bloom_filter_byte_ranges;
+  // Get dictionary page byte ranges from the reader
   std::vector<cudf::io::text::byte_range_info> dict_page_byte_ranges;
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
-    if (verbose) { std::cout << "READER: Get bloom filter byte ranges...\n"; }
-    timer.reset();
-    bloom_filter_byte_ranges = reader.bloom_filters_byte_ranges(current_row_group_indices, options);
-    if (verbose) { timer.print_elapsed_millis(); }
-  }
   if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
     if (verbose) { std::cout << "READER: Get dictionary page byte ranges...\n"; }
     timer.reset();
@@ -172,6 +165,15 @@ std::vector<cudf::size_type> apply_row_group_filters(
     }
   } else if (verbose) {
     std::cout << "SKIP: Row group filtering with dictionary pages...\n\n";
+  }
+
+  // Get bloom filter byte ranges from the reader
+  std::vector<cudf::io::text::byte_range_info> bloom_filter_byte_ranges;
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
+    if (verbose) { std::cout << "READER: Get bloom filter byte ranges...\n"; }
+    timer.reset();
+    bloom_filter_byte_ranges = reader.bloom_filters_byte_ranges(current_row_group_indices, options);
+    if (verbose) { timer.print_elapsed_millis(); }
   }
 
   // Filter row groups with bloom filters

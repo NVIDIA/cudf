@@ -28,7 +28,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
-#include <cudf/wrappers/timestamps.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
@@ -1261,25 +1260,3 @@ distribution_params<T> data_profile::get_distribution_params() const
       desc.id, static_cast<rep>(desc.lower_bound), static_cast<rep>(desc.upper_bound), desc.scale};
   }
 }
-
-// Explicit instantiations for the parameter getters used outside this translation unit.
-template distribution_params<double> data_profile::get_distribution_params<double>() const;
-template distribution_params<float> data_profile::get_distribution_params<float>() const;
-template distribution_params<int32_t> data_profile::get_distribution_params<int32_t>() const;
-template distribution_params<numeric::decimal64>
-data_profile::get_distribution_params<numeric::decimal64>() const;
-template distribution_params<numeric::decimal32>
-data_profile::get_distribution_params<numeric::decimal32>() const;
-template distribution_params<cudf::timestamp_s>
-data_profile::get_distribution_params<cudf::timestamp_s>() const;
-template distribution_params<cudf::string_view>
-data_profile::get_distribution_params<cudf::string_view>() const;
-template distribution_params<cudf::list_view>
-data_profile::get_distribution_params<cudf::list_view>() const;
-template distribution_params<int8_t> data_profile::get_distribution_params<int8_t>() const;
-template distribution_params<int16_t> data_profile::get_distribution_params<int16_t>() const;
-template distribution_params<int64_t> data_profile::get_distribution_params<int64_t>() const;
-template distribution_params<uint8_t> data_profile::get_distribution_params<uint8_t>() const;
-template distribution_params<uint16_t> data_profile::get_distribution_params<uint16_t>() const;
-template distribution_params<uint32_t> data_profile::get_distribution_params<uint32_t>() const;
-template distribution_params<uint64_t> data_profile::get_distribution_params<uint64_t>() const;

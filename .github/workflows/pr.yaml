@@ -568,36 +568,20 @@ jobs:
     permissions:
       actions: read
       contents: read
+      id-token: write
       packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
-    runs-on: linux-${{ matrix.ARCH }}-gpu-l4-latest-1
-    container:
-      image: rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }} # zizmor: ignore[unpinned-images]
-      env:
-        NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          persist-credentials: false
-      - name: Download java-build artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
-          path: java_pkg
-      - name: Run Java tests
-        env:
-          LIBCUDF_LARGE_STRINGS_ENABLED: "0"
-        run: |
-          . java/ci/java_classifier.sh
-          JAVA_JAR="$(cudf_java_resolve_artifact_jar java_pkg)"
-          export JAVA_JAR
-          ci/test_packaged_java.sh
+    with:
+      build_type: pull-request
+      arch: ${{ matrix.ARCH }}
+      node_type: "gpu-l4-latest-1"
+      container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -649,9 +633,9 @@ jobs:
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
-      docs-projects: cudf,libcudf
+      docs-projects: cudf,dask-cudf,libcudf
       dry-run: true
-      version-map: '{"26.04": "legacy", "26.06": "stable"}'
+      version-map: ${{ vars.VERSION_MAP }}
   wheel-build-libcudf:
     needs: [build-details, checks]
     permissions:

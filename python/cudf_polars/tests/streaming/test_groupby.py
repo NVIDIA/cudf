@@ -83,6 +83,25 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
     assert tracer.decision == "shuffle"
 
 
+@pytest.mark.parametrize(
+    "nranks,npartitions,expected",
+    [
+        (2, 5, [3, 2]),
+        (3, 5, [2, 2, 1]),
+        (4, 10, [3, 2, 3, 2]),
+    ],
+)
+def test_partition_count_for_rank_uses_contiguous_ownership(
+    nranks, npartitions, expected
+):
+    """GroupBy metadata uses the same uneven partition ownership as adjust_ordering."""
+    counts = [
+        groupby_actor_graph._partition_count_for_rank(rank, nranks, npartitions)
+        for rank in range(nranks)
+    ]
+    assert counts == expected
+
+
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])
 @pytest.mark.parametrize("agg", ["sum", "mean", "len", "min", "max"])
 def test_dynamic_groupby_basic(df, streaming_engine, keys, agg):
@@ -109,6 +128,27 @@ def test_dynamic_groupby_shuffle_strategy(streaming_engine_factory):
     df = pl.LazyFrame({"key": range(1000), "value": range(1000)})
     q = df.group_by("key").agg(pl.col("value").sum())
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("group_keys", [("key", "subkey"), ("key",)])
+def test_dynamic_groupby_after_sort_on_group_keys(spmd_engine_factory, group_keys):
+    """Group sorted data by the full sort key set or a sorted-key prefix."""
+    streaming_engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=128),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": [0] * 16 + [1] * 16 + [2] * 16 + [3] * 16,
+            "subkey": ([0] * 8 + [1] * 8) * 4,
+            "value": range(64),
+        }
+    )
+    q = (
+        df.sort("key", "subkey")
+        .group_by(*group_keys, maintain_order=True)
+        .agg(pl.col("value").sum())
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_dynamic_groupby_single_group(streaming_engine):

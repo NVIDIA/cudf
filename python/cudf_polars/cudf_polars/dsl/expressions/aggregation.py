@@ -12,12 +12,11 @@ from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import polars as pl
 from polars.exceptions import ComputeError
 
 import pylibcudf as plc
 
-from cudf_polars.containers import Column, DataType
+from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136
@@ -25,33 +24,9 @@ from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
-    from cudf_polars.containers import DataFrame
+    from cudf_polars.containers import DataFrame, DataType
 
 __all__ = ["Agg", "Item", "Kurtosis", "Skew", "SortedAgg"]
-
-_EPS = sys.float_info.epsilon
-
-
-def _powf_overflowsafe(base: float, exponent: float) -> float:
-    """Raise ``base`` to ``exponent``, returning ``inf`` on overflow like IEEE-754."""
-    try:
-        return base**exponent
-    except OverflowError:
-        return math.inf
-
-
-def _as_float_for_moments(column: Column, dtype: DataType, stream: Stream) -> Column:
-    if plc.traits.is_timestamp(column.obj.type()) or plc.traits.is_duration(
-        column.obj.type()
-    ):
-        phys_dtype = DataType(
-            pl.Int32()
-            if column.obj.type().id()
-            in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
-            else pl.Int64()
-        )
-        column = column.astype(phys_dtype, stream)
-    return column.astype(dtype, stream)
 
 
 class Item(Expr):
@@ -592,8 +567,16 @@ class Skew(Expr):
         Overflow follows IEEE-754 (producing ``inf``/``nan``) matching Rust,
         rather than raising Python's ``OverflowError``.
         """
-        is_zero = m2 <= (_EPS * mean) * (_EPS * mean)
-        biased = math.nan if is_zero else m3 / _powf_overflowsafe(m2, 1.5)
+        eps = sys.float_info.epsilon
+        is_zero = m2 <= (eps * mean) * (eps * mean)
+        if is_zero:
+            biased = math.nan
+        else:
+            try:
+                denom = m2**1.5
+            except OverflowError:
+                denom = math.inf
+            biased = m3 / denom
         if bias:
             return biased
         return math.sqrt(n * (n - 1)) / (n - 2) * biased
@@ -702,7 +685,8 @@ class Kurtosis(Expr):
         bias correction applied when ``bias=False``, and subtracting 3.0 for
         Fisher's definition.
         """
-        is_zero = m2 <= (_EPS * mean) * (_EPS * mean)
+        eps = sys.float_info.epsilon
+        is_zero = m2 <= (eps * mean) * (eps * mean)
         biased = math.nan if is_zero else m4 / (m2 * m2)
         if bias:
             out = biased

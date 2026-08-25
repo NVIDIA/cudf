@@ -22,6 +22,7 @@ from polars import polars as plrs  # type: ignore[attr-defined]
 import pylibcudf as plc
 
 from cudf_polars.containers import DataType
+from cudf_polars.containers.datatype import _contains_array
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.to_ast import insert_colrefs
@@ -80,8 +81,7 @@ def _align_decimal_float_for_comparison(
 def _contains_array_input(expression: expr.Expr) -> bool:
     """Return whether an expression consumes an Array-typed input."""
     return any(
-        isinstance(child.dtype.polars_type, pl.Array)
-        for child in traversal(expression.children)
+        _contains_array(node.dtype.polars_type) for node in traversal([expression])
     )
 
 
@@ -289,9 +289,10 @@ class Translator:
         """
         node = self.visitor.view_expression(n)
         dtype = DataType(self.visitor.get_dtype(n))
-        if isinstance(dtype.polars_type, pl.Array) and not isinstance(
+        is_array_passthrough = isinstance(dtype.polars_type, pl.Array) and isinstance(
             node, plrs._expr_nodes.Column
-        ):
+        )
+        if isinstance(dtype.polars_type, pl.Array) and not is_array_passthrough:
             error = NotImplementedError(
                 "Only pass-through of Array columns is supported"
             )
@@ -302,7 +303,7 @@ class Translator:
         except Exception as e:
             self.errors.append(e)
             return expr.ErrorExpr(dtype, str(e))
-        if _contains_array_input(translated):
+        if not is_array_passthrough and _contains_array_input(translated):
             error = NotImplementedError(
                 "Only pass-through of Array columns is supported"
             )

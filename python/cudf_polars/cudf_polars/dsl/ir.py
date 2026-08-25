@@ -3562,6 +3562,10 @@ class MapFunction(IR):
                 # polars requires that all to-explode columns have the
                 # same sub-shapes
                 raise NotImplementedError("Explode with more than one column")
+            if any(
+                isinstance(df.schema[name].polars_type, pl.Array) for name in to_explode
+            ):
+                raise NotImplementedError("Explode on Array is not supported")
             self.options = (tuple(to_explode),)
         elif self.name == "unpivot":
             indices, pivotees, variable_name, value_name = self.options

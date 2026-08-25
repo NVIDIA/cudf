@@ -40,6 +40,19 @@ SCALAR_NAME_TO_POLARS_TYPE_MAP: dict[str, pl.DataType] = {
 }
 
 
+def _contains_array(dtype: PolarsDataType) -> bool:
+    """Return whether ``dtype`` is or contains a Polars Array dtype."""
+    if isinstance(dtype, type):
+        dtype = dtype()
+    if isinstance(dtype, pl.Array):
+        return True
+    if isinstance(dtype, pl.List):
+        return _contains_array(dtype.inner)
+    if isinstance(dtype, pl.Struct):
+        return any(_contains_array(field.dtype) for field in dtype.fields)
+    return False
+
+
 def _dtype_to_header(dtype: PolarsDataType) -> DataTypeHeader:
     if isinstance(dtype, type):
         dtype = dtype()
@@ -194,6 +207,10 @@ def _from_polars(dtype: PolarsDataType) -> plc.DataType:
         # TODO: Hopefully
         return plc.DataType(plc.TypeId.EMPTY)
     elif isinstance(dtype, pl.List):
+        if _contains_array(dtype.inner):
+            raise NotImplementedError(
+                "Array nested inside another dtype is not supported"
+            )
         # Recurse to catch unsupported inner types
         _ = _from_polars(dtype.inner)
         return plc.DataType(plc.TypeId.LIST)
@@ -207,6 +224,10 @@ def _from_polars(dtype: PolarsDataType) -> plc.DataType:
     elif isinstance(dtype, pl.Struct):
         # Recurse to catch unsupported field types
         for field in dtype.fields:
+            if _contains_array(field.dtype):
+                raise NotImplementedError(
+                    "Array nested inside another dtype is not supported"
+                )
             _ = _from_polars(field.dtype)
         return plc.DataType(plc.TypeId.STRUCT)
     else:

@@ -127,6 +127,47 @@ def test_array_expression_falls_back(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "values,dtype",
+    [
+        ([[[1, 2], [3, 4]]], pl.List(pl.Array(pl.Int8, 2))),
+        ([{"x": [1, 2]}], pl.Struct({"x": pl.Array(pl.Int8, 2)})),
+    ],
+    ids=["list", "struct"],
+)
+def test_nested_array_falls_back(
+    in_memory_engine: pl.GPUEngine,
+    values: list,
+    dtype: pl.DataType,
+):
+    q = pl.LazyFrame({"a": pl.Series(values, dtype=dtype)}).select("a")
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_array_grouped_collection_falls_back(in_memory_engine: pl.GPUEngine):
+    q = (
+        pl.LazyFrame(
+            {
+                "key": [1, 1],
+                "a": pl.Series([[1, 2], [3, 4]], dtype=pl.Array(pl.Int8, 2)),
+            }
+        )
+        .group_by("key")
+        .agg("a")
+    )
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_array_explode_falls_back(in_memory_engine: pl.GPUEngine):
+    q = pl.LazyFrame(
+        {"a": pl.Series([[1, 2], [3, 4]], dtype=pl.Array(pl.Int8, 2))}
+    ).explode("a")
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_dataframescan_with_decimals(engine: pl.GPUEngine):
     q = pl.LazyFrame(
         {

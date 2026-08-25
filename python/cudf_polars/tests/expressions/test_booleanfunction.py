@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
 import pytest
@@ -277,11 +278,104 @@ def test_is_in_shape_mismatch_raises(engine: pl.GPUEngine, needles, haystack):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_boolean_is_close(engine: pl.GPUEngine):
-    ldf = pl.LazyFrame({"a": [1.0, 1.2, 1.4, 1.45, 1.6]})
-    q = ldf.select(pl.col("a").is_close(1.4, abs_tol=0.1))
+_INF = float("inf")
+_NAN = float("nan")
 
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"abs_tol": 0.5},
+        {"rel_tol": 0.2},
+        {"nans_equal": True},
+        {"abs_tol": 0.5, "nans_equal": True},
+    ],
+)
+def test_boolean_is_close(engine: pl.GPUEngine, kwargs):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [1.0, 1.0, 1.00000001, _NAN, _INF, _INF, -_INF, 5.0, None, 2.0],
+                dtype=pl.Float64,
+            ),
+            "b": pl.Series(
+                [1.0, 1.1, 1.0, _NAN, _INF, -_INF, -_INF, None, 5.0, 2.0],
+                dtype=pl.Float64,
+            ),
+        }
+    )
+    q = ldf.select(pl.col("a").is_close(pl.col("b"), **kwargs))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_boolean_is_close_scalar(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": [1.0, 1.2, 1.4, 1.45, 1.6, None]})
+    q = ldf.select(pl.col("a").is_close(1.4, abs_tol=0.1))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"abs_tol": 0.1}])
+def test_boolean_is_close_both_scalar(engine: pl.GPUEngine, kwargs):
+    ldf = pl.LazyFrame({"a": [1.0]})
+    q = ldf.select(pl.lit(1.0).is_close(pl.lit(1.05), **kwargs).alias("r"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Int64])
+def test_boolean_is_close_dtypes(engine: pl.GPUEngine, dtype):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series([1, 2, 3], dtype=dtype),
+            "b": pl.Series([1, 2, 4], dtype=dtype),
+        }
+    )
+    q = ldf.select(pl.col("a").is_close(pl.col("b")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        (1.0e308, 1.1e308),
+        (1.0e308, -1.0e308),
+        (1.0e308, 0.0),
+        (-1.0e308, -1.1e308),
+    ],
+)
+def test_boolean_is_close_large_values(engine: pl.GPUEngine, a, b):
+    ldf = pl.LazyFrame({"a": [a], "b": [b]})
+    q = ldf.select(pl.col("a").is_close(pl.col("b")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"abs_tol": -0.1},
+        {"rel_tol": -0.1},
+        {"abs_tol": -1.0, "rel_tol": 0.1},
+        {"abs_tol": 0.1, "rel_tol": -1.0},
+    ],
+)
+def test_boolean_is_close_negative_tol_raises(engine: pl.GPUEngine, kwargs):
+    ldf = pl.LazyFrame({"a": [1.0], "b": [1.0]})
+    q = ldf.select(pl.col("a").is_close(pl.col("b"), **kwargs))
+    assert_ir_translation_raises(q, engine, pl.exceptions.ComputeError)
+
+
+@pytest.mark.parametrize(
+    "dtype,data",
+    [
+        (pl.Boolean, [True, False]),
+        (pl.String, ["a", "b"]),
+        (pl.Date, [date(2020, 1, 1), date(2020, 1, 2)]),
+    ],
+)
+def test_boolean_is_close_invalid_dtype_raises(engine: pl.GPUEngine, dtype, data):
+    ldf = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = ldf.select(pl.col("a").is_close(pl.col("a")))
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
 
 
 @pytest.mark.skipif(

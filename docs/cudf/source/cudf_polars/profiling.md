@@ -58,6 +58,72 @@ print(total)
 ```
 
 
+## I/O Statistics
+
+`kvikio_statistics=True` turns on [KvikIO I/O statistics][kvikio-stats] on every rank, which
+report what storage did. It is separate from `statistics`, so you can collect either on its own.
+`gather_io_summary()` returns one `kvikio.Summary` per rank, keyed by rank index:
+
+```python
+import polars as pl
+from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.engine.ray import RayEngine
+
+opts = StreamingOptions(kvikio_statistics=True)
+
+with RayEngine.from_options(opts) as engine:
+    pl.scan_parquet("/data/*.parquet").collect(engine=engine)
+
+    for rank, summary in engine.gather_io_summary().items():
+        print(f"--- rank {rank} ---")
+        print(summary)
+```
+
+`clear=True` restarts each rank's measured span after reading, scoping the next gather to
+whatever follows. A rank that is not counting is absent, so the result is empty unless
+`kvikio_statistics=True` is set. That is distinct from a zeroed summary, which means the rank
+was counting and did no I/O.
+
+Printing a summary gives KvikIO's own report:
+
+```text
+KvikIO I/O summary
+  wall time            122.55 ms
+  busy time            18.40 ms (15.02 % of the wall time)
+  busy bandwidth       66.44 MB/s
+  operations           12 (12 read, 0 write)
+  mean duration        3.90 ms
+  bytes                1.17 MiB of 1.17 MiB requested (1.17 MiB read, 0 B written)
+  errors               0
+  backend POSIX        1.17 MiB in 12 ops, 46.83 ms, 26.11 MB/s
+  backend GDS          unused
+  backend MMAP         unused
+  backend REMOTE_HTTP  unused
+  backend REMOTE_HDFS  unused
+```
+
+Every row is also an attribute, `s.bytes_read`, `s.busy_ns` and so on. See the
+[KvikIO reference][kvikio-stats] for the full set, and [busy time and bandwidth][kvikio-busy]
+for how the busy figures are measured.
+
+### What is and is not counted
+
+Counting happens per process, so what a summary covers depends on what else shares that
+process. With {class}`~cudf_polars.engine.ray.RayEngine` and
+{class}`~cudf_polars.engine.dask.DaskEngine` each rank has a process to itself, so a summary
+covers only cudf-polars[^shared-worker]. With {class}`~cudf_polars.engine.spmd.SPMDEngine`
+cudf-polars shares your script's process, so KvikIO operations your own code performs are
+counted too.
+
+Some I/O never reaches the monitor. On a system with working GDS the cuFile asynchronous API
+reports nothing, the batch API reports nothing, and anything cudf-polars reads outside KvikIO is
+invisible.
+
+[^shared-worker]: A Dask worker can host more than one rank if you run several engines, or other
+    Dask work, against one cluster. Neither is a recommended setup, and the summaries would be
+    mixed together.
+
+
 ## GPU Profiling
 
 For streaming queries, we recommend profiling with [NVIDIA NSight Systems][nsight]. `cudf-polars`
@@ -184,6 +250,8 @@ shape: (2, 3)
 
 [nsight]: https://developer.nvidia.com/nsight-systems
 [nvtx]: https://nvidia.github.io/NVTX/
+[kvikio-stats]: https://docs.rapids.ai/api/kvikio/nightly/statistics/
+[kvikio-busy]: https://docs.rapids.ai/api/kvikio/nightly/statistics/#busy-time-and-bandwidth
 [rapidsmpf-stats]: https://docs.rapids.ai/api/rapidsmpf/nightly/statistics/
 [structlog]: https://www.structlog.org/en/stable/
 [structlog-configure]: https://www.structlog.org/en/stable/configuration.html

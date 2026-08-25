@@ -5,13 +5,12 @@
 
 #include <cudf_test/cudf_gtest.hpp>
 
+#include <cudf/detail/device_scalar.hpp>
 #include <cudf/reduction/bloom_filter.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
-
-#include <rmm/device_scalar.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuco/extent.cuh>
@@ -41,7 +40,7 @@ TEST(BloomFilterPolicyTest, UsesBlocksBeyondFormerArrowLimit)
   constexpr auto num_blocks       = arrow_max_blocks + 1;
   constexpr auto upper_hash       = std::numeric_limits<std::uint32_t>::max();
   auto const stream               = cudf::get_default_stream();
-  rmm::device_scalar<std::uint32_t> index{0, stream};
+  cudf::detail::device_scalar<std::uint32_t> index{0, stream};
 
   block_index_kernel<<<1, 1, 0, stream.value()>>>(upper_hash, num_blocks, index.data());
   CUDF_CHECK_CUDA(stream.value());

@@ -16,7 +16,7 @@ function(find_and_configure_rtcx VERSION)
     GLOBAL_TARGETS rtcx::rtcx
     CPM_ARGS
     GIT_REPOSITORY https://github.com/rapidsai/librtcx.git
-    GIT_TAG efad266c1fd9de6d8486c6ba71bfa74df063eb1f
+    GIT_TAG a9f63f8cdd4b0b41a2d88a9f705576a61b4222ec
     GIT_SHALLOW FALSE
     EXCLUDE_FROM_ALL ${CUDF_EXCLUDE_DEPS_FROM_ALL}
   )
@@ -24,7 +24,7 @@ function(find_and_configure_rtcx VERSION)
   # When CPM fetches from source (add_subdirectory), embed.cmake is not auto-included. Include it
   # explicitly so add_embed/embed_includes/embed functions are available.
   if(rtcx_ADDED OR DEFINED CPM_rtcx_SOURCE)
-    include("${rtcx_SOURCE_DIR}/embed.cmake")
+    include("${rtcx_SOURCE_DIR}/cmake/modules/embed.cmake")
   endif()
 endfunction()
 

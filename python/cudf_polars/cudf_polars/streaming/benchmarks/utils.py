@@ -252,6 +252,7 @@ class SuccessRecord:
     iteration: int
     duration: float
     statistics: dict[str, Any] | None = None
+    io_summaries: dict[str, dict[str, Any]] | None = None
     traces: list[dict[str, Any]] | None = None
     validation_result: ValidationResult | None = None
     status: Literal["success"] = "success"
@@ -263,6 +264,7 @@ class SuccessRecord:
         iteration: int,
         duration: float,
         statistics: dict[str, Any] | None = None,
+        io_summaries: dict[str, dict[str, Any]] | None = None,
         traces: list[dict[str, Any]] | None = None,
     ) -> SuccessRecord:
         """Create a Record from plain data."""
@@ -271,6 +273,7 @@ class SuccessRecord:
             iteration=iteration,
             duration=duration,
             statistics=statistics,
+            io_summaries=io_summaries,
             traces=traces,
         )
 
@@ -461,6 +464,47 @@ def _infer_scale_factor(name: str, path: str | Path, suffix: str) -> int | float
 
     else:
         raise ValueError(f"Invalid benchmark script name: '{name}'.")
+
+
+def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
+    """
+    Read one iteration record back from its serialized form.
+
+    Parameters
+    ----------
+    data
+        One entry of a run's ``records``.
+
+    Returns
+    -------
+    The record, typed by its ``status``.
+
+    Raises
+    ------
+    ValueError
+        If the status is unrecognized.
+    """
+    status = data["status"]
+    if status == "success":
+        validation = data.get("validation_result")
+        return SuccessRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            duration=data["duration"],
+            statistics=data.get("statistics"),
+            io_summaries=data.get("io_summaries"),
+            traces=data.get("traces"),
+            validation_result=(
+                ValidationResult(**validation) if validation is not None else None
+            ),
+        )
+    if status == "error":
+        return FailedRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            traceback=data["traceback"],
+        )
+    raise ValueError(f"Unrecognized iteration status: {status!r}")
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -935,6 +979,23 @@ def _collect_statistics(engine: pl.GPUEngine | None) -> dict[str, Any] | None:
     return engine.global_statistics(clear=True).to_dict()
 
 
+def _collect_io_summaries(
+    engine: pl.GPUEngine | None,
+) -> dict[str, dict[str, Any]] | None:
+    """Gather + clear kvikio I/O statistics, keyed by rank."""
+    if engine is None:
+        return None
+    if not isinstance(engine, StreamingEngine):
+        return None
+    # String keys, since the record is written as JSON. Empty when no rank is
+    # counting, which the report reads as "not collected".
+    summaries = {
+        str(rank): dataclasses.asdict(summary)
+        for rank, summary in engine.gather_io_summary(clear=True).items()
+    }
+    return summaries or None
+
+
 def run_polars_query_iteration(
     q_id: int,
     iteration: int,
@@ -960,6 +1021,10 @@ def run_polars_query_iteration(
         # Once we support polars 1.40, we should remove this
         result = result.with_columns(*result_casts)
 
+    # I/O first: gathering it is itself a RapidsMPF collective, so doing it after
+    # `_collect_statistics` would leave those events in the freshly cleared
+    # counters and report them against the next iteration.
+    io_summaries = _collect_io_summaries(engine)
     statistics = _collect_statistics(engine)
 
     if expected is not None:
@@ -989,6 +1054,7 @@ def run_polars_query_iteration(
         iteration=iteration,
         duration=duration,
         statistics=statistics,
+        io_summaries=io_summaries,
         validation_result=validation_result,
     )
 

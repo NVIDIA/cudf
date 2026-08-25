@@ -102,8 +102,12 @@ mixed_join(table_view const& left_equality,
                                  std::nullopt,
                                  stream,
                                  mr);
-    return finalize_full_join(
-      std::move(left_outer), left_conditional.num_rows(), right_conditional.num_rows(), stream, mr);
+    return finalize_full_join(std::move(left_outer),
+                              left_conditional.num_rows(),
+                              right_conditional.num_rows(),
+                              std::nullopt,
+                              stream,
+                              mr);
   }
 
   auto const hash_joiner = cudf::hash_join{right_equality, compare_nulls, stream};

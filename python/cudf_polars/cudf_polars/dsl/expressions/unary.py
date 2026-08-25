@@ -124,6 +124,7 @@ class UnaryFunction(Expr):
             "fill_null_with_strategy",
             "gather_every",
             "hash",
+            "hist",
             "index_of",
             "mask_nans",
             "mode",
@@ -224,6 +225,19 @@ class UnaryFunction(Expr):
             raise NotImplementedError(
                 "Filling null values with limit specified is not yet supported."
             )
+        if self.name == "hist":
+            bin_count, include_category, include_breakpoint = self.options
+            if include_category or include_breakpoint:
+                raise NotImplementedError(
+                    "hist with category or breakpoint output is not supported"
+                )
+            if bin_count is None:
+                raise NotImplementedError("hist without bin_count is not supported")
+            typ = children[0].dtype.polars_type
+            if not typ.is_numeric() or typ.is_decimal():
+                raise pl.exceptions.InvalidOperationError(
+                    "'hist' is only supported for numeric data"
+                )
         if self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
             if not plc.binaryop.is_supported_operation(
@@ -603,6 +617,110 @@ class UnaryFunction(Expr):
                     1,
                     stream=df.stream,
                 ),
+                dtype=self.dtype,
+            )
+        if self.name == "hist":
+            bin_count, _, _ = self.options
+            (column,) = (child.evaluate(df, context=context) for child in self.children)
+            if column.null_count > 0:
+                column = Column(
+                    plc.stream_compaction.drop_nulls(
+                        plc.Table([column.obj]), [0], 1, stream=df.stream
+                    ).columns()[0],
+                    dtype=column.dtype,
+                )
+            if plc.traits.is_floating_point(column.obj.type()):
+                column = Column(
+                    plc.stream_compaction.drop_nans(
+                        plc.Table([column.obj]), [0], 1, stream=df.stream
+                    ).columns()[0],
+                    dtype=column.dtype,
+                )
+            zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
+            if column.size == 0 or bin_count == 0:
+                return Column(
+                    plc.Column.from_scalar(zero, bin_count, stream=df.stream),
+                    dtype=self.dtype,
+                )
+            min_scalar, max_scalar = plc.reduce.minmax(column.obj, stream=df.stream)
+            min_value = min_scalar.to_py(stream=df.stream)
+            max_value = max_scalar.to_py(stream=df.stream)
+            assert isinstance(min_value, int | float)
+            assert isinstance(max_value, int | float)
+            if min_value == max_value:
+                hist_offset = min_value - 0.5
+                hist_width = 1.0 / bin_count
+                hist_upper = max_value + 0.5
+            else:
+                hist_offset = float(min_value)
+                hist_width = (max_value - min_value) / bin_count
+                hist_upper = float(max_value)
+            breaks = [x * hist_width + hist_offset for x in range(bin_count)]
+            breaks.append(hist_upper)
+            f64 = plc.DataType(plc.TypeId.FLOAT64)
+            hist_values = column.obj
+            if hist_values.type().id() != plc.TypeId.FLOAT64:
+                hist_values = plc.unary.cast(hist_values, f64, stream=df.stream)
+            labels = plc.labeling.label_bins(
+                hist_values,
+                plc.Column.from_iterable_of_py(
+                    breaks[:-1], dtype=f64, stream=df.stream
+                ),
+                plc.labeling.Inclusive.NO,
+                plc.Column.from_iterable_of_py(breaks[1:], dtype=f64, stream=df.stream),
+                plc.labeling.Inclusive.YES,
+                stream=df.stream,
+            )
+            if labels.null_count() > 0:
+                assign_left = plc.transform.compute_column(
+                    plc.Table([labels, hist_values]),
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOGICAL_AND,
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.IS_NULL,
+                            plc.expressions.ColumnReference(0),
+                        ),
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.EQUAL,
+                            plc.expressions.ColumnReference(1),
+                            plc.expressions.Literal(
+                                plc.Scalar.from_py(breaks[0], f64, stream=df.stream)
+                            ),
+                        ),
+                    ),
+                    stream=df.stream,
+                )
+                labels = plc.copying.copy_if_else(
+                    plc.Scalar.from_py(0, labels.type(), stream=df.stream),
+                    labels,
+                    assign_left,
+                    stream=df.stream,
+                )
+            (keys_table, (counts_table,)) = plc.groupby.GroupBy(
+                plc.Table([labels]), null_handling=plc.types.NullPolicy.EXCLUDE
+            ).aggregate(
+                [
+                    plc.groupby.GroupByRequest(
+                        labels,
+                        [plc.aggregation.count(plc.types.NullPolicy.EXCLUDE)],
+                    )
+                ],
+                stream=df.stream,
+            )
+            counts_col = counts_table.columns()[0]
+            if counts_col.type() != self.dtype.plc_type:
+                counts_col = plc.unary.cast(
+                    counts_col, self.dtype.plc_type, stream=df.stream
+                )
+            return Column(
+                plc.copying.scatter(
+                    plc.Table([counts_col]),
+                    keys_table.columns()[0],
+                    plc.Table(
+                        [plc.Column.from_scalar(zero, bin_count, stream=df.stream)]
+                    ),
+                    stream=df.stream,
+                ).columns()[0],
                 dtype=self.dtype,
             )
         if self.name == "mode":

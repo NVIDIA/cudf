@@ -68,6 +68,69 @@ struct generated_test_data {
   std::vector<uint8_t> list_validity;
 };
 
+// Build a struct schema carrying a single fixed_size_list<int64>[width] child named "a".
+// ArrowSchemaInitFromType cannot initialize a fixed-size-list schema, and
+// ArrowSchemaSetTypeFixedSize leaves the allocated child type unset.
+inline nanoarrow::UniqueSchema make_struct_fixed_size_list_int64_schema(int32_t width,
+                                                                        bool nullable = false)
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetTypeFixedSize(schema->children[0], NANOARROW_TYPE_FIXED_SIZE_LIST, width));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
+  schema->children[0]->flags = nullable ? ARROW_FLAG_NULLABLE : 0;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetType(schema->children[0]->children[0], NANOARROW_TYPE_INT64));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0]->children[0], "element"));
+  schema->children[0]->children[0]->flags = 0;
+
+  return schema;
+}
+
+// Build an array matching make_struct_fixed_size_list_int64_schema. Fixed-size-list arrays
+// carry no offsets buffer; validity belongs to the list child of the outer struct.
+inline nanoarrow::UniqueArray make_struct_fixed_size_list_int64_array(
+  ArrowSchema* schema,
+  std::vector<int64_t> const& values,
+  int64_t num_rows,
+  std::vector<uint8_t> const& validity = {})
+{
+  nanoarrow::UniqueArray array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(array.get(), schema, nullptr));
+  array->length     = num_rows;
+  array->null_count = 0;
+
+  auto* list_array       = array->children[0];
+  list_array->length     = num_rows;
+  list_array->null_count = 0;
+  if (!validity.empty()) {
+    ArrowBitmap bitmap;
+    ArrowBitmapInit(&bitmap);
+    NANOARROW_THROW_NOT_OK(ArrowBitmapReserve(&bitmap, validity.size()));
+    ArrowBitmapAppendInt8Unsafe(
+      &bitmap, reinterpret_cast<int8_t const*>(validity.data()), validity.size());
+    ArrowArraySetValidityBitmap(list_array, &bitmap);
+    list_array->null_count =
+      num_rows -
+      ArrowBitCountSet(ArrowArrayValidityBitmap(list_array)->buffer.data, 0, validity.size());
+  }
+
+  auto* values_array = list_array->children[0];
+  NANOARROW_THROW_NOT_OK(ArrowBufferAppend(ArrowArrayBuffer(values_array, 1),
+                                           reinterpret_cast<void const*>(values.data()),
+                                           values.size() * sizeof(int64_t)));
+  values_array->length     = values.size();
+  values_array->null_count = 0;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+  return array;
+}
+
 // no-op allocator/deallocator to set into ArrowArray buffers that we don't
 // want to own their buffers.
 static ArrowBufferAllocator noop_alloc = (struct ArrowBufferAllocator){

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -163,6 +163,16 @@ def test_skew_kurtosis_groupby_unsupported(engine):
                 datetime(2020, 1, 10),
             ],
             dtype=pl.Datetime("ns"),
+        ),
+        pl.Series(
+            [
+                timedelta(days=1),
+                timedelta(days=2),
+                None,
+                timedelta(days=5),
+                timedelta(days=10),
+            ],
+            dtype=pl.Duration("us"),
         ),
     ],
 )

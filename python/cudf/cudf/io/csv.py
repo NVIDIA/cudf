@@ -377,9 +377,6 @@ def to_csv(
         )
         raise NotImplementedError(error_msg)
 
-    # Validate compression type
-    # Only zstd is supported because it supports concatenated frames
-    # which allows progressive compression with standard tool decompression
     if compression and compression != "zstd":
         raise NotImplementedError(
             f"Compression {compression} is not supported. "

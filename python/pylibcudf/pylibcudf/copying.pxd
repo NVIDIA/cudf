@@ -94,13 +94,9 @@ cpdef ColumnOrTable reverse(
     ColumnOrTable input, object stream = *, DeviceMemoryResource mr=*
 )
 
-cpdef list[ColumnOrTable] slice(
-    ColumnOrTable input, object indices, object stream = *
-)
+cpdef list[ColumnOrTable] slice(ColumnOrTable input, list indices, object stream = *)
 
-cpdef list[ColumnOrTable] split(
-    ColumnOrTable input, object splits, object stream = *
-)
+cpdef list[ColumnOrTable] split(ColumnOrTable input, list splits, object stream = *)
 
 cpdef Column copy_if_else(
     LeftCopyIfElseOperand lhs,

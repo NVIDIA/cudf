@@ -7,10 +7,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 
 cpdef Table merge (
-    object tables_to_merge,
-    object key_cols,
-    object column_order,
-    object null_precedence,
+    list tables_to_merge,
+    list key_cols,
+    list column_order,
+    list null_precedence,
     object stream = *,
     DeviceMemoryResource mr=*
 )

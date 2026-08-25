@@ -32,19 +32,19 @@ cdef class CsvReaderOptions:
     cdef csv_reader_options c_obj
     cdef SourceInfo source
     cpdef void set_header(self, size_type header)
-    cpdef void set_names(self, object col_names)
+    cpdef void set_names(self, list col_names)
     cpdef void set_prefix(self, str prefix)
-    cpdef void set_use_cols_indexes(self, object col_indices)
-    cpdef void set_use_cols_names(self, object col_names)
+    cpdef void set_use_cols_indexes(self, list col_indices)
+    cpdef void set_use_cols_names(self, list col_names)
     cpdef void set_delimiter(self, str delimiter)
     cpdef void set_thousands(self, str thousands)
     cpdef void set_comment(self, str comment)
-    cpdef void set_parse_dates(self, object val)
-    cpdef void set_parse_hex(self, object val)
+    cpdef void set_parse_dates(self, list val)
+    cpdef void set_parse_hex(self, list val)
     cpdef void set_dtypes(self, object types)
-    cpdef void set_true_values(self, object true_values)
-    cpdef void set_false_values(self, object false_values)
-    cpdef void set_na_values(self, object na_values)
+    cpdef void set_true_values(self, list true_values)
+    cpdef void set_false_values(self, list false_values)
+    cpdef void set_na_values(self, list na_values)
     cpdef void set_source(self, SourceInfo src)
 
 

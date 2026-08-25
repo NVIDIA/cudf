@@ -7,12 +7,12 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 
 cpdef Column translate(
-    Column input, object chars_table, object stream = *, DeviceMemoryResource mr=*
+    Column input, dict chars_table, object stream = *, DeviceMemoryResource mr=*
 )
 
 cpdef Column filter_characters(
     Column input,
-    object characters_to_filter,
+    dict characters_to_filter,
     filter_type keep_characters,
     Scalar replacement,
     object stream = *,

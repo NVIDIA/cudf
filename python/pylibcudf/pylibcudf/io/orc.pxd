@@ -51,10 +51,10 @@ cdef class OrcReaderOptions:
     cdef SourceInfo source
     cpdef void set_num_rows(self, int64_t nrows)
     cpdef void set_skip_rows(self, int64_t skip_rows)
-    cpdef void set_stripes(self, object stripes)
-    cpdef void set_decimal128_columns(self, object val)
+    cpdef void set_stripes(self, list stripes)
+    cpdef void set_decimal128_columns(self, list val)
     cpdef void set_timestamp_type(self, DataType type_)
-    cpdef void set_columns(self, object col_names)
+    cpdef void set_columns(self, list col_names)
     cpdef void set_source(self, SourceInfo src)
 
 cdef class OrcReaderOptionsBuilder:
@@ -105,7 +105,7 @@ cdef class OrcWriterOptionsBuilder:
     cdef SinkInfo sink
     cpdef OrcWriterOptionsBuilder compression(self, compression_type comp)
     cpdef OrcWriterOptionsBuilder enable_statistics(self, statistics_freq val)
-    cpdef OrcWriterOptionsBuilder key_value_metadata(self, object kvm)
+    cpdef OrcWriterOptionsBuilder key_value_metadata(self, dict kvm)
     cpdef OrcWriterOptionsBuilder metadata(self, TableInputMetadata meta)
     cpdef OrcWriterOptions build(self)
 
@@ -129,7 +129,7 @@ cdef class ChunkedOrcWriterOptionsBuilder:
     cpdef ChunkedOrcWriterOptionsBuilder compression(self, compression_type comp)
     cpdef ChunkedOrcWriterOptionsBuilder enable_statistics(self, statistics_freq val)
     cpdef ChunkedOrcWriterOptionsBuilder key_value_metadata(
-        self, object kvm
+        self, dict kvm
     )
     cpdef ChunkedOrcWriterOptionsBuilder metadata(self, TableInputMetadata meta)
     cpdef ChunkedOrcWriterOptions build(self)

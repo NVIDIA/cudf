@@ -21,7 +21,7 @@ __all__ = ["join_streams"]
 
 
 cpdef void join_streams(
-    object streams: list[CudaStreamLike], object stream: CudaStreamLike
+    list streams: list[CudaStreamLike], object stream: CudaStreamLike
 ):
     """Synchronize a stream to an event on a set of streams.
 

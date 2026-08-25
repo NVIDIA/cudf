@@ -77,7 +77,7 @@ cpdef Aggregation std(size_type ddof = *)
 
 cpdef Aggregation median()
 
-cpdef Aggregation quantile(object quantiles, interpolation interp = *)
+cpdef Aggregation quantile(list quantiles, interpolation interp = *)
 
 cpdef Aggregation argmax()
 

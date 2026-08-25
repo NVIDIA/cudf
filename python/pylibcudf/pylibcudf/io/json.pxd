@@ -33,7 +33,7 @@ from pylibcudf.types cimport DataType
 cdef class JsonReaderOptions:
     cdef json_reader_options c_obj
     cdef SourceInfo source
-    cpdef void set_dtypes(self, object types)
+    cpdef void set_dtypes(self, list types)
     cpdef void enable_keep_quotes(self, bool keep_quotes)
     cpdef void enable_mixed_types_as_string(self, bool mixed_types_as_string)
     cpdef void enable_prune_columns(self, bool prune_columns)
@@ -52,7 +52,7 @@ cdef class JsonReaderOptions:
     cpdef void allow_unquoted_control_chars(self, bool val)
     cpdef void allow_numeric_leading_zeros(self, bool val)
     cpdef void allow_nonnumeric_numbers(self, bool val)
-    cpdef void set_na_values(self, object vals)
+    cpdef void set_na_values(self, list vals)
 
 
 cdef class JsonReaderOptionsBuilder:

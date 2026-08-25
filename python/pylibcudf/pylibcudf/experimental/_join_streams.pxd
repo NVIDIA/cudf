@@ -2,4 +2,4 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-cpdef void join_streams(object streams, object stream)
+cpdef void join_streams(list streams, object stream)

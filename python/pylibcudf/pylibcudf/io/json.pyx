@@ -185,7 +185,7 @@ cdef class JsonReaderOptions:
         json_builder.source = source
         return json_builder
 
-    cpdef void set_dtypes(self, object types: list[DataType] | list[NameAndType]):
+    cpdef void set_dtypes(self, list types: list[DataType] | list[NameAndType]):
         """
         Set data types for columns to be read.
 
@@ -338,7 +338,7 @@ cdef class JsonReaderOptions:
     cpdef void allow_nonnumeric_numbers(self, bool val):
         self.c_obj.allow_nonnumeric_numbers(val)
 
-    cpdef void set_na_values(self, object vals: list[str]):
+    cpdef void set_na_values(self, list vals: list[str]):
         cdef vector[string] vec
         for val in vals:
             if isinstance(val, str):

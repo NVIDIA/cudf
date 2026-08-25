@@ -10,8 +10,8 @@ from .table cimport Table
 cpdef Column lower_bound(
     Table haystack,
     Table needles,
-    object column_order,
-    object null_precedence,
+    list column_order,
+    list null_precedence,
     object stream = *,
     DeviceMemoryResource mr = *,
 )
@@ -19,8 +19,8 @@ cpdef Column lower_bound(
 cpdef Column upper_bound(
     Table haystack,
     Table needles,
-    object column_order,
-    object null_precedence,
+    list column_order,
+    list null_precedence,
     object stream = *,
     DeviceMemoryResource mr = *,
 )

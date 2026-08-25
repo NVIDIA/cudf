@@ -329,7 +329,7 @@ cdef class OrcReaderOptions:
         """
         self.c_obj.set_skip_rows(skip_rows)
 
-    cpdef void set_stripes(self, object stripes: list[list[int]]):
+    cpdef void set_stripes(self, list stripes: list[list[int]]):
         """
         Sets list of stripes to read for each input source.
 
@@ -351,7 +351,7 @@ cdef class OrcReaderOptions:
             vec.clear()
         self.c_obj.set_stripes(c_stripes)
 
-    cpdef void set_decimal128_columns(self, object val: list[str]):
+    cpdef void set_decimal128_columns(self, list val: list[str]):
         """
         Set columns that should be read as 128-bit Decimal.
 
@@ -387,7 +387,7 @@ cdef class OrcReaderOptions:
         """
         self.c_obj.set_timestamp_type(type_.c_obj)
 
-    cpdef void set_columns(self, object col_names: list[str]):
+    cpdef void set_columns(self, list col_names: list[str]):
         """
         Sets names of the column to read.
 
@@ -634,7 +634,7 @@ cdef class OrcWriterOptionsBuilder:
         self.c_obj.enable_statistics(val)
         return self
 
-    cpdef OrcWriterOptionsBuilder key_value_metadata(self, object kvm: dict[str, str]):
+    cpdef OrcWriterOptionsBuilder key_value_metadata(self, dict kvm: dict[str, str]):
         """
         Sets Key-Value footer metadata.
 
@@ -879,7 +879,7 @@ cdef class ChunkedOrcWriterOptionsBuilder:
 
     cpdef ChunkedOrcWriterOptionsBuilder key_value_metadata(
         self,
-        object kvm: dict[str, str]
+        dict kvm: dict[str, str]
     ):
         """
         Sets Key-Value footer metadata.

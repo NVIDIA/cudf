@@ -45,23 +45,23 @@ cdef class GroupBy:
     cdef unique_ptr[vector[null_order]] _null_precedence
 
     cpdef tuple[Table, list[Table]] aggregate(
-        self, object requests, object stream = *, DeviceMemoryResource mr=*
+        self, list requests, object stream = *, DeviceMemoryResource mr=*
     )
     cpdef tuple[Table, list[Table]] scan(
-        self, object requests, object stream = *, DeviceMemoryResource mr=*
+        self, list requests, object stream = *, DeviceMemoryResource mr=*
     )
     cpdef tuple[Table, Table] shift(
         self,
         Table values,
-        object offset,
-        object fill_values,
+        list offset,
+        list fill_values,
         object stream = *,
         DeviceMemoryResource mr=*,
     )
     cpdef tuple[Table, Table] replace_nulls(
         self,
         Table values,
-        object replace_policies,
+        list replace_policies,
         object stream = *,
         DeviceMemoryResource mr=*,
     )

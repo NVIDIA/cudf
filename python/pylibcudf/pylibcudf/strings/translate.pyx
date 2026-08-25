@@ -50,7 +50,7 @@ cdef vector[pair[char_utf8, char_utf8]] _table_to_c_table(dict table):
 
 cpdef Column translate(
     Column input,
-    object chars_table: dict[int | str, int | str],
+    dict chars_table: dict[int | str, int | str],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -94,7 +94,7 @@ cpdef Column translate(
 
 cpdef Column filter_characters(
     Column input,
-    object characters_to_filter: dict[int | str, int | str],
+    dict characters_to_filter: dict[int | str, int | str],
     filter_type keep_characters,
     Scalar replacement,
     object stream: CudaStreamLike | None = None,

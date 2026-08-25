@@ -426,7 +426,7 @@ cpdef Aggregation median():
 
 
 cpdef Aggregation quantile(
-    object quantiles: list[float],
+    list quantiles: list[float],
     interpolation interp = interpolation.LINEAR,
 ):
     """Create a quantile aggregation.

@@ -869,6 +869,11 @@ def test_orc_write_bool_statistics(tmp_path, datadir, nrows):
 
 
 def test_orc_reader_gmt_timestamps(datadir):
+    if version.parse(pa.__version__) >= version.parse("24"):
+        pytest.skip(
+            "PyArrow 24 cannot read legacy out-of-range ORC timestamps"
+        )
+
     path = datadir / "TestOrcFile.gmt.orc"
 
     pdf = pd.read_orc(path)
@@ -1431,6 +1436,11 @@ def test_chunked_orc_writer_lists():
 
 
 def test_writer_timestamp_stream_size(datadir, tmp_path):
+    if version.parse(pa.__version__) >= version.parse("24"):
+        pytest.skip(
+            "PyArrow 24 cannot read legacy out-of-range ORC timestamps"
+        )
+
     pdf_fname = datadir / "TestOrcFile.largeTimestamps.orc"
     gdf_fname = tmp_path / "gdf.orc"
 

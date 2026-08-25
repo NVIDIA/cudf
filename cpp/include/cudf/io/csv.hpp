@@ -1777,8 +1777,7 @@ class csv_writer_options_builder {
   /**
    * @brief Sets the compression type for the output.
    *
-   * Only ZSTD is supported: concatenated frames let the chunks be compressed as they are written
-   * while keeping the output readable by standard tools.
+   * Only NONE and ZSTD are supported.
    *
    * @param comp The compression type (NONE or ZSTD only)
    * @return this for chaining
@@ -1792,8 +1791,7 @@ class csv_writer_options_builder {
   /**
    * @brief Sets the size of the blocks that the output is compressed in.
    *
-   * Each block becomes its own frame, so the codec can compress them in parallel. Independent of
-   * `rows_per_chunk`, and capped at the codec's maximum input size.
+   * Independent of `rows_per_chunk`, and capped at the codec's maximum input size.
    *
    * @param size The compression block size, in bytes
    * @return this for chaining

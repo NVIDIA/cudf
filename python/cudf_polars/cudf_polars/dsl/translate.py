@@ -77,6 +77,14 @@ def _align_decimal_float_for_comparison(
     return operands
 
 
+def _contains_array_input(expression: expr.Expr) -> bool:
+    """Return whether an expression consumes an Array-typed input."""
+    return any(
+        isinstance(child.dtype.polars_type, pl.Array)
+        for child in traversal(expression.children)
+    )
+
+
 def _strip_file_uri(path: str) -> str:
     # file:///foo/path is treated as a local path. Polars
     # rejects file:// URIs with any non-empty host, so
@@ -290,10 +298,17 @@ class Translator:
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         try:
-            return _translate_expr(node, self, dtype, schema)
+            translated = _translate_expr(node, self, dtype, schema)
         except Exception as e:
             self.errors.append(e)
             return expr.ErrorExpr(dtype, str(e))
+        if _contains_array_input(translated):
+            error = NotImplementedError(
+                "Only pass-through of Array columns is supported"
+            )
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
+        return translated
 
 
 class set_node(AbstractContextManager[None]):

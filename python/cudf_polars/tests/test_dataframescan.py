@@ -98,8 +98,18 @@ def test_array_pass_through(in_memory_engine: pl.GPUEngine):
         pl.when("keep").then("a").otherwise("b"),
         pl.col("a").cast(pl.List(pl.Int8)),
         pl.col("values").cast(pl.Array(pl.Int8, 2)),
+        pl.col("a").is_null(),
+        pl.col("a").count(),
     ],
-    ids=["function", "binary", "non-column", "cast-from", "cast-to"],
+    ids=[
+        "function",
+        "binary",
+        "non-column",
+        "cast-from",
+        "cast-to",
+        "is-null",
+        "count",
+    ],
 )
 def test_array_expression_falls_back(
     in_memory_engine: pl.GPUEngine,

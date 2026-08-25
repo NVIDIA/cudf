@@ -706,6 +706,16 @@ class StreamingOptions:
                 Built-in default: 8."""),
         )
         g.add_argument(
+            "--kvikio-statistics",
+            dest="kvikio_statistics",
+            default=None,
+            action=argparse.BooleanOptionalAction,
+            help=textwrap.dedent("""\
+                Collect KvikIO I/O statistics, reported per rank.
+                Env: CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS.
+                Built-in default: false."""),
+        )
+        g.add_argument(
             "--max-concurrent-io-tasks",
             dest="max_concurrent_io_tasks",
             default=None,

@@ -12,7 +12,6 @@
 #include <cudf/utilities/pinned_memory.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/detail/error.hpp>
 #include <rmm/error.hpp>
 #include <rmm/mr/aligned_resource_adaptor.hpp>
@@ -28,6 +27,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream_ref>
 #include <cuda_runtime_api.h>
 
 #include <sys/mman.h>
@@ -937,8 +937,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocInternal(JNIEnv* env,
   {
     cudf::jni::auto_set_device(env);
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
-    auto c_stream = rmm::cuda_stream_view(reinterpret_cast<cudaStream_t>(stream));
-    void* ret     = mr.allocate(c_stream, size);
+    auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
+    void* ret                         = mr.allocate(c_stream, size);
     return reinterpret_cast<jlong>(ret);
   }
   JNI_CATCH(env, 0);
@@ -952,7 +952,7 @@ Java_ai_rapids_cudf_Rmm_free(JNIEnv* env, jclass clazz, jlong ptr, jlong size, j
     cudf::jni::auto_set_device(env);
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
     void* cptr                        = reinterpret_cast<void*>(ptr);
-    auto c_stream = rmm::cuda_stream_view(reinterpret_cast<cudaStream_t>(stream));
+    auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
     mr.deallocate(c_stream, cptr, size);
   }
   JNI_CATCH(env, );

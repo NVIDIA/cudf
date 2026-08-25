@@ -571,6 +571,7 @@ class UnaryFunction(Expr):
                     f"'by' column in {self.name} expression has incorrect length: "
                     f"expected {val.size}, got {by.size}"
                 )
+            unmasked = by
             by = by.mask_nans(stream=df.stream)
             agg = (
                 plc.aggregation.argmax()
@@ -581,14 +582,21 @@ class UnaryFunction(Expr):
                 by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
             )
             if not index.is_valid(stream=df.stream):
-                return Column(
-                    plc.Column.from_scalar(
-                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
-                        1,
-                        stream=df.stream,
-                    ),
-                    dtype=self.dtype,
-                )
+                if unmasked.null_count != unmasked.size:
+                    index = plc.reduce.reduce(
+                        unmasked.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+                    )
+                if not index.is_valid(stream=df.stream):
+                    return Column(
+                        plc.Column.from_scalar(
+                            plc.Scalar.from_py(
+                                None, self.dtype.plc_type, stream=df.stream
+                            ),
+                            1,
+                            stream=df.stream,
+                        ),
+                        dtype=self.dtype,
+                    )
             if val.is_scalar:
                 return val
             return Column(

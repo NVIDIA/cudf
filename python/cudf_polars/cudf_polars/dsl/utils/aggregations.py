@@ -133,8 +133,6 @@ def decompose_single_agg(
             )
             if any(nested_agg for _, nested_agg in child_aggs):
                 raise NotImplementedError("Nested aggs in groupby not supported")
-        if plc.traits.is_floating_point(by.dtype.plc_type):
-            by = expr.UnaryFunction(by.dtype, "mask_nans", (), by)
         is_null = expr.BooleanFunction(
             DataType(pl.Boolean()),
             expr.BooleanFunction.Name.IsNull,
@@ -147,6 +145,8 @@ def decompose_single_agg(
             expr.Literal(val.dtype, None),
             val,
         )
+        if plc.traits.is_floating_point(by.dtype.plc_type):
+            by = expr.UnaryFunction(by.dtype, "mask_nans", (), by)
         descending = agg.name == "max_by"
         return [
             (

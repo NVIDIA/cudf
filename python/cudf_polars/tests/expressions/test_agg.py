@@ -175,6 +175,7 @@ def test_max_min_by(engine: pl.GPUEngine, expr: str, data) -> None:
         [-1.0, float("nan"), 1.0],
         [1.0, float("nan"), float("nan")],
         [float("nan"), float("nan"), 1.0],
+        [float("nan"), float("nan"), float("nan")],
     ],
 )
 def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
@@ -237,6 +238,8 @@ def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
     [
         [1, 5, 5, 2, None, 1],
         [1.0, float("nan"), 2.0, 5.0, None, 1.0],
+        [None, None, None, 2.0, 5.0, 1.0],
+        [1.0, 5.0, 2.0, float("nan"), float("nan"), float("nan")],
     ],
 )
 def test_groupby_max_min_by(engine: pl.GPUEngine, agg: str, b) -> None:

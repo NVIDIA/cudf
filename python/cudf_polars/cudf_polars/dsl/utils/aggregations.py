@@ -145,23 +145,27 @@ def decompose_single_agg(
             expr.Literal(val.dtype, None),
             val,
         )
-        if plc.traits.is_floating_point(by.dtype.plc_type):
-            by = expr.UnaryFunction(by.dtype, "mask_nans", (), by)
         descending = agg.name == "max_by"
-        return [
-            (
-                named_expr.reconstruct(
-                    expr.SortedAgg(
-                        agg.dtype,
-                        "first",
-                        (False, (True,), (descending,)),
-                        val,
-                        by,
-                    )
-                ),
-                True,
+        if plc.traits.is_floating_point(by.dtype.plc_type):
+            sorted_agg = expr.SortedAgg(
+                agg.dtype,
+                "first",
+                (False, (True, True), (descending, descending)),
+                val,
+                expr.UnaryFunction(by.dtype, "mask_nans", (), by),
+                by,
             )
-        ], named_expr.reconstruct(expr.Col(agg.dtype, name))
+        else:
+            sorted_agg = expr.SortedAgg(
+                agg.dtype,
+                "first",
+                (False, (True,), (descending,)),
+                val,
+                by,
+            )
+        return [(named_expr.reconstruct(sorted_agg), True)], named_expr.reconstruct(
+            expr.Col(agg.dtype, name)
+        )
     if isinstance(agg, expr.UnaryFunction) and agg.name in _WINDOW_ONLY_UNARY_FUNCTIONS:
         if context != ExecutionContext.WINDOW:
             raise NotImplementedError(

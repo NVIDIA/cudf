@@ -740,20 +740,24 @@ class UnaryFunction(Expr):
             )
             if not index.is_valid(stream=df.stream):
                 if unmasked.null_count != unmasked.size:
-                    index = plc.reduce.reduce(
-                        unmasked.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+                    valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
+                    filtered = plc.stream_compaction.apply_boolean_mask(
+                        plc.Table([val.obj]), valid, stream=df.stream
                     )
-                if not index.is_valid(stream=df.stream):
                     return Column(
-                        plc.Column.from_scalar(
-                            plc.Scalar.from_py(
-                                None, self.dtype.plc_type, stream=df.stream
-                            ),
-                            1,
-                            stream=df.stream,
-                        ),
+                        plc.copying.slice(
+                            filtered.columns()[0], [0, 1], stream=df.stream
+                        )[0],
                         dtype=self.dtype,
                     )
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             if val.is_scalar:
                 return val
             return Column(

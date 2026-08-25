@@ -141,21 +141,27 @@ def test_product(engine: pl.GPUEngine, data, dtype):
 )
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
 @pytest.mark.parametrize(
-    "data",
+    "data,by_dtype",
     [
-        {"a": [1, 2, 2, None, 3, 1], "b": [5, 4, 3, 2, 1, 6]},
-        {"a": [1, 2, 3, 4], "b": [5, None, 3, None]},
-        {"a": [10, 20, 30, 40], "b": [1, 5, 5, 2]},
-        {"a": [None, None, None], "b": [None, None, None]},
-        {"a": [7], "b": [3]},
-        {"a": [], "b": []},
+        ({"a": [1, 2, 2, None, 3, 1], "b": [5, 4, 3, 2, 1, 6]}, pl.Int64),
+        ({"a": [1, 2, 3, 4], "b": [5, None, 3, None]}, pl.Int64),
+        ({"a": [10, 20, 30, 40], "b": [1, 5, 5, 2]}, pl.Int64),
+        ({"a": [None, None, None], "b": [None, None, None]}, pl.Int64),
+        ({"a": [7], "b": [3]}, pl.Int64),
+        ({"a": [], "b": []}, pl.Int64),
+        ({"a": [], "b": []}, pl.Float64),
+        ({"a": [None, None, None], "b": [None, None, None]}, pl.Float64),
+        ({"a": [7], "b": [3.0]}, pl.Float64),
+        ({"a": [10, 20, 30], "b": [None, float("nan"), None]}, pl.Float64),
+        ({"a": [10, 20, 30], "b": [float("nan"), None, float("nan")]}, pl.Float64),
+        ({"a": [10, 20, 30], "b": [None, None, float("nan")]}, pl.Float64),
     ],
 )
-def test_max_min_by(engine: pl.GPUEngine, expr: str, data) -> None:
+def test_max_min_by(engine: pl.GPUEngine, expr: str, data, by_dtype) -> None:
     df = pl.LazyFrame(
         {
             "a": pl.Series(data["a"], dtype=pl.Int64),
-            "b": pl.Series(data["b"], dtype=pl.Int64),
+            "b": pl.Series(data["b"], dtype=by_dtype),
         }
     )
     q = df.select(getattr(pl.col("a"), expr)("b"))
@@ -234,20 +240,53 @@ def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 @pytest.mark.parametrize(
-    "b",
+    "g,a,b,by_dtype",
     [
-        [1, 5, 5, 2, None, 1],
-        [1.0, float("nan"), 2.0, 5.0, None, 1.0],
-        [None, None, None, 2.0, 5.0, 1.0],
-        [1.0, 5.0, 2.0, float("nan"), float("nan"), float("nan")],
+        ([1, 1, 1, 2, 2, 2], [10, 20, 30, 40, 50, 60], [1, 5, 5, 2, None, 1], pl.Int64),
+        (
+            [1, 1, 1, 2, 2, 2],
+            [10, 20, 30, 40, 50, 60],
+            [1.0, float("nan"), 2.0, 5.0, None, 1.0],
+            pl.Float64,
+        ),
+        (
+            [1, 1, 1, 2, 2, 2],
+            [10, 20, 30, 40, 50, 60],
+            [None, None, None, 2.0, 5.0, 1.0],
+            pl.Float64,
+        ),
+        (
+            [1, 1, 1, 2, 2, 2],
+            [10, 20, 30, 40, 50, 60],
+            [1.0, 5.0, 2.0, float("nan"), float("nan"), float("nan")],
+            pl.Float64,
+        ),
+        ([], [], [], pl.Int64),
+        ([], [], [], pl.Float64),
+        ([1, 2, 3], [10, 20, 30], [None, None, None], pl.Float64),
+        ([1], [10], [3.0], pl.Float64),
+        ([1], [10], [None], pl.Float64),
+        ([1], [10], [float("nan")], pl.Float64),
+        (
+            [1, 1, 1, 2, 2, 2],
+            [10, 20, 30, 40, 50, 60],
+            [None, float("nan"), None, float("nan"), None, float("nan")],
+            pl.Float64,
+        ),
+        (
+            [1, 1, 1, 2, 2],
+            [10, 20, 30, 40, 50],
+            [None, None, float("nan"), float("nan"), None],
+            pl.Float64,
+        ),
     ],
 )
-def test_groupby_max_min_by(engine: pl.GPUEngine, agg: str, b) -> None:
+def test_groupby_max_min_by(engine: pl.GPUEngine, agg: str, g, a, b, by_dtype) -> None:
     df = pl.LazyFrame(
         {
-            "g": [1, 1, 1, 2, 2, 2],
-            "a": [10, 20, 30, 40, 50, 60],
-            "b": b,
+            "g": pl.Series(g, dtype=pl.Int64),
+            "a": pl.Series(a, dtype=pl.Int64),
+            "b": pl.Series(b, dtype=by_dtype),
         }
     )
     q = df.group_by("g").agg(getattr(pl.col("a"), agg)("b")).sort("g")

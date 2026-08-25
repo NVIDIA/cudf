@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <iterator>
 #include <numeric>
+#include <ranges>
 #include <tuple>
 #include <utility>
 
@@ -79,6 +80,24 @@ namespace {
 }
 
 /**
+ * @brief Construct a vector of empty-like buffers from the input buffers
+ *
+ * @param buffers Input buffers
+ * @return Vector of empty-like buffers
+ */
+[[nodiscard]] std::vector<inline_column_buffer> make_empty_like_column_buffers(
+  std::span<inline_column_buffer const> buffers)
+{
+  std::vector<inline_column_buffer> empty_buffers;
+  empty_buffers.reserve(buffers.size());
+  std::transform(
+    buffers.begin(), buffers.end(), std::back_inserter(empty_buffers), [](auto const& buffer) {
+      return inline_column_buffer::empty_like(buffer);
+    });
+  return empty_buffers;
+}
+
+/**
  * @brief Count the number of row groups in the input
  *
  * @param row_group_indices Row group indices
@@ -117,6 +136,44 @@ namespace {
 }
 
 }  // namespace
+
+void hybrid_scan_reader_impl::mark_buffers_nullable_for_pruned_pages()
+{
+  auto const& pass               = *_pass_itm_data;
+  auto buffers_with_pruned_pages = std::vector<bool>(_output_buffers.size(), false);
+  auto pruned_page_indices =
+    std::views::iota(std::size_t{0}, _pass_page_mask.size()) |
+    std::views::filter([&](auto page_idx) { return not _pass_page_mask[page_idx]; });
+  std::ranges::for_each(pruned_page_indices, [&](auto page_idx) {
+    auto const& chunk        = pass.chunks[pass.pages[page_idx].chunk_idx];
+    auto const& input_column = _input_columns[chunk.src_col_index];
+    buffers_with_pruned_pages[input_column.nesting.front()] = true;
+  });
+
+  // Helper to mark a buffer and its children nullable
+  auto const mark_buffers_nullable = [](auto const& self,
+                                        std::span<inline_column_buffer> buffers) -> void {
+    for (auto& buffer : buffers) {
+      // Page pruning synthesizes null rows at every nesting level except list elements.
+      if ((buffer.user_data & parquet::detail::PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT) == 0) {
+        buffer.is_nullable = true;
+      }
+      self(self, buffer.children);
+    }
+  };
+
+  // Mark buffers with pruned pages as nullable
+  auto buffers_with_pruned_page_indices =
+    std::views::iota(std::size_t{0}, _output_buffers.size()) |
+    std::views::filter([&](auto buffer_idx) { return buffers_with_pruned_pages[buffer_idx]; });
+  std::ranges::for_each(buffers_with_pruned_page_indices, [&](auto buffer_idx) {
+    mark_buffers_nullable(mark_buffers_nullable,
+                          std::span<inline_column_buffer>{&_output_buffers[buffer_idx], 1});
+    mark_buffers_nullable(
+      mark_buffers_nullable,
+      std::span<inline_column_buffer>{&_output_buffers_template[buffer_idx], 1});
+  });
+}
 
 hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
@@ -224,14 +281,16 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
 
   CUDF_EXPECTS(_input_columns.size() > 0 and _output_buffers.size() > 0, "No columns selected");
 
-  // Clear the output buffers templates
-  _output_buffers_template.clear();
+  // Save original output-buffer schema for reuse across materialization passes.
+  _original_output_buffers_template = make_empty_like_column_buffers(_output_buffers);
 
-  // Save the states of the output buffers for reuse.
-  std::transform(_output_buffers.begin(),
-                 _output_buffers.end(),
-                 std::back_inserter(_output_buffers_template),
-                 [](auto const& buff) { return inline_column_buffer::empty_like(buff); });
+  // Initialize mutable output-buffer template for this materialization pass.
+  reset_output_buffers_template();
+}
+
+void hybrid_scan_reader_impl::reset_output_buffers_template()
+{
+  _output_buffers_template = make_empty_like_column_buffers(_original_output_buffers_template);
 }
 
 std::vector<std::vector<size_type>> hybrid_scan_reader_impl::all_row_groups(
@@ -276,6 +335,7 @@ void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode read_col
   reset_internal_state();
   initialize_options(options, num_sources, stream, mr);
   select_columns(read_columns_mode, options);
+  reset_output_buffers_template();
 }
 
 std::vector<std::vector<cudf::size_type>>
@@ -1439,6 +1499,9 @@ void hybrid_scan_reader_impl::set_pass_page_mask(std::span<bool const> data_page
   // Make sure we inserted exactly the number of pages for this pass
   CUDF_EXPECTS(_pass_page_mask.size() == pass->pages.size(),
                "Encountered mismatch in number of pass pages and page mask size");
+
+  // Mark output buffers nullable when page pruning produces nulls
+  mark_buffers_nullable_for_pruned_pages();
 }
 
 void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
@@ -1487,6 +1550,9 @@ void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
   // Make sure we inserted exactly the number of pages for this pass.
   CUDF_EXPECTS(_pass_page_mask.size() == pass->pages.size(),
                "Encountered mismatch in number of pass pages and page mask size");
+
+  // Mark output buffers nullable when page pruning produces nulls
+  mark_buffers_nullable_for_pruned_pages();
 }
 
 }  // namespace cudf::io::parquet::experimental::detail

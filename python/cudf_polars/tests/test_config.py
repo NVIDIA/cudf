@@ -518,6 +518,21 @@ def test_validate_parquet_options(option: str) -> None:
         )
 
 
+def test_use_hybrid_scan_requires_prefetch_file_metadata() -> None:
+    with pytest.raises(
+        ValueError, match="use_hybrid_scan requires prefetch_file_metadata"
+    ):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                parquet_options={
+                    "use_hybrid_scan": True,
+                    "prefetch_file_metadata": False,
+                },
+            )
+        )
+
+
 def test_prefetch_file_metadata_default() -> None:
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
     assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)

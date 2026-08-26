@@ -111,7 +111,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
                                              cudf::column_view const& visibilities)
 {
   // all device memory operations and kernel functions will run on this stream
-  auto stream = cuda::stream_ref{cudaStreamLegacy};
+  auto stream = cudf::get_default_stream();
 
   auto const d_names        = cudf::column_device_view::create(names, stream);
   auto const d_visibilities = cudf::column_device_view::create(visibilities, stream);

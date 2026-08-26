@@ -111,7 +111,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
                                              cudf::column_view const& visibilities)
 {
   // all device memory operations and kernel functions will run on this stream
-  auto stream = cuda::stream_ref{cudaStreamLegacy};
+  auto stream = cudf::get_default_stream();
 
   set_malloc_heap_size();  // to illustrate adjusting the malloc heap
 

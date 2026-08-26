@@ -499,16 +499,11 @@ def _plc_write_csv(
     # Materialize iterator to avoid consuming it during access context setup
     columns_list = list(iter_columns)
 
-    # Map compression string to pylibcudf enum
-    if compression is None:
-        plc_compression = plc.io.types.CompressionType.NONE
-    elif compression == "zstd":
-        plc_compression = plc.io.types.CompressionType.ZSTD
-    else:
-        raise NotImplementedError(
-            f"Compression {compression} is not supported. "
-            "Only 'zstd' is supported for CSV compression."
-        )
+    plc_compression = (
+        plc.io.types.CompressionType.ZSTD
+        if compression == "zstd"
+        else plc.io.types.CompressionType.NONE
+    )
 
     with access_columns(*columns_list, mode="read", scope="internal"):
         columns = [col.plc_column for col in columns_list]

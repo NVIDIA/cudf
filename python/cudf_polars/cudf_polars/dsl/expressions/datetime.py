@@ -60,6 +60,7 @@ def _local_wall_clock(
     """Convert UTC timestamps to naive wall-clock timestamps in ``from_zone``."""
     if tzif_dir is None:
         return column
+    # tzif_dir is not None implies from_zone is a str (from TemporalFunction.__init__)
     data = _tz_transition_columns(cast("str", from_zone), tzif_dir, stream)
     if data is None:
         return column

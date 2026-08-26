@@ -867,14 +867,18 @@ def test_hybrid_scan_filter_row_groups_with_dictionary_pages_negation(
         _, dictionary_ranges = reader.secondary_filters_byte_ranges(
             all_row_groups, simple_parquet_options
         )
+        # the caller is responsible for keeping the source bytes alive until
+        # synchronize_stream() below runs.
+        # See https://github.com/rapidsai/rmm/issues/2521
+        dict_page_bytes = [
+            simple_parquet_bytes[r.offset : r.offset + r.size]
+            for r in dictionary_ranges
+        ]
         dictionary_data = [
             plc.gpumemoryview(
-                rmm.DeviceBuffer.to_device(
-                    simple_parquet_bytes[r.offset : r.offset + r.size],
-                    plc.utils._get_stream(),
-                )
+                rmm.DeviceBuffer.to_device(b, plc.utils._get_stream())
             )
-            for r in dictionary_ranges
+            for b in dict_page_bytes
         ]
         synchronize_stream()
         return reader.filter_row_groups_with_dictionary_pages(

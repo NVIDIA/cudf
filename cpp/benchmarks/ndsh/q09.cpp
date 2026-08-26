@@ -114,7 +114,7 @@ struct q9_data {
 
   auto const one = cudf::numeric_scalar<double>(1);
   auto const one_minus_discount =
-    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type());
+    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
   auto const extendedprice_discounted_type = cudf::data_type{cudf::type_id::FLOAT64};
   auto const extendedprice_discounted      = cudf::binary_operation(extendedprice,
                                                                one_minus_discount->view(),
@@ -124,7 +124,7 @@ struct q9_data {
                                                                mr);
   auto const supplycost_quantity_type      = cudf::data_type{cudf::type_id::FLOAT64};
   auto const supplycost_quantity           = cudf::binary_operation(
-    supplycost, quantity, cudf::binary_operator::MUL, supplycost_quantity_type);
+    supplycost, quantity, cudf::binary_operator::MUL, supplycost_quantity_type, stream, mr);
   auto amount = cudf::binary_operation(extendedprice_discounted->view(),
                                        supplycost_quantity->view(),
                                        cudf::binary_operator::SUB,

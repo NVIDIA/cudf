@@ -19,6 +19,7 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
+    _prefetch_parquet_footers_for_paths,
     prefetch_parquet_file_metadata_for_ir,
 )
 from cudf_polars.engine.options import StreamingOptions
@@ -145,6 +146,17 @@ def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
         streaming_scan, py_executor=None, stats=None
     )
     assert set(result) == {local_path}
+
+
+def test_cached_parquet_info_hybrid_scan_reader_lazy(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    [info] = _prefetch_parquet_footers_for_paths([local_path])
+    assert info._hybrid_scan_metadata is None
+
+    info.hybrid_scan_reader(info.default_reader_options())
+    assert info._hybrid_scan_metadata is not None
 
 
 def test_prefetch_file_metadata_select_fast_count(

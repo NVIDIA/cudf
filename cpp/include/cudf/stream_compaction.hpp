@@ -214,7 +214,7 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> apply_retention_mask(
   table_view const& input,
   column_view const& retention_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -244,11 +244,11 @@ std::unique_ptr<table> apply_retention_mask(
  * if the corresponding element `i` in the mask is non-null and `false`.
  * This operation is stable: the input order is preserved.
  *
- * @note if @p input.num_rows() is zero, there is no error, and an empty table
- * is returned.
+ * @note If @p deletion_mask is empty, or @p input has zero rows, an empty table is returned.
  *
- * @throws cudf::logic_error if `input.num_rows() != deletion_mask.size()`.
- * @throws cudf::logic_error if `deletion_mask` is not `type_id::BOOL8` type.
+ * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
+ * deletion_mask.
+ * @throws cudf::logic_error if @p deletion_mask is not `type_id::BOOL8` type.
  *
  * @param[in] input The input table_view to filter
  * @param[in] deletion_mask A nullable column_view of type type_id::BOOL8 used

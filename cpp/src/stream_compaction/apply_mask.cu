@@ -98,7 +98,7 @@ std::unique_ptr<table> apply_mask(table_view const& input,
  */
 std::unique_ptr<table> apply_retention_mask(table_view const& input,
                                             column_view const& retention_mask,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

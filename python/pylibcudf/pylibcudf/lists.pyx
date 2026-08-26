@@ -867,7 +867,7 @@ cpdef Column apply_retention_mask(
     Returns
     -------
     Column
-    A Column of filtered elements based upon the retention mask.
+        A Column of filtered elements based upon the retention mask.
     """
     cdef unique_ptr[column] c_result
     cdef ListsColumnView list_view = input.list_view()

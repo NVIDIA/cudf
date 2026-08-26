@@ -2979,32 +2979,6 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_applyRetentionMask(
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_applyBooleanMask(
-  JNIEnv* env, jclass, jlong list_column_handle, jlong boolean_mask_list_column_handle)
-{
-  JNI_NULL_CHECK(env, list_column_handle, "list handle is null", 0);
-  JNI_NULL_CHECK(env, boolean_mask_list_column_handle, "boolean mask handle is null", 0);
-  JNI_TRY
-  {
-    cudf::jni::auto_set_device(env);
-
-    cudf::column_view const* list_column =
-      reinterpret_cast<cudf::column_view const*>(list_column_handle);
-    cudf::lists_column_view const list_view = cudf::lists_column_view(*list_column);
-
-    cudf::column_view const* boolean_mask_list_column =
-      reinterpret_cast<cudf::column_view const*>(boolean_mask_list_column_handle);
-    cudf::lists_column_view const boolean_mask_list_view =
-      cudf::lists_column_view(*boolean_mask_list_column);
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return release_as_jlong(cudf::lists::apply_boolean_mask(list_view, boolean_mask_list_view));
-#pragma GCC diagnostic pop
-  }
-  JNI_CATCH(env, 0);
-}
-
 JNIEXPORT jboolean JNICALL Java_ai_rapids_cudf_ColumnView_hasNonEmptyNulls(JNIEnv* env,
                                                                            jclass,
                                                                            jlong column_view_handle)

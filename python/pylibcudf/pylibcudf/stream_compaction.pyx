@@ -134,7 +134,7 @@ cpdef Table apply_retention_mask(
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
-    """Filters out rows from the input table based on a retention mask.
+    """Filters rows of the input table using a retention mask.
 
     For details, see :cpp:func:`apply_retention_mask`.
 

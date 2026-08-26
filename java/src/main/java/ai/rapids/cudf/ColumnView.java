@@ -4450,9 +4450,9 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * from the row *only* if the corresponding `retention_mask` is non-null and `true`.
    * <p>
    * E.g.
-   * column       = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
+   * column         = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
    * retention_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
-   * results      = { {1,2},   {3},   {5,6,7}, {} };
+   * results        = { {1,2},   {3},   {5,6,7}, {} };
    * <p>
    * This column and `retention_mask` must have the same number of rows.
    * The output column has the same number of rows as this column.
@@ -5259,8 +5259,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   static native long applyRetentionMask(long arrayColumnView, long retentionMaskHandle)
       throws CudfException;
-
-  static native long applyBooleanMask(long arrayColumnView, long booleanMaskHandle) throws CudfException;
 
   static native boolean hasNonEmptyNulls(long handle) throws CudfException;
 

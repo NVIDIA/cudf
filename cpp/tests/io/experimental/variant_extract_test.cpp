@@ -1079,12 +1079,6 @@ TEST_F(ExtractVariantFieldTest, MalformedVariantDataYieldsNull)
 
 TEST_F(ExtractVariantFieldTest, ObjectFieldIdBeyondDictionarySizeIsRejected)
 {
-  // Regression test: locate_object_field's name_for_id lookup must reject an object field id
-  // that is out of range for the metadata dictionary instead of computing an out-of-bounds
-  // offset position. The dictionary here has a single key "x" (meta_num_entries == 1); the
-  // object below claims field id INT32_MAX for its single field, which is both out of range and
-  // large enough that `field_id * meta_offset_size` would overflow if computed in `size_type`
-  // (32-bit) arithmetic rather than being bounds-checked first.
   auto const meta = build_metadata({"x"});
 
   // Object header: field_id_size = 4 bytes, field_offset_size = 1 byte, is_large = false.

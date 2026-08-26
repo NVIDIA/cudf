@@ -17,6 +17,7 @@
 
 #include <cuda/iterator>
 
+#include <exception>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -123,13 +124,23 @@ std::vector<table_t> read_parquet_multithreaded(std::vector<io_source> const& in
     });
 
   // Create threads with tasks
+  std::vector<std::exception_ptr> exceptions(read_tasks.size());
   std::vector<std::thread> threads;
   threads.reserve(thread_count);
-  for (auto& c : read_tasks) {
-    threads.emplace_back(c);
+  for (std::size_t i = 0; i < read_tasks.size(); ++i) {
+    threads.emplace_back([task = read_tasks[i], &exception = exceptions[i]]() mutable {
+      try {
+        task();
+      } catch (...) {
+        exception = std::current_exception();
+      }
+    });
   }
   for (auto& t : threads) {
     t.join();
+  }
+  for (auto const& exception : exceptions) {
+    if (exception) { std::rethrow_exception(exception); }
   }
 
   // If CONCATENATE_ALL mode, then concatenate to a vector of one final table.
@@ -197,13 +208,23 @@ void write_parquet_multithreaded(std::string const& output_path,
     });
 
   // Writer threads
+  std::vector<std::exception_ptr> exceptions(write_tasks.size());
   std::vector<std::thread> threads;
   threads.reserve(thread_count);
-  for (auto& c : write_tasks) {
-    threads.emplace_back(c);
+  for (std::size_t i = 0; i < write_tasks.size(); ++i) {
+    threads.emplace_back([task = write_tasks[i], &exception = exceptions[i]]() mutable {
+      try {
+        task();
+      } catch (...) {
+        exception = std::current_exception();
+      }
+    });
   }
   for (auto& t : threads) {
     t.join();
+  }
+  for (auto const& exception : exceptions) {
+    if (exception) { std::rethrow_exception(exception); }
   }
 }
 

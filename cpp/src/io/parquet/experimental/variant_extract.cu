@@ -302,10 +302,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
     meta_num_entries      = num_meta_entries.value();
   }
 
-  // O(1) name lookup by id: two offset reads into the metadata table. `field_id` may come
-  // directly from untrusted object data (an out-of-range dictionary index), so it is bounds
-  // checked against the metadata dictionary size before use, and the offset positions are
-  // computed in 64-bit arithmetic to avoid overflowing `size_type` for large ids.
+  // O(1) name lookup by id: two offset reads into the metadata table
   auto name_for_id = [&](size_type field_id) -> cuda::std::optional<cudf::string_view> {
     if (field_id < 0 || cuda::std::cmp_greater_equal(field_id, meta_num_entries)) {
       return cuda::std::nullopt;

@@ -1781,6 +1781,7 @@ class csv_writer_options_builder {
    *
    * @param comp The compression type (NONE or ZSTD only)
    * @return this for chaining
+   * @throw cudf::logic_error if compression type is not NONE or ZSTD
    */
   csv_writer_options_builder& compression(compression_type comp)
   {
@@ -1795,6 +1796,7 @@ class csv_writer_options_builder {
    *
    * @param size The compression block size, in bytes
    * @return this for chaining
+   * @throw cudf::logic_error if the block size is zero
    */
   csv_writer_options_builder& compression_block_size(size_t size)
   {

@@ -614,3 +614,104 @@ TEST_F(TextUnicodeNormalizeTest, NFC_NonStarterDecomposition)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
   }
 }
+
+TEST_F(TextUnicodeNormalizeTest, NullCodepointPassthrough)
+{
+  // U+0000 (NULL) is a valid Unicode codepoint that must survive all four
+  // normalization forms.  The old implementation used 0 as a "consumed by
+  // composition" sentinel, so U+0000 was silently dropped.
+  // Input: "\x00A\x00" — NUL, 'A', NUL
+  cudf::test::strings_column_wrapper input_strings(
+    {std::string("\x00"
+                 "A\x00",
+                 3)});
+  cudf::strings_column_view input(input_strings);
+
+  cudf::test::strings_column_wrapper codepoints({"0041"});
+  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({0});
+  cudf::test::strings_column_wrapper decomp_mappings({""});
+  auto unicode_data = cudf::table_view({codepoints, ccc_values, decomp_mappings});
+
+  for (auto form : {nvtext::unicode_normalization_form::NFD,
+                    nvtext::unicode_normalization_form::NFC,
+                    nvtext::unicode_normalization_form::NFKD,
+                    nvtext::unicode_normalization_form::NFKC}) {
+    auto normalizer = nvtext::create_unicode_normalizer(unicode_data, form);
+    auto result     = nvtext::normalize_unicode(input, *normalizer);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input_strings);
+  }
+}
+
+TEST_F(TextUnicodeNormalizeTest, NFKC_IndirectCompatDecomposition)
+{
+  // U+0385 GREEK DIALYTIKA TONOS has a canonical decomposition to U+00A8 + U+0301.
+  // U+00A8 DIAERESIS has a compatibility decomposition to U+0020 + U+0308.
+  // U+0385 has CCC=0, no compat tag, and count≠1, so scatter_compat_flag_fn skips
+  // it.  The new propagation pass detects that U+00A8 (a canonical decomp token) is
+  // already flagged and flags U+0385 too.
+  //
+  // Input : U+0385                   (\xCE\x85)
+  // NFC   : U+0385                   (\xCE\x85)          — recomposes from U+00A8 + U+0301
+  // NFKC  : U+0020 U+0308 U+0301    ("\x20\xCC\x88\xCC\x81")
+  cudf::test::strings_column_wrapper input_strings({"\xCE\x85"});
+  cudf::strings_column_view input(input_strings);
+
+  cudf::test::strings_column_wrapper codepoints({"0385", "00A8", "0020", "0308", "0301"});
+  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({0, 0, 0, 230, 230});
+  cudf::test::strings_column_wrapper decomp_mappings(
+    {"00A8 0301", "<compat> 0020 0308", "", "", ""});
+  auto unicode_data = cudf::table_view({codepoints, ccc_values, decomp_mappings});
+
+  // NFC: canonical decomp then recompose → identity
+  {
+    auto normalizer =
+      nvtext::create_unicode_normalizer(unicode_data, nvtext::unicode_normalization_form::NFC);
+    auto result = nvtext::normalize_unicode(input, *normalizer);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input_strings);
+  }
+
+  // NFKC: compat expands U+00A8 → U+0020 U+0308; no recomposition possible
+  {
+    auto normalizer =
+      nvtext::create_unicode_normalizer(unicode_data, nvtext::unicode_normalization_form::NFKC);
+    auto result = nvtext::normalize_unicode(input, *normalizer);
+    cudf::test::strings_column_wrapper expected({"\x20\xCC\x88\xCC\x81"});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+  }
+}
+
+TEST_F(TextUnicodeNormalizeTest, NFC_StarterStarterComposition)
+{
+  // Bengali canonical composition where both operands have CCC=0.
+  // U+09CB BENGALI VOWEL SIGN O decomposes to U+09C7 + U+09BE; both components
+  // have CCC=0, so the original compose_fn only tried Hangul algorithmic
+  // composition and missed the table-based pair.  The quick check also had to be
+  // updated to flag U+09BE (CCC=0 second operand) so it doesn't short-circuit.
+  //
+  // Input : U+09C7 U+09BE  (\xE0\xA7\x87 \xE0\xA6\xBE)
+  // NFC   : U+09CB          (\xE0\xA7\x8B)
+  cudf::test::strings_column_wrapper input_strings({"\xE0\xA7\x87\xE0\xA6\xBE"});
+  cudf::strings_column_view input(input_strings);
+
+  cudf::test::strings_column_wrapper codepoints({"09CB", "09C7", "09BE"});
+  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({0, 0, 0});
+  cudf::test::strings_column_wrapper decomp_mappings({"09C7 09BE", "", ""});
+  auto unicode_data = cudf::table_view({codepoints, ccc_values, decomp_mappings});
+
+  // NFD/NFKD: decomposed input has no canonical decomposition entry → unchanged
+  for (auto form :
+       {nvtext::unicode_normalization_form::NFD, nvtext::unicode_normalization_form::NFKD}) {
+    auto normalizer = nvtext::create_unicode_normalizer(unicode_data, form);
+    auto result     = nvtext::normalize_unicode(input, *normalizer);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input_strings);
+  }
+
+  // NFC/NFKC: must compose to U+09CB
+  cudf::test::strings_column_wrapper expected({"\xE0\xA7\x8B"});
+  for (auto form :
+       {nvtext::unicode_normalization_form::NFC, nvtext::unicode_normalization_form::NFKC}) {
+    auto normalizer = nvtext::create_unicode_normalizer(unicode_data, form);
+    auto result     = nvtext::normalize_unicode(input, *normalizer);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+  }
+}

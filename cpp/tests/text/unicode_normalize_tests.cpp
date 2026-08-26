@@ -715,3 +715,31 @@ TEST_F(TextUnicodeNormalizeTest, NFC_StarterStarterComposition)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
   }
 }
+
+TEST_F(TextUnicodeNormalizeTest, NFC_CompatOnlyIsStable)
+{
+  // U+FB01 (fi ligature) has only a compatibility decomposition to "fi"; it has
+  // no canonical decomposition and is therefore NFC-stable.  The NFC quick check
+  // must not flag it, so the early-return path fires and the column is returned
+  // as-is without running the full normalization pipeline.
+  cudf::test::strings_column_wrapper input_strings({"\xEF\xAC\x81"});  // U+FB01 ﬁ
+  cudf::strings_column_view input(input_strings);
+
+  cudf::test::strings_column_wrapper codepoints({"FB01"});
+  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({0});
+  cudf::test::strings_column_wrapper decomp_mappings({"<compat> 0066 0069"});
+  auto unicode_data = cudf::table_view({codepoints, ccc_values, decomp_mappings});
+
+  // NFC: U+FB01 is NFC-stable — must be returned unchanged
+  auto normalizer =
+    nvtext::create_unicode_normalizer(unicode_data, nvtext::unicode_normalization_form::NFC);
+  auto result = nvtext::normalize_unicode(input, *normalizer);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input_strings);
+
+  // NFKC: compatibility decomposition is applied -> "fi"
+  auto normalizer_nfkc =
+    nvtext::create_unicode_normalizer(unicode_data, nvtext::unicode_normalization_form::NFKC);
+  result = nvtext::normalize_unicode(input, *normalizer_nfkc);
+  cudf::test::strings_column_wrapper expected_nfkc({"fi"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_nfkc);
+}

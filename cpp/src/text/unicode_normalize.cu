@@ -144,9 +144,10 @@ struct setup_row_fn {
     // Set quick-check flags (NFC/NFKC only; compat_flags is empty for NFD/NFKD)
     if (!compat_flags.empty() && cp <= MAX_CODEPOINT) {
       bool const is_compat_row = sv.size_bytes() > 0 && sv.data()[0] == '<';
-      // Flag compat decompositions (NFKC-unstable) and singleton canonical
-      // decompositions like U+212B ANGSTROM SIGN -> U+00C5 (NFC-unstable).
-      if (is_compat_row || count == 1) {
+      // Flag compat decompositions (NFKC-unstable only; compat rows are NFC-stable
+      // unless they are also singleton canonical decompositions, covered below) and
+      // singleton canonical decompositions like U+212B -> U+00C5 (NFC-unstable).
+      if ((is_compat_row && apply_compat) || count == 1) {
         cudf::set_bit(compat_flags.data(), static_cast<cudf::size_type>(cp));
       }
     }

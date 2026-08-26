@@ -120,7 +120,7 @@ cpdef void write_json(JsonWriterOptions options, object stream = *)
 
 cpdef bool is_supported_write_json(DataType type)
 
-cpdef tuple chunked_read_json(
+cpdef tuple[list[Column], list[str], dict] chunked_read_json(
     JsonReaderOptions options,
     int chunk_size= *,
     object stream = *,

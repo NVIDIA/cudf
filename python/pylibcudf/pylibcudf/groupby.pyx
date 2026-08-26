@@ -56,7 +56,9 @@ cdef class GroupByRequest:
     aggregations : List[Aggregation]
         The list of aggregations to perform.
     """
-    def __init__(self, Column values, list aggregations: list[Aggregation]):
+    def __init__(
+        self, Column values, list aggregations: list[Aggregation]
+    ):
         self._values = values
         self._aggregations = aggregations
 
@@ -147,7 +149,7 @@ cdef class GroupBy:
     __hash__ = None
 
     @staticmethod
-    cdef tuple _parse_outputs(
+    cdef tuple[Table, list[Table]] _parse_outputs(
         pair[unique_ptr[table], vector[aggregation_result]] c_res,
         object stream,
         DeviceMemoryResource mr,
@@ -169,7 +171,7 @@ cdef class GroupBy:
             results.append(Table(inner_results))
         return group_keys, results
 
-    cpdef tuple aggregate(
+    cpdef tuple[Table, list[Table]] aggregate(
         self,
         list requests: list[GroupByRequest],
         object stream: CudaStreamLike | None = None,
@@ -213,7 +215,7 @@ cdef class GroupBy:
             )
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
-    cpdef tuple scan(
+    cpdef tuple[Table, list[Table]] scan(
         self,
         list requests: list[GroupByRequest],
         object stream: CudaStreamLike | None = None,
@@ -256,7 +258,7 @@ cdef class GroupBy:
             )
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
-    cpdef tuple shift(
+    cpdef tuple[Table, Table] shift(
         self,
         Table values,
         list offset: list[int],
@@ -309,7 +311,7 @@ cdef class GroupBy:
             Table.from_libcudf(move(c_res.second), _stream, mr),
         )
 
-    cpdef tuple replace_nulls(
+    cpdef tuple[Table, Table] replace_nulls(
         self,
         Table value,
         list replace_policies: list[ReplacePolicy],
@@ -353,7 +355,7 @@ cdef class GroupBy:
             Table.from_libcudf(move(c_res.second), _stream, mr),
         )
 
-    cpdef tuple get_groups(
+    cpdef tuple[list[int], Table, object] get_groups(
         self, Table values=None, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
     ):
         """Get the grouped keys and values labels for each row.

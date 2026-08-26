@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing_extensions import Buffer
+    from pylibcudf.typing import CudaStreamLike
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 ctypedef const string const_string
@@ -118,7 +119,7 @@ cdef class ParquetColumnSchema:
         """
         return ParquetColumnSchema.from_column_schema(self.column_schema.child(idx))
 
-    cpdef list children(self):
+    cpdef list[ParquetColumnSchema] children(self):
         """
         Returns schemas of all child columns.
 
@@ -177,7 +178,7 @@ cdef class ParquetSchema:
         """
         return ParquetColumnSchema.from_column_schema(self.schema.root())
 
-    cpdef dict column_types(self):
+    cpdef dict[str, DataType] column_types(self):
         """
         Returns a dictionary mapping column names to their cudf data types.
 
@@ -187,10 +188,10 @@ cdef class ParquetSchema:
             Dictionary mapping column names to DataType objects
         """
         cdef ParquetColumnSchema root_schema = self.root()
-        return {
-            root_schema.child(i).name(): root_schema.child(i).cudf_type()
-            for i in range(root_schema.num_children())
-        }
+        result = {}
+        for i in range(root_schema.num_children()):
+            result[root_schema.child(i).name()] = root_schema.child(i).cudf_type()
+        return result
 
 
 cdef class ParquetMetadata:
@@ -250,7 +251,7 @@ cdef class ParquetMetadata:
         """
         return self.meta.num_rowgroups_per_file()
 
-    cpdef dict metadata(self):
+    cpdef dict[str, str] metadata(self):
         """
         Returns the key-value metadata in the file footer.
 
@@ -259,9 +260,12 @@ cdef class ParquetMetadata:
         dict[str, str]
             Key value metadata as a map.
         """
-        return {key.decode(): val.decode() for key, val in self.meta.metadata()}
+        result = {}
+        for key, val in self.meta.metadata():
+            result[key.decode()] = val.decode()
+        return result
 
-    cpdef list rowgroup_metadata(self):
+    cpdef list[dict[str, int]] rowgroup_metadata(self):
         """
         Returns the row group metadata in the file footer.
 
@@ -270,12 +274,15 @@ cdef class ParquetMetadata:
         list[dict[str, int]]
             Vector of row group metadata as maps.
         """
-        return [
-            {key.decode(): val for key, val in metadata}
-            for metadata in self.meta.rowgroup_metadata()
-        ]
+        result = []
+        for metadata in self.meta.rowgroup_metadata():
+            decoded_metadata = {}
+            for key, val in metadata:
+                decoded_metadata[key.decode()] = val
+            result.append(decoded_metadata)
+        return result
 
-    cpdef dict columnchunk_metadata(self):
+    cpdef dict[str, list[int]] columnchunk_metadata(self):
         """
         Returns a map of leaf column names to lists of `total_uncompressed_size`
         metadata from all column chunks in the file footer.
@@ -762,7 +769,7 @@ cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
     return ParquetMetadata.from_metadata(c_result)
 
 
-cpdef list read_parquet_footers(SourceInfo src_info):
+cpdef list[FileMetaData] read_parquet_footers(SourceInfo src_info):
     """
     Read parquet file footers as ``FileMetaData`` objects.
 
@@ -802,7 +809,7 @@ cpdef list read_parquet_footers(SourceInfo src_info):
 cpdef Table read_parquet_column_chunk_bounds(
     object file_metadatas,
     object columns,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

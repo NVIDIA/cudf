@@ -72,17 +72,13 @@ class CachedParquetInfo:
         options: plc.io.parquet.ParquetReaderOptions,
     ) -> plc.io.experimental.HybridScanReader:
         """Return a fresh HybridScanReader backed by shared pre-parsed file metadata."""
-        if self._hybrid_scan_metadata is None:
-            object.__setattr__(
-                self,
-                "_hybrid_scan_metadata",
-                plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
-                    self.file_metadata, options
-                ),
+        metadata = self._hybrid_scan_metadata
+        if metadata is None:
+            metadata = plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
+                self.file_metadata, options
             )
-        return plc.io.experimental.HybridScanReader.from_metadata(
-            self._hybrid_scan_metadata
-        )
+            object.__setattr__(self, "_hybrid_scan_metadata", metadata)
+        return plc.io.experimental.HybridScanReader.from_metadata(metadata)
 
     def default_reader_options(self) -> plc.io.parquet.ParquetReaderOptions:
         """Return baseline ``ParquetReaderOptions`` for this cached parquet file."""

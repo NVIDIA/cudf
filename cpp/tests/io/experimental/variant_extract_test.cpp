@@ -908,7 +908,7 @@ TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
   // corresponding field id in the object (as opposed to a key absent from the dictionary
   // altogether).
   auto const keys = make_numeric_keys(50);
-  auto const meta = build_metadata(keys, /*sorted=*/true);
+  auto const meta = build_metadata(keys);
   // Only 49 fields (ids 0..48); dictionary index 49 ("k49") has no matching field id.
   auto const val         = build_sequential_int32_object(49);
   auto col               = wrap_single_variant(meta, val);

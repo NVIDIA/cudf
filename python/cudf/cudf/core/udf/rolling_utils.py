@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Helpers for JIT-compiling and running user-defined rolling window functions."""
+
 from __future__ import annotations
 
 import functools
@@ -94,6 +96,12 @@ def jit_rolling_apply(
     func : callable
         The user-defined function. Receives a 1D array (the window) and
         returns a scalar.
+
+    Returns
+    -------
+    ColumnBase
+        A column of the results, with nulls where ``min_periods`` was
+        not satisfied.
     """
     value_dtype = source_column.dtype
     kernel, return_dtype = _compile_or_get_kernel(func, value_dtype)

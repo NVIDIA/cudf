@@ -233,7 +233,8 @@ void read_ranges_to_host(
   OffsetIterator offsets,
   SizeIterator sizes,
   std::size_t count,
-  cudf::host_span<uint8_t> dst)
+  cudf::host_span<uint8_t> dst,
+  bool serialize_submissions)
 {
   std::vector<std::future<std::size_t>> host_read_tasks;
   std::vector<std::size_t> expected_sizes;
@@ -246,7 +247,8 @@ void read_ranges_to_host(
   // Schedule host reads holding the `host_read_mutex` so that all reads for a caller thread
   // are scheduled without interleaving with reads from other threads yielding better pipelining
   {
-    std::scoped_lock<std::mutex> lock(host_read_mutex());
+    std::unique_lock<std::mutex> lock(host_read_mutex(), std::defer_lock);
+    if (serialize_submissions) { lock.lock(); }
 
     std::for_each(iter, iter + count, [&](auto const& tuple) {
       auto const src_idx    = cuda::std::get<0>(tuple);
@@ -285,7 +287,8 @@ fetch_byte_ranges_to_device_async_impl(
   cudf::host_span<cudf::host_span<cudf::io::text::byte_range_info const> const>
     byte_ranges_per_source,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  rmm::device_async_resource_ref mr,
+  bool serialize_submissions)
 {
   auto const num_sources = datasources.size();
 
@@ -395,7 +398,8 @@ fetch_byte_ranges_to_device_async_impl(
   // Schedule host reads holding the `host_read_mutex` so that all reads for a caller thread
   // are scheduled without interleaving with reads from other threads yielding better pipelining
   {
-    std::scoped_lock<std::mutex> lock(host_read_mutex());
+    std::unique_lock<std::mutex> lock(host_read_mutex(), std::defer_lock);
+    if (serialize_submissions) { lock.lock(); }
 
     std::for_each(iter, iter + io_offsets.size(), [&](auto const& tuple) {
       auto const src_idx   = cuda::std::get<0>(tuple);
@@ -433,7 +437,8 @@ fetch_byte_ranges_to_device_async_impl(
   // Schedule device reads holding the `device_read_mutex` so that all reads for a caller thread
   // are scheduled without interleaving with reads from other threads yielding better pipelining
   {
-    std::scoped_lock<std::mutex> lock(device_read_mutex());
+    std::unique_lock<std::mutex> lock(device_read_mutex(), std::defer_lock);
+    if (serialize_submissions) { lock.lock(); }
 
     std::for_each(iter, iter + io_offsets.size(), [&](auto const& tuple) {
       auto const src_idx   = cuda::std::get<0>(tuple);
@@ -475,7 +480,8 @@ fetch_bloom_filters_to_device_impl(
   cudf::host_span<cudf::host_span<cudf::io::text::byte_range_info const> const>
     bloom_filter_byte_ranges_per_source,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  rmm::device_async_resource_ref mr,
+  bool serialize_submissions)
 {
   auto const num_sources = datasources.size();
   CUDF_EXPECTS(num_sources == bloom_filter_byte_ranges_per_source.size(),
@@ -526,7 +532,8 @@ fetch_bloom_filters_to_device_impl(
                       initial_offsets.cbegin(),
                       initial_sizes.cbegin(),
                       total_filters,
-                      initial_buffer);
+                      initial_buffer,
+                      serialize_submissions);
 
   // Phase 2: Parse headers, organize bitset slots, and record deferred bitset reads
   std::vector<void const*> copy_srcs;
@@ -601,7 +608,8 @@ fetch_bloom_filters_to_device_impl(
                         deferred_offsets.cbegin(),
                         deferred_sizes,
                         deferred_filter_indices.size(),
-                        deferred_buffer);
+                        deferred_buffer,
+                        serialize_submissions);
     std::size_t deferred_dst_offset = 0;
     std::for_each(
       deferred_filter_indices.begin(), deferred_filter_indices.end(), [&](auto const filter_idx) {
@@ -638,7 +646,8 @@ fetch_bloom_filters_to_device_impl(
   // One batched copy (entries with a null source or zero size are ignored by the batch API)
   if (total_device_size != 0) {
     {
-      std::scoped_lock<std::mutex> lock(device_read_mutex());
+      std::unique_lock<std::mutex> lock(device_read_mutex(), std::defer_lock);
+      if (serialize_submissions) { lock.lock(); }
       CUDF_CUDA_TRY(cudf::detail::memcpy_batch_async(
         copy_dsts.data(), copy_srcs.data(), copy_sizes.data(), total_filters, stream));
     }
@@ -703,7 +712,8 @@ std::tuple<std::vector<rmm::device_buffer>,
 fetch_byte_ranges_to_device_async(cudf::io::datasource& datasource,
                                   std::span<cudf::io::text::byte_range_info const> byte_ranges,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  rmm::device_async_resource_ref mr,
+                                  bool serialize_submissions)
 {
   CUDF_FUNC_RANGE();
 
@@ -716,7 +726,8 @@ fetch_byte_ranges_to_device_async(cudf::io::datasource& datasource,
     {datasources.data(), datasources.size()},
     {byte_ranges_per_source.data(), byte_ranges_per_source.size()},
     stream,
-    mr);
+    mr,
+    serialize_submissions);
 
   return {std::move(buffers), std::move(fetched_byte_ranges.front()), std::move(fut)};
 }
@@ -728,7 +739,8 @@ fetch_byte_ranges_to_device_async(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<std::vector<cudf::io::text::byte_range_info> const> byte_ranges_per_source,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  rmm::device_async_resource_ref mr,
+  bool serialize_submissions)
 {
   CUDF_FUNC_RANGE();
 
@@ -742,7 +754,8 @@ fetch_byte_ranges_to_device_async(
     datasources,
     {byte_range_spans_per_source.data(), byte_range_spans_per_source.size()},
     stream,
-    mr);
+    mr,
+    serialize_submissions);
 }
 
 std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
@@ -750,7 +763,8 @@ fetch_bloom_filters_to_device(
   cudf::io::datasource& datasource,
   cudf::host_span<cudf::io::text::byte_range_info const> bloom_filter_byte_ranges,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  rmm::device_async_resource_ref mr,
+  bool serialize_submissions)
 {
   CUDF_FUNC_RANGE();
 
@@ -763,7 +777,8 @@ fetch_bloom_filters_to_device(
     {datasources.data(), datasources.size()},
     {bloom_filter_byte_ranges_per_source.data(), bloom_filter_byte_ranges_per_source.size()},
     stream,
-    mr);
+    mr,
+    serialize_submissions);
 
   return {std::move(buffers), std::move(fetched_byte_ranges.front())};
 }
@@ -775,7 +790,8 @@ fetch_bloom_filters_to_device(
   cudf::host_span<std::vector<cudf::io::text::byte_range_info> const>
     bloom_filter_byte_ranges_per_source,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  rmm::device_async_resource_ref mr,
+  bool serialize_submissions)
 {
   CUDF_FUNC_RANGE();
 
@@ -790,7 +806,8 @@ fetch_bloom_filters_to_device(
                                             {bloom_filter_byte_range_spans_per_source.data(),
                                              bloom_filter_byte_range_spans_per_source.size()},
                                             stream,
-                                            mr);
+                                            mr,
+                                            serialize_submissions);
 }
 
 }  // namespace cudf::io::parquet

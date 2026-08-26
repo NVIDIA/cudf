@@ -384,8 +384,8 @@ aggregate_reader_metadata::read_bloom_filters(
       return std::ref(*source);
     });
 
-  auto [bloom_filter_buffers, bitset_spans_per_source] =
-    fetch_bloom_filters_to_device(datasource_refs, bloom_filter_byte_ranges_per_source, stream, mr);
+  auto [bloom_filter_buffers, bitset_spans_per_source] = fetch_bloom_filters_to_device(
+    datasource_refs, bloom_filter_byte_ranges_per_source, stream, mr, false);
 
   // Flatten the per-source bitset spans into per-chunk order
   std::vector<cudf::device_span<cuda::std::byte const>> bloom_filter_data;

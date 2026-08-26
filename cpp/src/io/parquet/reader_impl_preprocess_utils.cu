@@ -200,7 +200,8 @@ void generate_depth_remappings(
     {datasource_refs.data(), datasource_refs.size()},
     {source_byte_ranges.data(), source_byte_ranges.size()},
     stream,
-    mr);
+    mr,
+    false);
 
   // Extract data pointers from returned spans
   size_t range_idx = 0;

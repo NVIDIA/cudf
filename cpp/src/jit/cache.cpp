@@ -201,6 +201,8 @@ constexpr int32_t MIN_NVRTC_VERSION_PCH =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--pch" NVRTC flag
 constexpr int32_t MIN_NVRTC_VERSION_MINIMAL =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--minimal" NVRTC flag
+constexpr int32_t LTO_ARCHITECTURE =
+  CUDF_LTO_ARCHITECTURE;  // target architecture for LTO IR compilation
 
 std::tuple<rtcx::library, rtcx::blob> compile_library(
   char const* name,
@@ -293,11 +295,9 @@ rtcx::blob compile_fragment(char const* name,
 {
   CUDF_FUNC_RANGE();
 
-  auto& ctx               = cudf::get_context();
-  auto& cfg               = ctx.config();
-  auto& bundle            = ctx.jit_bundle();
-  auto& device_properties = ctx.get_device_properties();
-  auto sm                 = device_properties.compute_capability;
+  auto& ctx    = cudf::get_context();
+  auto& cfg    = ctx.config();
+  auto& bundle = ctx.jit_bundle();
 
   auto include_dirs = bundle.get_include_directories();
   auto pch_dir      = ctx.get_jit_pch_dir();
@@ -313,12 +313,12 @@ rtcx::blob compile_fragment(char const* name,
     options.emplace_back(std::format("-I{}", include_dir));
   }
 
-  options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
+  options.emplace_back(std::format("--gpu-architecture=sm_{}", LTO_ARCHITECTURE));
 
   options.emplace_back("--diag-suppress=47");
   options.emplace_back("--device-int128");
 
-  if (sm >= 100) { options.emplace_back("--device-float128"); }
+  if (LTO_ARCHITECTURE >= 100) { options.emplace_back("--device-float128"); }
 
   options.emplace_back("-std=c++20");
   options.emplace_back("--device-as-default-execution-space");
@@ -446,7 +446,6 @@ rtcx::blob get_kernel_fragment(std::string const& name,
   auto& device_properties = ctx.get_device_properties();
   auto runtime            = device_properties.runtime_version;
   auto driver             = device_properties.driver_version;
-  auto sm                 = device_properties.compute_capability;
   auto bundle_hash        = bundle.get_hash();
 
   auto source_file = std::format("{}/{}", bundle.get_directory(), source_file_id);
@@ -464,7 +463,7 @@ kernel_instance={}
                           name,
                           runtime,
                           driver,
-                          sm,
+                          LTO_ARCHITECTURE,
                           bundle_hash,
                           source_file,
                           kernel_instance);

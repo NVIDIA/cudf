@@ -68,7 +68,7 @@ cdef class BoundedClosed:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_closed](dereference(delta.get()))
@@ -85,7 +85,7 @@ cdef class BoundedOpen:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_open](dereference(delta.get()))
@@ -287,7 +287,7 @@ cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
     return cpp_rolling.is_valid_rolling_aggregation(source.c_obj, agg.kind())
 
 
-cpdef tuple make_range_windows(
+cpdef tuple[Column, Column] make_range_windows(
     Table group_keys,
     Column orderby,
     order order,

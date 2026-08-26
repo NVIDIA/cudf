@@ -36,7 +36,7 @@ __all__ = [
 
 cpdef Column replace_nulls(
     Column source_column,
-    ReplacementType replacement,
+    ReplacementType replacement: Column | Scalar | ReplacePolicy,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):

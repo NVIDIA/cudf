@@ -119,7 +119,7 @@ cpdef Table gather(
 
 
 cpdef Table scatter(
-    TableOrListOfScalars source,
+    TableOrListOfScalars source: Table | list[Scalar],
     Column scatter_map,
     Table target_table,
     object stream: CudaStreamLike | None = None,
@@ -240,7 +240,7 @@ cpdef ColumnOrTable empty_like(
 cpdef Column allocate_like(
     Column input_column,
     mask_allocation_policy policy,
-    size=None,
+    object size: int | None = None,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
@@ -497,7 +497,7 @@ cpdef ColumnOrTable reverse(
         return Table.from_libcudf(move(c_tbl_result), _stream, mr)
 
 
-cpdef list slice(
+cpdef list[ColumnOrTable] slice(
     ColumnOrTable input,
     list indices: list[int],
     object stream: CudaStreamLike | None = None,
@@ -558,7 +558,7 @@ cpdef list slice(
         ]
 
 
-cpdef list split(
+cpdef list[ColumnOrTable] split(
     ColumnOrTable input,
     list splits: list[int],
     object stream: CudaStreamLike | None = None,
@@ -707,7 +707,7 @@ cpdef Column copy_if_else(
 
 
 cpdef Table boolean_mask_scatter(
-    TableOrListOfScalars input,
+    TableOrListOfScalars input: Table | list[Scalar],
     Table target,
     Column boolean_mask,
     object stream: CudaStreamLike | None = None,

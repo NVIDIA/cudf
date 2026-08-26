@@ -14,7 +14,7 @@ from libcpp.limits cimport numeric_limits
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.utility cimport move
 
-from pylibcudf.libcudf.column.column cimport column, column_contents
+from pylibcudf.libcudf.column.column cimport column as cpp_column, column_contents
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.column.column_factories cimport make_column_from_scalar
 from pylibcudf.libcudf.copying cimport get_element
@@ -31,7 +31,7 @@ from pylibcudf.libcudf.interop cimport (
     to_arrow_schema_raw,
 )
 from pylibcudf.libcudf.null_mask cimport bitmask_allocation_size_bytes
-from pylibcudf.libcudf.scalar.scalar cimport scalar
+from pylibcudf.libcudf.scalar.scalar cimport scalar as cpp_scalar
 from pylibcudf.libcudf.lists.lists_column_view cimport lists_column_view
 from pylibcudf.libcudf.strings.strings_column_view cimport strings_column_view
 from pylibcudf.libcudf.structs.structs_column_view cimport structs_column_view
@@ -51,7 +51,7 @@ from ._interop_helpers cimport (
 from .filling cimport sequence
 from .gpumemoryview cimport gpumemoryview
 from .scalar cimport Scalar
-from .span import is_span as py_is_span
+from .span import Span, is_span as py_is_span
 from .traits cimport (
     is_fixed_width as plc_is_fixed_width,
     is_nested,
@@ -104,11 +104,11 @@ cdef class _ArrowColumnHolder:
     cdef DeviceMemoryResource mr
 
 
-cdef class OwnerWithCAI:
+cdef class _OwnerWithCAI:
     """An interface for column view's data with gpumemoryview via CAI."""
     @staticmethod
     cdef create(column_view cv, object owner, object stream):
-        obj = OwnerWithCAI()
+        obj = _OwnerWithCAI()
         obj.owner = owner
         # The default size of 0 will be applied for any type that stores data in the
         # children (such that the parent size is 0).
@@ -138,11 +138,11 @@ cdef class OwnerWithCAI:
         return self.cai
 
 
-cdef class OwnerMaskWithCAI:
+cdef class _OwnerMaskWithCAI:
     """An interface for column view's null mask with gpumemoryview via CAI."""
     @staticmethod
     cdef create(column_view cv, object owner):
-        obj = OwnerMaskWithCAI()
+        obj = _OwnerMaskWithCAI()
         obj.owner = owner
 
         obj.cai = {
@@ -162,7 +162,7 @@ cdef class OwnerMaskWithCAI:
         return self.cai
 
 
-class ArrayInterfaceWrapper:
+class _ArrayInterfaceWrapper:
     def __init__(self, iface):
         self.__array_interface__ = iface
 
@@ -175,7 +175,7 @@ cdef gpumemoryview _copy_array_to_device(object buf, object stream: CudaStreamLi
     ----------
     buf : array.array
         Array of bytes.
-    stream : Stream | None
+    stream : CudaStreamLike | None
         CUDA stream on which to perform the operation.
 
     Returns
@@ -342,9 +342,9 @@ cdef class Column:
         The type of data in the column.
     size : size_type
         The number of rows in the column.
-    data : gpumemoryview
+    data : Span | None
         The data the column will refer to.
-    mask : gpumemoryview
+    mask : Span | None
         The null mask for the column.
     null_count : int
         The number of null rows in the column.
@@ -358,8 +358,9 @@ cdef class Column:
     __hash__ = None
 
     def __init__(
-        self, DataType data_type not None, size_type size, object data,
-        object mask, size_type null_count, size_type offset,
+        self, DataType data_type not None, size_type size,
+        object data: Span | None, object mask: Span | None,
+        size_type null_count, size_type offset,
         children: Iterable[Column], bint validate=True
     ):
         children = list(children)
@@ -390,7 +391,7 @@ cdef class Column:
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a pyarrow array from a pylibcudf column.
 
@@ -398,7 +399,7 @@ cdef class Column:
         ----------
         metadata : ColumnMetadata | str | None
             The metadata to attach to the column.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -422,7 +423,7 @@ cdef class Column:
         dtype: DataType | None = None,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ) -> ArrowLike:
+    ) -> Column:
         """
         Create a Column from an Arrow-like object using the Arrow C Data Interface.
 
@@ -440,7 +441,7 @@ cdef class Column:
             - `__arrow_c_device_stream__` (device Arrow stream)
         dtype : DataType | None
             The pylibcudf data type.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Device memory resource for allocations.
@@ -663,7 +664,7 @@ cdef class Column:
 
     @staticmethod
     cdef Column from_libcudf(
-        unique_ptr[column] libcudf_col,
+        unique_ptr[cpp_column] libcudf_col,
         object stream,
         DeviceMemoryResource mr
     ):
@@ -713,7 +714,12 @@ cdef class Column:
             children,
         )
 
-    cpdef Column with_mask(self, object mask, size_type null_count, bint validate=True):
+    cpdef Column with_mask(
+        self,
+        object mask: Span | None,
+        size_type null_count,
+        bint validate=True
+    ):
         """Augment this column with a new null mask.
 
         Parameters
@@ -807,11 +813,11 @@ cdef class Column:
                 )
 
         cdef gpumemoryview owning_data = gpumemoryview(
-            OwnerWithCAI.create(cv, owner, stream)
+            _OwnerWithCAI.create(cv, owner, stream)
         )
         cdef gpumemoryview owning_mask = None
         if cv.null_count() > 0:
-            owning_mask = gpumemoryview(OwnerMaskWithCAI.create(cv, owner))
+            owning_mask = gpumemoryview(_OwnerMaskWithCAI.create(cv, owner))
 
         return Column(
             DataType.from_libcudf(cv.type()),
@@ -838,7 +844,7 @@ cdef class Column:
             The scalar to create a column from.
         size : size_type
             The number of elements in the column.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -846,8 +852,8 @@ cdef class Column:
         Column
             A Column containing the scalar repeated `size` times.
         """
-        cdef const scalar* c_scalar = slr.get()
-        cdef unique_ptr[column] c_result
+        cdef const cpp_scalar* c_scalar = slr.get()
+        cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
@@ -868,7 +874,7 @@ cdef class Column:
         ------
         ValueError
             If the column has more than one row.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Device memory resource used to allocate the returned scalar's device memory.
@@ -882,7 +888,7 @@ cdef class Column:
             raise ValueError("to_scalar only works for columns of size 1")
 
         cdef column_view cv = self.view()
-        cdef unique_ptr[scalar] result
+        cdef unique_ptr[cpp_scalar] result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
@@ -907,7 +913,7 @@ cdef class Column:
             Column whose type we should mimic
         size : int
             Number of rows in the resulting column.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -919,7 +925,7 @@ cdef class Column:
         cdef cudaStream_t _cs = _stream.view().value()
         mr = _get_memory_resource(mr)
         cdef Scalar slr = Scalar.empty_like(like, _stream, mr)
-        cdef unique_ptr[column] c_result
+        cdef unique_ptr[cpp_column] c_result
         with nogil:
             c_result = make_column_from_scalar(
                 dereference(slr.get()),
@@ -1004,7 +1010,7 @@ cdef class Column:
         ----------
         obj : Any
             Must implement the ``__array_interface__`` protocol.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1059,7 +1065,7 @@ cdef class Column:
         ----------
         obj : Any
             Must implement the ``__cuda_array_interface__`` protocol.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1103,7 +1109,7 @@ cdef class Column:
         ----------
         obj : object
             The input array to be converted into a `pylibcudf.Column`.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1151,7 +1157,7 @@ cdef class Column:
             An iterable of Python scalar values (int, float, bool, str) or nested lists.
         dtype : DataType | None
             The type of the leaf elements. If not specified, the type is inferred.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -1273,7 +1279,7 @@ cdef class Column:
             "version": 3,
         }
 
-        return Column.from_array_interface(ArrayInterfaceWrapper(iface), stream)
+        return Column.from_array_interface(_ArrayInterfaceWrapper(iface), stream)
 
     cpdef list to_pylist(self):
         """
@@ -1422,20 +1428,20 @@ cdef class Column:
         """
         self._null_count = null_count
 
-    cpdef list children(self):
+    cpdef list[Column] children(self):
         """The children of the column."""
         return self._children
 
     cpdef Column copy(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """Create a copy of the column."""
-        cdef unique_ptr[column] c_result
+        cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
 
         mr = _get_memory_resource(mr)
         cdef column_view c_self = self.view()
         with nogil:
-            c_result = make_unique[column](c_self, _cs, mr.get_mr())
+            c_result = make_unique[cpp_column](c_self, _cs, mr.get_mr())
         return Column.from_libcudf(move(c_result), _stream, mr)
 
     cpdef uint64_t device_buffer_size(self):
@@ -1542,11 +1548,11 @@ cdef class ListsColumnView:
 
     __hash__ = None
 
-    cpdef child(self):
+    cpdef Column child(self):
         """The data column of the underlying list column."""
         return self._column.child(1)
 
-    cpdef offsets(self):
+    cpdef Column offsets(self):
         """The offsets column of the underlying list column."""
         return self._column.child(0)
 
@@ -1565,7 +1571,7 @@ cdef class ListsColumnView:
 
         Parameters
         ----------
-        stream : Stream, optional
+        stream : CudaStreamLike, optional
             CUDA stream to use
 
         Returns
@@ -1605,7 +1611,7 @@ cdef class StructsColumnView:
         ----------
         index : int
             The index of the child to get.
-        stream : Stream, optional
+        stream : CudaStreamLike, optional
             CUDA stream to use
 
         Returns

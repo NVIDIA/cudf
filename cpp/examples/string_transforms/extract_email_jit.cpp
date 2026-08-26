@@ -8,7 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <array>
 #include <utility>

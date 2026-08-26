@@ -19,7 +19,7 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)

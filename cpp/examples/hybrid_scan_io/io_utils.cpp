@@ -9,7 +9,7 @@
 
 #include <rmm/resource_ref.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 /**
  * @file io_utils.cpp

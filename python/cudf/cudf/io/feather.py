@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import warnings
@@ -17,7 +17,15 @@ def read_feather(path, *args, **kwargs):
         "Using CPU via PyArrow to read feather dataset, this may "
         "be GPU accelerated in the future"
     )
-    pa_table = feather.read_table(path, *args, **kwargs)
+    # ``pyarrow.feather`` is deprecated as of PyArrow 24 but remains the
+    # supported compatibility wrapper for the Feather-specific API.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"pyarrow\.feather\.read_table is deprecated",
+            category=FutureWarning,
+        )
+        pa_table = feather.read_table(path, *args, **kwargs)
     return DataFrame.from_arrow(pa_table)
 
 
@@ -30,4 +38,11 @@ def to_feather(df, path, *args, **kwargs):
     )
     # Feather doesn't support using an index
     pa_table = df.to_arrow(preserve_index=False)
-    feather.write_feather(pa_table, path, *args, **kwargs)
+    # See the corresponding note in ``read_feather`` above.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"pyarrow\.feather\.write_feather is deprecated",
+            category=FutureWarning,
+        )
+        feather.write_feather(pa_table, path, *args, **kwargs)

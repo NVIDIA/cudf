@@ -1,16 +1,54 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
-#include "io/cuio_common.hpp"
-
 #include <cudf/groupby.hpp>
 #include <cudf/io/parquet.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <rmm/device_buffer.hpp>
+#include <rmm/mr/pinned_host_memory_resource.hpp>
+
+#include <cuda/stream>
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+/**
+ * @brief Host-backed Parquet source populated from an NDS-H device sink
+ */
+class ndsh_parquet_source {
+ public:
+  ndsh_parquet_source();
+  ~ndsh_parquet_source();
+
+  ndsh_parquet_source(ndsh_parquet_source&& other) noexcept;
+  ndsh_parquet_source& operator=(ndsh_parquet_source&& other) noexcept;
+
+  ndsh_parquet_source(ndsh_parquet_source const&)            = delete;
+  ndsh_parquet_source& operator=(ndsh_parquet_source const&) = delete;
+
+  [[nodiscard]] cudf::io::source_info make_source_info() const;
+
+  void append_from_device(void const* device_data, std::size_t size, cuda::stream_ref stream);
+
+ private:
+  std::unique_ptr<rmm::mr::pinned_host_memory_resource> pinned_mr_;
+  std::vector<rmm::device_buffer> buffers_;
+};
+
+using ndsh_data_sources = std::unordered_map<std::string, ndsh_parquet_source>;
+
+struct ndsh_data_generation_options {
+  cudf::size_type orders_per_chunk{16'000'000};
+  std::size_t max_parquet_file_bytes{8ul << 30};
+  bool include_lineitem_comment{false};
+};
 
 /**
  * @brief A class to represent a table with column names attached
@@ -193,10 +231,12 @@ int32_t days_since_epoch(int year, int month, int day);
  * @param table The `cudf::table` to write
  * @param col_names The column names of the table
  * @param source The source sink pair to write the table to
+ * @param max_parquet_file_bytes Maximum estimated uncompressed bytes per Parquet file
  */
 void write_to_parquet_device_buffer(std::unique_ptr<cudf::table> const& table,
                                     std::vector<std::string> const& col_names,
-                                    cuio_source_sink_pair& source);
+                                    ndsh_parquet_source& source,
+                                    std::size_t max_parquet_file_bytes);
 
 /**
  * @brief Generate NDS-H tables and write to parquet device buffers
@@ -204,7 +244,9 @@ void write_to_parquet_device_buffer(std::unique_ptr<cudf::table> const& table,
  * @param scale_factor The scale factor of NDS-H tables to generate
  * @param table_names The names of the tables to generate
  * @param sources The parquet data sources to populate
+ * @param options Chunking and schema options for generated data
  */
 void generate_parquet_data_sources(double scale_factor,
                                    std::vector<std::string> const& table_names,
-                                   std::unordered_map<std::string, cuio_source_sink_pair>& sources);
+                                   ndsh_data_sources& sources,
+                                   ndsh_data_generation_options const& options = {});

@@ -225,7 +225,7 @@ struct q9_data {
   }
 }
 
-q9_data load_data(std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+q9_data load_data(ndsh_data_sources& sources)
 {
   auto lineitem = read_parquet(
     sources.at("lineitem").make_source_info(),
@@ -312,14 +312,15 @@ void ndsh_q9(nvbench::state& state)
   auto const scale_factor = state.get_float64("scale_factor");
   auto const engine       = engine_from_string(state.get_string("engine"));
 
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    q9_data const data = load_data(sources);
-    auto const result  = compute_profit(state,
+    auto const query_execution_range = cudf::benchmark::scoped_range{"query_execution"};
+    q9_data const data               = load_data(sources);
+    auto const result                = compute_profit(state,
                                        engine,
                                        data,
                                        launch.get_stream().get_stream(),
@@ -335,7 +336,7 @@ void ndsh_q9_noio(nvbench::state& state)
   auto const scale_factor = state.get_float64("scale_factor");
   auto const engine       = engine_from_string(state.get_string("engine"));
 
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
@@ -345,7 +346,8 @@ void ndsh_q9_noio(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    result = compute_profit(state,
+    auto const query_execution_range = cudf::benchmark::scoped_range{"query_execution"};
+    result                           = compute_profit(state,
                             engine,
                             data,
                             launch.get_stream().get_stream(),
@@ -363,7 +365,7 @@ void ndsh_q9_amount(nvbench::state& state)
   auto const scale_factor = state.get_float64("scale_factor");
   auto const engine       = engine_from_string(state.get_string("engine"));
 
-  std::unordered_map<std::string, cuio_source_sink_pair> sources;
+  ndsh_data_sources sources;
   generate_parquet_data_sources(
     scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
@@ -378,7 +380,8 @@ void ndsh_q9_amount(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto amount = compute_amount(joined_table->column("l_discount"),
+    auto const query_execution_range = cudf::benchmark::scoped_range{"query_execution"};
+    auto amount                      = compute_amount(joined_table->column("l_discount"),
                                  joined_table->column("l_extendedprice"),
                                  joined_table->column("ps_supplycost"),
                                  joined_table->column("l_quantity"),

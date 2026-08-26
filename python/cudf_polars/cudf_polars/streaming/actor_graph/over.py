@@ -327,31 +327,29 @@ def _evaluate_window_with_stamps(
     return result.with_columns(stamp_cols, stream=stream)
 
 
-def _partition_by_origin_rank(
+def _split_off_origin_rank(
     result: DataFrame,
-    num_ranks: int,
     br: Any,
-) -> tuple[TableChunk | None, list[int]]:
+) -> tuple[TableChunk, TableChunk] | None:
     """
-    Rearrange rows so partition i contains rows whose origin rank is i.
+    Split the origin-rank stamp off the evaluated result.
 
-    Returns a chunk with the rank stamp dropped and the per-rank split
-    indices for direct insertion into the return shuffle.
+    Returns the payload and the single-column rank map that routes each row
+    back to its origin, or ``None`` when there is nothing to route. The
+    rearrangement itself is left to ``insert_index``, which reserves for it.
     """
     if result.table.num_rows() == 0:
-        return None, []
+        return None
 
     stream = result.stream
     columns = result.table.columns()
-    rank_column = columns[-1]
-    payload = plc.Table(columns[:-1])
-
-    rearranged, offsets = plc.partitioning.partition(
-        payload, rank_column, num_ranks, stream=stream
-    )
     return (
-        TableChunk.from_pylibcudf_table(rearranged, stream, exclusive_view=True, br=br),
-        list(offsets[1:-1]),
+        TableChunk.from_pylibcudf_table(
+            plc.Table(columns[:-1]), stream, exclusive_view=True, br=br
+        ),
+        TableChunk.from_pylibcudf_table(
+            plc.Table([columns[-1]]), stream, exclusive_view=True, br=br
+        ),
     )
 
 
@@ -517,7 +515,7 @@ async def _distribute_by_group(
                     ir_context.get_cuda_stream(),
                     context.br(),
                 )
-                inserter.insert_hash(stamped, key_indices)
+                await inserter.insert_hash(stamped, key_indices)
             chunk_index += 1
     return sequence_numbers
 
@@ -528,7 +526,6 @@ async def _evaluate_and_route_to_origin(
     ir_context: IRExecutionContext,
     forward_shuffle: ShuffleManager,
     return_shuffle: ShuffleManager,
-    num_ranks: int,
     stamps: OriginStamps,
     *,
     sort_by_input_order: bool,
@@ -537,7 +534,7 @@ async def _evaluate_and_route_to_origin(
     async with return_shuffle.inserting() as inserter:
         for partition_id in forward_shuffle.local_partitions():
             stream = ir_context.get_cuda_stream()
-            extracted = forward_shuffle.extract_chunk(partition_id, stream)
+            extracted = await forward_shuffle.extract_chunk(partition_id, stream)
             if extracted.num_rows() == 0:
                 continue
             partition = TableChunk.from_pylibcudf_table(
@@ -551,11 +548,11 @@ async def _evaluate_and_route_to_origin(
                 stamps,
                 sort_by_input_order=sort_by_input_order,
             )
-            routed, splits = await ir_context.to_thread(
-                _partition_by_origin_rank, evaluated, num_ranks, context.br()
+            routed = await ir_context.to_thread(
+                _split_off_origin_rank, evaluated, context.br()
             )
             if routed is not None:
-                inserter.insert_split(routed, splits)
+                await inserter.insert_index(*routed)
 
 
 async def _reassemble_input_chunks(
@@ -588,7 +585,7 @@ async def _reassemble_input_chunks(
         # Distinct stream per chunk so downstream work on different
         # chunks can overlap on the GPU.
         stream = ir_context.get_cuda_stream()
-        tbl = local.extract_chunk(chunk_index, stream)
+        tbl = await local.extract_chunk(chunk_index, stream)
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:
@@ -683,7 +680,6 @@ async def _shuffle_and_reassemble(
         ir_context,
         forward_shuffle,
         return_shuffle,
-        comm.nranks,
         stamps,
         sort_by_input_order=sort_by_input_order,
     )

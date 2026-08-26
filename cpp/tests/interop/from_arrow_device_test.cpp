@@ -25,7 +25,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <limits>
 #include <numeric>

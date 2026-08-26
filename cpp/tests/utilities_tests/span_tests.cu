@@ -19,7 +19,7 @@
 #include <rmm/device_vector.hpp>
 
 #include <cuda/std/span>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 

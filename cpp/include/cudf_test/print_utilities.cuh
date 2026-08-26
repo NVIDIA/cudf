@@ -9,8 +9,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/stream_ref>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <iterator>
 #include <type_traits>

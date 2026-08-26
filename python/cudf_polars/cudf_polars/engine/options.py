@@ -210,7 +210,7 @@ class StreamingOptions:
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
-        Default: ``2``.
+        Default: auto.
         Category: executor.
     fallback_mode
         Fallback behavior (``"warn"``, ``"raise"``, ``"silent"``).
@@ -723,7 +723,7 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Maximum concurrent IO tasks for each scan node.
                 Env: CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS.
-                Built-in default: 2."""),
+                Built-in default: auto."""),
         )
         g.add_argument(
             "--raise-on-fail",

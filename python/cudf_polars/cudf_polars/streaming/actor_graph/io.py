@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
 
+import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
@@ -41,9 +42,10 @@ from cudf_polars.streaming.io import (
     _sink_to_file,
 )
 from cudf_polars.streaming.rank_aware_source import RankAwareSource
+from cudf_polars.utils.config import Unspecified
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
@@ -57,6 +59,21 @@ if TYPE_CHECKING:
         PartitionInfo,
     )
     from cudf_polars.streaming.io import FusedScan, SplitScan
+
+
+_DEFAULT_LOCAL_MAX_CONCURRENT_IO_TASKS = 2
+_DEFAULT_REMOTE_MAX_CONCURRENT_IO_TASKS = 8
+
+
+def resolve_max_concurrent_io_tasks(
+    max_concurrent_io_tasks: int | Unspecified, paths: Iterable[str]
+) -> int:
+    """Resolve the scan-local IO producer count."""
+    if not isinstance(max_concurrent_io_tasks, Unspecified):
+        return max_concurrent_io_tasks
+    if any(plc.io.SourceInfo._is_remote_uri(path) for path in paths):
+        return _DEFAULT_REMOTE_MAX_CONCURRENT_IO_TASKS
+    return _DEFAULT_LOCAL_MAX_CONCURRENT_IO_TASKS
 
 
 class Lineariser:
@@ -280,7 +297,9 @@ def _(
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
     config_options = rec.state["config_options"]
     rows_per_partition = config_options.executor.max_rows_per_partition
-    num_producers = rec.state["max_concurrent_io_tasks"]
+    num_producers = resolve_max_concurrent_io_tasks(
+        rec.state["max_concurrent_io_tasks"], ()
+    )
     # Use target_partition_size as the estimated chunk size
     estimated_chunk_bytes = config_options.executor.target_partition_size
 
@@ -674,7 +693,10 @@ def _(
     config_options = rec.state["config_options"]
     executor = config_options.executor
     partition_info = rec.state["partition_info"][ir]
-    num_producers = rec.state["max_concurrent_io_tasks"]
+    num_producers = resolve_max_concurrent_io_tasks(
+        rec.state["max_concurrent_io_tasks"],
+        ir.base_scan.paths,
+    )
     channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
 
     assert partition_info.io_plan is not None, "Scan node must have a partition plan"

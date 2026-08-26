@@ -71,7 +71,8 @@ class Unspecified:
 
     The singleton instance :data:`UNSPECIFIED` is used as the default for every
     :class:`StreamingOptions` field, as well as for
-    ``ParquetOptions.prefetch_file_metadata``. When a field is still
+    ``ParquetOptions.prefetch_file_metadata`` and
+    ``StreamingExecutor.max_concurrent_io_tasks``. When a field is still
     ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
     matching environment variable was provided), the consuming component decides
     on the semantics.
@@ -92,7 +93,8 @@ class Unspecified:
 
 UNSPECIFIED = Unspecified()
 """Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
-``ParquetOptions.prefetch_file_metadata``.
+``ParquetOptions.prefetch_file_metadata`` and
+``StreamingExecutor.max_concurrent_io_tasks``.
 
 A field set to ``UNSPECIFIED`` after construction means no explicit value and no
 matching environment variable was found; the consuming component decides on the
@@ -740,8 +742,9 @@ class StreamingExecutor:
         Enable through environment variables with
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
     max_concurrent_io_tasks
-        Maximum number of concurrent IO tasks for each scan node. Default is 2.
-        This can be set via
+        Maximum number of concurrent IO tasks for each scan node. By default,
+        this is selected automatically based on the scan's paths. This can be
+        set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment variable
@@ -830,9 +833,9 @@ class StreamingExecutor:
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
         default_factory=JoinFilterPushdownOptions
     )
-    max_concurrent_io_tasks: int = dataclasses.field(
+    max_concurrent_io_tasks: int | Unspecified = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS", int, default=2
+            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS", int, default=UNSPECIFIED
         )
     )
     num_py_executors: int = dataclasses.field(
@@ -928,8 +931,8 @@ class StreamingExecutor:
             raise TypeError("sink_to_directory must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
-        if not isinstance(self.max_concurrent_io_tasks, int):
-            raise TypeError("max_concurrent_io_tasks must be an int")
+        if not isinstance(self.max_concurrent_io_tasks, (int, Unspecified)):
+            raise TypeError("max_concurrent_io_tasks must be an int when specified")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
         if not isinstance(self.kvikio_nthreads, int):

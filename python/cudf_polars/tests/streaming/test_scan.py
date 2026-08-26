@@ -21,7 +21,8 @@ from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
     prefetch_parquet_file_metadata_for_ir,
 )
-from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.engine.options import UNSPECIFIED, StreamingOptions
+from cudf_polars.streaming.actor_graph.io import resolve_max_concurrent_io_tasks
 from cudf_polars.streaming.base import (
     DataSourceInfo,
     IOPartitionFlavor,
@@ -145,6 +146,25 @@ def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
         streaming_scan, py_executor=None, stats=None
     )
     assert set(result) == {local_path}
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        ([], 2),
+        (["file.parquet"], 2),
+        (["file.parquet", "s3://bucket/file.parquet"], 8),
+        (["s3://bucket/file.parquet"], 8),
+    ],
+)
+def test_resolve_max_concurrent_io_tasks_default(
+    paths: list[str], expected: int
+) -> None:
+    assert resolve_max_concurrent_io_tasks(UNSPECIFIED, paths) == expected
+
+
+def test_resolve_max_concurrent_io_tasks_explicit() -> None:
+    assert resolve_max_concurrent_io_tasks(6, ["s3://bucket/file.parquet"]) == 6
 
 
 def test_prefetch_file_metadata_select_fast_count(

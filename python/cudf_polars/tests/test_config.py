@@ -424,6 +424,19 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.executor.quent_context is not None
 
 
+def test_max_concurrent_io_tasks_default_unspecified() -> None:
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert isinstance(config.executor.max_concurrent_io_tasks, Unspecified)
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": 6},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == 6
+
+
 def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "0")
@@ -562,6 +575,7 @@ def test_parquet_options_unspecified_dict_factory() -> None:
     assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
     result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
     assert result["parquet_options"]["prefetch_file_metadata"] is None
+    assert result["executor"]["max_concurrent_io_tasks"] is None
 
 
 def test_validate_raise_on_fail() -> None:

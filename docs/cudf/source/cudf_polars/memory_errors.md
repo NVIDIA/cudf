@@ -59,6 +59,21 @@ enters the pipeline at once. For formats that do not support partial reads, such
 the engine must load an entire file before it can begin processing, which may produce
 chunks much larger than `target_partition_size`.
 
+(cudf-polars-memory-errors-concurrent-io)=
+### Concurrent file reads
+
+Each scan node may read more than one input chunk at a time. At least two IO
+producer tasks are generally needed to overlap IO with GPU compute on distinct
+CUDA streams.
+
+The `max_concurrent_io_tasks` setting controls the number of IO producer tasks
+for each scan node. The default is selected automatically. The current automatic
+policy uses 2 producer tasks for local paths and 8 producer tasks for scans that
+include remote URIs. More producers can improve high-latency IO throughput in
+exchange for higher memory usage by each Scan actor. If a query is close to the
+memory limit or spilling heavily, reducing
+`max_concurrent_io_tasks` or `target_partition_size` can reduce peak memory use.
+
 ## Spilling to host memory
 
 When GPU memory pressure rises above a configurable threshold
@@ -95,10 +110,11 @@ constructing the GPU engine for queries.
 | Option | Default | Effect |
 |---|---|---|
 | `target_partition_size` (executor option or `CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`) | 1.5 GB or 2.5% of smallest GPU | Target chunk size in bytes. Smaller values reduce peak memory at some cost to compute efficiency. |
+| `max_concurrent_io_tasks` (executor option or `CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`) | auto | Number of concurrent IO producer tasks for each scan node. Larger values may improve high-latency IO throughput but increase memory pressure. |
 | `RAPIDSMPF_SPILL_DEVICE_LIMIT` | `80%` | GPU memory fraction at which spilling begins. Lower values give more headroom for peaks. |
 | `RAPIDSMPF_PINNED_MEMORY` | disabled | Set to `true` to enable pinned host memory for spill buffers. |
 | `RAPIDSMPF_PINNED_INITIAL_POOL_SIZE` | (none) | Size of the pinned memory pool to pre-allocate (e.g. `32GB`). |
 
-For the full list of engine configuration options, including `target_partition_size`,
-see {doc}`options`. For the full list of memory and spill configuration options see the
-[RapidsMPF configuration reference](https://docs.rapids.ai/api/rapidsmpf/stable/configuration/#general).
+For the full list of engine configuration options, including `target_partition_size`
+and `max_concurrent_io_tasks`, see {doc}`options`. For the full list of memory
+and spill configuration options see the [RapidsMPF configuration reference](https://docs.rapids.ai/api/rapidsmpf/stable/configuration/#general).

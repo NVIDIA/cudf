@@ -132,7 +132,7 @@ void write_compressed_to_sink(data_sink* out_sink,
   // the output buffer is laid out using the maximum compressed size of each block, since the
   // compressed sizes are not known yet, with padding to keep every block aligned for the codec
   auto const alignment = io::detail::compress_required_chunk_alignment(compression);
-  auto out_offsets     = cudf::detail::make_host_vector<size_t>(num_blocks + 1, stream);
+  auto out_offsets = std::vector<size_t>(num_blocks + 1);
   out_offsets[0]       = 0;
   std::transform_inclusive_scan(
     h_inputs.begin(), h_inputs.end(), out_offsets.begin() + 1, std::plus{}, [&](auto const& input) {

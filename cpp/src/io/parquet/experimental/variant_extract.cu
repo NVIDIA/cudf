@@ -288,9 +288,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
     }
 
     // Read the terminal offset offsets[num_entries] up front: it is the authoritative size of the
-    // string-data region, so every individual entry's end offset must be bounded by it below, not
-    // just by the physical buffer remainder (`meta_strings_extent`) -- the same distinction the
-    // object value's own sentinel/values_region check makes for field values.
+    // string-data region, so every individual entry's end offset must be bounded by it below
     auto const terminal_off_pos =
       meta_offsets_start + static_cast<size_type>(num_meta_entries.value()) * meta_offset_size;
     auto const terminal_off = read_uint64(meta, terminal_off_pos, meta_offset_size);

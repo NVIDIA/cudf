@@ -360,7 +360,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
   auto const values_region = static_cast<size_type>(sentinel_raw.value());
 
   // Binary search field_ids[0..N-1] by resolving each probe to its name and comparing against
-  // `key` directly -- no separate id lookup for `key` itself is needed.
+  // `key` directly
   bool found           = false;
   uint64_t match_start = 0;
   size_type lo         = 0;

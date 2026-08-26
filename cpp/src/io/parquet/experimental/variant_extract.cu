@@ -212,194 +212,6 @@ __device__ cuda::std::optional<uint64_t> variant_value_length(device_span<uint8_
   return values_base + sentinel.value();
 }
 
-// Parse an array value header and return the sub-span of the element at `index` (0-based) within
-// `val`. Returns an empty span if `val` is not an array (`basic_type != array`), if `index` is out
-// of bounds, or if the encoded data is truncated.
-//
-// Array layout per the Variant spec:
-//   byte 0: header (basic_type=array in low 2 bits; value_header in high 6 bits)
-//     value_header bits: (offset_size - 1) in bits 0-1, is_large in bit 2, bits 3-5 unused
-//   num_elements: 1 byte if !is_large else 4 bytes (little-endian)
-//   offsets:      (num_elements + 1) entries, each `offset_size` bytes, relative to the end of
-//                 offsets
-//   values:       concatenated element blobs
-//
-// Array element offsets are monotonically increasing, so the element length is taken directly from
-// the offset delta (o1 - o0) rather than from the element's own header.
-__device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_array_element(
-  device_span<uint8_t const> value, size_type index)
-{
-  if (index < 0) { return {{}, op_status::MISSING_PATH}; }
-
-  auto const value_size = static_cast<size_type>(value.size());
-  if (value_size < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
-  uint8_t const value_metadata = value[0];
-  if (decode_basic_type(value_metadata) != basic_type::ARRAY) {
-    return {{}, op_status::MISSING_PATH};
-  }
-
-  int const value_header = variant_value_header(value_metadata);
-  [[maybe_unused]] auto const [offset_size, _, num_elements_size] =
-    decode_object_array_header(value_header, false);
-
-  size_type position            = 1;
-  auto const num_elements_value = narrow_cast(read_uint64(value, position, num_elements_size));
-  if (!num_elements_value.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
-  auto const num_elements = num_elements_value.value();
-  if (index >= num_elements) { return {{}, op_status::MISSING_PATH}; }
-  position += num_elements_size;
-
-  size_type const offsets_start = position;
-
-  // Computed in 64-bit because (num_elements + 1) * offset_size can exceed the signed `size_type`
-  // range (which would be UB); the check below then rejects any array that overruns the value blob.
-  auto const offsets_bytes = (static_cast<uint64_t>(num_elements) + 1) * offset_size;
-  if (cuda::std::cmp_greater(offsets_bytes, value_size - offsets_start)) {
-    return {{}, op_status::MALFORMED_VARIANT};
-  }
-  size_type const values_base = offsets_start + static_cast<size_type>(offsets_bytes);
-  auto const values_extent    = value_size - values_base;
-  // Read the terminal offset offsets[num_elements]; it is the spec-declared bound on the
-  // values region and must be used instead of the physical extent so that an element whose
-  // offset escapes the declared boundary is caught as malformed even when physical bytes
-  // are present beyond it.
-  auto const terminal_off_pos = offsets_start + static_cast<uint64_t>(num_elements) * offset_size;
-  auto const terminal_off     = read_uint64(value, terminal_off_pos, offset_size);
-  if (!terminal_off.has_value() || cuda::std::cmp_greater(*terminal_off, values_extent)) {
-    return {{}, op_status::MALFORMED_VARIANT};
-  }
-  // The spec requires offsets[0] == 0; a nonzero first offset silently skips leading
-  // value bytes and can return a plausible result from a malformed array.
-  auto const first_off = read_uint64(value, offsets_start, offset_size);
-  if (!first_off.has_value() || *first_off != 0) { return {{}, op_status::MALFORMED_VARIANT}; }
-
-  auto const start_offset_pos = offsets_start + static_cast<uint64_t>(index) * offset_size;
-  auto const end_offset_pos   = offsets_start + (static_cast<uint64_t>(index) + 1) * offset_size;
-  if (cuda::std::cmp_greater(end_offset_pos + offset_size, value_size)) {
-    return {{}, op_status::MALFORMED_VARIANT};
-  }
-  auto const start_offset = read_uint64(value, start_offset_pos, offset_size);
-  auto const end_offset   = read_uint64(value, end_offset_pos, offset_size);
-  if (!start_offset.has_value() || !end_offset.has_value()) {
-    return {{}, op_status::MALFORMED_VARIANT};
-  }
-  auto const element_start = *start_offset;
-  auto const element_end   = *end_offset;
-  if (element_end < element_start || cuda::std::cmp_greater(element_end, *terminal_off)) {
-    return {{}, op_status::MALFORMED_VARIANT};
-  }
-  return {value.subspan(values_base + element_start, element_end - element_start),
-          op_status::SUCCESS};
-}
-
-__device__ bool is_variant_null(device_span<uint8_t const> enc)
-{
-  if (enc.empty()) { return false; }
-  auto const vm = enc[0];
-  return decode_basic_type(vm) == basic_type::PRIMITIVE &&
-         variant_value_header(vm) == static_cast<uint8_t>(primitive_type::NULLVAL);
-}
-
-// The fixed-width signed integers a VARIANT value can be cast to: INT{8,16,32,64}.  Matches the
-// exact width types (not e.g. __int128) since those are the only variant primitive int headers.
-template <typename T>
-constexpr bool is_variant_int =
-  cudf::is_integral_not_bool<T>() && cudf::is_signed<T>() && !cuda::std::is_same_v<T, __int128_t>;
-
-// The fixed-width primitive types (signed integers and floats) a VARIANT value can be decoded into.
-template <typename T>
-constexpr bool is_variant_numerical = is_variant_int<T> || cudf::is_floating_point<T>();
-
-// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats, bool,
-// and strings.
-template <typename T>
-constexpr bool is_variant_castable = is_variant_numerical<T> || cuda::std::is_same_v<T, bool> ||
-                                     cuda::std::is_same_v<T, cudf::string_view>;
-
-// Maps a fixed-width output type to the VARIANT primitive type header id that encodes it.
-template <typename T>
-  requires(is_variant_numerical<T>)
-__device__ constexpr primitive_type primitive_type_for()
-{
-  if constexpr (cuda::std::is_same_v<T, int8_t>) {
-    return primitive_type::INT8;
-  } else if constexpr (cuda::std::is_same_v<T, int16_t>) {
-    return primitive_type::INT16;
-  } else if constexpr (cuda::std::is_same_v<T, int32_t>) {
-    return primitive_type::INT32;
-  } else if constexpr (cuda::std::is_same_v<T, int64_t>) {
-    return primitive_type::INT64;
-  } else if constexpr (cuda::std::is_same_v<T, float>) {
-    return primitive_type::FLOAT32;
-  } else if constexpr (cuda::std::is_same_v<T, double>) {
-    return primitive_type::FLOAT64;
-  } else {
-    CUDF_UNREACHABLE("primitive_type_for: T is not a supported variant primitive type");
-    return primitive_type::NULLVAL;
-  }
-}
-
-/**
- * @brief Decode a single VARIANT value blob into a fixed-width primitive of type `T`.
- *
- * Requires `basic_type == primitive` and a value header whose physical type id matches `T` exactly.
- */
-template <typename T>
-__device__ inline cuda::std::optional<T> decode_primitive(device_span<uint8_t const> enc)
-{
-  if (cuda::std::cmp_less(enc.size(), 1 + sizeof(T))) { return cuda::std::nullopt; }
-
-  uint8_t const value_metadata = enc[0];
-  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE ||
-      variant_value_header(value_metadata) != static_cast<uint8_t>(primitive_type_for<T>())) {
-    return cuda::std::nullopt;
-  }
-  return cudf::io::unaligned_load<T>(enc.data() + 1);
-}
-
-/**
- * @brief Decode a single VARIANT value blob into a bool.
- *
- * Boolean values carry no payload: the distinction between true and false is encoded entirely in
- * the primitive type header (`boolean_true` vs `boolean_false`).
- */
-__device__ inline cuda::std::optional<bool> decode_bool(device_span<uint8_t const> enc)
-{
-  if (enc.empty()) { return cuda::std::nullopt; }
-  uint8_t const value_metadata = enc[0];
-  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE) { return cuda::std::nullopt; }
-  auto const value_header = variant_value_header(value_metadata);
-  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_TRUE)) { return true; }
-  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_FALSE)) { return false; }
-  return cuda::std::nullopt;
-}
-
-// Parse an array-index step token of the form "[<N>]" into its zero-based index. Returns nullopt
-// for any malformed token or an index that does not fit in `size_type` (such an index is out of
-// range for any array, so the caller treats it as a missing element).
-__device__ cuda::std::optional<size_type> parse_index_step(cudf::string_view step)
-{
-  auto const step_size  = step.size_bytes();
-  auto const* step_data = step.data();
-  if (step_size < 3 || step_data[0] != '[' || step_data[step_size - 1] != ']') {
-    return cuda::std::nullopt;
-  }
-
-  // Accumulate directly in `size_type`; the checked-arithmetic helpers reject the token if the
-  // running value overflows, which means the index is out of range for any array and the caller
-  // treats it as a missing element.
-  size_type index = 0;
-  for (size_type k = 1; k < step_size - 1; ++k) {
-    char const c = step_data[k];
-    if (c < '0' || c > '9') { return cuda::std::nullopt; }
-    if (cuda::mul_overflow(index, index, size_type{10}) ||
-        cuda::add_overflow(index, index, static_cast<size_type>(c - '0'))) {
-      return cuda::std::nullopt;
-    }
-  }
-  return index;
-}
-
 /**
  * @brief Locate the encoded bytes of a single field within an object value by field name.
  *
@@ -589,6 +401,194 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
     return {{}, op_status::MALFORMED_VARIANT};
   }
   return {val.subspan(values_base + match_start, value_len.value()), op_status::SUCCESS};
+}
+
+// Parse an array value header and return the sub-span of the element at `index` (0-based) within
+// `val`. Returns an empty span if `val` is not an array (`basic_type != array`), if `index` is out
+// of bounds, or if the encoded data is truncated.
+//
+// Array layout per the Variant spec:
+//   byte 0: header (basic_type=array in low 2 bits; value_header in high 6 bits)
+//     value_header bits: (offset_size - 1) in bits 0-1, is_large in bit 2, bits 3-5 unused
+//   num_elements: 1 byte if !is_large else 4 bytes (little-endian)
+//   offsets:      (num_elements + 1) entries, each `offset_size` bytes, relative to the end of
+//                 offsets
+//   values:       concatenated element blobs
+//
+// Array element offsets are monotonically increasing, so the element length is taken directly from
+// the offset delta (o1 - o0) rather than from the element's own header.
+__device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_array_element(
+  device_span<uint8_t const> value, size_type index)
+{
+  if (index < 0) { return {{}, op_status::MISSING_PATH}; }
+
+  auto const value_size = static_cast<size_type>(value.size());
+  if (value_size < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
+  uint8_t const value_metadata = value[0];
+  if (decode_basic_type(value_metadata) != basic_type::ARRAY) {
+    return {{}, op_status::MISSING_PATH};
+  }
+
+  int const value_header = variant_value_header(value_metadata);
+  [[maybe_unused]] auto const [offset_size, _, num_elements_size] =
+    decode_object_array_header(value_header, false);
+
+  size_type position            = 1;
+  auto const num_elements_value = narrow_cast(read_uint64(value, position, num_elements_size));
+  if (!num_elements_value.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+  auto const num_elements = num_elements_value.value();
+  if (index >= num_elements) { return {{}, op_status::MISSING_PATH}; }
+  position += num_elements_size;
+
+  size_type const offsets_start = position;
+
+  // Computed in 64-bit because (num_elements + 1) * offset_size can exceed the signed `size_type`
+  // range (which would be UB); the check below then rejects any array that overruns the value blob.
+  auto const offsets_bytes = (static_cast<uint64_t>(num_elements) + 1) * offset_size;
+  if (cuda::std::cmp_greater(offsets_bytes, value_size - offsets_start)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  size_type const values_base = offsets_start + static_cast<size_type>(offsets_bytes);
+  auto const values_extent    = value_size - values_base;
+  // Read the terminal offset offsets[num_elements]; it is the spec-declared bound on the
+  // values region and must be used instead of the physical extent so that an element whose
+  // offset escapes the declared boundary is caught as malformed even when physical bytes
+  // are present beyond it.
+  auto const terminal_off_pos = offsets_start + static_cast<uint64_t>(num_elements) * offset_size;
+  auto const terminal_off     = read_uint64(value, terminal_off_pos, offset_size);
+  if (!terminal_off.has_value() || cuda::std::cmp_greater(*terminal_off, values_extent)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  // The spec requires offsets[0] == 0; a nonzero first offset silently skips leading
+  // value bytes and can return a plausible result from a malformed array.
+  auto const first_off = read_uint64(value, offsets_start, offset_size);
+  if (!first_off.has_value() || *first_off != 0) { return {{}, op_status::MALFORMED_VARIANT}; }
+
+  auto const start_offset_pos = offsets_start + static_cast<uint64_t>(index) * offset_size;
+  auto const end_offset_pos   = offsets_start + (static_cast<uint64_t>(index) + 1) * offset_size;
+  if (cuda::std::cmp_greater(end_offset_pos + offset_size, value_size)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  auto const start_offset = read_uint64(value, start_offset_pos, offset_size);
+  auto const end_offset   = read_uint64(value, end_offset_pos, offset_size);
+  if (!start_offset.has_value() || !end_offset.has_value()) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  auto const element_start = *start_offset;
+  auto const element_end   = *end_offset;
+  if (element_end < element_start || cuda::std::cmp_greater(element_end, *terminal_off)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  return {value.subspan(values_base + element_start, element_end - element_start),
+          op_status::SUCCESS};
+}
+
+__device__ bool is_variant_null(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return false; }
+  auto const vm = enc[0];
+  return decode_basic_type(vm) == basic_type::PRIMITIVE &&
+         variant_value_header(vm) == static_cast<uint8_t>(primitive_type::NULLVAL);
+}
+
+// The fixed-width signed integers a VARIANT value can be cast to: INT{8,16,32,64}.  Matches the
+// exact width types (not e.g. __int128) since those are the only variant primitive int headers.
+template <typename T>
+constexpr bool is_variant_int =
+  cudf::is_integral_not_bool<T>() && cudf::is_signed<T>() && !cuda::std::is_same_v<T, __int128_t>;
+
+// The fixed-width primitive types (signed integers and floats) a VARIANT value can be decoded into.
+template <typename T>
+constexpr bool is_variant_numerical = is_variant_int<T> || cudf::is_floating_point<T>();
+
+// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats, bool,
+// and strings.
+template <typename T>
+constexpr bool is_variant_castable = is_variant_numerical<T> || cuda::std::is_same_v<T, bool> ||
+                                     cuda::std::is_same_v<T, cudf::string_view>;
+
+// Maps a fixed-width output type to the VARIANT primitive type header id that encodes it.
+template <typename T>
+  requires(is_variant_numerical<T>)
+__device__ constexpr primitive_type primitive_type_for()
+{
+  if constexpr (cuda::std::is_same_v<T, int8_t>) {
+    return primitive_type::INT8;
+  } else if constexpr (cuda::std::is_same_v<T, int16_t>) {
+    return primitive_type::INT16;
+  } else if constexpr (cuda::std::is_same_v<T, int32_t>) {
+    return primitive_type::INT32;
+  } else if constexpr (cuda::std::is_same_v<T, int64_t>) {
+    return primitive_type::INT64;
+  } else if constexpr (cuda::std::is_same_v<T, float>) {
+    return primitive_type::FLOAT32;
+  } else if constexpr (cuda::std::is_same_v<T, double>) {
+    return primitive_type::FLOAT64;
+  } else {
+    CUDF_UNREACHABLE("primitive_type_for: T is not a supported variant primitive type");
+    return primitive_type::NULLVAL;
+  }
+}
+
+/**
+ * @brief Decode a single VARIANT value blob into a fixed-width primitive of type `T`.
+ *
+ * Requires `basic_type == primitive` and a value header whose physical type id matches `T` exactly.
+ */
+template <typename T>
+__device__ inline cuda::std::optional<T> decode_primitive(device_span<uint8_t const> enc)
+{
+  if (cuda::std::cmp_less(enc.size(), 1 + sizeof(T))) { return cuda::std::nullopt; }
+
+  uint8_t const value_metadata = enc[0];
+  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE ||
+      variant_value_header(value_metadata) != static_cast<uint8_t>(primitive_type_for<T>())) {
+    return cuda::std::nullopt;
+  }
+  return cudf::io::unaligned_load<T>(enc.data() + 1);
+}
+
+/**
+ * @brief Decode a single VARIANT value blob into a bool.
+ *
+ * Boolean values carry no payload: the distinction between true and false is encoded entirely in
+ * the primitive type header (`boolean_true` vs `boolean_false`).
+ */
+__device__ inline cuda::std::optional<bool> decode_bool(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return cuda::std::nullopt; }
+  uint8_t const value_metadata = enc[0];
+  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE) { return cuda::std::nullopt; }
+  auto const value_header = variant_value_header(value_metadata);
+  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_TRUE)) { return true; }
+  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_FALSE)) { return false; }
+  return cuda::std::nullopt;
+}
+
+// Parse an array-index step token of the form "[<N>]" into its zero-based index. Returns nullopt
+// for any malformed token or an index that does not fit in `size_type` (such an index is out of
+// range for any array, so the caller treats it as a missing element).
+__device__ cuda::std::optional<size_type> parse_index_step(cudf::string_view step)
+{
+  auto const step_size  = step.size_bytes();
+  auto const* step_data = step.data();
+  if (step_size < 3 || step_data[0] != '[' || step_data[step_size - 1] != ']') {
+    return cuda::std::nullopt;
+  }
+
+  // Accumulate directly in `size_type`; the checked-arithmetic helpers reject the token if the
+  // running value overflows, which means the index is out of range for any array and the caller
+  // treats it as a missing element.
+  size_type index = 0;
+  for (size_type k = 1; k < step_size - 1; ++k) {
+    char const c = step_data[k];
+    if (c < '0' || c > '9') { return cuda::std::nullopt; }
+    if (cuda::mul_overflow(index, index, size_type{10}) ||
+        cuda::add_overflow(index, index, static_cast<size_type>(c - '0'))) {
+      return cuda::std::nullopt;
+    }
+  }
+  return index;
 }
 
 // Walk a path of object-key or array-index steps level by level starting at `val` and return

@@ -282,12 +282,14 @@ def test_read_parquet_from_device_buffers(
         binary_source_or_sink, pa_table, **_COMMON_PARQUET_SOURCE_KWARGS
     )
 
-    rmm_buf = DeviceBuffer.to_device(
-        get_bytes_from_source(source), plc.utils._get_stream(stream)
-    )
-    buf = FooSpan(rmm_buf) if use_foo_span else rmm_buf
-
+    # to_device() is documented as fully async on a non-default stream, and
+    # the caller is responsible for keeping the source bytes alive until
+    # synchronize_stream() below runs.
+    # See https://github.com/rapidsai/rmm/issues/2521
+    src_bytes = get_bytes_from_source(source)
+    rmm_buf = DeviceBuffer.to_device(src_bytes, plc.utils._get_stream(stream))
     synchronize_stream(stream)
+    buf = FooSpan(rmm_buf) if use_foo_span else rmm_buf
 
     options = plc.io.parquet.ParquetReaderOptions.builder(
         plc.io.SourceInfo([buf] * num_buffers)

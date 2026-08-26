@@ -39,6 +39,7 @@ from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing_extensions import Buffer
     from pylibcudf.typing import CudaStreamLike
 
@@ -170,8 +171,8 @@ cdef class HybridScanReader:
 
     def __init__(
         self,
-        const uint8_t[::1] footer_bytes,
-        ParquetReaderOptions options
+        const uint8_t[::1] footer_bytes: Buffer,
+        ParquetReaderOptions options,
     ):
         cdef const uint8_t* footer_ptr = <const uint8_t*>0
         if len(footer_bytes) > 0:
@@ -490,9 +491,9 @@ cdef class HybridScanReader:
     def build_all_true_row_mask(
         self,
         list row_group_indices,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> Column:
         """Build an all-true boolean survival column for the given row groups.
 
         Parameters
@@ -814,7 +815,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
-        object column_chunk_data,
+        object column_chunk_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -905,7 +906,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
-        object column_chunk_data,
+        object column_chunk_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None

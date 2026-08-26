@@ -67,6 +67,7 @@ macro(add_fragment)
                CUDA_STANDARD 20
                CUDA_STANDARD_REQUIRED ON
                CUDA_VISIBILITY_PRESET hidden
+               CUDA_ARCHITECTURES ${CUDF_LTO_ARCHITECTURE}
   )
   target_link_libraries(
     ${OBJECT_ID}

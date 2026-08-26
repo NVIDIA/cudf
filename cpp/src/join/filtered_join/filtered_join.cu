@@ -130,13 +130,13 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
 {
   cudf::scoped_range range{"filtered_join::semi_anti_join"};
 
-  auto const preprocessed_left = [left, stream] {
+  auto const temp_mr           = cudf::get_current_device_resource_ref();
+  auto const preprocessed_left = [&left, stream, temp_mr] {
     cudf::scoped_range range{"filtered_join::semi_anti_join::preprocessed_left"};
-    return cudf::detail::row::equality::preprocessed_table::create(
-      left, stream, cudf::get_current_device_resource_ref());
+    return cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   }();
 
-  auto contains_map            = rmm::device_uvector<bool>(left.num_rows(), stream);
+  auto contains_map            = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
   auto const contains_map_span = cudf::device_span<bool>{contains_map.data(), contains_map.size()};
   if (_right_mode == row_operator_mode::PRIMITIVE) {
     query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);
@@ -147,12 +147,11 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
   }
 
   rmm::device_uvector<size_type> gather_map(left.num_rows(), stream, mr);
-  auto gather_map_end =
-    thrust::copy_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    cuda::counting_iterator<size_type>{0},
-                    cuda::counting_iterator<size_type>{left.num_rows()},
-                    gather_map.begin(),
-                    gather_mask{kind, contains_map_span});
+  auto gather_map_end = thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
+                                        cuda::counting_iterator<size_type>{0},
+                                        cuda::counting_iterator<size_type>{left.num_rows()},
+                                        gather_map.begin(),
+                                        gather_mask{kind, contains_map_span});
   gather_map.resize(cuda::std::distance(gather_map.begin(), gather_map_end), stream);
   return std::make_unique<rmm::device_uvector<size_type>>(std::move(gather_map));
 }

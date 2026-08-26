@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class VariantUtilsTest extends CudfTestBase {
@@ -252,6 +253,18 @@ public class VariantUtilsTest extends CudfTestBase {
     private static int simple(int type) {
       return header(0x00, type);
     }
+
+    private static List<Byte> primitiveHeader(int type) {
+      return bytes(simple(type));
+    }
+
+    private static List<Byte> shortStringHeader(int length) {
+      return bytes(header(0x01, length));
+    }
+
+    private static List<Byte> containerHeader(boolean array) {
+      return bytes(header(array ? 0x03 : 0x02, 0));
+    }
   }
 
   // Test data is constructed according to Apache Parquet's Variant encoding spec:
@@ -386,6 +399,182 @@ public class VariantUtilsTest extends CudfTestBase {
          ColumnVector result = VariantUtils.castVariantValue(valueBytes, DType.INT32);
          ColumnVector expected = ColumnVector.fromBoxedInts(null, 99, null)) {
       assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void variantLogicalTypeIdsMatchNativeValues() {
+    VariantLogicalType[] types = {
+        VariantLogicalType.OBJECT,
+        VariantLogicalType.ARRAY,
+        VariantLogicalType.NULL_VALUE,
+        VariantLogicalType.BOOLEAN,
+        VariantLogicalType.LONG_VALUE,
+        VariantLogicalType.STRING,
+        VariantLogicalType.DOUBLE_VALUE,
+        VariantLogicalType.DECIMAL,
+        VariantLogicalType.DATE,
+        VariantLogicalType.TIMESTAMP,
+        VariantLogicalType.TIMESTAMP_NTZ,
+        VariantLogicalType.FLOAT_VALUE,
+        VariantLogicalType.BINARY,
+        VariantLogicalType.UUID,
+        VariantLogicalType.TIME_NTZ
+    };
+
+    for (int nativeId = 0; nativeId < types.length; nativeId++) {
+      assertEquals(nativeId, types[nativeId].getNativeId());
+      assertEquals(types[nativeId], VariantLogicalType.fromNative(nativeId));
+    }
+    assertThrows(IllegalArgumentException.class, () -> VariantLogicalType.fromNative(-1));
+    assertThrows(IllegalArgumentException.class, () -> VariantLogicalType.fromNative(15));
+  }
+
+  @Test
+  void getVariantTypeIdCoversLogicalTypesAndPhysicalAliases() {
+    // get_variant_type_id intentionally classifies only the header byte. Supplying header-only
+    // blobs here both pins every physical-to-logical mapping and verifies that truncated payloads
+    // with recognized headers remain classifiable.
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.containerHeader(false),       // OBJECT
+             VariantEncoder.containerHeader(true),        // ARRAY
+             VariantEncoder.primitiveHeader(0),            // NULL_VALUE
+             VariantEncoder.primitiveHeader(1),            // BOOLEAN_TRUE
+             VariantEncoder.primitiveHeader(2),            // BOOLEAN_FALSE
+             VariantEncoder.primitiveHeader(3),            // INT8
+             VariantEncoder.primitiveHeader(4),            // INT16
+             VariantEncoder.primitiveHeader(5),            // INT32
+             VariantEncoder.primitiveHeader(6),            // INT64
+             VariantEncoder.shortStringHeader(0),          // SHORT_STRING
+             VariantEncoder.primitiveHeader(16),           // LONG_STRING
+             VariantEncoder.primitiveHeader(7),            // FLOAT64
+             VariantEncoder.primitiveHeader(8),            // DECIMAL4
+             VariantEncoder.primitiveHeader(9),            // DECIMAL8
+             VariantEncoder.primitiveHeader(10),           // DECIMAL16
+             VariantEncoder.primitiveHeader(11),           // DATE
+             VariantEncoder.primitiveHeader(12),           // TIMESTAMP_MICROS
+             VariantEncoder.primitiveHeader(18),           // TIMESTAMP_NANOS
+             VariantEncoder.primitiveHeader(13),           // TIMESTAMP_NTZ_MICROS
+             VariantEncoder.primitiveHeader(19),           // TIMESTAMP_NTZ_NANOS
+             VariantEncoder.primitiveHeader(14),           // FLOAT32
+             VariantEncoder.primitiveHeader(15),           // BINARY
+             VariantEncoder.primitiveHeader(20),           // UUID
+             VariantEncoder.primitiveHeader(17));          // TIME_NTZ_MICROS
+         ColumnVector result = VariantUtils.getVariantTypeId(values);
+         ColumnVector expected = ColumnVector.fromUnsignedBytes(
+             (byte) VariantLogicalType.OBJECT.getNativeId(),
+             (byte) VariantLogicalType.ARRAY.getNativeId(),
+             (byte) VariantLogicalType.NULL_VALUE.getNativeId(),
+             (byte) VariantLogicalType.BOOLEAN.getNativeId(),
+             (byte) VariantLogicalType.BOOLEAN.getNativeId(),
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId(),
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId(),
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId(),
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId(),
+             (byte) VariantLogicalType.STRING.getNativeId(),
+             (byte) VariantLogicalType.STRING.getNativeId(),
+             (byte) VariantLogicalType.DOUBLE_VALUE.getNativeId(),
+             (byte) VariantLogicalType.DECIMAL.getNativeId(),
+             (byte) VariantLogicalType.DECIMAL.getNativeId(),
+             (byte) VariantLogicalType.DECIMAL.getNativeId(),
+             (byte) VariantLogicalType.DATE.getNativeId(),
+             (byte) VariantLogicalType.TIMESTAMP.getNativeId(),
+             (byte) VariantLogicalType.TIMESTAMP.getNativeId(),
+             (byte) VariantLogicalType.TIMESTAMP_NTZ.getNativeId(),
+             (byte) VariantLogicalType.TIMESTAMP_NTZ.getNativeId(),
+             (byte) VariantLogicalType.FLOAT_VALUE.getNativeId(),
+             (byte) VariantLogicalType.BINARY.getNativeId(),
+             (byte) VariantLogicalType.UUID.getNativeId(),
+             (byte) VariantLogicalType.TIME_NTZ.getNativeId())) {
+      assertEquals(DType.UINT8, result.getType());
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void getVariantTypeIdNullAndInvalidHeaderBehavior() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.primitiveHeader(0),
+             null,
+             bytes(),
+             bytes(0xfc),
+             VariantEncoder.primitiveHeader(6));
+         ColumnVector result = VariantUtils.getVariantTypeId(values);
+         ColumnVector expected = ColumnVector.fromBoxedUnsignedBytes(
+             (byte) VariantLogicalType.NULL_VALUE.getNativeId(),
+             null,
+             null,
+             null,
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId())) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void getVariantTypeIdAcceptsExtractedValues() {
+    try (ColumnVector variant = makeXyzVariantColumn();
+         ColumnVector values = VariantUtils.getVariantFieldValue(variant, "x");
+         ColumnVector result = VariantUtils.getVariantTypeId(values);
+         ColumnVector expected = ColumnVector.fromBoxedUnsignedBytes(
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId(),
+             (byte) VariantLogicalType.LONG_VALUE.getNativeId(),
+             null)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void getVariantTypeIdSupportsSlicedInput() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.primitiveHeader(0),
+             VariantEncoder.containerHeader(true),
+             VariantEncoder.primitiveHeader(14),
+             VariantEncoder.shortStringHeader(0),
+             VariantEncoder.containerHeader(false));
+         ColumnVector slice = values.subVector(1, 4);
+         ColumnVector result = VariantUtils.getVariantTypeId(slice);
+         ColumnVector expected = ColumnVector.fromUnsignedBytes(
+             (byte) VariantLogicalType.ARRAY.getNativeId(),
+             (byte) VariantLogicalType.FLOAT_VALUE.getNativeId(),
+             (byte) VariantLogicalType.STRING.getNativeId())) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void getVariantTypeIdHandlesEmptyAndAllNullInput() {
+    try (ColumnVector empty = ColumnVector.fromLists(BINARY_TYPE);
+         ColumnVector emptyResult = VariantUtils.getVariantTypeId(empty);
+         ColumnVector expectedEmpty = ColumnVector.fromUnsignedBytes();
+         ColumnVector allNull = ColumnVector.fromLists(
+             BINARY_TYPE, (List<Byte>) null, (List<Byte>) null);
+         ColumnVector allNullResult = VariantUtils.getVariantTypeId(allNull);
+         ColumnVector expectedAllNull = ColumnVector.fromBoxedUnsignedBytes(null, null)) {
+      assertEquals(DType.UINT8, emptyResult.getType());
+      assertColumnsAreEqual(expectedEmpty, emptyResult);
+      assertColumnsAreEqual(expectedAllNull, allNullResult);
+    }
+  }
+
+  @Test
+  void getVariantTypeIdRejectsInvalidInput() {
+    ListType listOfInt = new ListType(true, new BasicType(false, DType.INT32));
+    try (ColumnVector notAList = ColumnVector.fromInts(1);
+         ColumnVector wrongChildType = ColumnVector.fromLists(listOfInt, Arrays.asList(1, 2))) {
+      assertThrows(CudfException.class, () -> VariantUtils.getVariantTypeId(notAList));
+      assertThrows(CudfException.class, () -> VariantUtils.getVariantTypeId(wrongChildType));
+    }
+    assertThrows(NullPointerException.class, () -> VariantUtils.getVariantTypeId(null));
+  }
+
+  @Test
+  void emptyInputUnsupportedDirectCastThrows() {
+    try (ColumnVector empty = ColumnVector.fromLists(BINARY_TYPE)) {
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValue(empty, DType.UINT32));
     }
   }
 

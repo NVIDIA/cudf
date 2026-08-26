@@ -115,30 +115,6 @@ struct row_group_size_info {
 [[nodiscard]] std::size_t derive_pass_read_limit(std::size_t chunk_read_limit);
 
 /**
- * @brief Synthesizes a source-index column.
- *
- * @param num_rows_per_source Number of rows per source
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource to use for device memory allocation
- * @return Synthesized source-index column
- */
-[[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
-  std::span<std::size_t const> num_rows_per_source,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
-
-/**
- * @brief Synthesizes row-group indices from a sorted source-index column.
- *
- * @param source_indices Source-index column containing one row per row group
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource to use for device memory allocation
- * @return Synthesized row-group index column
- */
-[[nodiscard]] std::unique_ptr<column> synthesize_row_group_index_column(
-  column_view const& source_indices, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
-
-/**
  * @brief Find the offset of the column chunk with the given schema index in the specified row group
  *
  * @note For mismatched schemas, `schema_idx` must be pre-mapped to the row group's source using

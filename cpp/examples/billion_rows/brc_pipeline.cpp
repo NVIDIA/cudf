@@ -16,6 +16,7 @@
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -128,12 +129,22 @@ int main(int argc, char const** argv)
     auto size  = std::min(chunk_size, file_size - start);
     chunk_tasks[i % thread_count].add_range(start, size);
   }
+  std::vector<std::exception_ptr> exceptions(chunk_tasks.size());
   std::vector<std::thread> threads;
-  for (auto& c : chunk_tasks) {
-    threads.emplace_back(std::thread{c});
+  for (std::size_t i = 0; i < chunk_tasks.size(); ++i) {
+    threads.emplace_back([task = chunk_tasks[i], &exception = exceptions[i]]() mutable {
+      try {
+        task();
+      } catch (...) {
+        exception = std::current_exception();
+      }
+    });
   }
   for (auto& t : threads) {
     t.join();
+  }
+  for (auto const& exception : exceptions) {
+    if (exception) { std::rethrow_exception(exception); }
   }
 
   // in case some kernels are still running on the default stream

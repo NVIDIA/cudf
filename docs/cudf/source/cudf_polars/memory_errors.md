@@ -67,12 +67,12 @@ producer tasks are generally needed to overlap IO with GPU compute on distinct
 CUDA streams.
 
 The `max_concurrent_io_tasks` setting controls the number of IO producer tasks
-for each scan node. The default is selected automatically. The current automatic
-policy uses 2 producer tasks for local paths and 8 producer tasks for scans that
-include remote URIs. More producers can improve high-latency IO throughput in
-exchange for higher memory usage by each Scan actor. If a query is close to the
-memory limit or spilling heavily, reducing
-`max_concurrent_io_tasks` or `target_partition_size` can reduce peak memory use.
+for each scan node. The default is selected automatically. See
+{class}`~cudf_polars.engine.options.StreamingOptions` for the current policy.
+More producers can improve high-latency IO throughput in exchange for higher
+memory usage by each Scan actor. If a query is close to the memory limit or
+spilling heavily, reducing `max_concurrent_io_tasks` or `target_partition_size`
+can reduce peak memory use.
 
 ## Spilling to host memory
 

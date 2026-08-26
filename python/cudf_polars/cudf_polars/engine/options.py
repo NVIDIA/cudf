@@ -210,7 +210,9 @@ class StreamingOptions:
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
-        Default: auto.
+        Default: auto. The current automatic policy uses ``2`` producer tasks
+        for local paths and ``8`` producer tasks for scans that include remote
+        URIs.
         Category: executor.
     fallback_mode
         Fallback behavior (``"warn"``, ``"raise"``, ``"silent"``).

@@ -4,6 +4,7 @@
 
 from cython.operator cimport dereference as deref
 from cython.operator cimport postincrement
+from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uint32_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.unordered_map cimport unordered_map
@@ -20,7 +21,13 @@ from rmm.pylibrmm.stream cimport Stream
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
 from rapidsmpf.memory.buffer_resource cimport BufferResource, cpp_BufferResource
+from rapidsmpf.memory.memory_reservation cimport (
+    MemoryReservation,
+    cpp_MemoryReservation,
+)
 from rapidsmpf.memory.packed_data cimport PackedData, cpp_PackedData
+
+ctypedef const cpp_PackedData* const_packed_data_ptr
 
 
 cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
@@ -38,6 +45,25 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             cpp_BufferResource* br,
         ) except +ex_handler
 
+    cdef size_t cpp_partition_and_pack_cost \
+        "cudf_streaming::partition_and_pack_cost"(
+            const table_view& table,
+            cuda_stream_view stream,
+            cpp_BufferResource* br,
+        ) except +ex_handler
+
+    cdef unordered_map[uint32_t, cpp_PackedData] cpp_partition_and_pack_reserved \
+        "cudf_streaming::partition_and_pack"(
+            const table_view& table,
+            const vector[size_type] &columns_to_hash,
+            int num_partitions,
+            int hash_function,
+            uint32_t seed,
+            cuda_stream_view stream,
+            cpp_BufferResource* br,
+            cpp_MemoryReservation& reservation,
+        ) except +ex_handler
+
     cdef unordered_map[uint32_t, cpp_PackedData] cpp_split_and_pack \
         "cudf_streaming::split_and_pack"(
             const table_view& table,
@@ -46,6 +72,59 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             cpp_BufferResource* br,
         ) except +ex_handler
 
+    cdef size_t cpp_split_and_pack_cost \
+        "cudf_streaming::split_and_pack_cost"(
+            const table_view& table,
+            cuda_stream_view stream,
+            cpp_BufferResource* br,
+        ) except +ex_handler
+
+    cdef unordered_map[uint32_t, cpp_PackedData] cpp_split_and_pack_reserved \
+        "cudf_streaming::split_and_pack"(
+            const table_view& table,
+            const vector[size_type] &splits,
+            cuda_stream_view stream,
+            cpp_BufferResource* br,
+            cpp_MemoryReservation& reservation,
+        ) except +ex_handler
+
+
+cpdef size_t partition_and_pack_cost(
+    Table table,
+    Stream stream,
+    BufferResource br,
+):
+    """
+    Peak device memory (in bytes) required by :func:`partition_and_pack`.
+
+    Covers both the table that the hash partitioning produces and the packed
+    partitions produced from it, which are alive at the same time.
+
+    Parameters
+    ----------
+    table
+        The input table to partition.
+    stream
+        The CUDA stream used for memory operations.
+    br
+        Buffer resource used for temporary allocations.
+
+    Returns
+    -------
+    The peak size in bytes.
+
+    See Also
+    --------
+    cudf_streaming.partition_utils.partition_and_pack
+    """
+    cdef cuda_stream_view _stream = stream.view()
+    cdef cpp_BufferResource* _br = br.ptr()
+    cdef table_view tbl = table.view()
+    cdef size_t ret
+    with nogil:
+        ret = cpp_partition_and_pack_cost(tbl, _stream, _br)
+    return ret
+
 
 cpdef object partition_and_pack(
     Table table,
@@ -53,6 +132,7 @@ cpdef object partition_and_pack(
     int num_partitions,
     Stream stream,
     BufferResource br,
+    MemoryReservation reservation=None,
 ):
     """
     Partition rows from the input table into multiple packed tables.
@@ -69,6 +149,10 @@ cpdef object partition_and_pack(
         The CUDA stream used for memory operations.
     br
         Buffer resource for memory allocations.
+    reservation
+        Device memory reservation covering :func:`partition_and_pack_cost`. It is
+        consumed as the allocations land, leaving it empty on return. If not given,
+        the memory is reserved internally instead.
 
     Returns
     -------
@@ -78,9 +162,14 @@ cpdef object partition_and_pack(
     ------
     IndexError
         If any index in ``columns_to_hash`` is invalid.
+    ValueError
+        If ``reservation`` is not a device memory reservation.
+    ReservationError
+        If ``reservation`` is smaller than :func:`partition_and_pack_cost`.
 
     See Also
     --------
+    cudf_streaming.partition_utils.partition_and_pack_cost
     cudf_streaming.partition_utils.unpack_and_concat
     pylibcudf.partitioning.hash_partition
     pylibcudf.contiguous_split.pack
@@ -91,16 +180,31 @@ cpdef object partition_and_pack(
     cdef vector[size_type] _columns_to_hash = tuple(columns_to_hash)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
     cdef table_view tbl = table.view()
+    cdef cpp_MemoryReservation* _reservation = NULL
+    if reservation is not None:
+        _reservation = reservation._handle.get()
     with nogil:
-        _ret = cpp_partition_and_pack(
-            tbl,
-            _columns_to_hash,
-            num_partitions,
-            cpp_HASH_MURMUR3,
-            cpp_DEFAULT_HASH_SEED,
-            _stream,
-            _br,
-        )
+        if _reservation == NULL:
+            _ret = cpp_partition_and_pack(
+                tbl,
+                _columns_to_hash,
+                num_partitions,
+                cpp_HASH_MURMUR3,
+                cpp_DEFAULT_HASH_SEED,
+                _stream,
+                _br,
+            )
+        else:
+            _ret = cpp_partition_and_pack_reserved(
+                tbl,
+                _columns_to_hash,
+                num_partitions,
+                cpp_HASH_MURMUR3,
+                cpp_DEFAULT_HASH_SEED,
+                _stream,
+                _br,
+                deref(_reservation),
+            )
     ret = {}
     cdef unordered_map[uint32_t, cpp_PackedData].iterator it = _ret.begin()
     while(it != _ret.end()):
@@ -112,11 +216,48 @@ cpdef object partition_and_pack(
     return ret
 
 
+cpdef size_t split_and_pack_cost(
+    Table table,
+    Stream stream,
+    BufferResource br,
+):
+    """
+    Peak device memory (in bytes) required by :func:`split_and_pack`.
+
+    Covers the packed partitions produced by the contiguous split.
+
+    Parameters
+    ----------
+    table
+        The input table to split and pack.
+    stream
+        The CUDA stream used for memory operations.
+    br
+        Buffer resource used for temporary allocations.
+
+    Returns
+    -------
+    The peak size in bytes.
+
+    See Also
+    --------
+    cudf_streaming.partition_utils.split_and_pack
+    """
+    cdef cuda_stream_view _stream = stream.view()
+    cdef cpp_BufferResource* _br = br.ptr()
+    cdef table_view tbl = table.view()
+    cdef size_t ret
+    with nogil:
+        ret = cpp_split_and_pack_cost(tbl, _stream, _br)
+    return ret
+
+
 cpdef object split_and_pack(
     Table table,
     object splits,
     Stream stream,
     BufferResource br,
+    MemoryReservation reservation=None,
 ):
     """
     Split rows from the input table into multiple packed tables.
@@ -132,6 +273,10 @@ cpdef object split_and_pack(
         The CUDA stream used for memory operations.
     br
         Buffer resource for memory allocations.
+    reservation
+        Device memory reservation covering :func:`split_and_pack_cost`. It is
+        consumed as the allocation lands. If not given, the memory is reserved
+        internally instead.
 
     Returns
     -------
@@ -141,9 +286,14 @@ cpdef object split_and_pack(
     ------
     IndexError
         If the splits are out of range for ``[0, len(table)]``.
+    ValueError
+        If ``reservation`` is not a device memory reservation.
+    ReservationError
+        If ``reservation`` is smaller than :func:`split_and_pack_cost`.
 
     See Also
     --------
+    cudf_streaming.partition_utils.split_and_pack_cost
     cudf_streaming.partition_utils.unpack_and_concat
     pylibcudf.copying.split
     cudf_streaming.partition_utils.partition_and_pack
@@ -153,13 +303,25 @@ cpdef object split_and_pack(
     cdef vector[size_type] _splits = tuple(splits)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
     cdef table_view tbl = table.view()
+    cdef cpp_MemoryReservation* _reservation = NULL
+    if reservation is not None:
+        _reservation = reservation._handle.get()
     with nogil:
-        _ret = cpp_split_and_pack(
-            tbl,
-            _splits,
-            _stream,
-            _br,
-        )
+        if _reservation == NULL:
+            _ret = cpp_split_and_pack(
+                tbl,
+                _splits,
+                _stream,
+                _br,
+            )
+        else:
+            _ret = cpp_split_and_pack_reserved(
+                tbl,
+                _splits,
+                _stream,
+                _br,
+                deref(_reservation),
+            )
     ret = {}
     cdef unordered_map[uint32_t, cpp_PackedData].iterator it = _ret.begin()
     while(it != _ret.end()):
@@ -189,6 +351,24 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             cpp_BufferResource* br,
         ) except +ex_handler
 
+    cdef size_t cpp_unpack_and_concat_cost \
+        "cudf_streaming::unpack_and_concat_cost"(
+            const vector[cpp_PackedData]& partitions,
+        ) except +ex_handler
+
+    cdef size_t cpp_unpack_and_concat_cost_ptrs \
+        "cudf_streaming::unpack_and_concat_cost"(
+            const vector[const_packed_data_ptr]& partitions,
+        ) except +ex_handler
+
+    cdef unique_ptr[cpp_table] cpp_unpack_and_concat_reserved \
+        "cudf_streaming::unpack_and_concat"(
+            vector[cpp_PackedData] partition,
+            cuda_stream_view stream,
+            cpp_BufferResource* br,
+            cpp_MemoryReservation& reservation,
+        ) except +ex_handler
+
 
 cdef vector[cpp_PackedData] _partitions_py_to_cpp(partitions):
     cdef vector[cpp_PackedData] ret
@@ -199,10 +379,44 @@ cdef vector[cpp_PackedData] _partitions_py_to_cpp(partitions):
     return move(ret)
 
 
+cpdef size_t unpack_and_concat_cost(object partitions):
+    """
+    Peak device memory (in bytes) required by :func:`unpack_and_concat`.
+
+    Covers moving any host-resident partitions back to device memory and the
+    concatenated output.
+
+    Parameters
+    ----------
+    partitions
+        Packed input tables (partitions).
+
+    Returns
+    -------
+    The peak size in bytes.
+
+    See Also
+    --------
+    cudf_streaming.partition_utils.unpack_and_concat
+    """
+    cdef vector[const_packed_data_ptr] _ptrs
+    cdef size_t ret
+    # Materialize the input so every wrapper outlives the pointers taken from it.
+    cdef list _parts = list(partitions)
+    for part in _parts:
+        if not (<PackedData?>part).c_obj:
+            raise ValueError("PackedData was empty")
+        _ptrs.push_back((<PackedData?>part).c_obj.get())
+    with nogil:
+        ret = cpp_unpack_and_concat_cost_ptrs(_ptrs)
+    return ret
+
+
 cpdef object unpack_and_concat(
     object partitions,
     Stream stream,
     BufferResource br,
+    MemoryReservation reservation=None,
 ):
     """
     Unpack input partitions and concatenate them into a single table.
@@ -226,6 +440,10 @@ cpdef object unpack_and_concat(
         table is ordered.
     br
         Buffer resource used for memory allocations.
+    reservation
+        Device memory reservation covering :func:`unpack_and_concat_cost`. It is
+        consumed as the allocations land, leaving it empty on return. If not given,
+        the memory is reserved internally instead.
 
     Returns
     -------
@@ -233,25 +451,41 @@ cpdef object unpack_and_concat(
 
     Raises
     ------
+    ValueError
+        If ``reservation`` is not a device memory reservation.
     ReservationError
         If the buffer resource cannot reserve enough memory to concatenate all
-        partitions.
+        partitions, or if ``reservation`` is smaller than
+        :func:`unpack_and_concat_cost`.
 
     See Also
     --------
+    cudf_streaming.partition_utils.unpack_and_concat_cost
     cudf_streaming.partition_utils.partition_and_pack
     """
     cdef cuda_stream_view _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[cpp_PackedData] _partitions = _partitions_py_to_cpp(partitions)
     cdef unique_ptr[cpp_table] _ret
+    cdef cpp_MemoryReservation* _reservation = NULL
+    if reservation is not None:
+        _reservation = reservation._handle.get()
     with nogil:
-        _ret = cpp_unpack_and_concat(
-            move(_partitions),
-            _stream,
-            _br,
-        )
+        if _reservation == NULL:
+            _ret = cpp_unpack_and_concat(
+                move(_partitions),
+                _stream,
+                _br,
+            )
+        else:
+            _ret = cpp_unpack_and_concat_reserved(
+                move(_partitions),
+                _stream,
+                _br,
+                deref(_reservation),
+            )
     return Table.from_libcudf(move(_ret), stream, br._device_mr)
+
 
 cdef extern from *:
     """

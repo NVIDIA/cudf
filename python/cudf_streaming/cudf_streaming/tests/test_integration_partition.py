@@ -12,6 +12,7 @@ from cudf_streaming.partition_utils import (
     partition_and_pack,
     split_and_pack,
     unpack_and_concat,
+    unpack_and_concat_cost,
 )
 from cudf_streaming.testing import assert_eq
 from rapidsmpf.memory.buffer_resource import BufferResource
@@ -137,3 +138,32 @@ def test_spill_unspill_roundtrip(
     )
     # Since the row order isn't preserved, we sort the rows by the first column.
     assert_eq(expect, got, sort_rows=0)
+
+
+def test_unpack_and_concat_cost_does_not_consume(
+    device_mr: rmm.mr.CudaMemoryResource,
+) -> None:
+    br = BufferResource(device_mr)
+    stream = DEFAULT_STREAM
+    expect = _make_table([[1, 2, 3, 4], [5, 6, 7, 8]])
+    packed = list(
+        partition_and_pack(
+            expect,
+            columns_to_hash=(0,),
+            num_partitions=2,
+            stream=stream,
+            br=br,
+        ).values()
+    )
+
+    # Calling it twice, and from a generator, must leave the partitions usable.
+    cost = unpack_and_concat_cost(packed)
+    assert cost > 0
+    assert unpack_and_concat_cost(p for p in packed) == cost
+
+    got = unpack_and_concat(packed, stream, br)
+    assert_eq(expect, got, sort_rows=0)
+
+    # They are consumed now, so asking again must raise rather than crash.
+    with pytest.raises(ValueError):
+        unpack_and_concat_cost(packed)

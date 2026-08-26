@@ -153,7 +153,7 @@ jobs:
       target-aws-region: ${{ secrets.NVIDIA_DOCS_AWS_REGION }}
       target-aws-secret-access-key: ${{ secrets.NVIDIA_DOCS_AWS_SECRET_ACCESS_KEY }}
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
-    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@release/26.08
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false

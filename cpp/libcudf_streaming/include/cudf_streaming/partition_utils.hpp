@@ -108,7 +108,8 @@ partition_and_pack(
  * @brief Partitions rows from the input table into multiple packed (serialized) tables,
  * using a caller-provided memory reservation.
  *
- * Behaves like the overload above, except that @p reservation stands in for the device
+ * Behaves like the `allow_overbooking` overload, except that @p reservation stands in
+ * for the device
  * memory reservations it would otherwise make. `partition_and_pack_cost()` bytes are
  * consumed from it as the allocations land, leaving it empty on return.
  *
@@ -194,7 +195,8 @@ partition_and_pack(cudf::table_view const& table,
  * @brief Splits rows from the input table into multiple packed (serialized) tables,
  * using a caller-provided memory reservation.
  *
- * Behaves like the overload above, except that @p reservation stands in for the device
+ * Behaves like the `allow_overbooking` overload, except that @p reservation stands in
+ * for the device
  * memory reservation it would otherwise make. `split_and_pack_cost()` bytes are consumed
  * from it as the allocation lands.
  *
@@ -291,7 +293,8 @@ partition_and_pack(cudf::table_view const& table,
  * @brief Unpack (deserialize) input partitions and concatenate them into a single table,
  * using a caller-provided memory reservation.
  *
- * Behaves like the overload above, except that @p reservation stands in for the device
+ * Behaves like the `allow_overbooking` overload, except that @p reservation stands in
+ * for the device
  * memory reservations it would otherwise make. `unpack_and_concat_cost()` bytes are
  * consumed from it as the allocations land, leaving it empty on return.
  *

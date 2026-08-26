@@ -124,7 +124,6 @@ template <typename Range>
   return {total_size, non_device_size};
 }
 
-// Defined below, next to the public `split_and_pack()`.
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack_impl(
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
@@ -197,8 +196,9 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   }
 
   // hash_partition does a deep-copy. Therefore, we need to reserve memory for
-  // at least the size of the table.
-  auto const reorder_bytes = estimated_memory_usage(table, stream);
+  // at least the size of the table. `packed_size()` measures the same bytes as the
+  // copy needs, rounded up to the packing alignment, so it is a safe over-estimate.
+  auto const reorder_bytes = cudf::packed_size(table, stream, br->device_mr());
   check_reservation(reservation, reorder_bytes);
   auto own_reservation = reserve_unless_provided(reservation, reorder_bytes, br, allow_overbooking);
   auto [reordered, split_points] = cudf::hash_partition(
@@ -214,9 +214,10 @@ std::size_t partition_and_pack_cost(cudf::table_view const& table,
                                     rmm::cuda_stream_view stream,
                                     rapidsmpf::BufferResource* br)
 {
+  // The reorder and the packed partitions are each about one packed table, and an
+  // empty table skips the reorder entirely.
   auto const packed_size = cudf::packed_size(table, stream, br->device_mr());
-  if (table.num_rows() == 0) { return packed_size; }
-  return estimated_memory_usage(table, stream) + packed_size;
+  return table.num_rows() == 0 ? packed_size : 2 * packed_size;
 }
 
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition_and_pack(

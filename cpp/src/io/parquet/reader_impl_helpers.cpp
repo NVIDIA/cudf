@@ -13,6 +13,7 @@
 #include "ipc/Schema_generated.h"
 #include "parquet_common.hpp"
 #include "row_group_stats_helpers.hpp"
+#include "synthetic_column_helpers.hpp"
 
 #include <cudf/column/column.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>

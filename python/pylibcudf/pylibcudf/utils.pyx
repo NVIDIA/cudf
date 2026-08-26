@@ -18,12 +18,16 @@ from rmm.pylibrmm.memory_resource cimport (
 
 from rmm.pylibrmm.stream import DEFAULT_STREAM, PER_THREAD_DEFAULT_STREAM, Stream
 
+from pylibcudf.typing import CudaStreamLike, HasCudaStream
+
 
 import os
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pylibcudf.typing import CudaStreamLike
+
+__all__ = [
+    "CudaStreamLike",
+    "HasCudaStream",
+]
 
 
 # Check the environment for the variable CUDF_PER_THREAD_STREAM. If it is set,

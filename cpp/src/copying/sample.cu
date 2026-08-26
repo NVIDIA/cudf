@@ -35,8 +35,13 @@ std::unique_ptr<table> sample(table_view const& input,
   CUDF_EXPECTS(n >= 0, "expected number of samples should be non-negative");
   auto const num_rows = input.num_rows();
 
-  if ((n > num_rows) and (replacement == sample_with_replacement::FALSE)) {
-    CUDF_FAIL("If n > number of rows, then multiple sampling of the same row should be allowed");
+  if (n > num_rows) {
+    CUDF_EXPECTS(replacement == sample_with_replacement::TRUE,
+                 "If n > number of rows, then multiple sampling of the same row should be allowed",
+                 std::invalid_argument);
+    CUDF_EXPECTS(num_rows > 0,
+                 "If n > number of rows, then the input table should not be empty",
+                 std::invalid_argument);
   }
 
   if (n == 0) return cudf::empty_like(input);

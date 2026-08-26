@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,17 @@ TEST_F(SampleTest, FailCaseRowMultipleSampling)
   cudf::table_view input({col1});
 
   EXPECT_THROW(cudf::sample(input, n_samples, cudf::sample_with_replacement::FALSE, 0),
-               cudf::logic_error);
+               std::invalid_argument);
+}
+
+TEST_F(SampleTest, FailSamplingEmptyTable)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col1{};
+  cudf::size_type const n_samples = 10;
+  cudf::table_view input({col1});
+
+  EXPECT_THROW(cudf::sample(input, n_samples, cudf::sample_with_replacement::TRUE, 0),
+               std::invalid_argument);
 }
 
 TEST_F(SampleTest, RowMultipleSamplingDisallowed)

@@ -1292,12 +1292,19 @@ def _run_query_loop(
     return records, plans, validation_failures, query_failures
 
 
+def _elapsed_ms(begin: float) -> float:
+    """Return milliseconds elapsed since ``begin`` (a ``time.monotonic()`` timestamp)."""
+    return (time.monotonic() - begin) * 1000
+
+
 def _finalize_benchmark_run(
     args: argparse.Namespace,
     run_config: RunConfig,
     validation_failures: list[int],
     query_failures: list[tuple[int, int]],
     serializable_engine_config: dict[str, Any],
+    startup_duration_ms: float | None,
+    shutdown_duration_ms: float | None,
 ) -> None:
     """Summarize, serialize, and exit after a benchmark run."""
     if args.summarize:
@@ -1320,6 +1327,14 @@ def _finalize_benchmark_run(
             )
         if not validation_failures and not query_failures:
             print("✅ All validated queries passed.")
+
+    # We modify the serialized engine config here to record the engine's
+    # start/end duration. We have to do it here, rather than in `RunConfig.serialize()`
+    # since serialize() needs to run before the engine is shutdown.
+    serializable_engine_config = dict(serializable_engine_config)
+    serializable_engine_config["startup_duration_ms"] = startup_duration_ms
+    serializable_engine_config["shutdown_duration_ms"] = shutdown_duration_ms
+
     args.output.write(json.dumps(serializable_engine_config))
     args.output.write("\n")
     sys.exit(1 if (query_failures or validation_failures) else 0)
@@ -1348,6 +1363,8 @@ def run_polars_cpu(
         validation_failures,
         query_failures,
         serializable_engine_config=run_config.serialize(engine=None),
+        startup_duration_ms=None,
+        shutdown_duration_ms=None,
     )
 
 
@@ -1365,10 +1382,12 @@ def run_polars_in_memory(
         "parquet_options": parquet_options,
     }
     engine_options.setdefault("raise_on_fail", True)
+    start_time_begin = time.monotonic()
     engine = pl.GPUEngine(
         executor="in-memory",
         **engine_options,
     )
+    startup_duration_ms = _elapsed_ms(start_time_begin)
     records, plans, validation_failures, query_failures = _run_query_loop(
         benchmark,
         args,
@@ -1385,6 +1404,8 @@ def run_polars_in_memory(
         validation_failures,
         query_failures,
         serializable_engine_config=run_config.serialize(engine=engine),
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=None,
     )
 
 
@@ -1407,11 +1428,13 @@ def run_polars_spmd(
         "parquet_options": parquet_options,
     }
     engine_options.setdefault("raise_on_fail", True)
+    start_time_begin = time.monotonic()
     with SPMDEngine(
         rapidsmpf_options=run_config.streaming_options.to_rapidsmpf_options(),
         executor_options=executor_options,
         engine_options=engine_options,
     ) as engine:
+        startup_duration_ms = _elapsed_ms(start_time_begin)
         from cudf_polars.engine.spmd import (
             allgather_polars_dataframe,
         )
@@ -1445,6 +1468,7 @@ def run_polars_spmd(
         )
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
         serializable_engine_config = run_config.serialize(engine=engine)
+        shutdown_time_begin = time.monotonic()
 
     if is_rank_0:
         _write_quent_traces(
@@ -1452,12 +1476,15 @@ def run_polars_spmd(
             run_id=run_config.run_id,
             collect_traces=run_config.collect_traces,
         )
+    shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
         run_config,
         validation_failures,
         query_failures,
         serializable_engine_config=serializable_engine_config,
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=shutdown_duration_ms,
     )
 
 
@@ -1486,12 +1513,14 @@ def run_polars_ray(
     if run_config.num_gpus is not None:
         ray_init_options["num_gpus"] = run_config.num_gpus
 
+    start_time_begin = time.monotonic()
     with RayEngine(
         rapidsmpf_options=run_config.streaming_options.to_rapidsmpf_options(),
         executor_options=executor_options,
         engine_options=engine_options,
         ray_init_options=ray_init_options,
     ) as engine:
+        startup_duration_ms = _elapsed_ms(start_time_begin)
         run_config = dataclasses.replace(run_config, n_workers=engine.nranks)
         records, plans, validation_failures, query_failures = _run_query_loop(
             benchmark,
@@ -1505,18 +1534,22 @@ def run_polars_ray(
         run_config = _consolidate_logs(run_config, engine=engine)
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
         serializable_engine_config = run_config.serialize(engine=engine)
+        shutdown_time_begin = time.monotonic()
 
     _write_quent_traces(
         engine=engine,
         run_id=run_config.run_id,
         collect_traces=run_config.collect_traces,
     )
+    shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
         run_config,
         validation_failures,
         query_failures,
         serializable_engine_config=serializable_engine_config,
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=shutdown_duration_ms,
     )
 
 
@@ -1532,6 +1565,8 @@ def run_polars_dask(
     import distributed
 
     from cudf_polars.engine.dask import DaskEngine
+
+    start_time_begin = time.monotonic()
 
     executor_options = get_executor_options(run_config, benchmark=benchmark)
     # "cluster" is reserved — DaskEngine sets it
@@ -1560,6 +1595,7 @@ def run_polars_dask(
             engine_options=engine_options,
             dask_client=dask_client,
         ) as engine:
+            startup_duration_ms = _elapsed_ms(start_time_begin)
             run_config = dataclasses.replace(run_config, n_workers=engine.nranks)
             records, plans, validation_failures, query_failures = _run_query_loop(
                 benchmark, args, run_config, engine, numeric_type, date_type
@@ -1570,6 +1606,7 @@ def run_polars_dask(
             run_config = _consolidate_logs(run_config, engine)
             # We need to create this before StreamingEngine.shutdown(), which clears engine.config
             serializable_engine_config = run_config.serialize(engine=engine)
+            shutdown_time_begin = time.monotonic()
 
         _write_quent_traces(
             engine=engine,
@@ -1579,12 +1616,15 @@ def run_polars_dask(
     finally:
         if dask_client is not None:
             dask_client.close()
+    shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
         run_config,
         validation_failures,
         query_failures,
         serializable_engine_config=serializable_engine_config,
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=shutdown_duration_ms,
     )
 
 

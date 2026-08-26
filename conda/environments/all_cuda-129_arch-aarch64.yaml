@@ -81,7 +81,7 @@ dependencies:
 - polars>=1.35,<1.43
 - pre-commit
 - psutil
-- pyarrow>=19.0.0,<24
+- pyarrow>=19.0.0
 - pytables
 - pytest-benchmark
 - pytest-cases>=3.8.2

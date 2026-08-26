@@ -2088,6 +2088,27 @@ def test_to_csv_zstd_compression(tmp_path, chunksize):
     assert_eq(df, pd.read_csv(fname))
 
 
+@pytest.mark.parametrize("mode", ["w", "wb"])
+def test_to_csv_zstd_compression_file_object(tmp_path, mode):
+    # a text file object wraps a binary buffer, so it must not be rejected
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    fname = tmp_path / "test_zstd.csv.zst"
+    with open(fname, mode) as f:
+        df.to_csv(f, index=False, compression="zstd")
+
+    assert_eq(df, pd.read_csv(fname))
+
+
+def test_to_csv_zstd_compression_remote_path():
+    # fsspec opens remote paths in text mode, wrapping a binary buffer
+    fsspec = pytest.importorskip("fsspec")
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    df.to_csv("memory://test_zstd.csv.zst", index=False, compression="zstd")
+
+    written = fsspec.filesystem("memory").cat("/test_zstd.csv.zst")
+    assert_eq(df, pd.read_csv(BytesIO(written), compression="zstd"))
+
+
 @pytest.mark.parametrize("compression", ["zstd", "infer"])
 @pytest.mark.parametrize("ext", [".zst", ".zstd"])
 def test_read_csv_zstd_extension(tmp_path, ext, compression):

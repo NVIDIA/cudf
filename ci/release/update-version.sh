@@ -125,10 +125,10 @@ except Exception:
     for FILE in dependencies.yaml conda/recipes/cudf/recipe.yaml; do
       for f in $FILE; do
         [[ -f "$f" ]] || continue
-        sed_runner "s/numba-cuda>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*/numba-cuda${NUMBA_CUDA_SPEC}/g" "$f"
-        sed_runner "s/numba-cuda\[cu12\]>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*/numba-cuda[cu12]${NUMBA_CUDA_SPEC}/g" "$f"
-        sed_runner "s/numba-cuda\[cu13\]>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*/numba-cuda[cu13]${NUMBA_CUDA_SPEC}/g" "$f"
-        sed_runner "s/numba-cuda >=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*/numba-cuda ${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda\[cu12\]>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda[cu12]${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda\[cu13\]>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda[cu13]${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda >=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda ${NUMBA_CUDA_SPEC}/g" "$f"
       done
     done
   else

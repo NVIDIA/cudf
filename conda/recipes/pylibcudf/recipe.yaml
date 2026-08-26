@@ -69,7 +69,7 @@ requirements:
     - cuda-version =${{ cuda_version }}
     - ${{ stdlib("c") }}
   host:
-    - cython >=3.2.2
+    - cython >=3.2.2,<3.3.0a0
     - pip
     - python =${{ py_abi_min }}
     - python-abi3 ${{ py_abi_min }}.*
@@ -95,7 +95,7 @@ requirements:
     - nvtx >=0.2.1
   run_constraints:
     - numpy >=2.0,<3.0
-    - pyarrow>=19.0.0,<24  # https://github.com/NVIDIA/cudf/issues/22229
+    - pyarrow>=19.0.0
   ignore_run_exports:
     from_package:
       - cuda-cudart-dev

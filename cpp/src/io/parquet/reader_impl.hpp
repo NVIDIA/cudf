@@ -495,34 +495,6 @@ class reader_impl {
                                                                          size_t chunk_num_rows);
 
   /**
-   * @brief Synthesize source index column
-   *
-   * @param num_rows_per_source Number of rows per parquet source
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
-   * @return Synthesized source index column
-   */
-  [[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
-    std::span<std::size_t const> num_rows_per_source,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  /**
-   * @brief Synthesize file-local row index column
-   *
-   * For each output row, the column contains the row's index within its parquet source file,
-   * accounting for row group selection and row bounds.
-   *
-   * @param read_info Row range of the output chunk relative to the first row of the first
-   *                  selected row group
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
-   * @return Synthesized row index column
-   */
-  [[nodiscard]] std::unique_ptr<column> synthesize_row_index_column(
-    row_range const& read_info, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
-
-  /**
    * @brief Computes the names of columns to be read from the file, if specified.
    *
    * @param options The reader options
@@ -567,11 +539,11 @@ class reader_impl {
     bool output_dict_columns = false;
   } _options;
 
-  // name to reference converter to extract AST output filter
-  named_to_reference_converter _expr_conv{std::nullopt, table_metadata{}, true};
+  // Converts the input filter to AST output filter.
+  parquet_filter_normalizer _expr_conv{std::nullopt, table_metadata{}, true};
 
   std::vector<std::unique_ptr<datasource>> _sources;
-  std::unique_ptr<aggregate_reader_metadata> _metadata;
+  std::shared_ptr<aggregate_reader_metadata> _metadata;
 
   // Number of sources
   size_t _num_sources{0};
@@ -604,6 +576,9 @@ class reader_impl {
 
   // are offset indexes available for selected row groups
   bool _has_offset_index = false;
+
+  // whether sparse page I/O is enabled
+  bool _sparse_page_io = false;
 
   std::optional<std::vector<reader_column_schema>> _reader_column_schema;
 

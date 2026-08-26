@@ -515,7 +515,7 @@ struct check_datetime_format {
       // eliminate static character values first
       if (item.item_type == format_char_type::literal) {
         // check static character matches
-        if (*ptr != item.value) return cuda::std::nullopt;
+        if (length < item.length || *ptr != item.value) { return cuda::std::nullopt; }
         ptr += item.length;
         length -= item.length;
         continue;

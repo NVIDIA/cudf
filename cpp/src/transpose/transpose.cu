@@ -15,14 +15,14 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
+#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   // If there are no rows in the input, return successfully
@@ -49,7 +49,7 @@ std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input
 }  // namespace detail
 
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

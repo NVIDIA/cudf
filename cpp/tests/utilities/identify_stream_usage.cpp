@@ -67,21 +67,15 @@ namespace detail {
  */
 class test_cuda_stream_pool : public cuda_stream_pool {
  public:
-  rmm::cuda_stream_view get_stream() override { return cudf::test::get_default_stream(); }
-  [[maybe_unused]] rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
-  {
-    return cudf::test::get_default_stream();
-  }
+  cuda::stream_ref get_stream() override { return cudf::test::get_default_stream(); }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    return std::vector<rmm::cuda_stream_view>(count, cudf::test::get_default_stream());
+    return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream());
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool() { return new test_cuda_stream_pool(); }
+cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
 
 }  // namespace detail
 #endif
@@ -218,6 +212,10 @@ void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
           CHECK_STREAM_ARG(cudaMemcpy3DPeerAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync_ptsz, 7000, stream);
+#if CUDART_VERSION >= 13000
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync, 13000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync_ptsz, 13000, stream);
+#endif
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyToSymbolAsync, 3020, stream);

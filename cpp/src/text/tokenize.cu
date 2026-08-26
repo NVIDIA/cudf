@@ -85,7 +85,7 @@ std::unique_ptr<cudf::column> tokenize_fn(cudf::size_type strings_count,
                      strings_count,
                      tokenizer);
   // create the strings column using the tokens pointers
-  return cudf::strings::detail::make_strings_column(tokens.begin(), tokens.end(), stream, mr);
+  return cudf::make_strings_column(tokens, stream, mr);
 }
 
 }  // namespace

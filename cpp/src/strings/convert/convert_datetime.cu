@@ -335,16 +335,16 @@ struct parse_datetime {
     auto const days = [timeparts, this] {
       // week and weekday prioritize over month/day
       if ((timeparts.week > 0) && (timeparts.weekday > 0)) {
-        auto const y = cuda::std::chrono::year{timeparts.year};
+        auto const y         = cuda::std::chrono::year{timeparts.year};
+        auto const first_day = static_cast<uint32_t>(format_contains('W'));
         // clang-format off
-        auto const start = format_contains('U')
+        auto const start = first_day==0
           ? cuda::std::chrono::sys_days{cuda::std::chrono::Sunday[1]/cuda::std::chrono::January/y}
           : cuda::std::chrono::sys_days{cuda::std::chrono::Monday[1]/cuda::std::chrono::January/y};
         // clang-format on
         auto const days =  // compute days from year, weeks and weekday
           start + cuda::std::chrono::weeks(timeparts.week - 1) - cuda::std::chrono::weeks{1} +
-          (cuda::std::chrono::weekday(timeparts.weekday) -
-           cuda::std::chrono::weekday{1});  // cuda::std::chrono::Monday causes compile error here
+          (cuda::std::chrono::weekday(timeparts.weekday) - cuda::std::chrono::weekday{first_day});
         return days.time_since_epoch().count();
       }
       auto const ymd =  // chrono class handles the leap year calculations for us

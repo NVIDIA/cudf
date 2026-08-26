@@ -132,6 +132,21 @@ TEST_F(PartitionReservation, rejects_invalid_reservations)
   EXPECT_THROW(std::ignore = pack(too_small), rapidsmpf::reservation_error);
 }
 
+TEST_F(PartitionReservation, empty_table)
+{
+  auto stream = cudf::get_default_stream();
+  auto br     = rapidsmpf::BufferResource::create(mr());
+  auto table  = random_table_with_index(42, 0, 0, 10);
+
+  // An empty table skips the reorder, so the cost is the packed size alone.
+  auto reservation = br->reserve_or_fail(partition_and_pack_cost(table, stream, br.get()),
+                                         rapidsmpf::MemoryType::DEVICE);
+  auto packed      = partition_and_pack(
+    table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get(), reservation);
+  EXPECT_EQ(packed.size(), 4);
+  EXPECT_EQ(reservation.size(), 0);
+}
+
 TEST_F(PartitionReservation, unspill_consumes_the_reservation_exactly)
 {
   auto stream = cudf::get_default_stream();

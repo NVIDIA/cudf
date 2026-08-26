@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iostream>
 #include <mutex>
 #include <span>
 #include <utility>

@@ -230,7 +230,7 @@ void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_re
 
   if (_null_handling == null_policy::INCLUDE) {
     if (_nan_handling == nan_policy::NAN_IS_NULL) {
-      auto const d_table    = table_device_view::create(input, stream);
+      auto const d_table    = table_device_view::create(input, stream, temp_mr);
       auto const nan_hasher = nan_to_null_hasher{hash_key, *d_table};
       auto const hash_iter  = cudf::detail::make_counting_transform_iterator(0, nan_hasher);
       ref.add_async(hash_iter, hash_iter + num_rows, stream);
@@ -251,7 +251,7 @@ void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_re
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);
       }
     } else {
-      auto const d_table = table_device_view::create(input, stream);
+      auto const d_table = table_device_view::create(input, stream, temp_mr);
       if (!has_nulls) {
         auto const pred = check_nans_predicate{*d_table, nullptr};
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);

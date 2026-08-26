@@ -36,6 +36,22 @@ using text::byte_range_info;
 
 namespace {
 
+// Construct a vector of FileMetaData from the input footer bytes
+[[nodiscard]] std::vector<FileMetaData> parquet_metadatas_from_footer_bytes(
+  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes)
+{
+  std::vector<FileMetaData> parquet_metadatas;
+  parquet_metadatas.reserve(footer_bytes.size());
+  std::transform(footer_bytes.begin(),
+                 footer_bytes.end(),
+                 std::back_inserter(parquet_metadatas),
+                 [](auto const& footer_bytes) {
+                   metadata parsed_metadata{footer_bytes};
+                   return FileMetaData{std::move(parsed_metadata)};
+                 });
+  return parquet_metadatas;
+}
+
 // Construct a vector of all row group indices from the input vectors
 [[nodiscard]] auto all_row_group_indices(
   std::span<std::vector<cudf::size_type> const> row_group_indices)
@@ -116,63 +132,25 @@ aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(host_span<std::unique_ptr<datasource> const>{}, false, false)
+  : aggregate_reader_metadata_base(parquet_metadatas_from_footer_bytes(footer_bytes),
+                                   use_arrow_schema,
+                                   has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(not footer_bytes.empty(), "At least one source must be provided");
-  per_file_metadata.reserve(footer_bytes.size());
-  std::transform(footer_bytes.begin(),
-                 footer_bytes.end(),
-                 std::back_inserter(per_file_metadata),
-                 [](auto const& fb) { return metadata{fb}; });
-  initialize_internals(use_arrow_schema, has_cols_from_mismatched_srcs);
+  CUDF_EXPECTS(
+    not footer_bytes.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<FileMetaData const> parquet_metadatas,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(host_span<std::unique_ptr<datasource> const>{}, false, false)
+  : aggregate_reader_metadata_base(
+      std::vector<FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
+      use_arrow_schema,
+      has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(not parquet_metadatas.empty(), "At least one source must be provided");
-  per_file_metadata.reserve(parquet_metadatas.size());
-  // Just copy over the FileMetaData structs to the internal metadata structs
-  std::transform(parquet_metadatas.begin(),
-                 parquet_metadatas.end(),
-                 std::back_inserter(per_file_metadata),
-                 [](auto const& parquet_metadata) { return metadata{parquet_metadata}; });
-  initialize_internals(use_arrow_schema, has_cols_from_mismatched_srcs);
-}
-
-void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
-                                                     bool has_cols_from_mismatched_srcs)
-{
-  keyval_maps     = collect_keyval_metadata();
-  schema_idx_maps = init_schema_idx_maps(has_cols_from_mismatched_srcs);
-  num_rows        = calc_num_rows();
-  num_row_groups  = calc_num_row_groups();
-
-  // Force all non-nullable (REQUIRED) columns to be nullable without modifying REPEATED columns to
-  // preserve list structures
-  std::for_each(per_file_metadata.begin(), per_file_metadata.end(), [](auto& pfm) {
-    auto& schema = pfm.schema;
-    std::for_each(schema.begin() + 1, schema.end(), [](auto& col) {
-      // TODO: Store information of whichever column schema we modified here and restore it to
-      // `REQUIRED` if we end up not pruning any pages out of it
-      if (col.repetition_type == FieldRepetitionType::REQUIRED) {
-        col.repetition_type = FieldRepetitionType::OPTIONAL;
-      }
-    });
-  });
-
-  // Collect and apply arrow:schema from Parquet's key value metadata section
-  if (use_arrow_schema) {
-    apply_arrow_schema();
-
-    // Erase ARROW_SCHEMA_KEY from the output pfm if exists
-    std::for_each(keyval_maps.begin(), keyval_maps.end(), [](auto& pfm) {
-      pfm.erase(cudf::io::parquet::detail::ARROW_SCHEMA_KEY);
-    });
-  }
+  CUDF_EXPECTS(
+    not parquet_metadatas.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ranges() const

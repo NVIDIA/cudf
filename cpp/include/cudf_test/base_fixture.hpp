@@ -47,6 +47,8 @@ class BaseFixture : public ::testing::Test {
  *
  * Each test instantiates a fresh harness. Tests should construct results with `resources()`.
  * `TearDown` asserts that no output or temporary allocations remain live.
+ * Call `fail_on_current_device_resource_use()` in test scopes that must reject accidental
+ * current-device-resource allocations.
  */
 struct BaseFixtureWithHarness : public BaseFixture {
   /**
@@ -65,6 +67,19 @@ struct BaseFixtureWithHarness : public BaseFixture {
    * @return Explicit output and temporary resources that do not consult the current resource
    */
   cudf::memory_resources resources() { return _harness.resources(); }
+
+  /**
+   * @brief Install a scoped failing current-device resource.
+   *
+   * While the returned object is alive, allocations from the current device resource fail.
+   * Destroy it (or let it leave scope) to restore the previous current resource.
+   *
+   * @return Scoped guard around the failing current-device resource
+   */
+  [[nodiscard]] scoped_current_device_resource fail_on_current_device_resource_use()
+  {
+    return _harness.fail_on_current_device_resource_use();
+  }
 
  protected:
   memory_resource_test_harness _harness{mr()};

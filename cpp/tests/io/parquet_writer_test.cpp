@@ -11,6 +11,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/lists_column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>

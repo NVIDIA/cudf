@@ -9,6 +9,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/lists_column_wrapper.hpp>
 
 #include <cudf/strings/findall.hpp>
 #include <cudf/strings/regex/regex_program.hpp>

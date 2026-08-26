@@ -840,12 +840,7 @@ TEST_F(ExtractVariantFieldTest, MixedObjectArrayTraversal)
 
 TEST_F(ExtractVariantFieldTest, LargeDictionaryAndObjectScan)
 {
-  // Dictionary keys are inserted in descending name order ("k49" gets id 0, ..., "k00" gets id
-  // 49), the reverse of their lexicographic order. This decouples dictionary id order from name
-  // order, so the lookup can't get by on ids happening to already be name-ordered -- it must
-  // genuinely translate each probed id to a name via `name_for_id` and compare, exercising the
-  // O(1) id-to-name lookup this test targets. The object's field_ids are therefore emitted in
-  // descending order (`descending_ids=true`) to stay ordered by name, per the VARIANT spec.
+  // Dictionary keys are inserted in descending name order
   auto const ascending_keys = make_numeric_keys(50);
   std::vector<std::string> const keys(ascending_keys.rbegin(), ascending_keys.rend());
   auto const meta        = build_metadata(keys);

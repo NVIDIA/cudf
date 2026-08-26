@@ -14,7 +14,12 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
 
-_supported_dtypes = [(pl.Int8(), pl.Int64())]
+_supported_dtypes = [
+    (pl.Int8(), pl.Int64()),
+    (pl.Date(), pl.Float64()),
+    (pl.Datetime("us"), pl.Float64()),
+    (pl.Duration("ms"), pl.Float64()),
+]
 
 _unsupported_dtypes = [
     (pl.Boolean(), pl.Datetime("ns")),

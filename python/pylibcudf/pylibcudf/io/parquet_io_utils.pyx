@@ -29,6 +29,10 @@ from pylibcudf.libcudf.io.parquet_io_utils cimport (
 from pylibcudf.libcudf.io.text cimport byte_range_info
 from pylibcudf.libcudf.utilities.span cimport device_span, host_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 __all__ = ["fetch_byte_ranges_to_device", "fetch_page_index_to_host"]
 
@@ -36,7 +40,7 @@ __all__ = ["fetch_byte_ranges_to_device", "fetch_page_index_to_host"]
 cpdef list fetch_byte_ranges_to_device(
     SourceInfo source_info,
     list byte_ranges,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Fetch byte ranges from a Parquet source into device memory.

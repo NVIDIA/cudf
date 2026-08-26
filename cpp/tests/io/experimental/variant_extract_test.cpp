@@ -516,12 +516,7 @@ inline std::vector<uint8_t> build_single_field_object(uint8_t fid,
 }
 
 // Build a VARIANT object blob with `n_fields` fields, each holding a bare INT32 equal to its own
-// field id.  Per the VARIANT spec, an object's field_ids are ordered by name, not by numeric id,
-// so `descending_ids` selects which id order to emit: ascending (0..n_fields-1) when the
-// dictionary was built in ascending name order, or descending (n_fields-1..0) when the dictionary
-// was built in descending name order -- either way the emitted id order matches name order, as
-// real VARIANT data requires.  Uses 1-byte field_id_size and 1-byte field_off_size; n_fields must
-// be <= 51 so the total value bytes (5 * n_fields) still fit in 1-byte offsets.
+// field id.
 inline std::vector<uint8_t> build_sequential_int32_object(int n_fields, bool descending_ids = false)
 {
   auto const id_at = [&](int i) { return descending_ids ? (n_fields - 1 - i) : i; };

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,6 @@
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/unary.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -54,8 +53,8 @@
   return revenue;
 }
 
-void run_ndsh_q6(nvbench::state& state,
-                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+std::unique_ptr<table_with_names> load_ndsh_q6(
+  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {
   // Read out the `lineitem` table from parquet file
   std::vector<std::string> const lineitem_cols = {
@@ -74,26 +73,24 @@ void run_ndsh_q6(nvbench::state& state,
     cudf::ast::operation(cudf::ast::ast_operator::LESS, shipdate_ref, shipdate_upper_literal);
   auto const lineitem_pred = std::make_unique<cudf::ast::operation>(
     cudf::ast::ast_operator::LOGICAL_AND, shipdate_pred_a, shipdate_pred_b);
-  auto lineitem = read_parquet(
+  return read_parquet(
     sources.at("lineitem").make_source_info(), lineitem_cols, std::move(lineitem_pred));
+}
 
-  // Cast the discount and quantity columns to float32 and append to lineitem table
-  auto discout_float =
-    cudf::cast(lineitem->column("l_discount"), cudf::data_type{cudf::type_id::FLOAT32});
-  auto quantity_float =
-    cudf::cast(lineitem->column("l_quantity"), cudf::data_type{cudf::type_id::FLOAT32});
-
-  (*lineitem).append(discout_float, "l_discount_float").append(quantity_float, "l_quantity_float");
+std::unique_ptr<table_with_names> execute_ndsh_q6(std::unique_ptr<table_with_names> const& input)
+{
+  auto lineitem = std::make_unique<table_with_names>(std::make_unique<cudf::table>(input->table()),
+                                                     input->column_names());
 
   // Apply the filters
-  auto const discount_ref = cudf::ast::column_reference(lineitem->column_id("l_discount_float"));
-  auto const quantity_ref = cudf::ast::column_reference(lineitem->column_id("l_quantity_float"));
+  auto const discount_ref = cudf::ast::column_reference(lineitem->column_id("l_discount"));
+  auto const quantity_ref = cudf::ast::column_reference(lineitem->column_id("l_quantity"));
 
-  auto discount_lower               = cudf::numeric_scalar<float_t>(0.05);
+  auto discount_lower               = cudf::numeric_scalar<double>(0.05);
   auto const discount_lower_literal = cudf::ast::literal(discount_lower);
-  auto discount_upper               = cudf::numeric_scalar<float_t>(0.07);
+  auto discount_upper               = cudf::numeric_scalar<double>(0.07);
   auto const discount_upper_literal = cudf::ast::literal(discount_upper);
-  auto quantity_upper               = cudf::numeric_scalar<float_t>(24);
+  auto quantity_upper               = cudf::numeric_scalar<int8_t>(24);
   auto const quantity_upper_literal = cudf::ast::literal(quantity_upper);
 
   auto const discount_pred_a = cudf::ast::operation(
@@ -115,26 +112,44 @@ void run_ndsh_q6(nvbench::state& state,
 
   // Sum the `revenue` column
   auto const revenue_view = revenue->view();
-  auto const result_table = apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
-
-  // Write query result to a parquet file
-  result_table->to_parquet("q6.parquet");
+  return apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
 }
 
 void ndsh_q6(nvbench::state& state)
 {
   // Generate the required parquet files in device buffers
   double const scale_factor = state.get_float64("scale_factor");
+  auto const mode           = query_mode_from_string(state.get_string("mode"));
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
   generate_parquet_data_sources(scale_factor, {"lineitem"}, sources);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  auto lineitem               = mode == query_mode::COMPUTE_ONLY ? load_ndsh_q6(sources) : nullptr;
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { run_ndsh_q6(state, sources); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    std::unique_ptr<table_with_names> result;
+    if (mode == query_mode::END_TO_END) {
+      auto input = load_ndsh_q6(sources);
+      result     = execute_ndsh_q6(input);
+    } else {
+      result = execute_ndsh_q6(lineitem);
+    }
+  });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  if (not write_ndsh_results()) { return; }
+  std::unique_ptr<table_with_names> result;
+  if (mode == query_mode::END_TO_END) {
+    auto input = load_ndsh_q6(sources);
+    result     = execute_ndsh_q6(input);
+  } else {
+    result = execute_ndsh_q6(lineitem);
+  }
+  write_ndsh_result(*result, "q06");
 }
 
-NVBENCH_BENCH(ndsh_q6).set_name("ndsh_q6").add_float64_axis("scale_factor", {0.01, 0.1, 1});
+NVBENCH_BENCH(ndsh_q6)
+  .set_name("ndsh_q6")
+  .add_string_axis("mode", {"end_to_end", "compute_only"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1});

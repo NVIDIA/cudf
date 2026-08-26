@@ -27,7 +27,12 @@ namespace detail {
 static std::string rmm_mode_param{"--rmm_mode"};  ///< RMM mode command-line parameter name
 static std::string cuio_host_mem_param{
   "--cuio_host_mem"};  ///< cuio host memory mode parameter name
+static std::string output_directory_param{
+  "--output_directory"};  ///< Benchmark output directory parameter name
+inline std::string output_directory;
 }  // namespace detail
+
+inline std::string const& benchmark_output_directory() { return detail::output_directory; }
 
 /**
  * Base fixture for cudf benchmarks using nvbench.
@@ -93,6 +98,9 @@ struct nvbench_base_fixture {
       } else if (arg == detail::cuio_host_mem_param) {
         i++;
         cuio_host_mode = argv[i];
+      } else if (arg == detail::output_directory_param) {
+        i++;
+        detail::output_directory = argv[i];
       }
     }
 

@@ -1134,6 +1134,7 @@ dependencies:
         packages:
           - *cmake_ver
           - cuda-sanitizer-api
+          - duckdb
   # packages we want in the 'test_cpp' group in 'files', for CI, but which
   # shouldn't be added to 'all' for building a development environment
   test_cpp_cudf:

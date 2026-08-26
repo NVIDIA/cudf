@@ -55,6 +55,29 @@ target_include_directories(
          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
 )
 
+if(CUDF_BUILD_TESTS)
+  add_executable(NDSH_DATA_GENERATOR_TEST common/ndsh_data_generator/ndsh_data_generator_test.cpp)
+  set_target_properties(
+    NDSH_DATA_GENERATOR_TEST
+    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+               INSTALL_RPATH "\$ORIGIN/../../../lib"
+               CXX_STANDARD 20
+               CXX_STANDARD_REQUIRED ON
+  )
+  target_link_libraries(
+    NDSH_DATA_GENERATOR_TEST PRIVATE ndsh_data_generator cudf::cudftestutil_objects
+                                     $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+  rapids_cuda_set_runtime(NDSH_DATA_GENERATOR_TEST USE_STATIC ON)
+  rapids_test_add(
+    NAME NDSH_DATA_GENERATOR_TEST
+    COMMAND NDSH_DATA_GENERATOR_TEST
+    GPUS 1
+    PERCENT 15
+    INSTALL_COMPONENT_SET testing
+  )
+endif()
+
 # ##################################################################################################
 # * compiler function -----------------------------------------------------------------------------
 
@@ -125,10 +148,27 @@ ConfigureNVBench(TRANSPOSE_NVBENCH transpose/transpose.cpp)
 # ##################################################################################################
 # * nds-h benchmark --------------------------------------------------------------------------------
 ConfigureNVBench(NDSH_Q01_NVBENCH ndsh/q01.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q02_NVBENCH ndsh/q02.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q03_NVBENCH ndsh/q03.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q04_NVBENCH ndsh/q04.cpp ndsh/utilities.cpp)
 ConfigureNVBench(NDSH_Q05_NVBENCH ndsh/q05.cpp ndsh/utilities.cpp)
 ConfigureNVBench(NDSH_Q06_NVBENCH ndsh/q06.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q07_NVBENCH ndsh/q07.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q08_NVBENCH ndsh/q08.cpp ndsh/utilities.cpp)
 ConfigureNVBench(NDSH_Q09_NVBENCH ndsh/q09.cpp ndsh/utilities.cpp)
 ConfigureNVBench(NDSH_Q10_NVBENCH ndsh/q10.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q11_NVBENCH ndsh/q11.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q12_NVBENCH ndsh/q12.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q13_NVBENCH ndsh/q13.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q14_NVBENCH ndsh/q14.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q15_NVBENCH ndsh/q15.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q16_NVBENCH ndsh/q16.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q17_NVBENCH ndsh/q17.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q18_NVBENCH ndsh/q18.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q19_NVBENCH ndsh/q19.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q20_NVBENCH ndsh/q20.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q21_NVBENCH ndsh/q21.cpp ndsh/utilities.cpp)
+ConfigureNVBench(NDSH_Q22_NVBENCH ndsh/q22.cpp ndsh/utilities.cpp)
 
 # ##################################################################################################
 # * filter benchmark -------------------------------------------------------------------

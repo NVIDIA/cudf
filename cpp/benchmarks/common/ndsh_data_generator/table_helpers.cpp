@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,10 +23,12 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <limits>
 #include <vector>
 
 namespace cudf::datagen {
@@ -145,13 +147,14 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_l_suppkey(cudf::column_view const& l_partkey,
-                                                                cudf::size_type scale_factor,
+                                                                double scale_factor,
                                                                 cudf::size_type num_rows,
                                                                 rmm::cuda_stream_view stream,
                                                                 rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
   // Expression: (l_partkey + (i * (s/4 + (int)(l_partkey - 1)/s))) % s + 1
+  auto const supplier_count = static_cast<cudf::size_type>(scale_factor * 10'000);
 
   // Generate the `s` col
   auto s_empty = cudf::make_numeric_column(
@@ -160,7 +163,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
   auto s = cudf::fill(s_empty->view(),
                       0,
                       num_rows,
-                      cudf::numeric_scalar<cudf::size_type>(scale_factor * 10'000),
+                      cudf::numeric_scalar<cudf::size_type>(supplier_count),
                       stream,
                       mr);
 
@@ -217,13 +220,14 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
  */
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_ps_suppkey(
   cudf::column_view const& ps_partkey,
-  cudf::size_type scale_factor,
+  double scale_factor,
   cudf::size_type num_rows,
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
   // Expression: ps_suppkey = (ps_partkey + (i * (s/4 + (int)(ps_partkey - 1)/s))) % s + 1
+  auto const supplier_count = static_cast<cudf::size_type>(scale_factor * 10'000);
 
   // Generate the `s` col
   auto s_empty = cudf::make_numeric_column(
@@ -232,7 +236,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
   auto s = cudf::fill(s_empty->view(),
                       0,
                       num_rows,
-                      cudf::numeric_scalar<cudf::size_type>(scale_factor * 10'000),
+                      cudf::numeric_scalar<cudf::size_type>(supplier_count),
                       stream,
                       mr);
 
@@ -292,9 +296,12 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
   CUDF_BENCHMARK_RANGE();
   auto const sum_agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
   auto const l_num_rows_scalar =
-    cudf::reduce(o_rep_freqs, *sum_agg, cudf::data_type{cudf::type_id::INT32}, stream, mr);
-  return reinterpret_cast<cudf::numeric_scalar<cudf::size_type>*>(l_num_rows_scalar.get())
-    ->value(stream);
+    cudf::reduce(o_rep_freqs, *sum_agg, cudf::data_type{cudf::type_id::INT64}, stream, mr);
+  auto const l_num_rows =
+    reinterpret_cast<cudf::numeric_scalar<int64_t>*>(l_num_rows_scalar.get())->value(stream);
+  CUDF_EXPECTS(l_num_rows <= std::numeric_limits<cudf::size_type>::max(),
+               "Lineitem row count exceeds the libcudf row limit");
+  return static_cast<cudf::size_type>(l_num_rows);
 }
 
 /**

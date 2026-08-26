@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -95,7 +95,7 @@
     disc_price, one_plus_tax->view(), cudf::binary_operator::MUL, tax.type(), stream, mr);
 }
 
-void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
+std::unique_ptr<table_with_names> load_ndsh_q1(cudf::io::source_info const& source)
 {
   // Define the column projections and filter predicate for `lineitem` table
   std::vector<std::string> const lineitem_cols = {"l_returnflag",
@@ -115,7 +115,13 @@ void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
     cudf::ast::ast_operator::LESS_EQUAL, shipdate_ref, shipdate_upper_literal);
 
   // Read out the `lineitem` table from parquet file
-  auto lineitem = read_parquet(source, lineitem_cols, std::move(lineitem_pred));
+  return read_parquet(source, lineitem_cols, std::move(lineitem_pred));
+}
+
+std::unique_ptr<table_with_names> execute_ndsh_q1(std::unique_ptr<table_with_names> const& input)
+{
+  auto lineitem = std::make_unique<table_with_names>(std::make_unique<cudf::table>(input->table()),
+                                                     input->column_names());
 
   // Calculate the discount price and charge columns and append to lineitem table
   auto disc_price =
@@ -147,13 +153,21 @@ void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
           {cudf::aggregation::Kind::COUNT_ALL, "count_order"}}},
       }});
 
-  // Perform the order by operation
-  auto const orderedby_table = apply_orderby(groupedby_table,
-                                             {"l_returnflag", "l_linestatus"},
-                                             {cudf::order::ASCENDING, cudf::order::ASCENDING});
+  auto const projected = apply_projection(groupedby_table,
+                                          {"l_returnflag",
+                                           "l_linestatus",
+                                           "sum_qty",
+                                           "sum_base_price",
+                                           "sum_disc_price",
+                                           "sum_charge",
+                                           "avg_qty",
+                                           "avg_price",
+                                           "avg_disc",
+                                           "count_order"});
 
-  // Write query result to a parquet file
-  orderedby_table->to_parquet("q1.parquet");
+  // Perform the order by operation
+  return apply_orderby(
+    projected, {"l_returnflag", "l_linestatus"}, {cudf::order::ASCENDING, cudf::order::ASCENDING});
 }
 
 void ndsh_q1(nvbench::state& state)
@@ -161,6 +175,7 @@ void ndsh_q1(nvbench::state& state)
   // Generate the required parquet files in device buffers
   auto const scale_factor = state.get_float64("scale_factor");
   auto const filename     = state.get_string("filename");
+  auto const mode         = query_mode_from_string(state.get_string("mode"));
   if (!filename.empty() && scale_factor != 1.0) {
     state.skip("Only scale_factor=1 supported with filename input");
     return;
@@ -176,13 +191,32 @@ void ndsh_q1(nvbench::state& state)
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  auto lineitem               = mode == query_mode::COMPUTE_ONLY ? load_ndsh_q1(source) : nullptr;
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) { run_ndsh_q1(state, source); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    std::unique_ptr<table_with_names> result;
+    if (mode == query_mode::END_TO_END) {
+      auto input = load_ndsh_q1(source);
+      result     = execute_ndsh_q1(input);
+    } else {
+      result = execute_ndsh_q1(lineitem);
+    }
+  });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  if (not write_ndsh_results()) { return; }
+  std::unique_ptr<table_with_names> result;
+  if (mode == query_mode::END_TO_END) {
+    auto input = load_ndsh_q1(source);
+    result     = execute_ndsh_q1(input);
+  } else {
+    result = execute_ndsh_q1(lineitem);
+  }
+  write_ndsh_result(*result, "q01");
 }
 
 NVBENCH_BENCH(ndsh_q1)
   .set_name("ndsh_q1")
   .add_string_axis("filename", {""})
+  .add_string_axis("mode", {"end_to_end", "compute_only"})
   .add_float64_axis("scale_factor", {0.01, 0.1, 1});

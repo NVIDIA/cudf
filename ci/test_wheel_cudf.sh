@@ -16,7 +16,7 @@ CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_pyth
 rapids-logger "Install libcudf and verify its runtime dependencies in a virtual environment"
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}"
+rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}" constraints
 
 RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/

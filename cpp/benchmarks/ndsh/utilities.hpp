@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,9 +8,13 @@
 #include <cudf/groupby.hpp>
 #include <cudf/io/parquet.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <rmm/device_buffer.hpp>
+#include <rmm/mr/pinned_host_memory_resource.hpp>
+
+#include <cuda/stream>
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,7 +24,7 @@
  */
 class ndsh_parquet_source {
  public:
-  ndsh_parquet_source() = default;
+  ndsh_parquet_source();
   ~ndsh_parquet_source();
 
   ndsh_parquet_source(ndsh_parquet_source&& other) noexcept;
@@ -31,15 +35,11 @@ class ndsh_parquet_source {
 
   [[nodiscard]] cudf::io::source_info make_source_info() const;
 
-  void append_from_device(void const* device_data, std::size_t size, rmm::cuda_stream_view stream);
+  void append_from_device(void const* device_data, std::size_t size, cuda::stream_ref stream);
 
  private:
-  struct pinned_buffer {
-    void* data;
-    std::size_t size;
-  };
-
-  std::vector<pinned_buffer> buffers_;
+  std::unique_ptr<rmm::mr::pinned_host_memory_resource> pinned_mr_;
+  std::vector<rmm::device_buffer> buffers_;
 };
 
 using ndsh_data_sources = std::unordered_map<std::string, ndsh_parquet_source>;

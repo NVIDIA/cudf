@@ -99,7 +99,7 @@ std::unordered_map<std::string, std::vector<std::string> const> const SCHEMAS = 
 
 class device_buffer_sink final : public cudf::io::data_sink {
  public:
-  device_buffer_sink(std::size_t capacity, rmm::cuda_stream_view stream)
+  device_buffer_sink(std::size_t capacity, cuda::stream_ref stream)
     : buffer_{capacity, stream}, stream_{stream}
   {
   }
@@ -107,9 +107,8 @@ class device_buffer_sink final : public cudf::io::data_sink {
   void host_write(void const* data, std::size_t size) override
   {
     auto* destination = reserve(size);
-    CUDF_CUDA_TRY(
-      cudaMemcpyAsync(destination, data, size, cudaMemcpyHostToDevice, stream_.value()));
-    stream_.synchronize();
+    CUDF_CUDA_TRY(cudaMemcpyAsync(destination, data, size, cudaMemcpyDefault, stream_.get()));
+    stream_.sync();
   }
 
   [[nodiscard]] bool supports_device_write() const override { return true; }
@@ -126,8 +125,7 @@ class device_buffer_sink final : public cudf::io::data_sink {
                                        cuda::stream_ref stream) override
   {
     auto* destination = reserve(size);
-    CUDF_CUDA_TRY(
-      cudaMemcpyAsync(destination, gpu_data, size, cudaMemcpyDeviceToDevice, stream.get()));
+    CUDF_CUDA_TRY(cudaMemcpyAsync(destination, gpu_data, size, cudaMemcpyDefault, stream.get()));
     return std::async(std::launch::deferred, [stream] { stream.sync(); });
   }
 
@@ -147,32 +145,29 @@ class device_buffer_sink final : public cudf::io::data_sink {
   }
 
   rmm::device_buffer buffer_;
-  rmm::cuda_stream_view stream_;
+  cuda::stream_ref stream_;
   std::size_t size_{};
 };
 }  // namespace
 
-ndsh_parquet_source::~ndsh_parquet_source()
+ndsh_parquet_source::ndsh_parquet_source()
+  : pinned_mr_{std::make_unique<rmm::mr::pinned_host_memory_resource>()}
 {
-  for (auto const& buffer : buffers_) {
-    (void)cudaFreeHost(buffer.data);
-  }
 }
 
+ndsh_parquet_source::~ndsh_parquet_source() = default;
+
 ndsh_parquet_source::ndsh_parquet_source(ndsh_parquet_source&& other) noexcept
-  : buffers_{std::move(other.buffers_)}
+  : pinned_mr_{std::move(other.pinned_mr_)}, buffers_{std::move(other.buffers_)}
 {
-  other.buffers_.clear();
 }
 
 ndsh_parquet_source& ndsh_parquet_source::operator=(ndsh_parquet_source&& other) noexcept
 {
   if (this != &other) {
-    for (auto const& buffer : buffers_) {
-      (void)cudaFreeHost(buffer.data);
-    }
-    buffers_ = std::move(other.buffers_);
-    other.buffers_.clear();
+    buffers_.clear();
+    pinned_mr_ = std::move(other.pinned_mr_);
+    buffers_   = std::move(other.buffers_);
   }
   return *this;
 }
@@ -183,8 +178,8 @@ ndsh_parquet_source& ndsh_parquet_source::operator=(ndsh_parquet_source&& other)
   spans.reserve(buffers_.size());
   std::transform(
     buffers_.begin(), buffers_.end(), std::back_inserter(spans), [](auto const& buffer) {
-      return cudf::host_span<std::byte const>(reinterpret_cast<std::byte const*>(buffer.data),
-                                              buffer.size);
+      return cudf::host_span<std::byte const>(reinterpret_cast<std::byte const*>(buffer.data()),
+                                              buffer.size());
     });
   return cudf::io::source_info(
     cudf::host_span<cudf::host_span<std::byte const>>(spans.data(), spans.size()));
@@ -192,14 +187,12 @@ ndsh_parquet_source& ndsh_parquet_source::operator=(ndsh_parquet_source&& other)
 
 void ndsh_parquet_source::append_from_device(void const* device_data,
                                              std::size_t size,
-                                             rmm::cuda_stream_view stream)
+                                             cuda::stream_ref stream)
 {
-  void* host_buffer{};
-  CUDF_CUDA_TRY(cudaMallocHost(&host_buffer, size));
-  buffers_.push_back({host_buffer, size});
+  buffers_.emplace_back(size, stream, *pinned_mr_);
   CUDF_CUDA_TRY(
-    cudaMemcpyAsync(host_buffer, device_data, size, cudaMemcpyDeviceToHost, stream.value()));
-  stream.synchronize();
+    cudaMemcpyAsync(buffers_.back().data(), device_data, size, cudaMemcpyDefault, stream.get()));
+  stream.sync();
 }
 
 cudf::table_view table_with_names::table() const { return tbl->view(); }

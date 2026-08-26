@@ -308,7 +308,6 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
     auto const start_pos = static_cast<uint64_t>(meta_offsets_start) +
                            static_cast<uint64_t>(field_id) * meta_offset_size;
     auto const end_pos = start_pos + static_cast<uint64_t>(meta_offset_size);
-    if (cuda::std::cmp_greater(end_pos, meta.size())) { return cuda::std::nullopt; }
     auto const s = read_uint64(meta, static_cast<size_type>(start_pos), meta_offset_size);
     auto const e = read_uint64(meta, static_cast<size_type>(end_pos), meta_offset_size);
     if (!s.has_value() || !e.has_value()) { return cuda::std::nullopt; }

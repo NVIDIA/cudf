@@ -404,8 +404,8 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   }
 
   // Build composition table (NFC/NFKC only)
-  auto d_comp_keys    = rmm::device_uvector<uint64_t>(num_rows, stream, mr);
-  auto d_comp_values  = rmm::device_uvector<uint32_t>(num_rows, stream, mr);
+  auto d_comp_keys    = rmm::device_uvector<uint64_t>(num_rows, stream, temp_mr);
+  auto d_comp_values  = rmm::device_uvector<uint32_t>(num_rows, stream, temp_mr);
   auto build_table_fn = detail::build_comp_table_fn{
     *d_decomp_map, d_codepoints, ccc_table, compat_decomp_flags, d_comp_keys, d_comp_values};
   thrust::for_each_n(policy, row_iter, num_rows, build_table_fn);

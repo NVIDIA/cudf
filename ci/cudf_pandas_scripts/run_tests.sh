@@ -22,7 +22,7 @@ PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel
 CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
+rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt constraints
 
 # notes:
 #

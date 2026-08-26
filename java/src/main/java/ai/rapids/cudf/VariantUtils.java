@@ -49,6 +49,25 @@ public class VariantUtils {
   }
 
   /**
+   * Return the logical type ID of each raw Variant-encoded value.
+   *
+   * <p>The input must be a LIST&lt;UINT8&gt; column. The result is a UINT8 column containing the
+   * IDs defined by {@link VariantLogicalType}. A result row is null when the input row is null,
+   * the value blob is empty, or its header is unrecognized. An encoded Variant null is represented
+   * by a valid {@link VariantLogicalType#NULL_VALUE} row. Only the header byte is inspected, so a
+   * recognized header is classified even if the remaining payload is truncated.
+   *
+   * <p>This API mirrors an experimental libcudf API and is subject to change.
+   *
+   * @param valueBytes LIST&lt;UINT8&gt; column of raw Variant-encoded values
+   * @return owning UINT8 column of logical type IDs
+   */
+  public static ColumnVector getVariantTypeId(ColumnView valueBytes) {
+    Objects.requireNonNull(valueBytes, "valueBytes");
+    return new ColumnVector(getVariantTypeId(valueBytes.getNativeView()));
+  }
+
+  /**
    * Decode raw Variant-encoded value bytes into {@code targetType}. Supported target types are
    * {@link DType#STRING}, {@link DType#INT8}, {@link DType#INT16}, {@link DType#INT32}, and
    * {@link DType#INT64}.
@@ -75,6 +94,8 @@ public class VariantUtils {
   }
 
   private static native long getVariantFieldValue(long variantStructHandle, String path);
+
+  private static native long getVariantTypeId(long valueBytesHandle);
 
   private static native long castVariantValue(long valueBytesHandle, int cudfTypeId);
 

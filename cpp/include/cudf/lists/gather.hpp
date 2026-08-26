@@ -59,7 +59,7 @@ namespace lists {
  * output list row's element, when the gather index falls outside the range `[-n, n)`,
  * where `n` is the number of elements in list row corresponding to the gather-map row.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource to allocate any returned objects
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return column with elements in list of rows gathered based on `gather_map_list`
  *
  */
@@ -68,7 +68,7 @@ std::unique_ptr<column> segmented_gather(
   lists_column_view const& gather_map_list,
   out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
   cuda::stream_ref stream            = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr  = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr          = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace lists

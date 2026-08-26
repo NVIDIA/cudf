@@ -1545,3 +1545,73 @@ TYPED_TEST(ListColumnWrapperTestTyped, LargeListsOfStructsWithValidity)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected_struct_column,
                                  cudf::lists_column_view(*lists_column).child());
 }
+
+// Harness-scoped construction via lists_column_initializer.
+// Multi-row nested Init still routes through cudf::concatenate temporaries on the current
+// resource; keep fail_on_current scopes on leaf / single-child paths until concatenate is ported.
+struct ListsColumnInitializerHarnessTest : public cudf::test::BaseFixtureWithHarness {};
+
+TEST_F(ListsColumnInitializerHarnessTest, LeafInitUsesExplicitResources)
+{
+  using Init = cudf::test::lists_column_initializer<int32_t>;
+  using LCW  = cudf::test::lists_column_wrapper<int32_t, int32_t>;
+
+  auto const st = this->stream();
+  auto const mr = this->resources();
+
+  std::unique_ptr<cudf::column> built;
+  {
+    auto fail_on_current = this->fail_on_current_device_resource_use();
+    LCW list{Init{{1, 2, 3, 4}}, st, mr};
+    this->_harness.synchronize(st);
+    built = list.release();
+  }
+
+  LCW expected{Init{{1, 2, 3, 4}}, st, mr};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    *built, expected, cudf::test::debug_output_level::FIRST_ERROR, st, mr);
+}
+
+TEST_F(ListsColumnInitializerHarnessTest, LeafNullableInitUsesExplicitResources)
+{
+  using Init = cudf::test::lists_column_initializer<int32_t>;
+  using LCW  = cudf::test::lists_column_wrapper<int32_t, int32_t>;
+  using cudf::test::iterators::null_at;
+
+  auto const st = this->stream();
+  auto const mr = this->resources();
+
+  std::unique_ptr<cudf::column> built;
+  {
+    auto fail_on_current = this->fail_on_current_device_resource_use();
+    LCW list{Init{{1, 2, 3, 4}, null_at(1)}, st, mr};
+    this->_harness.synchronize(st);
+    built = list.release();
+  }
+
+  LCW expected{Init{{1, 2, 3, 4}, null_at(1)}, st, mr};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    *built, expected, cudf::test::debug_output_level::FIRST_ERROR, st, mr);
+}
+
+TEST_F(ListsColumnInitializerHarnessTest, SingleChildNestedInitUsesExplicitResources)
+{
+  using Init = cudf::test::lists_column_initializer<int32_t>;
+  using LCW  = cudf::test::lists_column_wrapper<int32_t, int32_t>;
+
+  auto const st = this->stream();
+  auto const mr = this->resources();
+
+  // One outer row whose only child is a leaf list: both levels avoid concatenate.
+  std::unique_ptr<cudf::column> built;
+  {
+    auto fail_on_current = this->fail_on_current_device_resource_use();
+    LCW list{Init{{{{1, 2, 3}}}}, st, mr};
+    this->_harness.synchronize(st);
+    built = list.release();
+  }
+
+  LCW expected{Init{{{{1, 2, 3}}}}, st, mr};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    *built, expected, cudf::test::debug_output_level::FIRST_ERROR, st, mr);
+}

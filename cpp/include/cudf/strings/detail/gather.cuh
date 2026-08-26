@@ -215,7 +215,7 @@ CUDF_KERNEL void gather_chars_fn_char_parallel(StringIterator strings_begin,
  * @param begin Start of index iterator.
  * @param end End of index iterator.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column.
  * @return New strings column containing the gathered strings.
  */
 template <bool NullifyOutOfBounds, typename MapIterator>
@@ -223,13 +223,16 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                      MapIterator begin,
                                      MapIterator end,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+
   auto const output_count = std::distance(begin, end);
   if (output_count == 0) return make_empty_column(type_id::STRING);
 
   // build offsets column
-  auto const d_strings    = column_device_view::create(strings.parent(), stream);
+  auto const d_strings    = column_device_view::create(strings.parent(), stream, temp_mr);
   auto const d_in_offsets = cudf::detail::offsetalator_factory::make_input_iterator(
     strings.is_empty() ? make_empty_column(type_id::INT32)->view() : strings.offsets(),
     strings.offset());
@@ -252,7 +255,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
   cudf::prefetch::detail::prefetch(strings.chars_begin(stream), strings.chars_size(stream), stream);
 
   // build output char column
-  auto out_chars_data = rmm::device_uvector<char>(out_char_bytes, stream, mr);
+  auto out_chars_data = rmm::device_uvector<char>(out_char_bytes, stream, output_mr);
   cudf::prefetch::detail::prefetch(out_chars_data, stream);
   auto d_out_chars = out_chars_data.data();
 
@@ -318,7 +321,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                  stream.get());
 
       // Allocate temporary storage
-      auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, mr);
+      auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, temp_mr);
 
       // Run batched copy algorithm
       cub::DeviceMemcpy::Batched(d_temp_storage.data(),
@@ -358,7 +361,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
  * @param end End of index iterator.
  * @param nullify_out_of_bounds If true, indices outside the column's range are nullified.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column.
  * @return New strings column containing the gathered strings.
  */
 template <typename MapIterator>
@@ -367,7 +370,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                                      MapIterator end,
                                      bool nullify_out_of_bounds,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   if (nullify_out_of_bounds) return gather<true>(strings, begin, end, stream, mr);
   return gather<false>(strings, begin, end, stream, mr);

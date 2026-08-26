@@ -5,6 +5,7 @@
 
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/detail/gather.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -80,7 +81,7 @@ struct list_gatherer {
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   // gather map iterator for this level (N)
   auto gather_map_begin =
@@ -109,8 +110,11 @@ std::unique_ptr<column> gather_list_leaf(column_view const& column,
 std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
                                            gather_data& gd,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+
   // gather map iterator for this level (N)
   auto gather_map_begin =
     cudf::detail::make_counting_transform_iterator(size_type{0}, list_gatherer{gd});
@@ -120,16 +124,16 @@ std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
   if (gather_map_size == 0) { return empty_like(list.parent()); }
 
   // gather the bitmask, if relevant
-  rmm::device_buffer null_mask{0, stream, mr};
+  rmm::device_buffer null_mask{0, stream, output_mr};
   size_type null_count = list.null_count();
   if (null_count > 0) {
-    auto list_cdv = column_device_view::create(list.parent(), stream);
+    auto list_cdv = column_device_view::create(list.parent(), stream, temp_mr);
     auto validity = cudf::detail::valid_if(
       gather_map_begin,
       gather_map_begin + gather_map_size,
       [cdv = *list_cdv] __device__(int index) { return cdv.is_valid(index); },
       stream,
-      mr);
+      output_mr);
     null_mask  = std::move(validity.first);
     null_count = validity.second;
   }

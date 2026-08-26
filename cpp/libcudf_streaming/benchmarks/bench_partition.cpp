@@ -15,7 +15,7 @@
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <benchmark/benchmark.h>
 #include <rapidsmpf/utils/misc.hpp>
@@ -45,7 +45,7 @@ static void BM_PartitionAndPack(benchmark::State& state)
 
   int const num_partitions = state.range(1);
 
-  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Get total GPU memory
   cudaDeviceProp prop;
@@ -94,7 +94,7 @@ static void BM_PartitionAndPackCurrentImpl(benchmark::State& state)
   int num_rows =
     int(local_size / std::int64_t{sizeof(std::int32_t)} / std::int64_t{num_partitions});
 
-  cuda::stream_ref stream = cuda::stream_ref{cudaStreamLegacy};
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Get total GPU memory
   cudaDeviceProp prop;

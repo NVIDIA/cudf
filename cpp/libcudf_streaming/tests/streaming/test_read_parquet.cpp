@@ -27,7 +27,7 @@
 
 #include <rmm/mr/per_device_resource.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <rapidsmpf/coll/allgather.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
@@ -240,7 +240,7 @@ TEST_P(StreamingReadParquetParams, ReadParquet)
   // May as well check on all ranks, so we also mildly exercise the allgather.
   auto gathered_packed_data = allgather.wait_and_extract(rapidsmpf::coll::AllGather::Ordered::YES);
   auto result               = cudf_streaming::unpack_and_concat(
-    std::move(gathered_packed_data), cuda::stream_ref{cudaStreamLegacy}, br.get());
+    std::move(gathered_packed_data), cudf::get_default_stream(), br.get());
   EXPECT_EQ(result->num_rows(), expected->num_rows());
   EXPECT_EQ(result->num_columns(), expected->num_columns());
   EXPECT_EQ(result->num_columns(), 1);

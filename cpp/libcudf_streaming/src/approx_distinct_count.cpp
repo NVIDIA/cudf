@@ -14,7 +14,7 @@
 #include <cudf_streaming/detail/stream_adapter.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <rapidsmpf/cuda_stream.hpp>

@@ -13,7 +13,7 @@
 #include <cudf_streaming/parquet.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/memory/memory_type.hpp>

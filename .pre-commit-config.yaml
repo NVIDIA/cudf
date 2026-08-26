@@ -335,7 +335,7 @@ repos:
           (?x)
             ^pyproject[.]toml$
   - repo: https://github.com/rapidsai/dependency-file-generator
-    rev: v1.21.0
+    rev: v1.22.0
     hooks:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]

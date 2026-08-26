@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import polars as pl
 
@@ -36,17 +36,9 @@ except ImportError as e:
     # We want to be able to import pdsh in a CPU-only environment.
     COUNT_DTYPE = None  # type: ignore[assignment]
 
+
 if TYPE_CHECKING:
     from cudf_polars.streaming.benchmarks.utils import RunConfig
-
-# Without this setting, the first IO task to run
-# on each worker takes ~15 sec extra
-os.environ["KVIKIO_COMPAT_MODE"] = os.environ.get("KVIKIO_COMPAT_MODE", "on")
-os.environ["KVIKIO_NTHREADS"] = os.environ.get("KVIKIO_NTHREADS", "8")
-# TODO: consider raising the rapidsmpf built-in default from 1 to 8.
-os.environ["RAPIDSMPF_NUM_STREAMING_THREADS"] = os.environ.get(
-    "RAPIDSMPF_NUM_STREAMING_THREADS", "8"
-)
 
 # The pre-computed expected results come from DuckDB, which has
 # different casting rules than Polars. For example, in polars
@@ -120,9 +112,13 @@ class PDSHQueries:
     """PDS-H query definitions."""
 
     name: str = "pdsh"
+    num_queries: int = 22
     EXPECTED_CASTS = EXPECTED_CASTS
     EXPECTED_CASTS_DECIMAL = EXPECTED_CASTS_DECIMAL
     EXPECTED_CASTS_TIMESTAMP = EXPECTED_CASTS_TIMESTAMP
+    # Queries expected to fail on GPU due to known bugs. Keys are query numbers;
+    # values are reasons for the failures. These queries will be skipped in GPU runs.
+    EXPECTED_FAILURES_TPCH: ClassVar[dict[int, str]] = {}
 
     @property
     def duckdb_queries(self) -> PDSHDuckDBQueries:
@@ -1798,7 +1794,16 @@ class PDSHDuckDBQueries:
 
 
 if __name__ == "__main__":
-    parser = build_parser(num_queries=22)
+    # Without this setting, the first IO task to run
+    # on each worker takes ~15 sec extra
+    os.environ["KVIKIO_COMPAT_MODE"] = os.environ.get("KVIKIO_COMPAT_MODE", "on")
+    os.environ["KVIKIO_NTHREADS"] = os.environ.get("KVIKIO_NTHREADS", "8")
+    # TODO: consider raising the rapidsmpf built-in default from 1 to 8.
+    os.environ["RAPIDSMPF_NUM_STREAMING_THREADS"] = os.environ.get(
+        "RAPIDSMPF_NUM_STREAMING_THREADS", "8"
+    )
+
+    parser = build_parser(num_queries=PDSHQueries.num_queries)
     args = parse_args(parser=parser)
     if args.frontend not in _CPU_ENGINES:
         os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "1")

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 67."""
@@ -265,7 +265,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
 
     ranked = rollup_data.with_columns(
         pl.col("sumsales")
-        .rank(method="dense", descending=True)
+        .rank(method="min", descending=True)
         .over("i_category")
         .alias("rk")
     )

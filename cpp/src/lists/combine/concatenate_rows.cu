@@ -115,7 +115,8 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                    offsets->view().begin<size_type>() + input.num_rows() + 1,
                                    offsets->mutable_view().begin<size_type>(),
                                    0,
-                                   stream);
+                                   stream,
+                                   mr);
   CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
                "Size of offsets exceeds maximum int32 limit",
                std::overflow_error);

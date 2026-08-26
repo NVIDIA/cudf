@@ -32,7 +32,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(n >= 0, "expected number of samples should be non-negative");
+  CUDF_EXPECTS(n >= 0, "expected number of samples should be non-negative", std::invalid_argument);
   auto const num_rows = input.num_rows();
 
   if (n > num_rows) {
@@ -40,7 +40,7 @@ std::unique_ptr<table> sample(table_view const& input,
                  "If n > number of rows, then multiple sampling of the same row should be allowed",
                  std::invalid_argument);
     CUDF_EXPECTS(num_rows > 0,
-                 "If n > number of rows, then the input table should not be empty",
+                 "A nonzero number of samples requested but the input table has zero rows",
                  std::invalid_argument);
   }
 

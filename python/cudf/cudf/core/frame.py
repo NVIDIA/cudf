@@ -35,6 +35,7 @@ from cudf.core.dtype.validators import (
 )
 from cudf.core.mixins import BinaryOperand, Scannable
 from cudf.utils.dtypes import (
+    _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta,
     dtype_from_pylibcudf_column,
     find_common_type,
     is_pandas_nullable_extension_dtype,
@@ -719,9 +720,23 @@ class Frame(BinaryOperand, Scannable, Serializable):
                     # otherwise store the null sentinel instead.
                     to_dtype = np.dtype("float64")
             else:
-                to_dtype = find_common_type(
-                    [dtype for _, dtype in self._dtypes]
-                )
+                column_dtypes = [dtype for _, dtype in self._dtypes]
+                if (
+                    module is not cupy
+                    and cudf.get_option("mode.pandas_compatible")
+                    and _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta(
+                        column_dtypes
+                    )
+                ):
+                    # pandas coerces bool+numeric and datetime64+timedelta64
+                    # mixes to `object` rather than promoting them; match
+                    # that here instead of calling find_common_type (which
+                    # raises in this case so the cudf.pandas proxy can fall
+                    # back to pandas). GPU arrays can't hold objects, so this
+                    # fallback only applies to numpy output.
+                    to_dtype = np.dtype("object")
+                else:
+                    to_dtype = find_common_type(column_dtypes)
                 if to_dtype is not None and any(
                     col.has_nulls() for col in self._columns
                 ):

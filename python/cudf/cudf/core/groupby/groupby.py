@@ -112,6 +112,7 @@ _DECIMAL_AGGS = {
     "COLLECT",
     "COUNT",
     "MAX",
+    "MEAN",
     "MIN",
     "NTH",
     "NUNIQUE",

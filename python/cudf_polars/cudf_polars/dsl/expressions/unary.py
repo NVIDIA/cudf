@@ -119,6 +119,7 @@ class UnaryFunction(Expr):
             "diff",
             "drop_nans",
             "drop_nulls",
+            "entropy",
             "extend_constant",
             "fill_null",
             "fill_null_with_strategy",
@@ -214,6 +215,10 @@ class UnaryFunction(Expr):
             raise NotImplementedError(f"Unary function {name=}")  # pragma: no cover
         if self.name == "index_of" and plc.traits.is_nested(children[0].dtype.plc_type):
             raise NotImplementedError("index_of on nested types is not supported")
+        if self.name == "entropy" and not plc.traits.is_numeric_not_bool(
+            children[0].dtype.plc_type
+        ):
+            raise NotImplementedError("entropy requires a numeric input")
         if self.name == "fill_null_with_strategy" and self.options[1] not in {0, None}:
             raise NotImplementedError(
                 "Filling null values with limit specified is not yet supported."
@@ -572,6 +577,76 @@ class UnaryFunction(Expr):
                 plc.Column.from_scalar(
                     plc.Scalar.from_py(
                         column.null_count, self.dtype.plc_type, stream=df.stream
+                    ),
+                    1,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        if self.name == "entropy":
+            base, normalize = self.options
+            column = self.children[0].evaluate(df, context=context)
+            if (
+                column.size == 0
+                or column.null_count == column.size
+                or (column.size == 1 and normalize)
+            ):
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(0.0, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            pk = column.astype(self.dtype, stream=df.stream).obj
+            col_ref: plc.expressions.Expression = plc.expressions.ColumnReference(0)
+            if normalize:
+                total = plc.reduce.reduce(
+                    pk, plc.aggregation.sum(), self.dtype.plc_type, stream=df.stream
+                )
+                col_ref = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    col_ref,
+                    plc.expressions.Literal(total),
+                )
+            log_value = plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOG, col_ref
+            )
+            if base != math.e:
+                log_value = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    log_value,
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOG,
+                        plc.expressions.Literal(
+                            plc.Scalar.from_py(
+                                base, self.dtype.plc_type, stream=df.stream
+                            )
+                        ),
+                    ),
+                )
+            expression = plc.expressions.Operation(
+                plc.expressions.ASTOperator.MUL,
+                plc.expressions.Literal(
+                    plc.Scalar.from_py(-1.0, self.dtype.plc_type, stream=df.stream)
+                ),
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.MUL,
+                    col_ref,
+                    log_value,
+                ),
+            )
+            terms = plc.transform.compute_column(
+                plc.Table([pk]), expression, stream=df.stream
+            )
+            return Column(
+                plc.Column.from_scalar(
+                    plc.reduce.reduce(
+                        terms,
+                        plc.aggregation.sum(),
+                        self.dtype.plc_type,
+                        stream=df.stream,
                     ),
                     1,
                     stream=df.stream,

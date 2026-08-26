@@ -34,6 +34,21 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_getVariantFieldValue(
   JNI_CATCH(env, 0);
 }
 
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_getVariantTypeId(JNIEnv* env,
+                                                                          jclass,
+                                                                          jlong value_bytes_handle)
+{
+  JNI_NULL_CHECK(env, value_bytes_handle, "value bytes column is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const& value_bytes = *reinterpret_cast<cudf::column_view const*>(value_bytes_handle);
+    return cudf::jni::release_as_jlong(cudf::io::parquet::experimental::get_variant_type_id(
+      value_bytes, cudf::get_default_stream(), cudf::get_current_device_resource_ref()));
+  }
+  JNI_CATCH(env, 0);
+}
+
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_castVariantValue(JNIEnv* env,
                                                                           jclass,
                                                                           jlong value_bytes_handle,

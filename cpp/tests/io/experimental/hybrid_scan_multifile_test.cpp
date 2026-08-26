@@ -8,6 +8,7 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -471,4 +472,32 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     EXPECT_EQ(result.metadata.num_input_row_groups, 8);
     EXPECT_FALSE(reader->has_next_table_chunk());
   }
+}
+
+TEST_F(HybridScanMultifileTest, AllColumnsPreservesRequiredNullability)
+{
+  auto const [input_table, parquet_buffer] = create_parquet_with_stats<int64_t, 1>();
+  auto const parquet_buffers               = std::vector<std::vector<char>>{parquet_buffer};
+  auto const source_info                   = build_source_info(parquet_buffers);
+  auto const options                       = cudf::io::parquet_reader_options::builder().build();
+  auto inputs                              = multifile_inputs(source_info);
+  auto reader =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+
+  // Check footer metadata
+  ASSERT_EQ(reader.parquet_metadatas().front().schema[1].repetition_type,
+            cudf::io::parquet::FieldRepetitionType::REQUIRED);
+
+  // Materialize all columns
+  auto const row_groups = reader.all_row_groups(options);
+  auto const stream     = cudf::get_default_stream();
+  auto const mr         = cudf::get_current_device_resource_ref();
+  auto column_data      = fetch_multisource_device_data(
+    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+  auto const result =
+    reader.materialize_all_columns(row_groups, column_data.flat_spans, options, stream, mr);
+
+  // Check results
+  EXPECT_FALSE(result.tbl->view().column(0).nullable());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(input_table->view(), result.tbl->view());
 }

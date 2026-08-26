@@ -1313,6 +1313,7 @@ encoding : str, default 'utf-8'
     Only 'utf-8' is currently supported
 compression : {{'zstd', None}}, default None
     A string representing the compression scheme to use in the output file.
+    Not inferred from the file name; ``'infer'`` is not supported.
 quoting : int, optional
     Control field quoting behavior per ``csv.QUOTE_*`` constants.
     Use one of ``csv.QUOTE_MINIMAL`` (0) or ``csv.QUOTE_NONE`` (3).

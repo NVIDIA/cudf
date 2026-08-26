@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import itertools
 from collections.abc import Collection, Mapping
-from io import BytesIO, StringIO
+from io import BytesIO, StringIO, TextIOBase
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -408,6 +408,17 @@ def to_csv(
             )
         path_or_buf = StringIO()
         return_as_string = True
+    elif (
+        compression
+        and isinstance(path_or_buf, TextIOBase)
+        and not hasattr(path_or_buf, "buffer")
+    ):
+        # a text sink with no underlying binary buffer decodes what it is given as
+        # UTF-8, which compressed output is not
+        raise ValueError(
+            f"Compression {compression} is not supported for text-mode sinks; "
+            "please pass a path or a binary file object."
+        )
 
     path_or_buf = ioutils.get_writer_filepath_or_buffer(
         path_or_data=path_or_buf, mode="w", storage_options=storage_options

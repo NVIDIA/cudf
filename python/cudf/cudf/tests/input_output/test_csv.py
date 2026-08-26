@@ -2069,6 +2069,14 @@ def test_to_csv_compression_no_path_error():
         df.to_csv(compression="zstd")
 
 
+def test_to_csv_compression_text_sink_error():
+    # a StringIO sink decodes what the writer hands it as UTF-8, which
+    # compressed output is not
+    df = cudf.DataFrame({"a": ["test"]})
+    with pytest.raises(ValueError, match="text-mode"):
+        df.to_csv(StringIO(), compression="zstd")
+
+
 @pytest.mark.parametrize("chunksize", [None, 8])
 def test_to_csv_zstd_compression(tmp_path, chunksize):
     df = cudf.DataFrame(

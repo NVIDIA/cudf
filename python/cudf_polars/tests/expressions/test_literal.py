@@ -176,12 +176,16 @@ def test_literal_stable_id_is_content_based():
     a = Literal(DataType(pl.Int64()), 42)
     b = Literal(DataType(pl.Int64()), 42)
     c = Literal(DataType(pl.Int64()), 43)
-    assert a.get_stable_id() == b.get_stable_id()
-    assert a.get_stable_id() != c.get_stable_id()
-
-    # Same value, but different dtype are not equal
     d = Literal(DataType(pl.UInt64()), 42)
+
+    # Same dtype, same value are equal
+    assert a.get_stable_id() == b.get_stable_id()
+    # Same dtype, different value are not equal
+    assert a.get_stable_id() != c.get_stable_id()
+    # Same value, but different dtype are not equal
     assert a.get_stable_id() != d.get_stable_id()
+    # For completeness: different dtype, different value are not equal
+    assert c.get_stable_id() != d.get_stable_id()
 
 
 def test_struct_literal_not_supported(engine: pl.GPUEngine):

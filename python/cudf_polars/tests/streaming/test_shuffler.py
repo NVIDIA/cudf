@@ -230,7 +230,7 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
             )
             async with shuffle.inserting() as inserter:
-                inserter.insert_hash(
+                await inserter.insert_hash(
                     TableChunk.from_pylibcudf_table(
                         cudf_df.table, stream, exclusive_view=True, br=context.br()
                     ),
@@ -241,7 +241,7 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
             await local.repartition_by_hash(columns_to_hash=(0,), stream=stream)
 
             for pid in local.local_partitions():
-                tbl = local.extract_chunk(pid, stream)
+                tbl = await local.extract_chunk(pid, stream)
                 results.append(
                     (
                         pid,
@@ -298,7 +298,7 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
             )
             async with shuffle.inserting() as inserter:
-                inserter.insert_index(
+                await inserter.insert_index(
                     TableChunk.from_pylibcudf_table(
                         payload_df.table, stream, exclusive_view=True, br=context.br()
                     ),
@@ -311,7 +311,7 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
             await local.repartition_by_index(partition_col=0, stream=stream)
 
             for pid in local.local_partitions():
-                tbl = local.extract_chunk(pid, stream)
+                tbl = await local.extract_chunk(pid, stream)
                 results.append(
                     (
                         pid,

@@ -386,7 +386,7 @@ async def _insert_chunks_into_shuffle(
                 stream=stream,
                 chunk_relative=True,
             )
-            inserter.insert_split(available_chunk, splits)
+            await inserter.insert_split(available_chunk, splits)
 
     post_sort_ir = ir
     if ir.stable:
@@ -422,7 +422,7 @@ async def _extract_partitions_and_send(
     ncols_out = len(output_schema)
     for partition_id in shuffle.local_partitions():
         stream = ir_context.get_cuda_stream()
-        table = shuffle.extract_chunk(partition_id, stream)
+        table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
             table = post_sort_ir.do_evaluate(
                 *post_sort_ir._non_child_args,

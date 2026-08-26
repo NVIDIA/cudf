@@ -15,8 +15,11 @@ from cudf_streaming.channel_metadata import (
 )
 from cudf_streaming.partition_utils import (
     partition_and_pack as py_partition_and_pack,
+    partition_and_pack_cost as py_partition_and_pack_cost,
     split_and_pack as py_split_and_pack,
+    split_and_pack_cost as py_split_and_pack_cost,
     unpack_and_concat as py_unpack_and_concat,
+    unpack_and_concat_cost as py_unpack_and_concat_cost,
 )
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.communicator.single import new_communicator as single_comm
@@ -25,6 +28,7 @@ from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.coll.shuffler import ShufflerAsync
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.context import Context
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
@@ -44,9 +48,11 @@ from cudf_polars.streaming.shuffle import Shuffle
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator
 
     from rapidsmpf.communicator.communicator import Communicator
+    from rapidsmpf.memory.buffer_resource import BufferResource
+    from rapidsmpf.memory.memory_reservation import MemoryReservation
     from rapidsmpf.memory.packed_data import PackedData
     from rapidsmpf.streaming.core.channel import Channel
     from rmm.pylibrmm.stream import Stream
@@ -55,6 +61,35 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.core import SubNetGenerator
     from cudf_polars.typing import Schema
+
+
+def _consume_reorder_reservation(
+    br: BufferResource,
+    reservation: MemoryReservation,
+    reordered: plc.Table,
+    stream: Stream,
+) -> None:
+    """
+    Consume the reorder's share of a reservation once the reorder has landed.
+
+    A reservation is counted on top of the memory already allocated, so the part
+    covering a completed allocation has to be given back. What remains is what
+    :func:`split_and_pack_cost` reports for ``reordered``.
+
+    Parameters
+    ----------
+    br
+        Buffer resource holding the reservation.
+    reservation
+        Reservation covering the reorder and the pack that follows it.
+    reordered
+        The table the reorder produced.
+    stream
+        CUDA stream the reorder is ordered on.
+    """
+    remaining = py_split_and_pack_cost(reordered, stream, br)
+    if reservation.size > remaining:
+        br.release(reservation, reservation.size - remaining)
 
 
 class ShuffleManager:
@@ -93,49 +128,80 @@ class ShuffleManager:
         def __init__(self, manager: ShuffleManager):
             self._manager = manager
 
-        def insert_hash(
+        async def insert_hash(
             self, chunk: TableChunk, columns_to_hash: tuple[int, ...]
         ) -> None:
             """Partition chunk by hash and insert into the shuffler."""
+            br = self._manager.context.br()
+            reservation = await reserve_memory(
+                self._manager.context,
+                py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),
+                net_memory_delta=0,
+            )
             self._manager.shuffler.insert(
                 py_partition_and_pack(
                     table=chunk.table_view(),
                     columns_to_hash=columns_to_hash,
                     num_partitions=self._manager.num_partitions,
                     stream=chunk.stream,
-                    br=self._manager.context.br(),
+                    br=br,
+                    reservation=reservation,
                 )
             )
 
-        def insert_hash_keys(self, chunk: TableChunk, key_table: plc.Table) -> None:
+        async def insert_hash_keys(
+            self, chunk: TableChunk, key_table: plc.Table
+        ) -> None:
             """Partition chunk by hash of a row-aligned key table and insert."""
+            br = self._manager.context.br()
+            # `partition_and_pack_cost` covers a reorder plus a pack, which is what
+            # the hash partitioning below and the split-and-pack after it need.
+            reservation = await reserve_memory(
+                self._manager.context,
+                py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),
+                net_memory_delta=0,
+            )
             partitioned_table, offsets = plc.partitioning.hash_partition(
                 chunk.table_view(),
                 key_table,
                 self._manager.num_partitions,
                 stream=chunk.stream,
+                mr=br.device_mr,
+            )
+            _consume_reorder_reservation(
+                br, reservation, partitioned_table, chunk.stream
             )
             self._manager.shuffler.insert(
                 py_split_and_pack(
                     table=partitioned_table,
                     splits=list(offsets[1:-1]),
                     stream=chunk.stream,
-                    br=self._manager.context.br(),
+                    br=br,
+                    reservation=reservation,
                 )
             )
 
-        def insert_split(self, chunk: TableChunk, splits: list[int]) -> None:
+        async def insert_split(self, chunk: TableChunk, splits: list[int]) -> None:
             """Split chunk at the given indices and insert into the shuffler."""
+            br = self._manager.context.br()
+            reservation = await reserve_memory(
+                self._manager.context,
+                py_split_and_pack_cost(chunk.table_view(), chunk.stream, br),
+                net_memory_delta=0,
+            )
             self._manager.shuffler.insert(
                 py_split_and_pack(
                     table=chunk.table_view(),
                     splits=splits,
                     stream=chunk.stream,
-                    br=self._manager.context.br(),
+                    br=br,
+                    reservation=reservation,
                 )
             )
 
-        def insert_index(self, chunk: TableChunk, partition_map: TableChunk) -> None:
+        async def insert_index(
+            self, chunk: TableChunk, partition_map: TableChunk
+        ) -> None:
             """
             Partition chunk by a separate single-column partition-map and insert.
 
@@ -149,23 +215,33 @@ class ShuffleManager:
                 target partition ID for each row. Must be row-aligned with
                 ``chunk``.
             """
+            br = self._manager.context.br()
             with stream_ordered_after(
-                self._manager.context.br().stream_pool.get_stream,
+                br.stream_pool.get_stream,
                 upstreams=(chunk.stream, partition_map.stream),
             ) as stream:
+                # As in `insert_hash_keys`, this covers the reorder plus the pack.
+                reservation = await reserve_memory(
+                    self._manager.context,
+                    py_partition_and_pack_cost(chunk.table_view(), stream, br),
+                    net_memory_delta=0,
+                )
                 partition_map_col = partition_map.table_view().columns()[0]
                 reordered, offsets = plc.partitioning.partition(
                     chunk.table_view(),
                     partition_map_col,
                     self._manager.num_partitions,
                     stream=stream,
+                    mr=br.device_mr,
                 )
+                _consume_reorder_reservation(br, reservation, reordered, stream)
                 self._manager.shuffler.insert(
                     py_split_and_pack(
                         table=reordered,
                         splits=list(offsets[1:-1]),
                         stream=stream,
-                        br=self._manager.context.br(),
+                        br=br,
+                        reservation=reservation,
                     )
                 )
 
@@ -206,7 +282,7 @@ class ShuffleManager:
         """Get the local partition IDs for this rank."""
         return self.shuffler.local_partitions()
 
-    def extract_chunk(self, partition_id: int, stream: Stream) -> plc.Table:
+    async def extract_chunk(self, partition_id: int, stream: Stream) -> plc.Table:
         """
         Extract a chunk from the ShuffleManager.
 
@@ -221,10 +297,18 @@ class ShuffleManager:
         -------
         The extracted table.
         """
+        partitions = self.shuffler.extract(partition_id)
+        reservation = await reserve_memory(
+            self.context,
+            py_unpack_and_concat_cost(partitions),
+            # The concatenated table replaces the packed partitions.
+            net_memory_delta=0,
+        )
         return py_unpack_and_concat(
-            partitions=self.shuffler.extract(partition_id),
+            partitions=partitions,
             stream=stream,
             br=self.context.br(),
+            reservation=reservation,
         )
 
     def extract_pieces(self, partition_id: int) -> list[PackedData]:
@@ -270,11 +354,19 @@ class LocalRepartitioner:
             shuffle.collective_id,
         )
 
-    def _iter_chunks(self, stream: Stream) -> Generator[plc.Table, None, None]:
+    async def _iter_chunks(self, stream: Stream) -> AsyncGenerator[plc.Table, None]:
         for partition_id in self._global_shuffle.local_partitions():
             for piece in self._global_shuffle.extract_pieces(partition_id):
                 # TODO: batch pieces up to target_partition_size before unpacking
-                table = py_unpack_and_concat([piece], stream=stream, br=self._br)
+                pieces = [piece]
+                reservation = await reserve_memory(
+                    self._global_shuffle.context,
+                    py_unpack_and_concat_cost(pieces),
+                    net_memory_delta=0,
+                )
+                table = py_unpack_and_concat(
+                    pieces, stream=stream, br=self._br, reservation=reservation
+                )
                 if table.num_rows() > 0:
                     yield table
 
@@ -292,8 +384,8 @@ class LocalRepartitioner:
             CUDA stream for the unpack operation.
         """
         async with self._local_shuffle.inserting() as inserter:
-            for table in self._iter_chunks(stream):
-                inserter.insert_hash(
+            async for table in self._iter_chunks(stream):
+                await inserter.insert_hash(
                     TableChunk.from_pylibcudf_table(
                         table, stream, exclusive_view=True, br=self._br
                     ),
@@ -322,7 +414,7 @@ class LocalRepartitioner:
             payload before inserting. If ``False``, it is kept in the output.
         """
         async with self._local_shuffle.inserting() as inserter:
-            for table in self._iter_chunks(stream):
+            async for table in self._iter_chunks(stream):
                 cols = table.columns()
                 payload = plc.Table(
                     [
@@ -332,7 +424,7 @@ class LocalRepartitioner:
                     ]
                 )
                 partition_map = plc.Table([cols[partition_col]])
-                inserter.insert_index(
+                await inserter.insert_index(
                     TableChunk.from_pylibcudf_table(
                         payload, stream, exclusive_view=True, br=self._br
                     ),
@@ -345,7 +437,7 @@ class LocalRepartitioner:
         """Return the local partition IDs."""
         return self._local_shuffle.local_partitions()
 
-    def extract_chunk(self, partition_id: int, stream: Stream) -> plc.Table:
+    async def extract_chunk(self, partition_id: int, stream: Stream) -> plc.Table:
         """
         Extract the table for *partition_id* from the local shuffle.
 
@@ -356,7 +448,7 @@ class LocalRepartitioner:
         stream
             CUDA stream for the unpack operation.
         """
-        return self._local_shuffle.extract_chunk(partition_id, stream)
+        return await self._local_shuffle.extract_chunk(partition_id, stream)
 
 
 def _key_column_indices(
@@ -465,11 +557,11 @@ async def _global_shuffle(
                     msg, br=context.br()
                 ).make_available_and_spill(context.br(), allow_overbooking=True)
                 if columns_to_hash is None:
-                    inserter.insert_hash_keys(
+                    await inserter.insert_hash_keys(
                         chunk, _evaluate_key_table(chunk, keys_to_hash, input_schema)
                     )
                 else:
-                    inserter.insert_hash(
+                    await inserter.insert_hash(
                         chunk,
                         columns_to_hash,
                     )
@@ -481,7 +573,7 @@ async def _global_shuffle(
             Message(
                 partition_id,
                 TableChunk.from_pylibcudf_table(
-                    table=shuffle.extract_chunk(partition_id, stream),
+                    table=await shuffle.extract_chunk(partition_id, stream),
                     stream=stream,
                     exclusive_view=True,
                     br=context.br(),

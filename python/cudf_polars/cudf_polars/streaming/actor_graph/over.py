@@ -517,7 +517,7 @@ async def _distribute_by_group(
                     ir_context.get_cuda_stream(),
                     context.br(),
                 )
-                inserter.insert_hash(stamped, key_indices)
+                await inserter.insert_hash(stamped, key_indices)
             chunk_index += 1
     return sequence_numbers
 
@@ -537,7 +537,7 @@ async def _evaluate_and_route_to_origin(
     async with return_shuffle.inserting() as inserter:
         for partition_id in forward_shuffle.local_partitions():
             stream = ir_context.get_cuda_stream()
-            extracted = forward_shuffle.extract_chunk(partition_id, stream)
+            extracted = await forward_shuffle.extract_chunk(partition_id, stream)
             if extracted.num_rows() == 0:
                 continue
             partition = TableChunk.from_pylibcudf_table(
@@ -555,7 +555,7 @@ async def _evaluate_and_route_to_origin(
                 _partition_by_origin_rank, evaluated, num_ranks, context.br()
             )
             if routed is not None:
-                inserter.insert_split(routed, splits)
+                await inserter.insert_split(routed, splits)
 
 
 async def _reassemble_input_chunks(
@@ -588,7 +588,7 @@ async def _reassemble_input_chunks(
         # Distinct stream per chunk so downstream work on different
         # chunks can overlap on the GPU.
         stream = ir_context.get_cuda_stream()
-        tbl = local.extract_chunk(chunk_index, stream)
+        tbl = await local.extract_chunk(chunk_index, stream)
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:

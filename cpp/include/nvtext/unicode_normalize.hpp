@@ -24,7 +24,7 @@ namespace CUDF_EXPORT nvtext {
  *
  * https://unicode.org/reports/tr15/
  */
-enum class unicode_normalization_form {
+enum class unicode_normalization_form : int32_t {
   NFD,   ///< Canonical Decomposition
   NFC,   ///< Canonical Decomposition followed by Canonical Composition
   NFKD,  ///< Compatibility Decomposition

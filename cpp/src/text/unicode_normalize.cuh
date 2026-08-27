@@ -27,6 +27,8 @@ constexpr int32_t MAX_DECOMP_DEPTH = 5;
 constexpr int32_t MAX_DECOMP_EXPAND = 18;
 
 // Hangul algorithmic decomposition constants (Unicode 3.1+)
+// https://unicode.org/reports/tr15/
+// https://unicode.org/Public/15.1.0/ucd/UnicodeData.txt
 constexpr uint32_t HANGUL_SBASE  = 0xAC00u;
 constexpr uint32_t HANGUL_LBASE  = 0x1100u;
 constexpr uint32_t HANGUL_VBASE  = 0x1161u;
@@ -50,7 +52,7 @@ constexpr uint32_t HANGUL_TEND   = HANGUL_TBASE + HANGUL_TCOUNT - 1u;  // 0x11C2
  * Writes 2 or 3 codepoints into @p out and returns the count written.
  * Caller must ensure @p out has space for 3 uint32_t values.
  */
-__device__ inline int hangul_decompose(uint32_t cp, uint32_t* out)
+__device__ inline int32_t hangul_decompose(uint32_t cp, uint32_t* out)
 {
   auto const sindex = cp - HANGUL_SBASE;
   auto const tindex = sindex % HANGUL_TCOUNT;

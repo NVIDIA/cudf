@@ -29,6 +29,7 @@ def test_rapids_doctor_runs_required_and_cudf_health_checks():
         capture_output=True,
         check=False,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     output = f"{result.stdout}\n{result.stderr}"

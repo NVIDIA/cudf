@@ -80,11 +80,9 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfLists)
   using T = TypeParam;
 
   auto src_list_column =
-    cudf::test::lists_column_wrapper<T, int32_t>{{{{0, 0}, {9, 9}},
-                                                  {{1, 1}, {8, 8}},
-                                                  {{2, 2}, {7, 7}},
-                                                  {{3, 3}, {6, 6}}},
-                                                 cudf::test::iterators::null_at(2)}
+    cudf::test::lists_column_wrapper<T, int32_t>{
+      {{{0, 0}, {9, 9}}, {{1, 1}, {8, 8}}, {{2, 2}, {7, 7}}, {{3, 3}, {6, 6}}},
+      cudf::test::iterators::null_at(2)}
       .release();
   auto src_sliced = cudf::slice(src_list_column->view(), {1, 4}).front();
 
@@ -102,12 +100,12 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfLists)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::test::lists_column_wrapper<T, int32_t>{{{},
-                                                 {{6, 6}, {5, 5}, {4, 4}},
-                                                 {{1, 1}, {8, 8}},
-                                                 {{9, 9}, {8, 8}, {7, 7}},
-                                                 {{6, 6}, {5, 5}, {4, 4}},
-                                                 {{3, 3}, {2, 2}, {1, 1}}},
-                                                cudf::test::iterators::null_at(0)},
+                                                  {{6, 6}, {5, 5}, {4, 4}},
+                                                  {{1, 1}, {8, 8}},
+                                                  {{9, 9}, {8, 8}, {7, 7}},
+                                                  {{6, 6}, {5, 5}, {4, 4}},
+                                                  {{3, 3}, {2, 2}, {1, 1}}},
+                                                 cudf::test::iterators::null_at(0)},
     ret->get_column(0));
 }
 
@@ -122,13 +120,12 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfStructs)
   auto src_validity = cudf::test::iterators::null_at(2);
   auto [src_mask, src_null_count] =
     cudf::test::detail::make_null_mask(src_validity, src_validity + 3);
-  auto src_list_column = cudf::make_lists_column(
-    3,
-    offsets_column{0, 2, 4, 6}.release(),
-    src_structs.release(),
-    src_null_count,
-    std::move(src_mask));
-  auto src_sliced = cudf::slice(src_list_column->view(), {1, 3}).front();
+  auto src_list_column = cudf::make_lists_column(3,
+                                                 offsets_column{0, 2, 4, 6}.release(),
+                                                 src_structs.release(),
+                                                 src_null_count,
+                                                 std::move(src_mask));
+  auto src_sliced      = cudf::slice(src_list_column->view(), {1, 3}).front();
 
   auto tgt_numerics       = numerics_column{0, 1, 2, 3, 4};
   auto tgt_structs        = cudf::test::structs_column_wrapper{{tgt_numerics}};
@@ -145,12 +142,11 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfStructs)
   auto expected_validity = cudf::test::iterators::null_at(0);
   auto [expected_mask, expected_null_count] =
     cudf::test::detail::make_null_mask(expected_validity, expected_validity + 5);
-  auto expected = cudf::make_lists_column(
-    5,
-    offsets_column{0, 2, 3, 5, 6, 7}.release(),
-    expected_structs.release(),
-    expected_null_count,
-    std::move(expected_mask));
+  auto expected = cudf::make_lists_column(5,
+                                          offsets_column{0, 2, 3, 5, 6, 7}.release(),
+                                          expected_structs.release(),
+                                          expected_null_count,
+                                          std::move(expected_mask));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view(), ret->get_column(0));
 }
@@ -300,11 +296,9 @@ TEST_F(ScatterListsTest, ListsOfStrings)
 TEST_F(ScatterListsTest, SlicedInputListsOfStrings)
 {
   auto src_list_column =
-    cudf::test::lists_column_wrapper<cudf::string_view>{{{"zero"},
-                                                         {"one", "one", "one"},
-                                                         {"two", "two"},
-                                                         {"three", "three", "three", "three"}},
-                                                        cudf::test::iterators::null_at(2)}
+    cudf::test::lists_column_wrapper<cudf::string_view>{
+      {{"zero"}, {"one", "one", "one"}, {"two", "two"}, {"three", "three", "three", "three"}},
+      cudf::test::iterators::null_at(2)}
       .release();
   auto src_sliced = cudf::slice(src_list_column->view(), {1, 4}).front();
 
@@ -322,11 +316,11 @@ TEST_F(ScatterListsTest, SlicedInputListsOfStrings)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::test::lists_column_wrapper<cudf::string_view>{{{},
-                                                        {"b", "b", "b", "b", "b"},
-                                                        {"one", "one", "one"},
-                                                        {"d", "d", "d", "d", "d"},
-                                                        {"e", "e", "e", "e", "e"}},
-                                                       cudf::test::iterators::null_at(0)},
+                                                         {"b", "b", "b", "b", "b"},
+                                                         {"one", "one", "one"},
+                                                         {"d", "d", "d", "d", "d"},
+                                                         {"e", "e", "e", "e", "e"}},
+                                                        cudf::test::iterators::null_at(0)},
     ret->get_column(0));
 }
 

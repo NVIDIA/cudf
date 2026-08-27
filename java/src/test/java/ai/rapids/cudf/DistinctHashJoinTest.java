@@ -49,8 +49,8 @@ public class DistinctHashJoinTest {
          Table probe2Table = new Table(probe2Keys);
          ColumnVector expected1 = ColumnVector.fromInts(1, 2, inv);
          ColumnVector expected2 = ColumnVector.fromInts(3, 0, inv)) {
-      assertGatherMapEquals(expected1, probe1Table.leftDistinctJoinGatherMap(hashJoin));
-      assertGatherMapEquals(expected2, probe2Table.leftDistinctJoinGatherMap(hashJoin));
+      assertGatherMapEquals(expected1, probe1Table.leftJoinGatherMap(hashJoin));
+      assertGatherMapEquals(expected2, probe2Table.leftJoinGatherMap(hashJoin));
     }
   }
 

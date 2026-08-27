@@ -102,11 +102,13 @@ def test_cuda_array_interface_with_mask_raises():
 
 
 def test_from_rmm_buffer():
+    # the caller is responsible for keeping the source bytes alive until
+    # the H2D copy completes (e.g. when the buffer is accessed below).
+    # See https://github.com/rapidsai/rmm/issues/2521
     result = pa.array([1, 2, 3], type=pa.int32())
+    data_bytes = result.buffers()[1].to_pybytes()
     expected = plc.Column.from_rmm_buffer(
-        rmm.DeviceBuffer.to_device(
-            result.buffers()[1].to_pybytes(), plc.utils._get_stream()
-        ),
+        rmm.DeviceBuffer.to_device(data_bytes, plc.utils._get_stream()),
         plc.DataType.from_arrow(result.type),
         len(result),
         [],
@@ -114,16 +116,16 @@ def test_from_rmm_buffer():
     assert_column_eq(result, expected)
 
     result = pa.array(["a", "b", "c"], type=pa.string())
+    offsets_bytes = result.buffers()[1].to_pybytes()
+    data_bytes = result.buffers()[2].to_pybytes()
     expected = plc.Column.from_rmm_buffer(
-        rmm.DeviceBuffer.to_device(
-            result.buffers()[2].to_pybytes(), plc.utils._get_stream()
-        ),
+        rmm.DeviceBuffer.to_device(data_bytes, plc.utils._get_stream()),
         plc.DataType.from_arrow(result.type),
         len(result),
         [
             plc.Column.from_rmm_buffer(
                 rmm.DeviceBuffer.to_device(
-                    result.buffers()[1].to_pybytes(), plc.utils._get_stream()
+                    offsets_bytes, plc.utils._get_stream()
                 ),
                 plc.DataType(plc.TypeId.INT32),
                 4,

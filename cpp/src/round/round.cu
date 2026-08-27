@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,9 +18,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -211,7 +211,7 @@ struct half_even_fixed_point {
 template <typename T, template <typename> typename RoundFunctor>
 std::unique_ptr<column> round_with(column_view const& input,
                                    int32_t decimal_places,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
   requires(not cudf::is_fixed_point<T>())
 {
@@ -244,7 +244,7 @@ std::unique_ptr<column> round_with(column_view const& input,
 template <typename T, template <typename> typename RoundFunctor>
 std::unique_ptr<column> round_with(column_view const& input,
                                    int32_t decimal_places,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
   requires(cudf::is_fixed_point<T>())
 {
@@ -310,7 +310,7 @@ struct round_type_dispatcher {
   std::unique_ptr<column> operator()(column_view const& input,
                                      int32_t decimal_places,
                                      cudf::rounding_method method,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_round_type<T>())
   {
@@ -350,7 +350,7 @@ struct round_dispatch_fn {
   std::unique_ptr<column> operator()(column_view const& input,
                                      int32_t decimal_places,
                                      cudf::rounding_method method,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<T>())
   {
@@ -377,7 +377,7 @@ struct round_dispatch_fn {
 std::unique_ptr<column> round(column_view const& input,
                               int32_t decimal_places,
                               cudf::rounding_method method,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_numeric(input.type()) || cudf::is_fixed_point(input.type()),
@@ -398,7 +398,7 @@ std::unique_ptr<column> round(column_view const& input,
 std::unique_ptr<column> round_decimal(column_view const& input,
                                       int32_t decimal_places,
                                       cudf::rounding_method method,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_integral_not_bool(input.type()) || cudf::is_fixed_point(input.type()),
@@ -422,7 +422,7 @@ std::unique_ptr<column> round_decimal(column_view const& input,
 std::unique_ptr<column> round(column_view const& input,
                               int32_t decimal_places,
                               rounding_method method,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -432,7 +432,7 @@ std::unique_ptr<column> round(column_view const& input,
 std::unique_ptr<column> round_decimal(column_view const& input,
                                       int32_t decimal_places,
                                       rounding_method method,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

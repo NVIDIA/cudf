@@ -10,12 +10,13 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 
 #include <cub/device/device_copy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 namespace CUDF_EXPORT cudf {
@@ -33,7 +34,7 @@ namespace detail {
 template <typename T>
 void batched_memset(cudf::host_span<cudf::device_span<T> const> host_buffers,
                     T const value,
-                    rmm::cuda_stream_view stream)
+                    cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -59,14 +60,14 @@ void batched_memset(cudf::host_span<cudf::device_span<T> const> host_buffers,
   auto const num_buffers         = host_buffers.size();
 
   cub::DeviceCopy::Batched(
-    nullptr, temp_storage_bytes, iter_in, iter_out, sizes, num_buffers, stream);
+    nullptr, temp_storage_bytes, iter_in, iter_out, sizes, num_buffers, stream.get());
 
   // Allocate temporary storage
   rmm::device_buffer d_temp_storage(
     temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
 
   cub::DeviceCopy::Batched(
-    d_temp_storage.data(), temp_storage_bytes, iter_in, iter_out, sizes, num_buffers, stream);
+    d_temp_storage.data(), temp_storage_bytes, iter_in, iter_out, sizes, num_buffers, stream.get());
 }
 
 }  // namespace detail

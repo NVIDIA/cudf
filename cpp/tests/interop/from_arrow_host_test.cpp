@@ -26,65 +26,94 @@
 
 #include <cuda/iterator>
 
+#include <array>
+#include <cstring>
 #include <limits>
 #include <numeric>
 #include <vector>
 
-// create a cudf::table and equivalent arrow table with host memory
-std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_host_tables(cudf::size_type length)
-{
-  auto [table, schema, test_data] = get_nanoarrow_cudf_table(length);
+namespace {
 
-  auto int64_array = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
-  auto string_array =
-    get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
-  cudf::dictionary_column_view view(table->get_column(2).view());
-  auto keys       = cudf::test::to_host<int64_t>(view.keys()).first;
-  auto indices    = cudf::test::to_host<uint32_t>(view.indices()).first;
-  auto dict_array = get_nanoarrow_dict_array(std::vector<int64_t>(keys.begin(), keys.end()),
-                                             std::vector<int32_t>(indices.begin(), indices.end()),
-                                             test_data.validity);
-  auto boolarray  = get_nanoarrow_array<bool>(test_data.bool_data, test_data.bool_validity);
-  auto list_array = get_nanoarrow_list_array<int64_t>(test_data.list_int64_data,
-                                                      test_data.list_offsets,
-                                                      test_data.list_int64_data_validity,
-                                                      test_data.list_validity);
+void release_schema(ArrowSchema* schema) { schema->release = nullptr; }
 
-  nanoarrow::UniqueArray arrow;
-  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(arrow.get(), schema.get(), nullptr));
-  arrow->length = length;
+void release_array(ArrowArray* array) { array->release = nullptr; }
 
-  int64_array.move(arrow->children[0]);
-  string_array.move(arrow->children[1]);
-  dict_array.move(arrow->children[2]);
-  boolarray.move(arrow->children[3]);
-  list_array.move(arrow->children[4]);
+struct direct_arrow_c_producer {
+  static constexpr int64_t num_rows = 5;
 
-  int64_array  = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
-  string_array = get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
-  int64_array.move(arrow->children[5]->children[0]);
-  string_array.move(arrow->children[5]->children[1]);
+  std::array<int32_t, num_rows> int_values{1, 2, 5, 2, 7};
+  std::array<uint8_t, 1> int_validity{0b00011101};
 
-  ArrowBitmap struct_validity;
-  ArrowBitmapInit(&struct_validity);
-  NANOARROW_THROW_NOT_OK(ArrowBitmapReserve(&struct_validity, length));
-  ArrowBitmapAppendInt8Unsafe(
-    &struct_validity, reinterpret_cast<int8_t const*>(test_data.bool_data_validity.data()), length);
-  arrow->children[5]->length = length;
-  ArrowArraySetValidityBitmap(arrow->children[5], &struct_validity);
-  arrow->children[5]->null_count =
-    length - ArrowBitCountSet(ArrowArrayValidityBitmap(arrow->children[5])->buffer.data, 0, length);
+  std::array<int32_t, num_rows + 1> string_offsets{0, 3, 6, 6, 6, 9};
+  std::array<char, 9> string_chars{'f', 'f', 'f', 'a', 'a', 'a', 'c', 'c', 'c'};
+  std::array<uint8_t, 1> string_validity{0b00010111};
 
-  ArrowError error;
-  if (ArrowArrayFinishBuilding(arrow.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, &error) !=
-      NANOARROW_OK) {
-    std::cerr << ArrowErrorMessage(&error) << std::endl;
-    CUDF_FAIL("failed to build example arrays");
+  ArrowSchema schema{};
+  std::array<ArrowSchema, 2> child_schemas{};
+  std::array<ArrowSchema*, 2> child_schema_ptrs{};
+
+  ArrowArray array{};
+  std::array<ArrowArray, 2> child_arrays{};
+  std::array<ArrowArray*, 2> child_array_ptrs{};
+  std::array<void const*, 1> parent_buffers{nullptr};
+  std::array<void const*, 2> int_buffers{int_validity.data(), int_values.data()};
+  std::array<void const*, 3> string_buffers{
+    string_validity.data(), string_offsets.data(), string_chars.data()};
+
+  direct_arrow_c_producer()
+  {
+    child_schema_ptrs = {&child_schemas[0], &child_schemas[1]};
+    child_array_ptrs  = {&child_arrays[0], &child_arrays[1]};
+
+    schema.format     = "+s";
+    schema.name       = "";
+    schema.flags      = 0;
+    schema.n_children = child_schemas.size();
+    schema.children   = child_schema_ptrs.data();
+    schema.release    = release_schema;
+
+    child_schemas[0].format  = "i";
+    child_schemas[0].name    = "ints";
+    child_schemas[0].flags   = ARROW_FLAG_NULLABLE;
+    child_schemas[0].release = release_schema;
+
+    child_schemas[1].format  = "u";
+    child_schemas[1].name    = "strings";
+    child_schemas[1].flags   = ARROW_FLAG_NULLABLE;
+    child_schemas[1].release = release_schema;
+
+    array.length     = num_rows;
+    array.null_count = 0;
+    array.n_buffers  = parent_buffers.size();
+    array.n_children = child_arrays.size();
+    array.buffers    = parent_buffers.data();
+    array.children   = child_array_ptrs.data();
+    array.release    = release_array;
+
+    child_arrays[0].length     = num_rows;
+    child_arrays[0].null_count = 1;
+    child_arrays[0].n_buffers  = int_buffers.size();
+    child_arrays[0].buffers    = int_buffers.data();
+    child_arrays[0].release    = release_array;
+
+    child_arrays[1].length     = num_rows;
+    child_arrays[1].null_count = 1;
+    child_arrays[1].n_buffers  = string_buffers.size();
+    child_arrays[1].buffers    = string_buffers.data();
+    child_arrays[1].release    = release_array;
   }
 
-  return std::make_tuple(std::move(table), std::move(schema), std::move(arrow));
-}
+  ArrowDeviceArray device_array() const
+  {
+    ArrowDeviceArray out{};
+    std::memcpy(&out.array, &array, sizeof(ArrowArray));
+    out.device_type = ARROW_DEVICE_CPU;
+    out.device_id   = -1;
+    return out;
+  }
+};
+
+}  // namespace
 
 struct FromArrowHostDeviceTest : public cudf::test::BaseFixture {};
 
@@ -110,6 +139,21 @@ TEST_F(FromArrowHostDeviceTest, EmptyTable)
 
   auto got_cudf_table = cudf::from_arrow_host(schema.get(), &input);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_cudf_table, got_cudf_table->view());
+}
+
+TEST_F(FromArrowHostDeviceTest, DirectArrowCProducerTable)
+{
+  direct_arrow_c_producer producer;
+  auto input = producer.device_array();
+
+  auto const expected_ints =
+    cudf::test::fixed_width_column_wrapper<int32_t>{{1, 2, 5, 2, 7}, {1, 0, 1, 1, 1}};
+  auto const expected_strings =
+    cudf::test::strings_column_wrapper{{"fff", "aaa", "", "xxx", "ccc"}, {1, 1, 1, 0, 1}};
+  auto const expected = cudf::table_view{{expected_ints, expected_strings}};
+
+  auto got_cudf_table = cudf::from_arrow_host(&producer.schema, &input);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, got_cudf_table->view());
 }
 
 TEST_F(FromArrowHostDeviceTest, ZeroColumnsWithRows)
@@ -980,32 +1024,6 @@ TEST_F(FromArrowHostDeviceTest, DictionaryIndicesType)
   cudf::table_view from_struct{
     std::vector<cudf::column_view>(got_cudf_col_view.child_begin(), got_cudf_col_view.child_end())};
   CUDF_TEST_EXPECT_TABLES_EQUAL(got_cudf_table->view(), from_struct);
-}
-
-void slice_host_nanoarrow(ArrowArray* arr, int64_t start, int64_t end)
-{
-  auto op = [&](ArrowArray* array) {
-    // slicing only needs to happen at the top level of an array
-    array->offset = start;
-    array->length = end - start;
-    if (array->null_count != 0) {
-      array->null_count =
-        array->length -
-        ArrowBitCountSet(ArrowArrayValidityBitmap(array)->buffer.data, start, end - start);
-    }
-  };
-
-  if (arr->n_children == 0) {
-    op(arr);
-    return;
-  }
-
-  // since we want to simulate a sliced table where the children are sliced,
-  // we slice each individual child of the record batch
-  arr->length = end - start;
-  for (int64_t i = 0; i < arr->n_children; ++i) {
-    op(arr->children[i]);
-  }
 }
 
 TEST_F(FromArrowHostDeviceTest, StringViewType)

@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column.hpp>
+#include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -14,6 +15,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
+#include <rmm/device_scalar.hpp>
 
 #include <cuda/stream>
 
@@ -29,6 +31,22 @@ static rmm::device_buffer make_string_device_buffer(std::string_view string,
   auto host_data = cudf::detail::make_pinned_vector<char>(string.size(), stream);
   std::copy(string.begin(), string.end(), host_data.begin());
   return rmm::device_buffer(host_data.data(), host_data.size(), stream, mr);
+}
+
+template <typename ScalarType>
+ScalarType const& expect_scalar_type(scalar const& data, data_type expected)
+{
+  CUDF_EXPECTS(data.type() == expected, "Input scalar type does not match.", cudf::data_type_error);
+  return static_cast<ScalarType const&>(data);
+}
+
+template <typename T>
+fixed_point_scalar<T> const& expect_fixed_point_scalar_type(scalar const& data)
+{
+  CUDF_EXPECTS(data.type().id() == type_to_id<T>(),
+               "Input scalar type does not match.",
+               cudf::data_type_error);
+  return static_cast<fixed_point_scalar<T> const&>(data);
 }
 
 scalar::scalar(data_type type,
@@ -74,6 +92,13 @@ string_scalar::string_scalar(string_scalar const& other,
                              cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
   : scalar(other, stream, mr), _data(other._data, stream, mr)
+{
+}
+
+string_scalar::string_scalar(scalar const& data,
+                             cuda::stream_ref stream,
+                             rmm::device_async_resource_ref mr)
+  : string_scalar(expect_scalar_type<string_scalar>(data, data_type{type_id::STRING}), stream, mr)
 {
 }
 
@@ -151,6 +176,14 @@ fixed_point_scalar<T>::fixed_point_scalar(T value,
 }
 
 template <typename T>
+fixed_point_scalar<T>::fixed_point_scalar(scalar const& data,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr)
+  : fixed_point_scalar(expect_fixed_point_scalar_type<T>(data), stream, mr)
+{
+}
+
+template <typename T>
 fixed_point_scalar<T>::fixed_point_scalar(rmm::device_scalar<rep_type>&& data,
                                           numeric::scale_type scale,
                                           bool is_valid,
@@ -218,11 +251,11 @@ fixed_width_scalar<T>::fixed_width_scalar(T value,
 }
 
 template <typename T>
-fixed_width_scalar<T>::fixed_width_scalar(rmm::device_scalar<T>&& data,
+fixed_width_scalar<T>::fixed_width_scalar(cudf::detail::device_scalar<T>&& data,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
-  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr), _data{data.value(stream), stream, mr}
+  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr), _data{std::move(data)}
 {
 }
 
@@ -302,11 +335,20 @@ numeric_scalar<T>::numeric_scalar(T value,
 }
 
 template <typename T>
+numeric_scalar<T>::numeric_scalar(scalar const& data,
+                                  cuda::stream_ref stream,
+                                  rmm::device_async_resource_ref mr)
+  : numeric_scalar(
+      expect_scalar_type<numeric_scalar<T>>(data, data_type{type_to_id<T>()}), stream, mr)
+{
+}
+
+template <typename T>
 numeric_scalar<T>::numeric_scalar(rmm::device_scalar<T>&& data,
                                   bool is_valid,
                                   cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
-  : detail::fixed_width_scalar<T>(std::forward<rmm::device_scalar<T>>(data), is_valid, stream, mr)
+  : detail::fixed_width_scalar<T>(data.value(stream), is_valid, stream, mr)
 {
 }
 
@@ -349,11 +391,20 @@ chrono_scalar<T>::chrono_scalar(T value,
 }
 
 template <typename T>
+chrono_scalar<T>::chrono_scalar(scalar const& data,
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref mr)
+  : chrono_scalar(
+      expect_scalar_type<chrono_scalar<T>>(data, data_type{type_to_id<T>()}), stream, mr)
+{
+}
+
+template <typename T>
 chrono_scalar<T>::chrono_scalar(rmm::device_scalar<T>&& data,
                                 bool is_valid,
                                 cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
-  : detail::fixed_width_scalar<T>(std::forward<rmm::device_scalar<T>>(data), is_valid, stream, mr)
+  : detail::fixed_width_scalar<T>(data.value(stream), is_valid, stream, mr)
 {
 }
 

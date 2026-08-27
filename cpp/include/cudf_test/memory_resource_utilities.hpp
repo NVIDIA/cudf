@@ -118,16 +118,28 @@ class memory_resource_test_harness {
   /** @brief Synchronize `stream` before leaving a failing-resource API scope. */
   void synchronize(cuda::stream_ref stream = cudf::test::get_default_stream()) const;
 
-  /** @brief Assert that output allocations are live after synchronizing `stream`. */
-  void expect_output_allocations_live(
+  /**
+   * @brief Assert that output allocations are live after synchronizing `stream`.
+   *
+   * @return Output-resource byte counters after the assertion
+   */
+  rmm::mr::statistics_resource_adaptor::counter expect_output_allocations_live(
     cuda::stream_ref stream = cudf::test::get_default_stream()) const;
 
-  /** @brief Assert that temporary allocations were made after synchronizing `stream`. */
-  void expect_temporary_allocation_activity(
+  /**
+   * @brief Assert that temporary allocations were made after synchronizing `stream`.
+   *
+   * @return Temporary-resource byte counters after the assertion
+   */
+  rmm::mr::statistics_resource_adaptor::counter expect_temporary_allocation_activity(
     cuda::stream_ref stream = cudf::test::get_default_stream()) const;
 
-  /** @brief Assert that no temporary allocations remain live after synchronizing `stream`. */
-  void expect_temporary_allocations_released(
+  /**
+   * @brief Assert that no temporary allocations remain live after synchronizing `stream`.
+   *
+   * @return Temporary-resource byte counters after the assertion
+   */
+  rmm::mr::statistics_resource_adaptor::counter expect_temporary_allocations_released(
     cuda::stream_ref stream = cudf::test::get_default_stream()) const;
 
   /**

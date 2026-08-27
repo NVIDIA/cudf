@@ -14,6 +14,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_view.hpp>
@@ -24,10 +25,10 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
@@ -51,7 +52,7 @@ struct dispatch_from_arrow_device {
                               ArrowArray const*,
                               data_type,
                               bool,
-                              rmm::cuda_stream_view,
+                              cuda::stream_ref,
                               rmm::device_async_resource_ref)
   {
     CUDF_FAIL("Unsupported type in from_arrow_device", cudf::data_type_error);
@@ -62,7 +63,7 @@ struct dispatch_from_arrow_device {
                               ArrowArray const* input,
                               data_type type,
                               bool skip_mask,
-                              rmm::cuda_stream_view,
+                              cuda::stream_ref,
                               rmm::device_async_resource_ref mr)
   {
     size_type const num_rows   = input->length;
@@ -84,7 +85,7 @@ dispatch_tuple_t get_column(ArrowSchemaView* schema,
                             ArrowArray const* input,
                             data_type type,
                             bool skip_mask,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 template <>
@@ -92,7 +93,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<bool>(ArrowSchemaView* s
                                                               ArrowArray const* input,
                                                               data_type type,
                                                               bool skip_mask,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   if (input->length == 0) {
@@ -155,7 +156,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
   ArrowArray const* input,
   data_type type,
   bool skip_mask,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto null_mask = skip_mask
@@ -197,7 +198,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
     // gather strings into output column
     auto out_col = cudf::make_strings_column(d_indices, stream, mr);
     owned.emplace_back(std::move(out_col));
-    stream.synchronize();
+    cudf::detail::sync_stream(stream);
     return std::make_tuple<column_view, owned_columns_t>(owned.front()->view(), std::move(owned));
   }
 
@@ -222,7 +223,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::dictionary32>(
   ArrowArray const* input,
   data_type type,
   bool skip_mask,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   ArrowSchemaView keys_schema_view;
@@ -271,7 +272,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::struct_view>(
   ArrowArray const* input,
   data_type type,
   bool skip_mask,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   std::vector<column_view> children;
@@ -316,7 +317,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
   ArrowArray const* input,
   data_type type,
   bool skip_mask,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(schema->type != NANOARROW_TYPE_LARGE_LIST,
@@ -394,7 +395,7 @@ dispatch_tuple_t get_column(ArrowSchemaView* schema,
                             ArrowArray const* input,
                             data_type type,
                             bool skip_mask,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -417,7 +418,7 @@ dispatch_tuple_t get_column(ArrowSchemaView* schema,
 
 unique_table_view_t from_arrow_device(ArrowSchema const* schema,
                                       ArrowDeviceArray const* input,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(schema != nullptr && input != nullptr,
@@ -436,7 +437,7 @@ unique_table_view_t from_arrow_device(ArrowSchema const* schema,
 
   if (input->sync_event != nullptr) {
     CUDF_CUDA_TRY(
-      cudaStreamWaitEvent(stream.value(), *reinterpret_cast<cudaEvent_t*>(input->sync_event)));
+      cudaStreamWaitEvent(stream.get(), *reinterpret_cast<cudaEvent_t*>(input->sync_event)));
   }
 
   std::vector<column_view> columns;
@@ -484,7 +485,7 @@ unique_table_view_t from_arrow_device(ArrowSchema const* schema,
 
 unique_column_view_t from_arrow_device_column(ArrowSchema const* schema,
                                               ArrowDeviceArray const* input,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(schema != nullptr && input != nullptr,
@@ -503,7 +504,7 @@ unique_column_view_t from_arrow_device_column(ArrowSchema const* schema,
 
   if (input->sync_event != nullptr) {
     CUDF_CUDA_TRY(
-      cudaStreamWaitEvent(stream.value(), *reinterpret_cast<cudaEvent_t*>(input->sync_event)));
+      cudaStreamWaitEvent(stream.get(), *reinterpret_cast<cudaEvent_t*>(input->sync_event)));
   }
 
   auto type             = arrow_to_cudf_type(&view);
@@ -516,7 +517,7 @@ unique_column_view_t from_arrow_device_column(ArrowSchema const* schema,
 
 unique_table_view_t from_arrow_device(ArrowSchema const* schema,
                                       ArrowDeviceArray const* input,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -526,7 +527,7 @@ unique_table_view_t from_arrow_device(ArrowSchema const* schema,
 
 unique_column_view_t from_arrow_device_column(ArrowSchema const* schema,
                                               ArrowDeviceArray const* input,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

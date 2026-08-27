@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -240,16 +242,40 @@ std::vector<double> make_compressed_test_values(cudf::size_type group, cudf::siz
   return values;
 }
 
-double exact_host_quantile(std::vector<double> values, double percentile)
+double exact_host_quantile(std::vector<double> const& sorted_values, double percentile)
 {
-  std::sort(values.begin(), values.end());
-  auto const rank       = percentile * static_cast<double>(values.size() - 1);
+  auto const rank       = percentile * static_cast<double>(sorted_values.size() - 1);
   auto const lower_rank = static_cast<std::size_t>(std::floor(rank));
   auto const upper_rank = static_cast<std::size_t>(std::ceil(rank));
-  if (lower_rank == upper_rank) { return values[lower_rank]; }
+  if (lower_rank == upper_rank) { return sorted_values[lower_rank]; }
 
   auto const weight = rank - static_cast<double>(lower_rank);
-  return values[lower_rank] + (values[upper_rank] - values[lower_rank]) * weight;
+  return sorted_values[lower_rank] +
+         (sorted_values[upper_rank] - sorted_values[lower_rank]) * weight;
+}
+
+std::pair<double, double> empirical_rank_interval(std::vector<double> const& sorted_values,
+                                                  double value)
+{
+  auto const denominator = static_cast<double>(sorted_values.size() - 1);
+  auto const first       = std::lower_bound(sorted_values.begin(), sorted_values.end(), value);
+
+  if (first != sorted_values.end() && *first == value) {
+    auto const last = std::upper_bound(first, sorted_values.end(), value);
+    return {static_cast<double>(std::distance(sorted_values.begin(), first)) / denominator,
+            static_cast<double>(std::distance(sorted_values.begin(), last) - 1) / denominator};
+  }
+
+  if (first == sorted_values.begin()) { return {0.0, 0.0}; }
+  if (first == sorted_values.end()) { return {1.0, 1.0}; }
+
+  auto const upper_index = static_cast<std::size_t>(std::distance(sorted_values.begin(), first));
+  auto const lower_index = upper_index - 1;
+  auto const lower_value = sorted_values[lower_index];
+  auto const upper_value = sorted_values[upper_index];
+  auto const fraction    = (value - lower_value) / (upper_value - lower_value);
+  auto const rank        = (static_cast<double>(lower_index) + fraction) / denominator;
+  return {rank, rank};
 }
 
 std::vector<std::vector<double>> lists_column_to_host(cudf::column_view const& column)
@@ -267,19 +293,24 @@ std::vector<std::vector<double>> lists_column_to_host(cudf::column_view const& c
 
 void expect_approx_percentiles_near_exact(std::vector<double> const& values,
                                           std::vector<double> const& percentiles,
-                                          std::vector<double> const& actual)
+                                          std::vector<double> const& actual,
+                                          double max_rank_error)
 {
   ASSERT_EQ(actual.size(), percentiles.size());
 
-  auto const [minimum, maximum] = std::minmax_element(values.begin(), values.end());
-  auto const value_tolerance    = (*maximum - *minimum) * 0.08;
-  // The low centroid count intentionally compresses thousands of rows. This bound is loose enough
-  // for both centroid clustering implementations but still catches gross percentile indexing,
-  // interpolation, or weighting regressions against an independent host quantile oracle.
+  auto sorted_values = values;
+  std::sort(sorted_values.begin(), sorted_values.end());
   for (std::size_t idx = 0; idx < percentiles.size(); ++idx) {
-    auto const exact = exact_host_quantile(values, percentiles[idx]);
-    EXPECT_NEAR(actual[idx], exact, value_tolerance)
-      << "percentile=" << percentiles[idx] << " exact=" << exact << " actual=" << actual[idx];
+    ASSERT_TRUE(std::isfinite(actual[idx]));
+
+    auto const [rank_low, rank_high] = empirical_rank_interval(sorted_values, actual[idx]);
+    auto const nearest_rank          = std::clamp(percentiles[idx], rank_low, rank_high);
+    auto const rank_error            = std::abs(percentiles[idx] - nearest_rank);
+    auto const exact                 = exact_host_quantile(sorted_values, percentiles[idx]);
+
+    EXPECT_LE(rank_error, max_rank_error)
+      << "percentile=" << percentiles[idx] << " actual_rank=[" << rank_low << ", " << rank_high
+      << "] exact_value=" << exact << " actual_value=" << actual[idx];
   }
 }
 
@@ -567,6 +598,8 @@ TEST_F(PercentileApproxTest, CompressedTdigestsAgainstHostQuantiles)
 {
   auto const max_centroids  = 20;
   auto const rows_per_group = 4096;
+  // Regression budget validated for max_centroids=20 with both clustering paths.
+  auto const max_rank_error = 0.025;
   auto const percentiles    = std::vector<double>{0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99};
   auto const percentiles_column =
     cudf::test::fixed_width_column_wrapper<double>(percentiles.begin(), percentiles.end());
@@ -594,7 +627,7 @@ TEST_F(PercentileApproxTest, CompressedTdigestsAgainstHostQuantiles)
 
       auto const actual = lists_column_to_host(result->view());
       ASSERT_EQ(actual.size(), 1);
-      expect_approx_percentiles_near_exact(values, percentiles, actual.front());
+      expect_approx_percentiles_near_exact(values, percentiles, actual.front(), max_rank_error);
     }
 
     std::vector<int32_t> keys;
@@ -636,7 +669,8 @@ TEST_F(PercentileApproxTest, CompressedTdigestsAgainstHostQuantiles)
       ASSERT_LT(key, static_cast<int32_t>(group_values.size()));
       ASSERT_FALSE(saw_group[key]);
       saw_group[key] = true;
-      expect_approx_percentiles_near_exact(group_values[key], percentiles, actual[row]);
+      expect_approx_percentiles_near_exact(
+        group_values[key], percentiles, actual[row], max_rank_error);
     }
     EXPECT_TRUE(std::all_of(
       saw_group.cbegin(), saw_group.cend(), [](bool const was_seen) { return was_seen; }));

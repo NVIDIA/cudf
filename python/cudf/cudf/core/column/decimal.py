@@ -162,7 +162,7 @@ class DecimalColumn(NumericalBaseColumn):
             )
 
     # Decimals in libcudf don't support truediv, see
-    # https://github.com/rapidsai/cudf/pull/7435 for explanation.
+    # https://github.com/NVIDIA/cudf/pull/7435 for explanation.
     def __truediv__(self, other: ColumnBinaryOperand) -> ColumnBase:
         return self._binaryop(other, "__div__")
 
@@ -177,7 +177,10 @@ class DecimalColumn(NumericalBaseColumn):
             if not isinstance(other, NumericalBaseColumn):
                 return NotImplemented
             elif other.dtype.kind == "f":
-                return self.astype(other.dtype)._binaryop(other, op)
+                casted = self.astype(other.dtype)
+                if reflect:
+                    return other._binaryop(casted, op)
+                return casted._binaryop(other, op)
             elif other.dtype.kind == "b":
                 raise TypeError(
                     "Decimal columns only support binary operations with "
@@ -205,7 +208,11 @@ class DecimalColumn(NumericalBaseColumn):
                 )
             other_cudf_dtype = self.dtype._from_decimal(Decimal(other))  # type: ignore[union-attr]
         elif isinstance(other, float):
-            return self._binaryop(as_column(other, length=len(self)), op)
+            other_col = as_column(other, length=len(self))
+            casted = self.astype(other_col.dtype)
+            if reflect:
+                return other_col._binaryop(casted, op)
+            return casted._binaryop(other_col, op)
         elif is_na_like(other):
             other = pa.scalar(None, type=cudf_dtype_to_pa_type(self.dtype))
             other_cudf_dtype = self.dtype

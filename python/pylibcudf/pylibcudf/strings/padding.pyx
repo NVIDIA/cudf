@@ -9,6 +9,10 @@ from pylibcudf.libcudf.strings cimport padding as cpp_padding
 from pylibcudf.libcudf.strings.side_type cimport side_type
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -20,7 +24,7 @@ cpdef Column pad(
     size_type width,
     side_type side,
     str fill_char,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -65,7 +69,7 @@ cpdef Column pad(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column zfill(
-    Column input, size_type width, object stream=None, DeviceMemoryResource mr=None
+    Column input, size_type width, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Add '0' as padding to the left of each string.
@@ -102,7 +106,7 @@ cpdef Column zfill(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column zfill_by_widths(
-    Column input, Column widths, object stream=None, DeviceMemoryResource mr=None
+    Column input, Column widths, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Add '0' as padding to the left of each string.

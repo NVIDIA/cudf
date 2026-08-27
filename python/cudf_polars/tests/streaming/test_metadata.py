@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import polars as pl
@@ -23,17 +25,30 @@ from cudf_streaming.table_chunk import TableChunk
 from cudf_polars import Translator
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.ir import GroupBy, HStack, Projection, Select, Sort
+from cudf_polars.dsl.ir import (
+    DataFrameScan,
+    GroupBy,
+    HStack,
+    IRExecutionContext,
+    MapFunction,
+    Projection,
+    Select,
+    Sort,
+)
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.collectives.sort import (
     _sort_to_order_keys,
 )
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
+from cudf_polars.streaming.actor_graph.hint_sorted import extract_hint_sorted_metadata
 from cudf_polars.streaming.actor_graph.utils import (
     NormalizedPartitioning,
+    _apply_ordering_metadata,
+    _leading_order_keys,
     maybe_remap_partitioning,
 )
 from cudf_polars.utils.config import ConfigOptions
+from cudf_polars.utils.dtypes import make_empty_column
 
 
 @pytest.fixture(scope="module")
@@ -83,7 +98,7 @@ def test_rapidsmpf_join_metadata(
     # ``self._handle`` across worker/actor processes, so the
     # ``metadata_collector`` round-trip fails on Dask and Ray.
     #
-    # When https://github.com/rapidsai/cudf/pull/22394 lands, dedup of
+    # When https://github.com/NVIDIA/cudf/pull/22394 lands, dedup of
     # replicated outputs moves to the Dask/Ray frontends and the
     # ``duplicated`` flag's semantics change to "every rank holds the
     # data". Revisit the ``len(metadata_collector) == 1`` and
@@ -255,7 +270,7 @@ def test_get_partitioning_moduli(partitioning, key_indices, nranks, expected) ->
             4,
             NormalizedPartitioning(None, None),
         ),
-        # Resolves https://github.com/rapidsai/cudf/issues/21742
+        # Resolves https://github.com/NVIDIA/cudf/issues/21742
         (
             Partitioning(inter_rank=HashScheme((0,), 8), local="inherit"),
             (1,),
@@ -508,6 +523,131 @@ def _make_order_scheme(context, *, key_indices=(0,), values=(100, 200), strict=F
     )
 
 
+def _hint_sorted_ir() -> MapFunction:
+    schema = {"a": DataType(pl.Int64()), "b": DataType(pl.Int64())}
+    child = DataFrameScan(schema, pl.DataFrame({"a": [1], "b": [2]})._df, None)
+    return MapFunction(schema, "hint_sorted", [[("a", False, False)]], child)
+
+
+async def _extract_hint_sorted_metadata(spmd_engine, metadata: ChannelMetadata):
+    context = spmd_engine.context
+    ch_in = context.create_channel()
+    ch_replay = context.create_channel()
+    result = await extract_hint_sorted_metadata(
+        context,
+        spmd_engine.comm,
+        _hint_sorted_ir(),
+        IRExecutionContext(),
+        metadata,
+        ch_in,
+        ch_replay,
+    )
+    return (*result, ch_in, ch_replay)
+
+
+def test_hint_sorted_metadata_attaches_single_partition_ordering(spmd_engine) -> None:
+    metadata = ChannelMetadata(local_count=1)
+
+    result, ch_forward, ch_in, ch_replay = asyncio.run(
+        _extract_hint_sorted_metadata(spmd_engine, metadata)
+    )
+
+    assert result.partitioning is not None
+    assert isinstance(result.partitioning.inter_rank, OrderScheme)
+    (ordering,) = result.partitioning.inter_rank.orderings
+    assert list(ordering.keys) == [
+        OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)
+    ]
+    assert ordering.strict_boundaries is True
+    assert ch_forward is ch_in
+    assert ch_forward is not ch_replay
+
+
+def test_hint_sorted_metadata_ignores_multi_partition_without_boundaries(
+    spmd_engine,
+) -> None:
+    metadata = ChannelMetadata(local_count=2)
+
+    result, ch_forward, ch_in, ch_replay = asyncio.run(
+        _extract_hint_sorted_metadata(spmd_engine, metadata)
+    )
+
+    assert result is metadata
+    assert ch_forward is ch_in
+    assert ch_forward is not ch_replay
+
+
+def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"a": [1, 1, 2], "b": [2, 1, 3]}), stream)
+    scheme = _make_order_scheme(spmd_engine.context, key_indices=(0, 1))
+    metadata = ChannelMetadata(
+        local_count=1,
+        partitioning=Partitioning(scheme, local="inherit"),
+    )
+
+    result = _apply_ordering_metadata(df, _leading_order_keys(metadata))
+
+    assert result.column_map["a"].is_sorted == plc.types.Sorted.YES
+    assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
+
+
+def test_apply_ordering_metadata_ignores_inter_rank_ordering_if_local_hash(
+    spmd_engine,
+) -> None:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"a": [2, 1, 3]}), stream)
+    scheme = _make_order_scheme(spmd_engine.context, key_indices=(0,))
+    metadata = ChannelMetadata(
+        local_count=1,
+        partitioning=Partitioning(
+            inter_rank=scheme,
+            local=HashScheme((0,), 1),
+        ),
+    )
+
+    result = _apply_ordering_metadata(df, _leading_order_keys(metadata))
+
+    assert result.column_map["a"].is_sorted == plc.types.Sorted.NO
+
+
+def test_apply_ordering_metadata_skips_conflicting_keys(spmd_engine) -> None:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"a": [1, 2, 3]}), stream)
+    before = plc.types.NullOrder.BEFORE
+
+    def empty_boundaries() -> TableChunk:
+        return TableChunk.from_pylibcudf_table(
+            plc.Table([make_empty_column(DataType(pl.Int64()), stream)]),
+            stream,
+            exclusive_view=False,
+            br=spmd_engine.context.br(),
+        )
+
+    scheme = OrderScheme(
+        [
+            Ordering(
+                [OrderKey(0, plc.types.Order.ASCENDING, before)],
+                empty_boundaries(),
+                strict_boundaries=True,
+            ),
+            Ordering(
+                [OrderKey(0, plc.types.Order.DESCENDING, before)],
+                empty_boundaries(),
+                strict_boundaries=True,
+            ),
+        ]
+    )
+    metadata = ChannelMetadata(
+        local_count=1,
+        partitioning=Partitioning(scheme, local="inherit"),
+    )
+
+    result = _apply_ordering_metadata(df, _leading_order_keys(metadata))
+
+    assert result.column_map["a"].is_sorted == plc.types.Sorted.NO
+
+
 @pytest.mark.parametrize(
     "keys,strict,should_match",
     [
@@ -547,8 +687,21 @@ def test_is_strictly_partitioned_order_scheme(spmd_engine):
     strict = _make_order_scheme(spmd_engine.context, strict=True)
     non_strict = _make_order_scheme(spmd_engine.context, strict=False)
     assert NormalizedPartitioning(strict, "inherit").is_strictly_partitioned()
+    assert not NormalizedPartitioning(strict, "inherit").is_strictly_partitioned(
+        level="local"
+    )
     assert not NormalizedPartitioning(non_strict, "inherit").is_strictly_partitioned()
     assert not NormalizedPartitioning(strict, non_strict).is_strictly_partitioned()
+    assert NormalizedPartitioning(strict, non_strict).is_strictly_partitioned(
+        level="inter_rank"
+    )
+    assert (
+        NormalizedPartitioning(strict, non_strict).is_strictly_partitioned(
+            level="local"
+        )
+        is False
+    )
+    assert NormalizedPartitioning(strict, strict).is_strictly_partitioned(level="local")
 
 
 def test_is_aligned_with_order_scheme(spmd_engine):
@@ -898,15 +1051,15 @@ def test_sort_output_metadata(spmd_engine_factory, by, descending, nulls_last) -
 
 
 @pytest.mark.parametrize(
-    "scheme_key_count,strict,expected",
+    "scheme_key_count,strict_boundaries,expected",
     [
-        (1, True, True),  # prefix match + strict → skip
-        (1, False, False),  # prefix match + non-strict → no skip
-        (2, True, True),  # exact match + strict → skip
-        (2, False, True),  # exact match + non-strict → skip (strict irrelevant)
+        (1, True, True),  # prefix match + strict → sorted
+        (1, False, False),  # prefix match + non-strict → not sorted
+        (2, True, True),  # exact match + strict → sorted
+        (2, False, True),  # exact match + non-strict → sorted
     ],
 )
-def test_is_strictly_sorted(spmd_engine, scheme_key_count, strict, expected) -> None:
+def test_is_ordered(spmd_engine, scheme_key_count, strict_boundaries, expected) -> None:
     df_lf = pl.LazyFrame({"x": list(range(5)), "y": list(range(5))})
     base_ir = Translator(df_lf._ldf.visit(), spmd_engine).translate_ir()
     asc, before = plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
@@ -936,7 +1089,9 @@ def test_is_strictly_sorted(spmd_engine, scheme_key_count, strict, expected) -> 
         exclusive_view=False,
         br=ctx.br(),
     )
-    scheme = OrderScheme([Ordering(keys, boundary_chunk, strict_boundaries=strict)])
+    scheme = OrderScheme(
+        [Ordering(keys, boundary_chunk, strict_boundaries=strict_boundaries)]
+    )
     meta = ChannelMetadata(
         3, partitioning=Partitioning(inter_rank=scheme, local="inherit")
     )
@@ -945,4 +1100,23 @@ def test_is_strictly_sorted(spmd_engine, scheme_key_count, strict, expected) -> 
     partitioning = NormalizedPartitioning.from_keys(
         meta.partitioning, nranks=1, keys=order_keys
     )
-    assert partitioning.is_strictly_sorted(order_keys) is expected
+    assert partitioning.is_ordered(order_keys) is expected
+    assert partitioning.is_ordered(order_keys, level="flat") is expected
+    assert not partitioning.is_ordered(order_keys, level="local")
+
+    nested = NormalizedPartitioning(scheme, scheme)
+    assert not nested.is_ordered(order_keys)
+    assert nested.is_ordered(order_keys, level="inter_rank") is expected
+    assert nested.is_ordered(order_keys, level="local") is expected
+
+    if scheme_key_count == 2:
+        desc, after = plc.types.Order.DESCENDING, plc.types.NullOrder.AFTER
+        mismatched_order_keys = [
+            (OrderKey(1, asc, before), OrderKey(0, asc, before)),
+            (OrderKey(0, desc, before), OrderKey(1, asc, before)),
+            (OrderKey(0, asc, after), OrderKey(1, asc, before)),
+        ]
+        for mismatched_keys in mismatched_order_keys:
+            assert not partitioning.is_ordered(mismatched_keys)
+            assert not nested.is_ordered(mismatched_keys, level="inter_rank")
+            assert not nested.is_ordered(mismatched_keys, level="local")

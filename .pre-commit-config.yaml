@@ -34,9 +34,10 @@ repos:
           )
       - id: check-xml
   - repo: https://github.com/MarcoGorelli/cython-lint
-    rev: v0.21.0
+    rev: v0.21.1
     hooks:
       - id: cython-lint
+        additional_dependencies: ["cython>=3.2.2,<3.3.0a0"]
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: 'v2.3.0'
     hooks:
@@ -45,7 +46,7 @@ repos:
           "polars>=1.35,<1.43",
           "numpy>=1.26",
           "pyarrow-stubs>=19.0",
-          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/rapidsai/cudf/issues/22229
+          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
           "pytest>=8.0.0,<9.1.0",
           "types-cachetools>=5.5.0",
           "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'",
@@ -112,6 +113,12 @@ repos:
         entry: 'rmm::exec_policy\('
         language: pygrep
         types_or: [c, c++, cuda]
+      - id: use-cuda-iterators
+        name: use-cuda-iterators
+        description: 'Enforce that CUDA iterators are used instead of equivalent Thrust iterators'
+        entry: 'thrust::(?:make_)?(?:constant|counting|discard|permutation|reverse|strided|tabulate_output|transform|transform_input_output|transform_output|zip)_iterator'
+        language: pygrep
+        types_or: [c, c++, cuda]
       - id: exec-policy-nosync-memory-resource
         name: exec-policy-nosync-memory-resource
         description: 'Enforce that rmm::exec_policy_nosync is always passed a memory resource as its second argument'
@@ -119,6 +126,12 @@ repos:
         language: pygrep
         types_or: [c, c++, cuda]
         files: '^cpp/(src|include)/'
+      - id: use-cuda-memcpy-default
+        name: use-cuda-memcpy-default
+        description: 'Enforce that cudaMemcpyDefault is used instead of explicit host/device cudaMemcpyKind policies'
+        entry: '\bcudaMemcpy(?:HostToHost|HostToDevice|DeviceToHost|DeviceToDevice)\b'
+        language: pygrep
+        types_or: [c, c++, cuda, cython]
       - id: use-cudf-memcpy-async
         name: use-cudf-memcpy-async
         description: 'Enforce that cudf::detail::memcpy_async or memcpy_batch_async is used instead of cudaMemcpyAsync (see developer guide)'
@@ -222,6 +235,11 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+  - repo: https://github.com/numpy/numpydoc
+    rev: v1.10.0
+    hooks:
+      - id: numpydoc-validation
+        files: ^python/cudf/cudf/
   - repo: https://github.com/rapidsai/pre-commit-hooks
     rev: v1.6.0
     hooks:
@@ -301,7 +319,7 @@ repos:
           )
       - id: verify-alpha-spec
       - id: verify-codeowners
-        args: [--fix, --project-prefix=cudf]
+        args: [--fix, --org=NVIDIA, --project-prefix=cudf]
       - id: verify-hardcoded-version
         exclude: |
           (?x)
@@ -322,7 +340,7 @@ repos:
           (?x)
             ^pyproject[.]toml$
   - repo: https://github.com/rapidsai/dependency-file-generator
-    rev: v1.21.0
+    rev: v1.22.0
     hooks:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]

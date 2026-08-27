@@ -36,6 +36,22 @@ using text::byte_range_info;
 
 namespace {
 
+// Construct a vector of FileMetaData from the input footer bytes
+[[nodiscard]] std::vector<FileMetaData> parquet_metadatas_from_footer_bytes(
+  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes)
+{
+  std::vector<FileMetaData> parquet_metadatas;
+  parquet_metadatas.reserve(footer_bytes.size());
+  std::transform(footer_bytes.begin(),
+                 footer_bytes.end(),
+                 std::back_inserter(parquet_metadatas),
+                 [](auto const& footer_bytes) {
+                   metadata parsed_metadata{footer_bytes};
+                   return FileMetaData{std::move(parsed_metadata)};
+                 });
+  return parquet_metadatas;
+}
+
 // Construct a vector of all row group indices from the input vectors
 [[nodiscard]] auto all_row_group_indices(
   std::span<std::vector<cudf::size_type> const> row_group_indices)
@@ -116,63 +132,25 @@ aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(host_span<std::unique_ptr<datasource> const>{}, false, false)
+  : aggregate_reader_metadata_base(parquet_metadatas_from_footer_bytes(footer_bytes),
+                                   use_arrow_schema,
+                                   has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(not footer_bytes.empty(), "At least one source must be provided");
-  per_file_metadata.reserve(footer_bytes.size());
-  std::transform(footer_bytes.begin(),
-                 footer_bytes.end(),
-                 std::back_inserter(per_file_metadata),
-                 [](auto const& fb) { return metadata{fb}; });
-  initialize_internals(use_arrow_schema, has_cols_from_mismatched_srcs);
+  CUDF_EXPECTS(
+    not footer_bytes.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<FileMetaData const> parquet_metadatas,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(host_span<std::unique_ptr<datasource> const>{}, false, false)
+  : aggregate_reader_metadata_base(
+      std::vector<FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
+      use_arrow_schema,
+      has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(not parquet_metadatas.empty(), "At least one source must be provided");
-  per_file_metadata.reserve(parquet_metadatas.size());
-  // Just copy over the FileMetaData structs to the internal metadata structs
-  std::transform(parquet_metadatas.begin(),
-                 parquet_metadatas.end(),
-                 std::back_inserter(per_file_metadata),
-                 [](auto const& parquet_metadata) { return metadata{parquet_metadata}; });
-  initialize_internals(use_arrow_schema, has_cols_from_mismatched_srcs);
-}
-
-void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
-                                                     bool has_cols_from_mismatched_srcs)
-{
-  keyval_maps     = collect_keyval_metadata();
-  schema_idx_maps = init_schema_idx_maps(has_cols_from_mismatched_srcs);
-  num_rows        = calc_num_rows();
-  num_row_groups  = calc_num_row_groups();
-
-  // Force all non-nullable (REQUIRED) columns to be nullable without modifying REPEATED columns to
-  // preserve list structures
-  std::for_each(per_file_metadata.begin(), per_file_metadata.end(), [](auto& pfm) {
-    auto& schema = pfm.schema;
-    std::for_each(schema.begin() + 1, schema.end(), [](auto& col) {
-      // TODO: Store information of whichever column schema we modified here and restore it to
-      // `REQUIRED` if we end up not pruning any pages out of it
-      if (col.repetition_type == FieldRepetitionType::REQUIRED) {
-        col.repetition_type = FieldRepetitionType::OPTIONAL;
-      }
-    });
-  });
-
-  // Collect and apply arrow:schema from Parquet's key value metadata section
-  if (use_arrow_schema) {
-    apply_arrow_schema();
-
-    // Erase ARROW_SCHEMA_KEY from the output pfm if exists
-    std::for_each(keyval_maps.begin(), keyval_maps.end(), [](auto& pfm) {
-      pfm.erase(cudf::io::parquet::detail::ARROW_SCHEMA_KEY);
-    });
-  }
+  CUDF_EXPECTS(
+    not parquet_metadatas.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ranges() const
@@ -325,7 +303,7 @@ std::size_t aggregate_reader_metadata::total_rows_in_row_groups(
 
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -421,7 +399,7 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -439,7 +417,8 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
   return stats_filtered_row_group_indices.value_or(all_row_group_indices(row_group_indices));
 }
 
-std::vector<byte_range_info> aggregate_reader_metadata::get_bloom_filter_bytes(
+std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::span<std::vector<cudf::size_type> const> row_group_indices,
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
@@ -463,7 +442,7 @@ std::vector<byte_range_info> aggregate_reader_metadata::get_bloom_filter_bytes(
                   std::back_inserter(bloom_filter_col_schemas),
                   [](auto& bloom_filter_literals) { return not bloom_filter_literals.empty(); });
 
-  // No equality literals found, return empty vector
+  // No equality literals found, return empty pair
   if (bloom_filter_col_schemas.empty()) { return {}; }
 
   // Compute total number of input row groups
@@ -476,36 +455,42 @@ std::vector<byte_range_info> aggregate_reader_metadata::get_bloom_filter_bytes(
   std::vector<byte_range_info> bloom_filter_bytes;
   bloom_filter_bytes.reserve(num_chunks);
 
+  // Parallel map identifying the source each emitted byte range must be fetched from
+  std::vector<cudf::size_type> bloom_filter_source_map;
+  bloom_filter_source_map.reserve(num_chunks);
+
   // Flag to check if we have at least one valid bloom filter offset
   auto have_bloom_filters = false;
 
   // For all sources
-  std::for_each(cuda::counting_iterator<std::size_t>{0},
-                cuda::counting_iterator{row_group_indices.size()},
-                [&](auto const src_index) {
-                  // Get all row group indices in the data source
-                  auto const& rg_indices = row_group_indices[src_index];
-                  // For all row groups
-                  std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
-                    // For all column chunks
-                    std::for_each(
-                      bloom_filter_col_schemas.begin(),
-                      bloom_filter_col_schemas.end(),
-                      [&](auto const schema_idx) {
-                        auto& col_meta = get_column_metadata(rg_index, src_index, schema_idx);
-                        // Get bloom filter offsets and sizes
-                        bloom_filter_bytes.emplace_back(col_meta.bloom_filter_offset.value_or(0),
-                                                        col_meta.bloom_filter_length.value_or(0));
+  std::for_each(
+    cuda::counting_iterator<std::size_t>{0},
+    cuda::counting_iterator{row_group_indices.size()},
+    [&](auto const src_index) {
+      // Get all row group indices in the data source
+      auto const& rg_indices = row_group_indices[src_index];
+      // For all row groups
+      std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
+        // For all column chunks
+        std::for_each(
+          bloom_filter_col_schemas.begin(),
+          bloom_filter_col_schemas.end(),
+          [&](auto const schema_idx) {
+            auto& col_meta = get_column_metadata(rg_index, src_index, schema_idx);
+            // Get bloom filter offsets and sizes
+            bloom_filter_bytes.emplace_back(col_meta.bloom_filter_offset.value_or(0),
+                                            col_meta.bloom_filter_length.value_or(0));
+            bloom_filter_source_map.emplace_back(static_cast<cudf::size_type>(src_index));
 
-                        // Set `have_bloom_filters` if `bloom_filter_offset` is valid
-                        if (col_meta.bloom_filter_offset.has_value()) { have_bloom_filters = true; }
-                      });
-                  });
-                });
+            // Set `have_bloom_filters` if `bloom_filter_offset` is valid
+            if (col_meta.bloom_filter_offset.has_value()) { have_bloom_filters = true; }
+          });
+      });
+    });
 
   if (not have_bloom_filters) { return {}; }
 
-  return bloom_filter_bytes;
+  return {std::move(bloom_filter_bytes), std::move(bloom_filter_source_map)};
 }
 
 std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
@@ -645,7 +630,7 @@ aggregate_reader_metadata::filter_row_groups_with_dictionary_pages(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Compute total number of input row groups
   auto const total_row_groups =
@@ -673,7 +658,7 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Collect equality literals for each input table column
   auto const literals =
@@ -698,6 +683,13 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
+
+  // Ensure there is one bloom filter data span per eligible column in each row group
+  CUDF_EXPECTS(bloom_filter_data.size() ==
+                 static_cast<std::size_t>(total_row_groups) * bloom_filter_col_schemas.size(),
+               "Bloom filter data size must match the number of row groups times the number of "
+               "columns with bloom filters and an equality predicate",
+               std::invalid_argument);
 
   // Transform bloom filter data to cuda::std::byte type for apply_bloom_filters
   std::vector<cudf::device_span<cuda::std::byte const>> transformed_bloom_filter_data;
@@ -725,9 +717,10 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
 }
 
 /**
- * @brief Converts column named expression to column index reference expression
+ * @brief Converts named columns to index reference columns and pushes logical negations down to
+ * expression leaves
  */
-named_to_reference_converter::named_to_reference_converter(
+parquet_filter_normalizer::parquet_filter_normalizer(
   std::optional<std::reference_wrapper<ast::expression const>> expr,
   table_metadata const& metadata,
   std::vector<SchemaElement> const& schema_tree,
@@ -749,7 +742,7 @@ named_to_reference_converter::named_to_reference_converter(
   expr.value().get().accept(*this);
 }
 
-std::reference_wrapper<ast::expression const> named_to_reference_converter::visit(
+std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   ast::column_reference const& expr)
 {
   // Map the column index to its name

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,8 +15,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
@@ -33,7 +32,7 @@ struct tile_functor {
 namespace detail {
 std::unique_ptr<table> tile(table_view const& in,
                             size_type count,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(count >= 0, "Count cannot be negative");
@@ -52,7 +51,7 @@ std::unique_ptr<table> tile(table_view const& in,
 
 std::unique_ptr<table> tile(table_view const& in,
                             size_type count,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

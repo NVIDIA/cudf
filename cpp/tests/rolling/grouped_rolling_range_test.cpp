@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -403,9 +403,9 @@ struct GroupedRollingRangeOrderByDecimalTypedTest
   /// For scale ==  2, the rep values are: [0, 1,     2,     3,     ... 11,     12,     13]
   [[nodiscard]] column_ptr generate_order_by_column(numeric::scale_type scale) const
   {
-    auto const begin = thrust::make_transform_iterator(
-      cuda::counting_iterator<Rep>{0},
-      [&](auto i) -> Rep { return (i * 10000) / base::pow10[scale + 2]; });
+    auto const begin =
+      cuda::transform_iterator(cuda::counting_iterator<Rep>{0},
+                               [&](auto i) -> Rep { return (i * 10000) / base::pow10[scale + 2]; });
 
     return decimals_column<Rep>{begin, begin + num_rows, numeric::scale_type{scale}}.release();
   }

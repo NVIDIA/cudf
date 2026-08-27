@@ -15,17 +15,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuco/operator.hpp>
 #include <cuco/static_set_ref.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
+#include <cuda/stream>
 
 #include <memory>
 
 namespace cudf::detail {
 
-void filtered_join::insert_right_table_flat(rmm::cuda_stream_view stream)
+void filtered_join::insert_right_table_flat(cuda::stream_ref stream)
 {
   auto const comparator =
     cudf::detail::row::equality::self_comparator{_preprocessed_right}.equal_to<false>(
@@ -49,7 +48,7 @@ void filtered_join::query_right_table_flat(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto const comparator =
     cudf::detail::row::equality::two_table_comparator{_preprocessed_right, preprocessed_left}

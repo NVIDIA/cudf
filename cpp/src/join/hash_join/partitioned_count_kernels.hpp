@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,7 +7,7 @@
 
 #include "kernels_common.cuh"
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -17,6 +17,6 @@ void launch_partitioned_count(probe_key_type const* keys,
                               thread_index_type n,
                               size_type* output,
                               Ref ref,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 
 }  // namespace cudf::detail

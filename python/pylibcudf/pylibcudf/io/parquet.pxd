@@ -73,7 +73,7 @@ cdef class ParquetReaderOptionsBuilder:
     cpdef ParquetReaderOptionsBuilder use_jit_filter(self, bool use_jit_filter)
     cpdef ParquetReaderOptionsBuilder case_sensitive_names(self, bool val)
     cpdef ParquetReaderOptionsBuilder decimal_width(self, type_id width)
-    cpdef build(self)
+    cpdef ParquetReaderOptions build(self)
 
 
 cdef class ChunkedParquetReader:
@@ -85,7 +85,7 @@ cdef class ChunkedParquetReader:
     cpdef TableWithMetadata read_chunk(self, DeviceMemoryResource mr=*)
 
 
-cpdef read_parquet(
+cpdef TableWithMetadata read_parquet(
     ParquetReaderOptions options,
     object stream = *,
     DeviceMemoryResource mr=*,

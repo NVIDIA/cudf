@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_load.cuh>
@@ -34,6 +33,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/find.h>
 #include <thrust/transform.h>
@@ -296,7 +296,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
                                               std::string_view delimiter,
                                               byte_range_info byte_range,
                                               bool strip_delimiters,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -343,7 +343,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     multibyte_split_init_kernel<<<TILES_PER_CHUNK,
                                   THREADS_PER_TILE,
                                   0,
-                                  stream.value()>>>(  //
+                                  stream.get()>>>(  //
       -TILES_PER_CHUNK,
       TILES_PER_CHUNK,
       tile_multistates,
@@ -405,20 +405,20 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       multibyte_split_init_kernel<<<tiles_in_launch,
                                     THREADS_PER_TILE,
                                     0,
-                                    scan_stream.value()>>>(  //
+                                    scan_stream.get()>>>(  //
         base_tile_idx,
         tiles_in_launch,
         tile_multistates,
         tile_offsets);
 
-      CUDF_CUDA_TRY(cudaStreamWaitEvent(scan_stream.value(), last_launch_event));
+      CUDF_CUDA_TRY(cudaStreamWaitEvent(scan_stream.get(), last_launch_event));
 
       if (delimiter.size() == 1) {
         // the single-byte case allows for a much more efficient kernel, so we special-case it
         byte_split_kernel<<<tiles_in_launch,
                             THREADS_PER_TILE,
                             0,
-                            scan_stream.value()>>>(  //
+                            scan_stream.get()>>>(  //
           base_tile_idx,
           chunk_offset,
           row_offset_storage.size(),
@@ -431,7 +431,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         multibyte_split_kernel<<<tiles_in_launch,
                                  THREADS_PER_TILE,
                                  0,
-                                 scan_stream.value()>>>(  //
+                                 scan_stream.get()>>>(  //
           base_tile_idx,
           chunk_offset,
           row_offset_storage.size(),
@@ -492,7 +492,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         char_storage.advance_output(output_size, scan_stream);
       }
 
-      CUDF_CUDA_TRY(cudaEventRecord(last_launch_event, scan_stream.value()));
+      CUDF_CUDA_TRY(cudaEventRecord(last_launch_event, scan_stream.get()));
 
       std::swap(read_stream, scan_stream);
       base_tile_idx += tiles_in_launch;
@@ -571,7 +571,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source const& source,
                                               std::string_view delimiter,
                                               parse_options options,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   auto result = detail::multibyte_split(

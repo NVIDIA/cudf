@@ -15,7 +15,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -91,10 +91,10 @@ void launch_filter_gather_map_kernel(
   cudf::detail::grid_1d const& config,
   std::size_t shmem_per_block,
   bool* predicate_results,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   filter_join_indices_kernel<MAX_BLOCK_SIZE, has_nulls, has_complex_type>
-    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.value()>>>(
+    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.get()>>>(
       left_table,
       right_table,
       left_indices,

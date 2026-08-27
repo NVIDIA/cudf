@@ -14,7 +14,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <list>
 #include <optional>
@@ -88,75 +88,27 @@ enum class operator_transform : uint8_t {
  * untransformable operators are returned as is (no std::nullopt)
  */
 template <operator_transform mode>
-[[nodiscard]] inline std::optional<ast::ast_operator> transform_operator(ast::ast_operator op)
-{
-  if constexpr (mode == operator_transform::INVERT) {
-    switch (op) {
-      case ast::ast_operator::LESS: return ast::ast_operator::GREATER;
-      case ast::ast_operator::GREATER: return ast::ast_operator::LESS;
-      case ast::ast_operator::LESS_EQUAL: return ast::ast_operator::GREATER_EQUAL;
-      case ast::ast_operator::GREATER_EQUAL: return ast::ast_operator::LESS_EQUAL;
-      default: return std::make_optional(op);
-    }
-  } else {
-    // mode == NEGATE
-    switch (op) {
-      case ast::ast_operator::LESS: return ast::ast_operator::GREATER_EQUAL;
-      case ast::ast_operator::GREATER: return ast::ast_operator::LESS_EQUAL;
-      case ast::ast_operator::LESS_EQUAL: return ast::ast_operator::GREATER;
-      case ast::ast_operator::GREATER_EQUAL: return ast::ast_operator::LESS;
-      case ast::ast_operator::EQUAL: return ast::ast_operator::NOT_EQUAL;
-      case ast::ast_operator::NOT_EQUAL: return ast::ast_operator::EQUAL;
-      default: return std::nullopt;
-    }
-  }
-}
+[[nodiscard]] std::optional<ast::ast_operator> transform_operator(ast::ast_operator op);
 
 /**
- * @brief Handle unary operation transform for membership-based row group filters. i.e., bloom
- * filter and dictionary page filter.
+ * @brief Returns the De Morgan operator for the given operator
  *
- * @tparam VisitorType Type of the AST visitor that implements accept()
- * @tparam VisitOperandsFn Callable matching `(host_span<reference_wrapper<expr>>) ->
- * vector<reference_wrapper<expr>>`
- *
- * @param expr Unary operation to transform
- * @param expr_tree The AST tree to push transformed expressions into
- * @param always_true Reference to the always_true sentinel literal
- * @param visitor The visitor used to accept column references
- * @param visit_operands_fn Callable to visit operands and return the transformed operands
- * @return Transformed expression or _always_true if the operation cannot be evaluated
+ * @param op Operator to transform
+ * @return De Morgan operator or std::nullopt
  */
-template <typename VisitorType, typename VisitOperandsFn>
-[[nodiscard]] inline std::reference_wrapper<ast::expression const> apply_unary_membership_transform(
-  ast::operation const& expr,
-  ast::tree& expr_tree,
-  std::reference_wrapper<ast::expression const> const always_true,
-  VisitorType& visitor,
-  VisitOperandsFn&& visit_operands_fn)
-{
-  auto const [kind, col_ref] = extract_unary_operand(expr);
+[[nodiscard]] std::optional<ast::ast_operator> de_morgan_operator(ast::ast_operator op);
 
-  // For `op col` form, push the `_always_true` expression
-  if (kind == operand_kind::COLUMN_REF) {
-    col_ref->accept(visitor);
-    expr_tree.push(ast::operation{ast::ast_operator::IDENTITY, always_true});
-    return always_true;
-  }
-  // For `op expr` form, visit operands and push expression
-  else {
-    auto new_operands = visit_operands_fn(expr.get_operands());
-    if (&new_operands.front().get() == &always_true.get()) {
-      // Pass through the _always_true child operand as is
-      expr_tree.push(ast::operation{ast::ast_operator::IDENTITY, expr_tree.back()});
-      return always_true;
-    } else {
-      auto const input_op = expr.get_operator();
-      expr_tree.push(ast::operation{input_op, new_operands.front()});
-      return expr_tree.back();
-    }
-  }
-}
+/**
+ * @brief Returns whether an expression is boolean-valued
+ *
+ * Comparison, logical and null-checking operations always yield `BOOL8`, and a literal knows its
+ * own type. A column reference cannot be typed here, as the filter is normalized before the output
+ * data types are known, so it is reported as not boolean.
+ *
+ * @param expr Expression to classify
+ * @return Whether the expression yields `BOOL8`
+ */
+[[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
 
 /**
  * @brief Collects column names from the expression ignoring the `skip_names`
@@ -199,24 +151,22 @@ class names_from_expression : public ast::detail::expression_transformer {
   [[nodiscard]] std::vector<std::string> to_vector() &&;
 
  private:
-  void visit_operands(
-    cudf::host_span<std::reference_wrapper<ast::expression const> const> operands);
-
   std::unordered_map<cudf::size_type, std::string> _column_indices_to_names;
   std::unordered_set<std::string> _column_names;
   column_path_set _skip_names;
 };
 
 /**
- * @brief Converts named columns to index reference columns
+ * @brief Converts named columns to index reference columns and pushes logical negations down to the
+ * leaves of the expression.
  */
-class named_to_reference_converter : public ast::detail::expression_transformer {
+class parquet_filter_normalizer : public ast::detail::expression_transformer {
  public:
-  named_to_reference_converter() = default;
+  parquet_filter_normalizer() = default;
 
-  named_to_reference_converter(std::optional<std::reference_wrapper<ast::expression const>> expr,
-                               table_metadata const& metadata,
-                               bool case_sensitive_names);
+  parquet_filter_normalizer(std::optional<std::reference_wrapper<ast::expression const>> expr,
+                            table_metadata const& metadata,
+                            bool case_sensitive_names);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -242,17 +192,40 @@ class named_to_reference_converter : public ast::detail::expression_transformer 
   /**
    * @brief Returns the converted AST expression
    *
-   * @return AST operation expression
+   * @return Converted expression, if an input expression was provided
    */
   [[nodiscard]] std::optional<std::reference_wrapper<ast::expression const>> get_converted_expr()
-    const
-  {
-    return _converted_expr;
-  }
+    const;
 
  protected:
-  std::vector<std::reference_wrapper<ast::expression const>> visit_operands(
-    cudf::host_span<std::reference_wrapper<ast::expression const> const> operands);
+  /**
+   * @brief Rewrites `NOT(operand)` into an equivalent expression with the negation pushed into
+   * `operand`'s own operands
+   *
+   * Only rewrites that are exact in every case cudf's AST evaluates are applied, as the converted
+   * expression also filters the decoded rows:
+   *
+   * - `NOT(NOT(x))` => `x`, but only when `x` is provably boolean. `NOT` yields `bool` for any
+   *   operand, so for a non-boolean `x` the double negation means `x != 0` rather than `x`
+   * - De Morgan forms: `NOT(a AND b)` => `NOT(a) OR NOT(b)` for both the null-propagating
+   *   (`LOGICAL_*`) and the Kleene (`NULL_LOGICAL_*`) operators
+   * - `NOT(a == b)` => `a != b` and vice versa
+   * - `NOT(IS_NULL(x))` and `NOT(NULL_EQUAL(a, b))` => left alone as they have no complement
+   * - Ordering comparisons (`<`, `>`, `<=`, `>=`) are *not* complemented as IEEE-754 makes every
+   *   comparison with a `NaN` false, so `NOT(a < b)` is true while `a >= b` is not
+   *
+   * @param operand The operand of the `NOT` operation to rewrite
+   * @return The rewritten expression, or std::nullopt if no exact rewrite exists
+   */
+  [[nodiscard]] std::optional<std::reference_wrapper<ast::expression const>> push_down_negation(
+    ast::expression const& operand);
+
+  /**
+   * @brief Returns the converted negation of `operand`, pushing the negation down if possible and
+   * otherwise wrapping the converted operand in a `NOT`
+   */
+  [[nodiscard]] std::reference_wrapper<ast::expression const> negate(
+    ast::expression const& operand);
 
   column_path_map<size_type> _column_name_to_index;
   std::optional<std::reference_wrapper<ast::expression const>> _converted_expr;
@@ -303,9 +276,6 @@ class equality_literals_collector : public ast::detail::expression_transformer {
   [[nodiscard]] std::vector<std::vector<ast::literal*>> get_literals() &&;
 
  protected:
-  std::vector<std::reference_wrapper<ast::expression const>> visit_operands(
-    cudf::host_span<std::reference_wrapper<ast::expression const> const> operands);
-
   cudf::host_span<cudf::data_type const> _output_dtypes;
   std::vector<std::vector<ast::literal*>> _literals;
 
@@ -318,13 +288,15 @@ class equality_literals_collector : public ast::detail::expression_transformer {
  * @brief Offsets every column referencein an expression by the specified value
  *
  */
-class offset_column_references : public named_to_reference_converter {
+class offset_column_references : public ast::detail::expression_transformer {
  public:
   offset_column_references(std::optional<std::reference_wrapper<ast::expression const>> expr,
                            size_type offset);
 
-  // Use `visit` overloads from named_to_reference_converter
-  using named_to_reference_converter::visit;
+  /**
+   * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
+   */
+  std::reference_wrapper<ast::expression const> visit(ast::literal const& expr) override;
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::column_reference const& )
@@ -332,12 +304,27 @@ class offset_column_references : public named_to_reference_converter {
   std::reference_wrapper<ast::expression const> visit(ast::column_reference const& expr) override;
 
   /**
+   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
+   */
+  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
+
+  /**
    * @copydoc ast::detail::expression_transformer::visit(ast::column_name_reference const& )
    */
   std::reference_wrapper<ast::expression const> visit(
     ast::column_name_reference const& expr) override;
 
+  /**
+   * @brief Returns the converted AST expression
+   *
+   * @return Converted expression, if an input expression was provided
+   */
+  [[nodiscard]] std::optional<std::reference_wrapper<ast::expression const>> get_converted_expr()
+    const;
+
  private:
+  ast::tree _tree;
+  std::optional<std::reference_wrapper<ast::expression const>> _converted_expr;
   size_type _offset{0};
 };
 
@@ -385,6 +372,6 @@ class offset_column_references : public named_to_reference_converter {
   cudf::table_view ast_table,
   std::reference_wrapper<ast::expression const> ast_expr,
   host_span<std::vector<size_type> const> input_row_group_indices,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::detail

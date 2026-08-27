@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,7 @@
 #include <rmm/device_vector.hpp>
 
 #include <cuda/std/span>
+#include <cuda/stream>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -407,8 +408,8 @@ TEST(HostDeviceSpanTest, CanCopySpan)
 
 TEST(HostDeviceSpanTest, CanSendToDevice)
 {
-  auto original_message = get_test_hostdevice_vector();
-  auto stream           = cudf::get_default_stream();
+  auto original_message   = get_test_hostdevice_vector();
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   original_message.host_to_device_async(stream);
 
@@ -417,8 +418,8 @@ TEST(HostDeviceSpanTest, CanSendToDevice)
                   original_message.device_ptr(),
                   original_message.size(),
                   cudaMemcpyDefault,
-                  stream.value());
-  stream.synchronize();
+                  stream.get());
+  stream.sync();
 
   EXPECT_EQ(got_message, hello_world_message);
 }

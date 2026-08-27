@@ -68,14 +68,7 @@ set(CUDF_BUILD_STATIC_DEPS
 )
 set_property(CACHE CUDF_BUILD_STATIC_DEPS PROPERTY STRINGS "ON" "OFF" "FORCE")
 
-# cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic linking
-option(CUDA_STATIC_RUNTIME "Statically link the CUDA runtime" OFF)
-# FORCE mode implies static CUDA runtime
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
-  set(CUDA_STATIC_RUNTIME
-      ON
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       ON
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -85,10 +78,6 @@ if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
       CACHE BOOL "Use static linking for nvJitLink" FORCE
   )
 else()
-  set(CUDA_STATIC_RUNTIME
-      OFF
-      CACHE BOOL "Statically link the CUDA runtime" FORCE
-  )
   set(RTCX_STATIC_LINK_NVRTC
       OFF
       CACHE BOOL "Use static linking for NVRTC" FORCE
@@ -192,6 +181,27 @@ set(CUDF_CXX_FLAGS "")
 set(CUDF_CUDA_FLAGS "")
 set(CUDF_CXX_DEFINITIONS "")
 set(CUDF_CUDA_DEFINITIONS "")
+
+# LTO IR can only be linked for targets greater than or equal to its architecture. An explicit
+# override must therefore not exceed the architecture of any target GPU on which it will be linked.
+set(CUDF_LTO_ARCHITECTURE
+    ""
+    CACHE STRING "LTO fragment architecture; empty selects the minimum supported by the toolkit"
+)
+
+if(CUDF_LTO_ARCHITECTURE STREQUAL "")
+  foreach(architecture IN LISTS CMAKE_CUDA_ARCHITECTURES_ALL)
+    string(REGEX MATCH "^[0-9]+" architecture "${architecture}")
+    if(architecture AND (NOT CUDF_LTO_ARCHITECTURE OR architecture LESS CUDF_LTO_ARCHITECTURE))
+      set(CUDF_LTO_ARCHITECTURE "${architecture}")
+    endif()
+  endforeach()
+endif()
+
+if(NOT CUDF_LTO_ARCHITECTURE MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "CUDF_LTO_ARCHITECTURE must be a numeric architecture")
+endif()
+message(VERBOSE "CUDF: Using ${CUDF_LTO_ARCHITECTURE} as the common LTO architecture")
 
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the
 # version RAPIDS uses in CI that causes it to handle the resulting -M* flags incorrectly with
@@ -441,6 +451,9 @@ if(NOT BUILD_SHARED_LIBS)
     install(TARGETS conda_env EXPORT cudf-exports)
   endif()
 endif()
+
+# ##################################################################################################
+# * JIT embedding ----------------------------------------------------------------------------------
 
 rtcx_add_embed(cudf_cuda_embed)
 
@@ -816,6 +829,7 @@ add_library(
   src/io/parquet/reader_impl_preprocess.cu
   src/io/parquet/reader_impl_preprocess_utils.cu
   src/io/parquet/stats_filter_helpers.cpp
+  src/io/parquet/synthetic_column_helpers.cu
   src/io/parquet/writer_impl.cu
   src/io/parquet/writer_impl_helpers.cpp
   src/io/parquet/decode_fixed.cu
@@ -954,18 +968,16 @@ add_library(
   src/reductions/segmented/nunique.cu
   src/reductions/segmented/product.cu
   src/reductions/segmented/reductions.cpp
-  src/reductions/segmented/std.cu
+  src/reductions/segmented/std_var.cu
   src/reductions/segmented/sum.cu
   src/reductions/segmented/sum_of_squares.cu
   src/reductions/segmented/update_validity.cu
-  src/reductions/segmented/var.cu
-  src/reductions/std.cu
+  src/reductions/std_var.cu
   src/reductions/sum.cu
   src/reductions/sum_of_squares.cu
   src/reductions/sum_overflow.cu
   src/reductions/unique_count.cu
   src/reductions/unique_count_column.cu
-  src/reductions/var.cu
   src/replace/clamp.cu
   src/replace/nans.cu
   src/replace/nulls.cu
@@ -1231,8 +1243,10 @@ target_include_directories(
 )
 
 target_compile_definitions(
-  cudf PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_DEFINITIONS}>"
-              "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_DEFINITIONS}>>"
+  cudf
+  PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_DEFINITIONS}>"
+         "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_DEFINITIONS}>>"
+         "CUDF_LTO_ARCHITECTURE=${CUDF_LTO_ARCHITECTURE}"
 )
 
 # Per-thread default stream

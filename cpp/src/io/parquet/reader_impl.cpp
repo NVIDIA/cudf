@@ -8,6 +8,7 @@
 #include "column_path_helpers.hpp"
 #include "error.hpp"
 #include "runtime/context.hpp"
+#include "synthetic_column_helpers.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
@@ -492,15 +493,15 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     }
   }
 
-  _stream.synchronize();
+  _stream.sync();
 }
 
-reader_impl::reader_impl() : _options{} {}
+reader_impl::reader_impl() : _stream{cudaStream_t{nullptr}}, _options{} {}
 
 reader_impl::reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& parquet_metadatas,
                          parquet_reader_options const& options,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
   : reader_impl(0 /*chunk_read_limit*/,
                 0 /*input_pass_read_limit*/,
@@ -517,7 +518,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& file_metadatas,
                          parquet_reader_options const& options,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
   : _stream{std::move(stream)},
     _mr{std::move(mr)},
@@ -550,11 +551,11 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
   CUDF_EXPECTS(file_metadatas.empty() or file_metadatas.size() == _sources.size(),
                "Encountered a mismatch in the number of provided data sources and metadatas");
 
-  _metadata = file_metadatas.empty() ? std::make_unique<aggregate_reader_metadata>(
+  _metadata = file_metadatas.empty() ? std::make_shared<aggregate_reader_metadata>(
                                          _sources,
                                          options.is_enabled_use_arrow_schema(),
                                          has_cols_from_mismatched_sources(options))
-                                     : std::make_unique<aggregate_reader_metadata>(
+                                     : std::make_shared<aggregate_reader_metadata>(
                                          std::forward<std::vector<FileMetaData>>(file_metadatas),
                                          options.is_enabled_use_arrow_schema(),
                                          has_cols_from_mismatched_sources(options));
@@ -592,12 +593,11 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     std::back_inserter(_output_buffers_template),
     [](auto const& buff) { return cudf::io::detail::inline_column_buffer::empty_like(buff); });
 
-  // Save the name to reference converter to extract output filter AST in
-  // `preprocess_file()` and `finalize_output()`
+  // Save the normalized output filter for `preprocess_file()` and `finalize_output()`.
   table_metadata metadata;
   populate_metadata(metadata);
   _expr_conv =
-    named_to_reference_converter(options.get_filter(), metadata, _options.case_sensitive_names);
+    parquet_filter_normalizer(options.get_filter(), metadata, _options.case_sensitive_names);
 }
 
 void reader_impl::prepare_data(read_mode mode)
@@ -990,8 +990,9 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   // Prepend the source and row index columns if requested
   {
     if (_options.prepend_row_index_column) {
-      out_columns.emplace(out_columns.begin(),
-                          synthesize_row_index_column(read_info, _stream, _mr));
+      out_columns.emplace(
+        out_columns.begin(),
+        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
@@ -1182,6 +1183,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
     std::fill(pinned_valids.begin(), pinned_valids.end(), false);
     cudf::set_null_masks_safe(
       pinned_null_masks, pinned_begin_bits, pinned_end_bits, pinned_valids, _stream);
+    _stream.sync();
   }
   // Otherwise, update the nullmasks in a loop
   else {

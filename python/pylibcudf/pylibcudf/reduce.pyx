@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
+from libc.stdint cimport int32_t
 from libcpp.functional cimport reference_wrapper
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
@@ -25,17 +26,23 @@ from pylibcudf.libcudf.scalar.scalar cimport scalar
 from pylibcudf.libcudf.types cimport nan_policy, null_policy, size_type
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
+from rmm.librmm.memory_resource cimport any_resource, device_accessible
 
 from .aggregation cimport Aggregation
 from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.libcudf.reduce import scan_type as ScanType  # no-cython-lint
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
+    "ApproxDistinctCount",
     "ScanType",
     "distinct_count",
     "is_valid_reduce_aggregation",
@@ -50,7 +57,7 @@ cpdef Scalar reduce(
     Aggregation agg,
     DataType data_type,
     Scalar init=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a reduction on a column
@@ -111,7 +118,7 @@ cpdef Column scan(
     Column col,
     Aggregation agg,
     scan_type inclusive,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a scan on a column
@@ -156,7 +163,11 @@ cpdef Column scan(
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef tuple minmax(Column col, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple[Scalar, Scalar] minmax(
+    Column col,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Compute the minimum and maximum of a column
 
     For details, see ``cudf::minmax`` documentation.
@@ -215,7 +226,7 @@ cpdef size_type unique_count(
     Column source,
     null_policy null_handling,
     nan_policy nan_handling,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of unique consecutive elements in the input column.
 
@@ -255,7 +266,7 @@ cpdef size_type distinct_count(
     Column source,
     null_policy null_handling,
     nan_policy nan_handling,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of distinct elements in the input column.
 
@@ -289,7 +300,7 @@ cpdef size_type distinct_count(
 cpdef size_type unique_count_table(
     Table source,
     null_equality nulls_equal,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of unique consecutive rows in the input table.
 
@@ -323,7 +334,7 @@ cpdef size_type unique_count_table(
 cpdef size_type distinct_count_table(
     Table source,
     null_equality nulls_equal,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Returns the number of distinct rows in the input table.
 
@@ -352,6 +363,147 @@ cpdef size_type distinct_count_table(
         return cpp_distinct_count.distinct_count(
             c_source, nulls_equal, _stream.view().value()
         )
+
+
+cdef class ApproxDistinctCount:
+    """HyperLogLog sketch for approximate distinct counting.
+
+    For details, see :cpp:class:`cudf::approx_distinct_count`.
+
+    Parameters
+    ----------
+    input : Table
+        Table whose rows will be added to the sketch.
+    precision : int
+        The HyperLogLog precision parameter (4-18). Higher precision gives
+        better accuracy but uses more memory. Default is 12.
+    null_handling : null_policy
+        Whether to include or exclude rows with nulls (default: EXCLUDE).
+    nan_handling : nan_policy
+        Whether to treat NaNs as null or valid elements (default: NAN_IS_NULL).
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    """
+    def __init__(
+        self,
+        Table input,
+        int32_t precision=12,
+        null_policy null_handling=null_policy.EXCLUDE,
+        nan_policy nan_handling=nan_policy.NAN_IS_NULL,
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None,
+    ):
+        cdef Stream _stream = _get_stream(stream)
+        cdef cudaStream_t _cs = _stream.view().value()
+        cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
+        cdef table_view c_input = input.view()
+        cdef any_resource[device_accessible] c_mr = any_resource[device_accessible](
+            _mr.get_mr()
+        )
+        with nogil:
+            self.c_obj.reset(
+                new cpp_approx_distinct_count(
+                    c_input, precision, null_handling, nan_handling, _cs, c_mr
+                )
+            )
+
+    cpdef void add(self, Table input, object stream: CudaStreamLike | None = None):
+        """Add rows from a table to the sketch.
+
+        Parameters
+        ----------
+        input : Table
+            Table whose rows will be added.
+        stream : Stream | None
+            CUDA stream on which to perform the operation.
+        """
+        cdef Stream _stream = _get_stream(stream)
+        cdef cudaStream_t _cs = _stream.view().value()
+        cdef table_view c_input = input.view()
+        with nogil:
+            dereference(self.c_obj).add(c_input, _cs)
+
+    cpdef void merge(
+        self,
+        ApproxDistinctCount other,
+        object stream: CudaStreamLike | None = None,
+    ):
+        """Merge another sketch into this sketch.
+
+        Parameters
+        ----------
+        other : ApproxDistinctCount
+            The sketch to merge into this sketch.
+        stream : Stream | None
+            CUDA stream on which to perform the operation.
+        """
+        cdef Stream _stream = _get_stream(stream)
+        cdef cudaStream_t _cs = _stream.view().value()
+        with nogil:
+            dereference(self.c_obj).merge(dereference(other.c_obj), _cs)
+
+    cpdef size_t estimate(self, object stream: CudaStreamLike | None = None):
+        """Estimate the approximate number of distinct rows in the sketch.
+
+        Parameters
+        ----------
+        stream : Stream | None
+            CUDA stream on which to perform the operation.
+
+        Returns
+        -------
+        int
+            The approximate number of distinct rows.
+        """
+        cdef Stream _stream = _get_stream(stream)
+        cdef cudaStream_t _cs = _stream.view().value()
+        cdef size_t result
+        with nogil:
+            result = dereference(self.c_obj).estimate(_cs)
+        return result
+
+    cpdef null_policy null_handling(self):
+        """Return the null handling policy for this sketch."""
+        return dereference(self.c_obj).null_handling()
+
+    cpdef nan_policy nan_handling(self):
+        """Return the NaN handling policy for this sketch."""
+        return dereference(self.c_obj).nan_handling()
+
+    cpdef int32_t precision(self):
+        """Return the precision parameter for this sketch."""
+        return dereference(self.c_obj).precision()
+
+    cpdef double standard_error(self):
+        """Return the standard error (error tolerance) for this sketch."""
+        return dereference(self.c_obj).standard_error()
+
+    @staticmethod
+    def sketch_bytes(int32_t precision) -> int:
+        """Return the bytes required for sketch storage at a given precision.
+
+        Parameters
+        ----------
+        precision : int
+            The HLL precision parameter (4-18).
+
+        Returns
+        -------
+        int
+            The number of bytes required for the sketch.
+        """
+        return cpp_approx_distinct_count.sketch_bytes(precision)
+
+    @staticmethod
+    def sketch_alignment() -> int:
+        """Return the alignment required for sketch storage.
+
+        Returns
+        -------
+        int
+            The required alignment in bytes.
+        """
+        return cpp_approx_distinct_count.sketch_alignment()
 
 
 ScanType.__str__ = ScanType.__repr__

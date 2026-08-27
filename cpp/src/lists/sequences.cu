@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,10 +16,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/scan.h>
@@ -39,7 +39,7 @@ struct tabulator {
 
   T const* const starts;
   T const* const steps;
-  size_type const* const offsets;
+  int32_t const* const offsets;
 
   template <typename U>
   static T __device__ multiply(U x, size_type times)
@@ -80,8 +80,8 @@ struct sequences_dispatcher {
                                      size_type n_elements,
                                      column_view const& starts,
                                      std::optional<column_view> const& steps,
-                                     size_type const* offsets,
-                                     rmm::cuda_stream_view stream,
+                                     int32_t const* offsets,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return sequences_functor<T>::invoke(n_lists, n_elements, starts, steps, offsets, stream, mr);
@@ -100,8 +100,8 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
                                         size_type n_elements,
                                         column_view const& starts,
                                         std::optional<column_view> const& steps,
-                                        size_type const* offsets,
-                                        rmm::cuda_stream_view stream,
+                                        int32_t const* offsets,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     auto result =
@@ -128,7 +128,7 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
 std::unique_ptr<column> sequences(column_view const& starts,
                                   std::optional<column_view> const& steps,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!starts.has_nulls() && !sizes.has_nulls(),
@@ -156,7 +156,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
   // Generate list offsets for the output.
   auto [list_offsets, n_elements] = cudf::detail::make_offsets_child_column(
     sizes_input_it, sizes_input_it + sizes.size(), stream, mr);
-  auto const offsets_begin = list_offsets->view().template begin<size_type>();
+  auto const offsets_begin = list_offsets->view().template begin<int32_t>();
 
   auto child = type_dispatcher(starts.type(),
                                sequences_dispatcher{},
@@ -176,7 +176,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   return sequences(starts, std::nullopt, sizes, stream, mr);
@@ -185,7 +185,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& steps,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   return sequences(starts, std::optional<column_view>{steps}, sizes, stream, mr);
@@ -195,7 +195,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -205,7 +205,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& steps,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

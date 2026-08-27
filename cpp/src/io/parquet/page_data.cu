@@ -5,6 +5,7 @@
 
 #include "page_data.cuh"
 #include "page_decode.cuh"
+#include "page_state_composed.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
@@ -13,7 +14,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf::io::parquet::detail {
 
@@ -50,16 +50,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                                 cudf::device_span<bool const> page_mask,
                                 kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16)
     page_state_buffers_s<rolling_buf_size, rolling_buf_size, rolling_buf_size>
       state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
 
   // Exit early if the page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }
@@ -93,7 +93,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     return;
   }
 
-  PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Get the level decode buffers for this page
   PageInfo* pp       = &pages[page_idx];
@@ -104,7 +104,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // skipped_leaf_values will always be 0 for flat hierarchies.
   uint32_t skipped_leaf_values = s->setup.page.skipped_leaf_values;
@@ -224,7 +224,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   // Zero-fill null positions after decoding valid values
   if (has_repetition) {
     int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-    auto const& ni             = s->nesting_info[leaf_level_index];
+    auto const& ni             = s->nesting.nesting_info[leaf_level_index];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
       zero_fill_null_positions_shared<decode_block_size>(s,
@@ -264,16 +264,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                    cudf::device_span<bool const> page_mask,
                    kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16)
     page_state_buffers_s<rolling_buf_size, rolling_buf_size, rolling_buf_size>
       state_buffers;
 
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  auto const block      = cg::this_thread_block();
-  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
   int out_warp_id;
 
   // Exit early if the page is pruned
@@ -296,11 +296,11 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   bool const process_nulls  = should_process_nulls(s);
 
-  PageNestingDecodeInfo* nesting_info_base = s->nesting_info;
+  PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   if (s->stream.dict_base) {
     out_warp_id = (s->stream.dict_bits > 0) ? 2 : 1;
@@ -475,7 +475,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const is_string =
     ((dtype == Type::BYTE_ARRAY) && !is_decimal) || (dtype == Type::FIXED_LEN_BYTE_ARRAY);
   if (is_string || has_repetition) {
-    auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
+    auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
       zero_fill_null_positions_shared<decode_block_size>(s,
@@ -498,7 +498,7 @@ struct mask_tform {
 }  // anonymous namespace
 
 uint32_t get_aggregated_decode_kernel_mask(cudf::detail::hostdevice_span<PageInfo const> pages,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   // determine which kernels to invoke
   return cudf::detail::transform_reduce(pages.device_begin(),
@@ -519,7 +519,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       int level_type_size,
                       cudf::device_span<bool const> page_mask,
                       kernel_error::pointer error_code,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -527,11 +527,11 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    decode_page_data<rolling_buf_size, uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_page_data<rolling_buf_size, uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_page_data<rolling_buf_size, uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_page_data<rolling_buf_size, uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -547,7 +547,7 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                             int level_type_size,
                             cudf::device_span<bool const> page_mask,
                             kernel_error::pointer error_code,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -556,12 +556,12 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
   if (level_type_size == 1) {
     decode_split_page_data_kernel<rolling_buf_size, uint8_t>
-      <<<dim_grid, dim_block, 0, stream.value()>>>(
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
         pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     decode_split_page_data_kernel<rolling_buf_size, uint16_t>
-      <<<dim_grid, dim_block, 0, stream.value()>>>(
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
         pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -569,13 +569,13 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
 void write_final_offsets(host_span<size_type const> offsets,
                          host_span<size_type* const> buff_addrs,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   // Copy offsets to device and create an iterator
   auto d_src_data = cudf::detail::make_device_uvector_async(
     offsets, stream, cudf::get_current_device_resource_ref());
   // Iterator for the source (scalar) data
-  auto src_iter = thrust::make_transform_iterator(
+  auto src_iter = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<cudf::size_type*>(
       [src = d_src_data.begin()] __device__(std::size_t i) { return src + i; }));

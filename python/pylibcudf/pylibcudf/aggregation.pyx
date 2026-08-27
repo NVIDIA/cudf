@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -7,6 +7,7 @@ from libcpp.cast cimport dynamic_cast
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf.aggregation cimport (
+    Kind as kind_t,
     aggregation,
     bitwise_op,
     correlation_type,
@@ -82,7 +83,6 @@ from pylibcudf.libcudf.types import \
 
 from .types cimport DataType
 
-
 __all__ = [
     "Aggregation",
     "BitwiseOp",
@@ -155,10 +155,7 @@ cdef class Aggregation:
     def __hash__(self):
         return dereference(self.c_obj).do_hash()
 
-    # TODO: Ideally we would include the return type here, but we need to do so
-    # in a way that Sphinx understands (currently have issues due to
-    # https://github.com/cython/cython/issues/5609).
-    cpdef kind(self):
+    cpdef kind_t kind(self):
         """Get the kind of the aggregation."""
         return dereference(self.c_obj).kind
 
@@ -428,7 +425,10 @@ cpdef Aggregation median():
     return Aggregation.from_libcudf(move(make_median_aggregation[aggregation]()))
 
 
-cpdef Aggregation quantile(list quantiles, interpolation interp = interpolation.LINEAR):
+cpdef Aggregation quantile(
+    list quantiles: list[float],
+    interpolation interp = interpolation.LINEAR,
+):
     """Create a quantile aggregation.
 
     For details, see :cpp:func:`make_quantile_aggregation`.
@@ -598,7 +598,10 @@ cpdef Aggregation udf(str operation, DataType output_type):
     )
 
 
-cpdef Aggregation correlation(correlation_type type, size_type min_periods):
+cpdef Aggregation correlation(
+    correlation_type type,
+    size_type min_periods,
+):
     """Create a correlation aggregation.
 
     For details, see :cpp:func:`make_correlation_aggregation`.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 using cudf::device_span;
 
@@ -149,7 +149,7 @@ uint32_t gather_row_offsets(cudf::io::parse_options_view const& options,
                             size_t byte_range_start,
                             size_t byte_range_end,
                             size_t skip_rows,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * Count the number of blank rows in the given row offset array
@@ -162,7 +162,7 @@ uint32_t gather_row_offsets(cudf::io::parse_options_view const& options,
 size_t count_blank_rows(cudf::io::parse_options_view const& options,
                         device_span<char const> data,
                         device_span<uint64_t const> row_offsets,
-                        rmm::cuda_stream_view stream);
+                        cuda::stream_ref stream);
 
 /**
  * Remove blank rows in the given row offset array
@@ -175,7 +175,7 @@ size_t count_blank_rows(cudf::io::parse_options_view const& options,
 device_span<uint64_t> remove_blank_rows(cudf::io::parse_options_view const& options,
                                         device_span<char const> data,
                                         device_span<uint64_t> row_offsets,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 /**
  * @brief Launches kernel for detecting possible dtype of each column of data
@@ -195,7 +195,7 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   device_span<column_parse::flags const> column_flags,
   device_span<uint64_t const> row_offsets,
   size_t const num_active_columns,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @brief Launches kernel for decoding row-column data
@@ -221,7 +221,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
                             device_span<cudf::bitmask_type* const> valids,
                             device_span<size_type> valid_counts,
                             device_span<bool* const> is_quoted,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 }  // namespace gpu
 }  // namespace csv

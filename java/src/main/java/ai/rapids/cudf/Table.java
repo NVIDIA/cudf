@@ -3002,7 +3002,7 @@ public final class Table implements AutoCloseable {
    * @param rightHash hash table built from distinct join key columns from the right table
    * @return right table gather map
    */
-  public GatherMap leftDistinctJoinGatherMap(DistinctHashJoin rightHash) {
+  public GatherMap leftJoinGatherMap(DistinctHashJoin rightHash) {
     if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
       throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
           "rightKeys: " + rightHash.getNumberOfColumns());

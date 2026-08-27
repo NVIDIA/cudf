@@ -2048,7 +2048,7 @@ public class TableTest extends CudfTestBase {
     checkLeftDistinctJoinGatherMap(
         leftKeys.leftDistinctJoinGatherMap(rightKeys, compareNullsEqual), expected);
     try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual)) {
-      checkLeftDistinctJoinGatherMap(leftKeys.leftDistinctJoinGatherMap(rightHash), expected);
+      checkLeftDistinctJoinGatherMap(leftKeys.leftJoinGatherMap(rightHash), expected);
     }
   }
 

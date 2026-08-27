@@ -286,12 +286,12 @@ class StreamingEngine(pl.GPUEngine):
     destruction and context manager exit must occur on the thread that created
     the instance.
 
-    Creating an engine configures the process-wide kvikio thread pool (default
-    256 threads). Because kvikio's pool is a global singleton, this blocks
-    any concurrent kvikio IO in the process until in-flight IO completes and overrides any prior
-    ``kvikio.defaults.set("num_threads", ...)`` call. Use the
-    ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS`` environment
-    variable to control the thread count.
+    Creating an engine sets the kvikio remote I/O backend to ``EASY_THREADPOOL``
+    and configures its thread pool (default 256 threads). Because kvikio's pool
+    is a global singleton, this blocks any concurrent kvikio IO in the process
+    until in-flight IO completes and overrides any prior ``kvikio.defaults.set(...)``
+    calls. Use the ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS``
+    environment variable to control the thread count.
 
     Parameters
     ----------

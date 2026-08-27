@@ -644,13 +644,6 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
         if (st != op_status::SUCCESS) { return {{}, st}; }
         dict = parsed;
       }
-      // locate_object_field's binary search resolves each candidate field id to a name and
-      // compares it against the target name directly, so `step` (the target name) can be handed
-      // straight to it -- no separate metadata dictionary lookup is needed to first turn `step`
-      // into a dictionary id. Note this does change status semantics for one edge case: a key
-      // absent from the dictionary of an otherwise-malformed value blob now reports
-      // MALFORMED_VARIANT (from parsing the object) instead of MISSING_PATH (from never having
-      // parsed the object at all) -- same null output, different status byte.
       auto const [span, st] = locate_object_field(*dict, meta, sub_val, step);
       if (st != op_status::SUCCESS) { return {{}, st}; }
       sub_val = span;

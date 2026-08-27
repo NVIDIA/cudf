@@ -14,7 +14,7 @@
 
 void nvbench_merge_struct(nvbench::state& state)
 {
-  cuda::stream_ref stream;
+  auto stream = cudf::get_default_stream();
 
   auto const input1 = create_structs_data(state);
   auto const sorted_input1 =
@@ -24,7 +24,7 @@ void nvbench_merge_struct(nvbench::state& state)
   auto const sorted_input2 =
     cudf::sort(*input2, {}, {}, stream, cudf::get_current_device_resource_ref());
 
-  stream.sync();
+  stream.synchronize();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
 

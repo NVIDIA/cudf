@@ -3,7 +3,7 @@
 
 """cuDF health checks for rapids doctor."""
 
-from cudf.health_checks._checks import (
+from cudf._health_checks._checks import (
     functional_check,
     functional_numba_check,
     import_check,

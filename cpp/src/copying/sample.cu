@@ -36,11 +36,11 @@ std::unique_ptr<table> sample(table_view const& input,
   auto const num_rows = input.num_rows();
 
   if (n > num_rows) {
+    CUDF_EXPECTS(num_rows > 0,
+                 "A nonzero number of samples was requested but the input table has zero rows",
+                 std::invalid_argument);
     CUDF_EXPECTS(replacement == sample_with_replacement::TRUE,
                  "If n > number of rows, then multiple sampling of the same row should be allowed",
-                 std::invalid_argument);
-    CUDF_EXPECTS(num_rows > 0,
-                 "A nonzero number of samples requested but the input table has zero rows",
                  std::invalid_argument);
   }
 

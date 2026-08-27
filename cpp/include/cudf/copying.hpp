@@ -869,8 +869,8 @@ enum class sample_with_replacement : bool {
  * @endcode
  *
  * @throws std::invalid_argument if `n` < 0.
+ * @throws std::invalid_argument if `n` > 0` and `input.num_rows() == 0`.
  * @throws std::invalid_argument if `n` > `input.num_rows()` and `replacement` == FALSE.
- * @throws std::invalid_argument if `n` > `input.num_rows()` and `input.num_rows() == 0`.
  *
  * @param input View of a table to sample
  * @param n non-negative number of samples expected from `input`

@@ -140,6 +140,46 @@ inline cudf::test::structs_column_wrapper make_xyz_three_row_variant()
 
 }  // namespace
 
+using op_status = cudf::io::parquet::experimental::variant_operation_status;
+namespace expns = cudf::io::parquet::experimental;
+auto const& cmr = cudf::get_current_device_resource_ref;
+
+/**
+ * @brief Helper using fixed_width_column_wrapper comparison for the common case where the status
+ * column has no nulls.
+ */
+static void expect_status_values(cudf::column_view const& status,
+                                 std::vector<uint8_t> const& expected)
+{
+  cudf::test::fixed_width_column_wrapper<uint8_t> exp(expected.begin(), expected.end());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(status, exp);
+}
+
+/**
+ * @brief Allocates a non-nullable UINT8 column of `num_rows` rows, pre-filled with
+ * `variant_operation_status::SUCCESS`, for callers to pass as the in-out `status` parameter of
+ * `get_variant_field`/`cast_variant`/`extract_variant_field`. `cast_variant` reads `status`'s
+ * existing values as incoming status, so a fresh buffer (no real incoming status to propagate)
+ * must be seeded with `SUCCESS` before use.
+ */
+static std::unique_ptr<cudf::column> make_status_buffer(cudf::size_type num_rows)
+{
+  auto col = cudf::make_numeric_column(
+    cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED);
+  if (num_rows > 0) {
+    CUDF_CUDA_TRY(
+      cudaMemset(col->mutable_view().data<uint8_t>(), 0, static_cast<std::size_t>(num_rows)));
+  }
+  return col;
+}
+
+constexpr uint8_t ST_SUCCESS   = static_cast<uint8_t>(op_status::SUCCESS);
+constexpr uint8_t ST_ROW_NULL  = static_cast<uint8_t>(op_status::ROW_NULL);
+constexpr uint8_t ST_MISSING   = static_cast<uint8_t>(op_status::MISSING_PATH);
+constexpr uint8_t ST_VNULL     = static_cast<uint8_t>(op_status::VARIANT_NULL);
+constexpr uint8_t ST_MISMATCH  = static_cast<uint8_t>(op_status::TYPE_MISMATCH);
+constexpr uint8_t ST_MALFORMED = static_cast<uint8_t>(op_status::MALFORMED_VARIANT);
+
 struct ExtractVariantFieldTest : public cudf::test::BaseFixture {};
 
 TEST_F(ExtractVariantFieldTest, NullStructRow)
@@ -520,10 +560,11 @@ inline std::vector<uint8_t> build_single_field_object(uint8_t fid,
 // so `descending_ids` selects which id order to emit: ascending (0..n_fields-1) when the
 // dictionary was built in ascending name order, or descending (n_fields-1..0) when the dictionary
 // was built in descending name order -- either way the emitted id order matches name order, as
-// real VARIANT data requires.  Uses 1-byte field_id_size and 1-byte field_off_size; n_fields must
-// be <= 51 so the total value bytes (5 * n_fields) still fit in 1-byte offsets.
+// real VARIANT data requires.  Uses 1-byte field_id_size and 1-byte field_off_size, so the total
+// value bytes (5 * n_fields) must fit in a 1-byte offset (enforced below).
 inline std::vector<uint8_t> build_sequential_int32_object(int n_fields, bool descending_ids = false)
 {
+  CUDF_EXPECTS(n_fields <= 51, "n_fields too large for 1-byte offset header");
   auto const id_at = [&](int i) { return descending_ids ? (n_fields - 1 - i) : i; };
   std::vector<uint8_t> out{make_variant_object_header(), static_cast<uint8_t>(n_fields)};
   for (int i = 0; i < n_fields; ++i) {
@@ -1105,14 +1146,16 @@ TEST_F(ExtractVariantFieldTest, ObjectFieldIdBeyondDictionarySizeIsRejected)
   val.push_back(static_cast<uint8_t>(payload.size()));  // offsets[1] (sentinel)
   val.insert(val.end(), payload.begin(), payload.end());
 
-  auto col = wrap_single_variant(meta, val);
-  auto got =
-    cudf::io::parquet::experimental::extract_variant_field(col,
-                                                           "x",
-                                                           cudf::data_type{cudf::type_id::INT32},
-                                                           std::nullopt,
-                                                           cudf::test::get_default_stream());
+  auto col    = wrap_single_variant(meta, val);
+  auto stream = cudf::test::get_default_stream();
+  auto status = make_status_buffer(cudf::column_view{col}.size());
+  auto got    = cudf::io::parquet::experimental::extract_variant_field(
+    col, "x", cudf::data_type{cudf::type_id::INT32}, status->mutable_view(), stream);
 
+  // Check the specific rejection reason (malformed, from the out-of-range field id), not just
+  // that the row happens to be null -- a null row alone wouldn't distinguish this from any other
+  // null-producing failure.
+  expect_status_values(*status, {ST_MALFORMED});
   ASSERT_EQ(got->size(), 1);
   EXPECT_EQ(got->null_count(), 1);
 }
@@ -2165,49 +2208,6 @@ TEST_F(GetVariantTypeIdTest, MultiWordNullMask)
   EXPECT_EQ(got->null_count(),
             static_cast<cudf::size_type>(list_null_rows.size() + unknown_header_rows.size()));
 }
-
-// ---------------------------------------------------------------------------
-// Status column tests
-// ---------------------------------------------------------------------------
-using op_status = cudf::io::parquet::experimental::variant_operation_status;
-namespace expns = cudf::io::parquet::experimental;
-auto const& cmr = cudf::get_current_device_resource_ref;
-
-/**
- * @brief Helper using fixed_width_column_wrapper comparison for the common case where the status
- * column has no nulls.
- */
-static void expect_status_values(cudf::column_view const& status,
-                                 std::vector<uint8_t> const& expected)
-{
-  cudf::test::fixed_width_column_wrapper<uint8_t> exp(expected.begin(), expected.end());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(status, exp);
-}
-
-/**
- * @brief Allocates a non-nullable UINT8 column of `num_rows` rows, pre-filled with
- * `variant_operation_status::SUCCESS`, for callers to pass as the in-out `status` parameter of
- * `get_variant_field`/`cast_variant`/`extract_variant_field`. `cast_variant` reads `status`'s
- * existing values as incoming status, so a fresh buffer (no real incoming status to propagate)
- * must be seeded with `SUCCESS` before use.
- */
-static std::unique_ptr<cudf::column> make_status_buffer(cudf::size_type num_rows)
-{
-  auto col = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED);
-  if (num_rows > 0) {
-    CUDF_CUDA_TRY(
-      cudaMemset(col->mutable_view().data<uint8_t>(), 0, static_cast<std::size_t>(num_rows)));
-  }
-  return col;
-}
-
-constexpr uint8_t ST_SUCCESS   = static_cast<uint8_t>(op_status::SUCCESS);
-constexpr uint8_t ST_ROW_NULL  = static_cast<uint8_t>(op_status::ROW_NULL);
-constexpr uint8_t ST_MISSING   = static_cast<uint8_t>(op_status::MISSING_PATH);
-constexpr uint8_t ST_VNULL     = static_cast<uint8_t>(op_status::VARIANT_NULL);
-constexpr uint8_t ST_MISMATCH  = static_cast<uint8_t>(op_status::TYPE_MISMATCH);
-constexpr uint8_t ST_MALFORMED = static_cast<uint8_t>(op_status::MALFORMED_VARIANT);
 
 // ---------------------------------------------------------------------------
 // GetVariantField status tests

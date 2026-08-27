@@ -18,7 +18,10 @@ from cudf_streaming.channel_metadata import (
     Ordering,
     Partitioning,
 )
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
@@ -84,7 +87,7 @@ class OrderSchemePartitioningResult:
     partitioning: Partitioning | None
     """The extracted partitioning, or ``None`` if extraction was not possible."""
     chunks: ChunkStore
-    """The consumed non-empty chunks, stored in replay order."""
+    """The consumed chunks, stored in replay order."""
 
 
 def _extract_boundaries_from_endpoint_rows(
@@ -145,12 +148,12 @@ def _extract_boundaries_from_endpoint_rows(
             expr,
         )
     row_eq_col = plc.transform.compute_column(combined, row_eq_expr, stream=stream)
-    strict = (
-        plc.stream_compaction.apply_boolean_mask(
-            plc.Table([row_eq_col]), row_eq_col, stream=stream
-        ).num_rows()
-        == 0
-    )
+    strict = not plc.reduce.reduce(
+        row_eq_col,
+        plc.aggregation.any(),
+        plc.DataType(plc.TypeId.BOOL8),
+        stream=stream,
+    ).to_py(stream=stream)
     return next_partition_starts, strict
 
 
@@ -189,7 +192,7 @@ async def extract_orderscheme_partitioning(
     ``OrderScheme`` built from the observed boundaries and ``local`` is
     ``"inherit"``, or ``None`` if the channel contains insufficient data
     or the data is not globally sorted. The result also contains the
-    consumed non-empty chunks in replay order.
+    consumed chunks in replay order.
 
     Notes
     -----
@@ -197,27 +200,29 @@ async def extract_orderscheme_partitioning(
     it push any messages into an output channel. All data
     messages from the input channel are consumed.
 
-    Boundaries are NOT collected for empty chunks. Empty chunks
-    should be dropped from the channel that the returned
-    partitioning is ultimately attached to.
+    Boundaries are not collected for empty chunks.
     """
     # Collect the first and last row from each non-empty sorted chunk.
     endpoint_rows: list[plc.Table] = []
     chunks = ChunkStore(context)
     stream = ir_context.get_cuda_stream()
+    row_indices = plc.Column.from_iterable_of_py(
+        [0, -1],
+        plc.DataType(plc.TypeId.INT32),
+        stream=stream,
+    )
     while (msg := await ch_in.recv(context)) is not None:
-        chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
-            context.br(), allow_overbooking=True
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context,
+            TableChunk.from_message(msg, br=context.br()),
+            reserve_extra=0,
+            net_memory_delta=0,
         )
         tbl = chunk.table_view()
-        if (n := tbl.num_rows()) == 0:
+        if tbl.num_rows() == 0:
+            chunks.insert(Message(msg.sequence_number, chunk))
             continue
         with stream_ordered_after(lambda: stream, upstreams=(chunk.stream,)):
-            row_indices = plc.Column.from_iterable_of_py(
-                [0, n - 1],
-                plc.DataType(plc.TypeId.INT32),
-                stream=stream,
-            )
             endpoint_rows.append(
                 plc.copying.gather(
                     tbl,

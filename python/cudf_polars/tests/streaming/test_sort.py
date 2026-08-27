@@ -375,10 +375,10 @@ def test_extract_orderscheme_partitioning_single_chunk(spmd_engine) -> None:
 
 
 @pytest.mark.spmd
-def test_extract_orderscheme_partitioning_drops_empty_replay_chunks(
+def test_extract_orderscheme_partitioning_preserves_empty_replay_chunks(
     spmd_engine,
 ) -> None:
-    """Empty chunks are excluded from the replay buffer."""
+    """Empty chunks are replayed but excluded from boundary extraction."""
     context = spmd_engine.context
     comm = spmd_engine.comm
 
@@ -401,11 +401,34 @@ def test_extract_orderscheme_partitioning_drops_empty_replay_chunks(
     )
 
     assert result.partitioning is not None
-    assert sequence_numbers == [0, 2]
+    assert sequence_numbers == [0, 1, 2]
     assert rows == [
         {"key": list(range(key_start, key_start + n_rows))},
+        {"key": []},
         {"key": list(range(key_start + n_rows, key_start + 2 * n_rows))},
     ]
+
+
+@pytest.mark.spmd
+def test_extract_orderscheme_partitioning_all_empty(spmd_engine) -> None:
+    """All-empty input is replayed without extracted partitioning."""
+    context = spmd_engine.context
+    order_keys = [OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)]
+    schema_ir = Empty({"key": DataType(pl.Int32())})
+
+    result = _run_extract_orderscheme_partitioning(
+        spmd_engine,
+        schema_ir,
+        order_keys,
+        [_key_frame([]), _key_frame([])],
+    )
+    sequence_numbers, rows = _chunk_sequences_and_data(
+        context, result, {"key": DataType(pl.Int32())}
+    )
+
+    assert result.partitioning is None
+    assert sequence_numbers == [0, 1]
+    assert rows == [{"key": []}, {"key": []}]
 
 
 @pytest.mark.spmd

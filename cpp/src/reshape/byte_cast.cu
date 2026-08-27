@@ -122,7 +122,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     }
 
     auto const num_chars = strings_column_view(input).chars_size(stream);
-    CUDF_EXPECTS(num_chars < static_cast<int64_t>(std::numeric_limits<size_type>::max()),
+    CUDF_EXPECTS(num_chars < static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
                  "Cannot convert strings column to lists column due to size_type limit",
                  std::overflow_error);
 

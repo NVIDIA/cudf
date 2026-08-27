@@ -252,7 +252,7 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
 #define CUDF_TEST_PROGRAM_MAIN()                                                                 \
   int main(int argc, char** argv)                                                                \
   {                                                                                              \
-    cudf::initialize();                                                                          \
+    cudf::detail::initialize();                                                                  \
     ::testing::InitGoogleTest(&argc, argv);                                                      \
     init_cudf_test(argc, argv);                                                                  \
     if (std::getenv("GTEST_CUDF_MEMORY_PEAK")) {                                                 \
@@ -260,12 +260,10 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
       cudf::set_current_device_resource(mr);                                                     \
       auto rc = RUN_ALL_TESTS();                                                                 \
       std::cout << "Peak memory usage " << mr.get_bytes_counter().peak << " bytes" << std::endl; \
-      cudf::teardown();                                                                          \
       rmm::mr::reset_current_device_resource();                                                  \
       return rc;                                                                                 \
     } else {                                                                                     \
       auto rc = RUN_ALL_TESTS();                                                                 \
-      cudf::teardown();                                                                          \
       rmm::mr::reset_current_device_resource();                                                  \
       return rc;                                                                                 \
     }                                                                                            \

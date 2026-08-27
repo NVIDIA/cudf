@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""cuDF health checks for rapids doctor."""
+"""RAPIDS Doctor health checks for cuDF."""
 
 from cudf._health_checks._checks import (
     functional_check,

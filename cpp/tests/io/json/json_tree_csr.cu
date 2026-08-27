@@ -364,3 +364,11 @@ TEST_F(JsonColumnTreeTests, JSONL_CornerCase_EmptyListOfLists)
   std::string json_string = R"([[]])";
   run_test(json_string, true);
 }
+
+TEST_F(JsonColumnTreeTests, JSONL_CornerCase_SingleColumn)
+{
+  std::string json_string = R"({}
+{}
+{})";
+  run_test(json_string, true);
+}

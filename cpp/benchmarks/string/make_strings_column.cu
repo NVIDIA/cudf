@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,8 +27,7 @@ using string_index_pair = cuda::std::pair<char const*, cudf::size_type>;
 
 template <bool batch_construction>
 std::vector<std::unique_ptr<cudf::column>> make_strings_columns(
-  std::vector<cudf::device_span<string_index_pair const>> const& input,
-  rmm::cuda_stream_view stream)
+  std::vector<cudf::device_span<string_index_pair const>> const& input, cuda::stream_ref stream)
 {
   if constexpr (batch_construction) {
     return cudf::make_strings_column_batch(input, stream);

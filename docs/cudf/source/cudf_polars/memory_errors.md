@@ -59,7 +59,6 @@ enters the pipeline at once. For formats that do not support partial reads, such
 the engine must load an entire file before it can begin processing, which may produce
 chunks much larger than `target_partition_size`.
 
-(cudf-polars-memory-errors-concurrent-io)=
 ### Concurrent file reads
 
 Each scan node may read more than one input chunk at a time. At least two IO

@@ -486,6 +486,17 @@ def test_max_concurrent_io_tasks_default_unset(
     assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
 
 
+def test_max_concurrent_io_tasks_accepts_dataclass() -> None:
+    value = MaxConcurrentIOTasks(local=3, remote=7)
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": value},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks is value
+
+
 @pytest.mark.parametrize(
     "value",
     [0, -1, {"local": 0}, {"remote": 0}, {"local": -1}, {"remote": -1}],

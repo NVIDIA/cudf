@@ -112,10 +112,6 @@ Environment variables follow these patterns:
 | `join_filter_pushdown`   | Configuration for join filter pushdown plan rewrites, dict or {class}`~cudf_polars.utils.config.JoinFilterPushdownOptions`. `None` disables.        | enabled     |
 | `sink_to_directory`      | Whether `.sink_*()` writes its output as a directory. The `spmd`, `ray`, and `dask` engines always use `True`; passing `False` raises `ValueError`. | `True`      |
 
-See {class}`~cudf_polars.engine.options.StreamingOptions` for accepted values
-and current defaults. For the memory trade-offs of IO concurrency, see the
-[memory tuning guide](memory_errors.md#cudf-polars-memory-errors-concurrent-io).
-
 ### Category: `engine`
 
 | Field                    | Description                                                                                                                   | Default                   |

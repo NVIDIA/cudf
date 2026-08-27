@@ -22,7 +22,6 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream>
 
 #include <stdexcept>
 

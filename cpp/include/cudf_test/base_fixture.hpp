@@ -66,7 +66,11 @@ struct BaseFixtureWithHarness : public BaseFixture {
    */
   cudf::memory_resources resources() { return _harness.resources(); }
 
- protected:
+  /**
+   * @brief Return the memory-resource harness used by this fixture.
+   */
+  [[nodiscard]] memory_resource_test_harness& harness() noexcept { return _harness; }
+
   memory_resource_test_harness _harness{mr()};
 };
 

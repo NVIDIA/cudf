@@ -35,15 +35,15 @@ def test_repr():
     "dtype, expected",
     [
         (
-            pl.Struct({"a": pl.Int8(), "b": pl.Int16()}),
+            pl.Struct({"a": pl.Int8, "b": pl.Int16}),
             [DataType(pl.Int8()), DataType(pl.Int16())],
         ),
         (
             pl.Struct({"a": pl.Struct({"b": pl.Int8()})}),
             [DataType(pl.Struct({"b": pl.Int8()}))],
         ),
-        (pl.List(pl.Int8()), [DataType(pl.Int8())]),
-        (pl.Array(pl.Int8(), 2), [DataType(pl.Int8())]),
+        (pl.List(pl.Int8), [DataType(pl.Int8())]),
+        (pl.Array(pl.Int8, 2), [DataType(pl.Int8())]),
         (pl.Int8(), []),
     ],
 )

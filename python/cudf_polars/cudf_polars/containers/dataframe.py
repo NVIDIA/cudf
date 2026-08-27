@@ -144,6 +144,7 @@ class DataFrame:
             if isinstance(column.dtype.polars_type, pl.Array)
         }
         if array_dtypes:
+            # TODO: Remove this cast when libcudf can export Arrow fixed-size lists.
             df = df.cast(pl.Schema(array_dtypes), strict=True)
         return df.with_columns(
             pl.col(c.name).set_sorted(descending=c.order == plc.types.Order.DESCENDING)

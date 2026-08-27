@@ -52,6 +52,8 @@ if TYPE_CHECKING:
 
 _HAS_ROLLING_FUNCTION = hasattr(plrs._expr_nodes, "RollingFunction")
 
+_ARRAY_PASSTHROUGH_ERROR = "Only pass-through of Array columns is supported"
+
 __all__ = ["Translator", "translate_named_expr"]
 
 
@@ -265,7 +267,9 @@ class Translator:
         )
         return NotImplementedError(message, unique_errors)
 
-    def translate_expr(self, *, n: int, schema: Schema) -> expr.Expr:
+    def translate_expr(
+        self, *, n: int, schema: Schema, allow_array_passthrough: bool = False
+    ) -> expr.Expr:
         """
         Translate a polars-internal expression IR into our representation.
 
@@ -275,6 +279,8 @@ class Translator:
             Node to translate, an integer referencing a polars internal node.
         schema
             Schema of the IR node this expression uses as evaluation context.
+        allow_array_passthrough
+            Whether a direct Array column may be returned unchanged.
 
         Returns
         -------
@@ -289,13 +295,13 @@ class Translator:
         """
         node = self.visitor.view_expression(n)
         dtype = DataType(self.visitor.get_dtype(n))
-        is_array_passthrough = isinstance(dtype.polars_type, pl.Array) and isinstance(
-            node, plrs._expr_nodes.Column
+        is_array_passthrough = (
+            allow_array_passthrough
+            and isinstance(dtype.polars_type, pl.Array)
+            and isinstance(node, plrs._expr_nodes.Column)
         )
         if isinstance(dtype.polars_type, pl.Array) and not is_array_passthrough:
-            error = NotImplementedError(
-                "Only pass-through of Array columns is supported"
-            )
+            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         try:
@@ -304,9 +310,7 @@ class Translator:
             self.errors.append(e)
             return expr.ErrorExpr(dtype, str(e))
         if not is_array_passthrough and _contains_array_input(translated):
-            error = NotImplementedError(
-                "Only pass-through of Array columns is supported"
-            )
+            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         return translated
@@ -581,7 +585,12 @@ def _(node: plrs._ir_nodes.Select, translator: Translator, schema: Schema) -> ir
         inp = translator.translate_ir(n=None)
         with set_internal_name_gen(translator, inp.schema):
             exprs = [
-                translate_named_expr(translator, n=e, schema=inp.schema)
+                translate_named_expr(
+                    translator,
+                    n=e,
+                    schema=inp.schema,
+                    allow_array_passthrough=True,
+                )
                 for e in node.expr
             ]
     return ir.Select(schema, exprs, node.should_broadcast, inp)
@@ -702,7 +711,12 @@ def _(node: plrs._ir_nodes.HStack, translator: Translator, schema: Schema) -> ir
         inp = translator.translate_ir(n=None)
         with set_internal_name_gen(translator, inp.schema):
             exprs = [
-                translate_named_expr(translator, n=e, schema=inp.schema)
+                translate_named_expr(
+                    translator,
+                    n=e,
+                    schema=inp.schema,
+                    allow_array_passthrough=True,
+                )
                 for e in node.exprs
             ]
     return ir.HStack(schema, exprs, node.should_broadcast, inp)
@@ -725,13 +739,17 @@ def _(node: plrs._ir_nodes.Distinct, translator: Translator, schema: Schema) -> 
     (keep, subset, maintain_order, zlice) = node.options
     keep = ir.Distinct._KEEP_MAP[keep]
     subset = frozenset(subset) if subset is not None else None
+    inp = translator.translate_ir(n=node.input)
+    keys = inp.schema if subset is None else subset
+    if any(_contains_array(inp.schema[name].polars_type) for name in keys):
+        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
     return ir.Distinct(
         schema,
         keep,
         subset,
         zlice,
         maintain_order,
-        translator.translate_ir(n=node.input),
+        inp,
     )
 
 
@@ -900,7 +918,11 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
 
 
 def translate_named_expr(
-    translator: Translator, *, n: plrs._expr_nodes.PyExprIR, schema: Schema
+    translator: Translator,
+    *,
+    n: plrs._expr_nodes.PyExprIR,
+    schema: Schema,
+    allow_array_passthrough: bool = False,
 ) -> expr.NamedExpr:
     """
     Translate a polars-internal named expression IR object into our representation.
@@ -913,6 +935,8 @@ def translate_named_expr(
         Node to translate, a named expression node.
     schema
         Schema of the IR node this expression uses as evaluation context.
+    allow_array_passthrough
+        Whether a direct Array column may be returned unchanged.
 
     Returns
     -------
@@ -931,7 +955,12 @@ def translate_named_expr(
         If any translation fails due to unsupported functionality.
     """
     return expr.NamedExpr(
-        n.output_name, translator.translate_expr(n=n.node, schema=schema)
+        n.output_name,
+        translator.translate_expr(
+            n=n.node,
+            schema=schema,
+            allow_array_passthrough=allow_array_passthrough,
+        ),
     )
 
 

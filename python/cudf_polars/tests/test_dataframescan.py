@@ -90,6 +90,20 @@ def test_array_pass_through(in_memory_engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=in_memory_engine)
 
 
+def test_array_select_pass_through(in_memory_engine: pl.GPUEngine):
+    q = pl.LazyFrame(
+        {
+            "a": pl.Series([[1, 2]], dtype=pl.Array(pl.Int8, 2)),
+            "value": [1],
+        }
+    ).select(
+        pl.col("a").alias("renamed"),
+        (pl.col("value") + 1).alias("value"),
+    )
+
+    assert_gpu_result_equal(q, engine=in_memory_engine)
+
+
 @pytest.mark.parametrize(
     "array_expr",
     [
@@ -156,6 +170,33 @@ def test_array_grouped_collection_falls_back(in_memory_engine: pl.GPUEngine):
         .group_by("key")
         .agg("a")
     )
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["sort", "group-by", "join", "unique"],
+)
+def test_array_consumer_falls_back(
+    in_memory_engine: pl.GPUEngine,
+    operation: str,
+):
+    q = pl.LazyFrame(
+        {
+            "a": pl.Series([[1, 2], [3, 4]], dtype=pl.Array(pl.Int8, 2)),
+            "value": [1, 2],
+        }
+    )
+
+    if operation == "sort":
+        q = q.sort("a")
+    elif operation == "group-by":
+        q = q.group_by("a").agg(pl.len())
+    elif operation == "join":
+        q = q.join(q, on="a")
+    else:
+        q = q.unique(subset=["a"])
 
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 

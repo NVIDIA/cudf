@@ -134,7 +134,7 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
 
 
 @cache
-def _from_polars(dtype: PolarsDataType) -> plc.DataType:
+def _from_polars(dtype: pl.DataType) -> plc.DataType:
     """
     Convert a polars datatype to a pylibcudf one.
 
@@ -152,9 +152,6 @@ def _from_polars(dtype: PolarsDataType) -> plc.DataType:
     NotImplementedError
         For unsupported conversions.
     """
-    if isinstance(dtype, type):
-        dtype = dtype()
-
     if isinstance(dtype, pl.Boolean):
         return plc.DataType(plc.TypeId.BOOL8)
     elif isinstance(dtype, pl.Int8):
@@ -212,10 +209,10 @@ def _from_polars(dtype: PolarsDataType) -> plc.DataType:
                 "Array nested inside another dtype is not supported"
             )
         # Recurse to catch unsupported inner types
-        _ = _from_polars(dtype.inner)
+        _ = DataType(dtype.inner)
         return plc.DataType(plc.TypeId.LIST)
     elif isinstance(dtype, pl.Array):
-        inner = _from_polars(dtype.inner)
+        inner = DataType(dtype.inner).plc_type
         if not plc.traits.is_fixed_width(inner):
             raise NotImplementedError(
                 f"{dtype=} conversion requires a fixed-width scalar inner dtype"
@@ -228,7 +225,7 @@ def _from_polars(dtype: PolarsDataType) -> plc.DataType:
                 raise NotImplementedError(
                     "Array nested inside another dtype is not supported"
                 )
-            _ = _from_polars(field.dtype)
+            _ = DataType(field.dtype)
         return plc.DataType(plc.TypeId.STRUCT)
     else:
         raise NotImplementedError(f"{dtype=} conversion not supported")

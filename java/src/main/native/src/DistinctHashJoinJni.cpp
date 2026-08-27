@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,10 @@
 
 extern "C" {
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_DistinctHashJoin_create(
-  JNIEnv* env, jclass, jlong j_build_keys, jboolean j_nulls_equal)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_DistinctHashJoin_create(JNIEnv* env,
+                                                                    jclass,
+                                                                    jlong j_build_keys,
+                                                                    jboolean j_nulls_equal)
 {
   JNI_NULL_CHECK(env, j_build_keys, "build keys table is null", 0);
 
@@ -29,8 +31,9 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_DistinctHashJoin_create(
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT void JNICALL Java_ai_rapids_cudf_DistinctHashJoin_destroy(
-  JNIEnv* env, jclass, jlong j_handle)
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_DistinctHashJoin_destroy(JNIEnv* env,
+                                                                    jclass,
+                                                                    jlong j_handle)
 {
   JNI_NULL_CHECK(env, j_handle, "distinct hash join handle is null", );
 

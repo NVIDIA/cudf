@@ -29,9 +29,9 @@ cdef class GetJsonObjectOptions:
     def __init__(
         self,
         *,
-        allow_single_quotes=False,
-        strip_quotes_from_single_strings=True,
-        missing_fields_as_nulls=False
+        allow_single_quotes: bool = False,
+        strip_quotes_from_single_strings: bool = True,
+        missing_fields_as_nulls: bool = False,
     ):
         self.set_allow_single_quotes(allow_single_quotes)
         self.set_strip_quotes_from_single_strings(
@@ -76,7 +76,7 @@ cdef class GetJsonObjectOptions:
         """
         return self.options.get_missing_fields_as_nulls()
 
-    def set_allow_single_quotes(self, bool val):
+    def set_allow_single_quotes(self, bool val) -> None:
         """
         Set whether single-quotes for strings are allowed.
 
@@ -91,7 +91,7 @@ cdef class GetJsonObjectOptions:
         """
         self.options.set_allow_single_quotes(val)
 
-    def set_strip_quotes_from_single_strings(self, bool val):
+    def set_strip_quotes_from_single_strings(self, bool val) -> None:
         """
         Set whether individually returned string values have their quotes stripped.
 
@@ -106,7 +106,7 @@ cdef class GetJsonObjectOptions:
         """
         self.options.set_strip_quotes_from_single_strings(val)
 
-    def set_missing_fields_as_nulls(self, bool val):
+    def set_missing_fields_as_nulls(self, bool val) -> None:
         """
         Set whether missing fields are interpreted as null.
 

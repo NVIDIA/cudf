@@ -34,7 +34,7 @@ repos:
           )
       - id: check-xml
   - repo: https://github.com/MarcoGorelli/cython-lint
-    rev: v0.21.0
+    rev: v0.21.1
     hooks:
       - id: cython-lint
         additional_dependencies: ["cython>=3.2.2,<3.3.0a0"]
@@ -235,6 +235,11 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+  - repo: https://github.com/numpy/numpydoc
+    rev: v1.10.0
+    hooks:
+      - id: numpydoc-validation
+        files: ^python/cudf/cudf/
   - repo: https://github.com/rapidsai/pre-commit-hooks
     rev: v1.6.0
     hooks:
@@ -335,7 +340,7 @@ repos:
           (?x)
             ^pyproject[.]toml$
   - repo: https://github.com/rapidsai/dependency-file-generator
-    rev: v1.21.0
+    rev: v1.22.0
     hooks:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]

@@ -57,11 +57,10 @@ cudf::size_type unique_count(column_view const& input,
   auto const count_nulls      = null_handling == null_policy::INCLUDE;
   auto const nan_is_null      = nan_handling == nan_policy::NAN_IS_NULL;
   auto const should_check_nan = cudf::is_floating_point(input.type());
-  auto input_device_view      = cudf::column_device_view::create(input, stream);
+  auto const temp_mr          = cudf::get_current_device_resource_ref();
+  auto input_device_view      = cudf::column_device_view::create(input, stream, temp_mr);
   auto device_view            = *input_device_view;
   auto input_table_view       = table_view{{input}};
-
-  auto temp_mr = cudf::get_current_device_resource_ref();
   auto const comparator =
     cudf::detail::row::equality::self_comparator{input_table_view, stream, temp_mr};
   auto const comp = comparator.equal_to<false>(

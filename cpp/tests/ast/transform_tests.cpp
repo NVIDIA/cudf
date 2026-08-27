@@ -49,7 +49,7 @@ struct executor_ast {
   static std::unique_ptr<cudf::column> compute_column(
     cudf::table_view const& table,
     cudf::ast::expression const& expr,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
     return cudf::compute_column(table, expr, stream, mr);
@@ -60,16 +60,74 @@ struct executor_jit {
   static std::unique_ptr<cudf::column> compute_column(
     cudf::table_view const& table,
     cudf::ast::expression const& expr,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
     return cudf::compute_column_jit(table, expr, stream, mr);
   }
 };
 
-using Executors = cudf::test::Types<executor_ast, executor_jit>;
+struct executor_transform_program {
+  static std::unique_ptr<cudf::column> compute_column(
+    cudf::table_view const& table,
+    cudf::ast::expression const& expr,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  {
+    std::reference_wrapper<cudf::ast::expression const> expressions[] = {expr};
+    cudf::transform_program program{table, expressions, stream, mr};
+    return std::move(program.run(table, stream, mr)->release().front());
+  }
+};
+
+using Executors = cudf::test::Types<executor_ast, executor_jit, executor_transform_program>;
 
 TYPED_TEST_SUITE(TransformTest, Executors);
+
+struct TransformProgramTest : public cudf::test::BaseFixture {};
+
+TEST_F(TransformProgramTest, ReusesAstWithCompatibleTable)
+{
+  auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};
+  auto construction_table = cudf::table_view{{construction_input}};
+  auto column_ref         = cudf::ast::column_reference{0};
+  auto literal_value      = cudf::numeric_scalar<int32_t>{2};
+  auto literal            = cudf::ast::literal{literal_value};
+  auto expression         = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, literal};
+  std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+
+  auto program = cudf::transform_program{construction_table, expressions};
+
+  auto construction_expected = column_wrapper<int32_t>{5, 22, 3, 52};
+  auto construction_result   = std::move(program.run(construction_table)->release().front());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(construction_expected, construction_result->view(), verbosity);
+
+  auto input    = column_wrapper<int32_t>{10, 20, 30};
+  auto table    = cudf::table_view{{input}};
+  auto expected = column_wrapper<int32_t>{12, 22, 32};
+  auto result   = std::move(program.run(table)->release().front());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, RejectsIncompatibleTable)
+{
+  auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};
+  auto construction_table = cudf::table_view{{construction_input}};
+  auto column_ref         = cudf::ast::column_reference{0};
+  std::reference_wrapper<cudf::ast::expression const> expressions[] = {column_ref};
+
+  auto program = cudf::transform_program{construction_table, expressions};
+
+  auto input = column_wrapper<int64_t>{10, 20, 30};
+  auto table = cudf::table_view{{input}};
+
+  EXPECT_THROW((void)program.run(table), std::invalid_argument);
+
+  auto nullable_input = column_wrapper<int32_t>{{10, 20, 30}, {1, 1, 1}};
+  auto nullable_table = cudf::table_view{{nullable_input}};
+  EXPECT_THROW((void)program.run(nullable_table), std::invalid_argument);
+}
 
 TYPED_TEST(TransformTest, ColumnReference)
 {

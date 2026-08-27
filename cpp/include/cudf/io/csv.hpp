@@ -325,9 +325,16 @@ class csv_reader_options {
   /**
    * @brief Whether to treat `\r\n` as line terminator.
    *
+   * @deprecated Deprecated in 26.10 and will be removed in 26.12+. CRLF input is supported using
+   * the default `\n` line terminator.
+   *
    * @return `true` if `\r\n` is treated as line terminator
    */
-  [[nodiscard]] bool is_enabled_windowslinetermination() const { return _windowslinetermination; }
+  [[nodiscard]] [[deprecated("CRLF input is supported using the default `\\n` line terminator.")]]
+  bool is_enabled_windowslinetermination() const
+  {
+    return _windowslinetermination;
+  }
 
   /**
    * @brief Whether to treat whitespace as field delimiter.
@@ -657,9 +664,16 @@ class csv_reader_options {
   /**
    * @brief Sets whether to treat `\r\n` as line terminator.
    *
+   * @deprecated Deprecated in 26.10 and will be removed in 26.12+. CRLF input is supported using
+   * the default `\n` line terminator.
+   *
    * @param val Boolean value to enable/disable
    */
-  void enable_windowslinetermination(bool val) { _windowslinetermination = val; }
+  [[deprecated("CRLF input is supported using the default `\\n` line terminator.")]]
+  void enable_windowslinetermination(bool val)
+  {
+    _windowslinetermination = val;
+  }
 
   /**
    * @brief Sets whether to treat whitespace as field delimiter.
@@ -1065,12 +1079,16 @@ class csv_reader_options_builder {
   /**
    * @brief Sets whether to treat `\r\n` as line terminator.
    *
+   * @deprecated Deprecated in 26.10 and will be removed in 26.12+. CRLF input is supported using
+   * the default `\n` line terminator.
+   *
    * @param val Boolean value to enable/disable
    * @return this for chaining
    */
+  [[deprecated("CRLF input is supported using the default `\\n` line terminator.")]]
   csv_reader_options_builder& windowslinetermination(bool val)
   {
-    options.enable_windowslinetermination(val);
+    options._windowslinetermination = val;
     return *this;
   }
 

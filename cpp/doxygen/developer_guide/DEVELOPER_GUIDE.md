@@ -114,7 +114,7 @@ prefixed with an underscore.
 
 ```c++
 template <typename IteratorType>
-void algorithm_function(int x, rmm::cuda_stream_view s, rmm::device_async_resource_ref mr)
+void algorithm_function(int x, cuda::stream_ref s, rmm::device_async_resource_ref mr)
 {
   ...
 }
@@ -379,7 +379,7 @@ following function that copies device data to a host `std::vector`.
 
 ```c++
 template <typename T>
-std::vector<T> make_std_vector_async(device_span<T const> v, rmm::cuda_stream_view stream)
+std::vector<T> make_std_vector_async(device_span<T const> v, cuda::stream_ref stream)
 ```
 
 ### When to use `host_span` vs `std::span`
@@ -560,7 +560,7 @@ libcudf throws under different circumstances, see the [section on error handling
 libcudf is in the process of adding support for asynchronous execution using
 CUDA streams. In order to facilitate the usage of streams, all new libcudf APIs
 that allocate device memory or execute a kernel should accept an
-`rmm::cuda_stream_view` parameter at the end with a default value of
+`cuda::stream_ref` parameter at the end with a default value of
 `cudf::get_default_stream()`.  There is one exception to this rule: if the API
 also accepts a memory resource parameter, the stream parameter should be placed
 just *before* the memory resource. This API should then forward the call to a
@@ -579,18 +579,18 @@ For example:
 ```c++
 // cpp/include/cudf/header.hpp
 void external_function(...,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 // cpp/include/cudf/detail/header.hpp
 namespace detail{
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 } // namespace detail
 
 // cudf/src/implementation.cpp
 namespace detail{
 // Use the stream parameter in the detail implementation.
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr){
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr){
   // Implementation uses the stream with async APIs.
   rmm::device_buffer buff(..., stream, mr);
   CUDF_CUDA_TRY(cudaMemcpyAsync(...,stream.value()));
@@ -599,7 +599,7 @@ void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_reso
 }
 } // namespace detail
 
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE(); // Generates an NVTX range for the lifetime of this function.
   detail::external_function(..., stream, mr);
@@ -789,7 +789,7 @@ Similar to a `device_vector`, allocates a contiguous set of elements in device m
 differences:
 - As an optimization, elements are uninitialized and no synchronization occurs at construction.
 This limits the types `T` to trivially copyable types.
-- All operations are stream ordered (i.e., they accept a `cuda_stream_view` specifying the stream
+- All operations are stream ordered (i.e., they accept a `cuda::stream_ref` specifying the stream
 on which the operation is performed). This improves safety when using non-default streams.
 - `device_uvector.hpp` does not include any `__device__` code, unlike `thrust/device_vector.hpp`,
   which means `device_uvector`s can be used in `.cpp` files, rather than just in `.cu` files.

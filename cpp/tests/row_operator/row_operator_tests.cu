@@ -17,10 +17,10 @@
 #include <cudf/hashing/detail/xxhash_64.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 template <typename T>
@@ -34,21 +34,21 @@ template <typename PhysicalElementComparator>
 std::unique_ptr<cudf::column> self_comparison(cudf::table_view input,
                                               std::vector<cudf::order> const& column_order,
                                               PhysicalElementComparator comparator,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               cudf::memory_resources mr);
 template <typename PhysicalElementComparator>
 std::unique_ptr<cudf::column> two_table_comparison(cudf::table_view lhs,
                                                    cudf::table_view rhs,
                                                    std::vector<cudf::order> const& column_order,
                                                    PhysicalElementComparator comparator,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    cudf::memory_resources mr);
 template <typename PhysicalElementComparator>
 std::unique_ptr<cudf::column> two_table_equality(cudf::table_view lhs,
                                                  cudf::table_view rhs,
                                                  std::vector<cudf::order> const& column_order,
                                                  PhysicalElementComparator comparator,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  cudf::memory_resources mr);
 template <typename PhysicalElementComparator>
 std::unique_ptr<cudf::column> sorted_order(
@@ -56,7 +56,7 @@ std::unique_ptr<cudf::column> sorted_order(
   cudf::size_type num_rows,
   bool has_nested,
   PhysicalElementComparator comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);
 
 TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorTwoTables)

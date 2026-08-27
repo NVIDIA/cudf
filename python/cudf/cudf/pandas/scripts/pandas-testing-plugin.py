@@ -3706,8 +3706,6 @@ NODEIDS_THAT_FAIL = {
     "tests/tools/test_to_datetime.py::TestOrigin::test_julian": "AssertionError: Attributes of Series are different",
     "tests/tools/test_to_datetime.py::TestOrigin::test_to_datetime_out_of_bounds_with_format_arg[%Y-%d-%m %H:%M:%S-None]": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestOrigin::test_to_datetime_out_of_bounds_with_format_arg[%Y-%m-%d %H:%M:%S-None]": "TODO: Add a reason for failure",
-    "tests/tools/test_to_datetime.py::TestTimeConversionFormats::test_to_datetime_format_weeks[False-2013020-%Y%U%w-2013-01-13]": "AssertionError: assert Timestamp('2013-01-19 00:00:00') == Timestamp('2013-01-13 00:00:00')",
-    "tests/tools/test_to_datetime.py::TestTimeConversionFormats::test_to_datetime_format_weeks[True-2013020-%Y%U%w-2013-01-13]": "AssertionError: assert Timestamp('2013-01-19 00:00:00') == Timestamp('2013-01-13 00:00:00')",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_mixed_offsets_with_native_datetime_utc_false_raises": "assert False",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_arrow[index-None-False]": "AssertionError: assert DatetimeIndex([1965-04-03 00:00:00, 1965-04-17 00:00:00, 1965-05-01 00:00:00,\n       1965-05-...",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_arrow[index-US/Central-False]": "AssertionError: assert Index([1965-04-03 00:00:00-06:00, 1965-04-17 00:00:00-06:00,\n       1965-05-01 00:00:00-05:00...",

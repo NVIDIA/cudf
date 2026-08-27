@@ -41,7 +41,7 @@ void BM_to_arrow_device(nvbench::state& state, nvbench::type_list<nvbench::enum_
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::to_arrow_device(table->view(), rmm::cuda_stream_view{launch.get_stream()});
+    cudf::to_arrow_device(table->view(), cuda::stream_ref{launch.get_stream()});
   });
 
   state.add_buffer_size(
@@ -67,7 +67,7 @@ void BM_to_arrow_host(nvbench::state& state, nvbench::type_list<nvbench::enum_ty
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::to_arrow_host(table->view(), rmm::cuda_stream_view{launch.get_stream()});
+    cudf::to_arrow_host(table->view(), cuda::stream_ref{launch.get_stream()});
   });
 
   state.add_buffer_size(
@@ -114,7 +114,7 @@ void BM_from_arrow_device(nvbench::state& state, nvbench::type_list<nvbench::enu
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::from_arrow_device_column(
-      schema.get(), input.get(), rmm::cuda_stream_view{launch.get_stream()});
+      schema.get(), input.get(), cuda::stream_ref{launch.get_stream()});
   });
 
   state.add_buffer_size(
@@ -160,8 +160,7 @@ void BM_from_arrow_host(nvbench::state& state, nvbench::type_list<nvbench::enum_
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::from_arrow_host_column(
-      schema.get(), input.get(), rmm::cuda_stream_view{launch.get_stream()});
+    cudf::from_arrow_host_column(schema.get(), input.get(), cuda::stream_ref{launch.get_stream()});
   });
 
   state.add_buffer_size(

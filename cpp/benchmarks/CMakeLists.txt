@@ -419,8 +419,13 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 # * transform benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  TRANSFORM_NVBENCH transform/encode.cpp transform/polynomials.cpp
-  transform/polynomials_concurrent.cpp transform/transform.cpp transform/transform_widetable.cpp
+  TRANSFORM_NVBENCH
+  transform/encode.cpp
+  transform/polynomials.cpp
+  transform/polynomials_concurrent.cpp
+  transform/transform.cpp
+  transform/transform_dispatch.cpp
+  transform/transform_widetable.cpp
 )
 
 # ##################################################################################################

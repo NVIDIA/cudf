@@ -252,6 +252,7 @@ class SuccessRecord:
     iteration: int
     duration: float
     statistics: dict[str, Any] | None = None
+    io_summaries: dict[str, dict[str, Any]] | None = None
     traces: list[dict[str, Any]] | None = None
     validation_result: ValidationResult | None = None
     status: Literal["success"] = "success"
@@ -263,6 +264,7 @@ class SuccessRecord:
         iteration: int,
         duration: float,
         statistics: dict[str, Any] | None = None,
+        io_summaries: dict[str, dict[str, Any]] | None = None,
         traces: list[dict[str, Any]] | None = None,
     ) -> SuccessRecord:
         """Create a Record from plain data."""
@@ -271,6 +273,7 @@ class SuccessRecord:
             iteration=iteration,
             duration=duration,
             statistics=statistics,
+            io_summaries=io_summaries,
             traces=traces,
         )
 
@@ -461,6 +464,47 @@ def _infer_scale_factor(name: str, path: str | Path, suffix: str) -> int | float
 
     else:
         raise ValueError(f"Invalid benchmark script name: '{name}'.")
+
+
+def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
+    """
+    Read one iteration record back from its serialized form.
+
+    Parameters
+    ----------
+    data
+        One entry of a run's ``records``.
+
+    Returns
+    -------
+    The record, typed by its ``status``.
+
+    Raises
+    ------
+    ValueError
+        If the status is unrecognized.
+    """
+    status = data["status"]
+    if status == "success":
+        validation = data.get("validation_result")
+        return SuccessRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            duration=data["duration"],
+            statistics=data.get("statistics"),
+            io_summaries=data.get("io_summaries"),
+            traces=data.get("traces"),
+            validation_result=(
+                ValidationResult(**validation) if validation is not None else None
+            ),
+        )
+    if status == "error":
+        return FailedRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            traceback=data["traceback"],
+        )
+    raise ValueError(f"Unrecognized iteration status: {status!r}")
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -935,6 +979,23 @@ def _collect_statistics(engine: pl.GPUEngine | None) -> dict[str, Any] | None:
     return engine.global_statistics(clear=True).to_dict()
 
 
+def _collect_io_summaries(
+    engine: pl.GPUEngine | None,
+) -> dict[str, dict[str, Any]] | None:
+    """Gather + clear kvikio I/O statistics, keyed by rank."""
+    if engine is None:
+        return None
+    if not isinstance(engine, StreamingEngine):
+        return None
+    # String keys, since the record is written as JSON. Empty when no rank is
+    # counting, which the report reads as "not collected".
+    summaries = {
+        str(rank): dataclasses.asdict(summary)
+        for rank, summary in engine.gather_io_summary(clear=True).items()
+    }
+    return summaries or None
+
+
 def run_polars_query_iteration(
     q_id: int,
     iteration: int,
@@ -960,6 +1021,10 @@ def run_polars_query_iteration(
         # Once we support polars 1.40, we should remove this
         result = result.with_columns(*result_casts)
 
+    # I/O first: gathering it is itself a RapidsMPF collective, so doing it after
+    # `_collect_statistics` would leave those events in the freshly cleared
+    # counters and report them against the next iteration.
+    io_summaries = _collect_io_summaries(engine)
     statistics = _collect_statistics(engine)
 
     if expected is not None:
@@ -989,6 +1054,7 @@ def run_polars_query_iteration(
         iteration=iteration,
         duration=duration,
         statistics=statistics,
+        io_summaries=io_summaries,
         validation_result=validation_result,
     )
 
@@ -1064,6 +1130,14 @@ def run_polars_query(
     record: SuccessRecord | FailedRecord
 
     for i in range(args.iterations):
+        if i > 0 and args.sleep_between_iterations > 0:
+            print(
+                f"==> Sleeping {args.sleep_between_iterations} seconds "
+                "between iterations",
+                flush=True,
+            )
+            time.sleep(args.sleep_between_iterations)
+
         if _HAS_STRUCTLOG and run_config.collect_traces:
             setup_logging(q_id, i)
             if isinstance(engine, StreamingEngine):
@@ -1218,12 +1292,19 @@ def _run_query_loop(
     return records, plans, validation_failures, query_failures
 
 
+def _elapsed_ms(begin: float) -> float:
+    """Return milliseconds elapsed since ``begin`` (a ``time.monotonic()`` timestamp)."""
+    return (time.monotonic() - begin) * 1000
+
+
 def _finalize_benchmark_run(
     args: argparse.Namespace,
     run_config: RunConfig,
     validation_failures: list[int],
     query_failures: list[tuple[int, int]],
     serializable_engine_config: dict[str, Any],
+    startup_duration_ms: float | None,
+    shutdown_duration_ms: float | None,
 ) -> None:
     """Summarize, serialize, and exit after a benchmark run."""
     if args.summarize:
@@ -1246,6 +1327,14 @@ def _finalize_benchmark_run(
             )
         if not validation_failures and not query_failures:
             print("✅ All validated queries passed.")
+
+    # We modify the serialized engine config here to record the engine's
+    # start/end duration. We have to do it here, rather than in `RunConfig.serialize()`
+    # since serialize() needs to run before the engine is shutdown.
+    serializable_engine_config = dict(serializable_engine_config)
+    serializable_engine_config["startup_duration_ms"] = startup_duration_ms
+    serializable_engine_config["shutdown_duration_ms"] = shutdown_duration_ms
+
     args.output.write(json.dumps(serializable_engine_config))
     args.output.write("\n")
     sys.exit(1 if (query_failures or validation_failures) else 0)
@@ -1274,6 +1363,8 @@ def run_polars_cpu(
         validation_failures,
         query_failures,
         serializable_engine_config=run_config.serialize(engine=None),
+        startup_duration_ms=None,
+        shutdown_duration_ms=None,
     )
 
 
@@ -1291,10 +1382,12 @@ def run_polars_in_memory(
         "parquet_options": parquet_options,
     }
     engine_options.setdefault("raise_on_fail", True)
+    start_time_begin = time.monotonic()
     engine = pl.GPUEngine(
         executor="in-memory",
         **engine_options,
     )
+    startup_duration_ms = _elapsed_ms(start_time_begin)
     records, plans, validation_failures, query_failures = _run_query_loop(
         benchmark,
         args,
@@ -1311,6 +1404,8 @@ def run_polars_in_memory(
         validation_failures,
         query_failures,
         serializable_engine_config=run_config.serialize(engine=engine),
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=None,
     )
 
 
@@ -1333,11 +1428,13 @@ def run_polars_spmd(
         "parquet_options": parquet_options,
     }
     engine_options.setdefault("raise_on_fail", True)
+    start_time_begin = time.monotonic()
     with SPMDEngine(
         rapidsmpf_options=run_config.streaming_options.to_rapidsmpf_options(),
         executor_options=executor_options,
         engine_options=engine_options,
     ) as engine:
+        startup_duration_ms = _elapsed_ms(start_time_begin)
         from cudf_polars.engine.spmd import (
             allgather_polars_dataframe,
         )
@@ -1371,6 +1468,7 @@ def run_polars_spmd(
         )
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
         serializable_engine_config = run_config.serialize(engine=engine)
+        shutdown_time_begin = time.monotonic()
 
     if is_rank_0:
         _write_quent_traces(
@@ -1378,12 +1476,15 @@ def run_polars_spmd(
             run_id=run_config.run_id,
             collect_traces=run_config.collect_traces,
         )
+    shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
         run_config,
         validation_failures,
         query_failures,
         serializable_engine_config=serializable_engine_config,
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=shutdown_duration_ms,
     )
 
 
@@ -1412,12 +1513,14 @@ def run_polars_ray(
     if run_config.num_gpus is not None:
         ray_init_options["num_gpus"] = run_config.num_gpus
 
+    start_time_begin = time.monotonic()
     with RayEngine(
         rapidsmpf_options=run_config.streaming_options.to_rapidsmpf_options(),
         executor_options=executor_options,
         engine_options=engine_options,
         ray_init_options=ray_init_options,
     ) as engine:
+        startup_duration_ms = _elapsed_ms(start_time_begin)
         run_config = dataclasses.replace(run_config, n_workers=engine.nranks)
         records, plans, validation_failures, query_failures = _run_query_loop(
             benchmark,
@@ -1431,18 +1534,22 @@ def run_polars_ray(
         run_config = _consolidate_logs(run_config, engine=engine)
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
         serializable_engine_config = run_config.serialize(engine=engine)
+        shutdown_time_begin = time.monotonic()
 
     _write_quent_traces(
         engine=engine,
         run_id=run_config.run_id,
         collect_traces=run_config.collect_traces,
     )
+    shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
         run_config,
         validation_failures,
         query_failures,
         serializable_engine_config=serializable_engine_config,
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=shutdown_duration_ms,
     )
 
 
@@ -1458,6 +1565,8 @@ def run_polars_dask(
     import distributed
 
     from cudf_polars.engine.dask import DaskEngine
+
+    start_time_begin = time.monotonic()
 
     executor_options = get_executor_options(run_config, benchmark=benchmark)
     # "cluster" is reserved — DaskEngine sets it
@@ -1486,6 +1595,7 @@ def run_polars_dask(
             engine_options=engine_options,
             dask_client=dask_client,
         ) as engine:
+            startup_duration_ms = _elapsed_ms(start_time_begin)
             run_config = dataclasses.replace(run_config, n_workers=engine.nranks)
             records, plans, validation_failures, query_failures = _run_query_loop(
                 benchmark, args, run_config, engine, numeric_type, date_type
@@ -1496,6 +1606,7 @@ def run_polars_dask(
             run_config = _consolidate_logs(run_config, engine)
             # We need to create this before StreamingEngine.shutdown(), which clears engine.config
             serializable_engine_config = run_config.serialize(engine=engine)
+            shutdown_time_begin = time.monotonic()
 
         _write_quent_traces(
             engine=engine,
@@ -1505,12 +1616,15 @@ def run_polars_dask(
     finally:
         if dask_client is not None:
             dask_client.close()
+    shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
         run_config,
         validation_failures,
         query_failures,
         serializable_engine_config=serializable_engine_config,
+        startup_duration_ms=startup_duration_ms,
+        shutdown_duration_ms=shutdown_duration_ms,
     )
 
 
@@ -2028,6 +2142,14 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
         default=1,
         type=int,
         help="Number of times to run the same query.",
+    )
+    parser.add_argument(
+        "--sleep-between-iterations",
+        default=0,
+        type=float,
+        dest="sleep_between_iterations",
+        metavar="SECONDS",
+        help="Sleep this many seconds between iterations (default: 0).",
     )
     parser.add_argument(
         "--io-mode",

@@ -1112,6 +1112,12 @@ def _(
             return expr.Agg(
                 dtype, "quantile", interp, translator._expr_context, *children
             )
+        if name == "skew":
+            (bias,) = options
+            return expr.Skew(dtype, bias, *children)
+        if name == "kurtosis":
+            fisher, bias = options
+            return expr.Kurtosis(dtype, fisher, bias, *children)
         if name == "arg_max" and len(options) == 2:
             # IRFunctionExpr::ArgSort is exposed as ("arg_max", descending, nulls_last)
             name = "arg_sort"

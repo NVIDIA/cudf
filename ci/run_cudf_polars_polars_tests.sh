@@ -33,6 +33,8 @@ DESELECTED_TESTS=(
     "tests/unit/io/test_write.py::test_write_async[read_parquet-<lambda>]" # kvikio file creation error in CI
     "tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>0]" # kvikio file creation error in CI
     "tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>2]" # kvikio file creation error in CI
+    "tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[schema0]" # polars bug: decompresses entire stream instead of stopping at slice limit, see https://github.com/pola-rs/polars/issues/28954
+    "tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[None]" # polars bug: decompresses entire stream instead of stopping at slice limit, see https://github.com/pola-rs/polars/issues/28954
     "tests/unit/operations/test_random.py::test_shuffle_group_by_reseed" # https://github.com/NVIDIA/cudf/issues/22964
 )
 

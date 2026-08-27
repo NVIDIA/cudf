@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,7 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 namespace cudf {
 
@@ -29,7 +29,7 @@ namespace jni {
 class maps_column_view {
  public:
   maps_column_view(lists_column_view const& lists_of_structs,
-                   rmm::cuda_stream_view stream = cudf::get_default_stream());
+                   cuda::stream_ref stream = cudf::get_default_stream());
 
   // Rule of 5.
   maps_column_view(maps_column_view const& maps_view)  = default;
@@ -74,7 +74,7 @@ class maps_column_view {
    */
   std::unique_ptr<column> get_values_for(
     column_view const& keys,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -93,7 +93,7 @@ class maps_column_view {
    */
   std::unique_ptr<column> get_values_for(
     scalar const& key,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -114,7 +114,7 @@ class maps_column_view {
    */
   std::unique_ptr<column> contains(
     scalar const& key,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -136,7 +136,7 @@ class maps_column_view {
 
   std::unique_ptr<column> contains(
     column_view const& key,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:

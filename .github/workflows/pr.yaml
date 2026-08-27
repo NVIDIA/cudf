@@ -45,7 +45,9 @@ jobs:
       - wheel-tests-dask-cudf
       - devcontainer
       - unit-tests-cudf-pandas
+      - pandas-tests-shards
       - pandas-tests
+      - pandas-tests-summary
       - narwhals-tests
       - telemetry-setup
       - third-party-integration-tests-cudf-pandas
@@ -633,9 +635,9 @@ jobs:
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
-      docs-projects: cudf,libcudf
+      docs-projects: cudf,dask-cudf,libcudf
       dry-run: true
-      version-map: '{"26.04": "legacy", "26.06": "stable"}'
+      version-map: ${{ vars.VERSION_MAP }}
   wheel-build-libcudf:
     needs: [build-details, checks]
     permissions:
@@ -934,16 +936,37 @@ jobs:
       continue-on-error: true
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_cuml_compat.sh"
+  pandas-tests-shards:
+    # Single source of truth for the shard count: both the matrix below and the
+    # num-shards argument the scripts receive are derived from NUM_SHARDS here,
+    # so the two can no longer drift apart.
+    permissions: {}
+    runs-on: ubuntu-latest
+    outputs:
+      num_shards: ${{ steps.shards.outputs.num_shards }}
+      shard_ids: ${{ steps.shards.outputs.shard_ids }}
+    steps:
+      - id: shards
+        env:
+          NUM_SHARDS: 2
+        run: |
+          {
+            echo "num_shards=${NUM_SHARDS}"
+            echo "shard_ids=$(seq 0 $((NUM_SHARDS - 1)) | jq -sc .)"
+          } >> "$GITHUB_OUTPUT"
   pandas-tests:
-    # run the Pandas unit tests using PR branch
-    needs: [wheel-build-cudf, changed-files]
+    # run the Pandas unit tests using PR branch, sharded across runners.
+    needs: [wheel-build-cudf, changed-files, pandas-tests-shards]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_id: ${{ fromJSON(needs.pandas-tests-shards.outputs.shard_ids) }}
     permissions:
       actions: read
       contents: read
       id-token: write
       packages: read
       pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_cudf_polars_nor_dask_cudf
     with:
@@ -953,7 +976,33 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-l4-latest-1"
       container_image: "rapidsai/citestwheel:26.10-latest"
-      script: ci/cudf_pandas_scripts/pandas-tests/run.sh pr
+      script: "ci/cudf_pandas_scripts/pandas-tests/run.sh pr ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
+      file_to_upload: ./pr-results.json
+      artifact-name: "pandas-test-pr-results-${{ matrix.shard_id }}"
+  pandas-tests-summary:
+    # Merge the sharded Pandas test results and post the diff against nightly.
+    # Informational only; the pass/fail signal comes from the pandas-tests job.
+    needs: [pandas-tests, changed-files, pandas-tests-shards]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    # Run whenever the shards ran (pass or fail) so we always get a diff, but
+    # not when pandas-tests was skipped. continue-on-error keeps this purely
+    # informational job from ever blocking the PR.
+    if: ${{ !cancelled() && needs.pandas-tests.result != 'skipped' }}
+    with:
+      build_type: pull-request
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "cpu8"
+      continue-on-error: true
+      container_image: "rapidsai/citestwheel:26.10-latest"
+      script: "ci/cudf_pandas_scripts/pandas-tests/summary.sh ${{ needs.pandas-tests-shards.outputs.num_shards }}"
   narwhals-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:

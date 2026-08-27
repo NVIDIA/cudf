@@ -48,10 +48,6 @@ if TYPE_CHECKING:
     from cudf_polars.quent._logging import QuentLogger
 
 
-DefaultT = TypeVar("DefaultT")
-T = TypeVar("T")
-
-
 __all__ = [
     "UNSPECIFIED",
     "Cluster",
@@ -137,10 +133,7 @@ class MaxConcurrentIOTasks:
         if isinstance(value, MaxConcurrentIOTasks):
             return value
         if not isinstance(value, dict):
-            raise TypeError(
-                "max_concurrent_io_tasks must be an int, dict, "
-                "MaxConcurrentIOTasks, or None"
-            )
+            raise TypeError("max_concurrent_io_tasks must be an int, dict, or None")
         return cls(**value)
 
     def __post_init__(self) -> None:
@@ -231,6 +224,10 @@ class Cluster(enum.StrEnum):
     SPMD = "spmd"
     RAY = "ray"
     DASK = "dask"
+
+
+T = TypeVar("T")
+DefaultT = TypeVar("DefaultT")
 
 
 def _make_default_factory(
@@ -791,7 +788,8 @@ class StreamingExecutor:
         uses ``2`` for local paths and ``8`` for scans with remote URIs.
         Passing an ``int`` uses the same value for all scans. Passing a dict
         with ``local`` and/or ``remote`` keys tunes local and remote paths
-        separately. This can be set via
+        separately. Passing ``None`` uses the automatic policy. This can be
+        set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment

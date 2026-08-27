@@ -486,6 +486,12 @@ def test_max_concurrent_io_tasks_default_auto(
     assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
 
 
+def test_max_concurrent_io_tasks_auto_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "auto")
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
+
+
 def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "0")

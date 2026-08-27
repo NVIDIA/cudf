@@ -38,12 +38,12 @@ def test_unspecified_repr() -> None:
 
 
 def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Clear all env vars that StreamingOptions reads.
+    # Clear all env vars that StreamingOptions reads so every field stays UNSPECIFIED.
     for key in list(os.environ):
         if key.startswith(("RAPIDSMPF_", "CUDF_POLARS__")):
             monkeypatch.delenv(key, raising=False)
     opts = StreamingOptions()
-    # Fields with no env var are UNSPECIFIED.
+    # Fields with no env var are always UNSPECIFIED.
     assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
     assert isinstance(opts.raise_on_fail, Unspecified)
     assert isinstance(opts.parquet_options, Unspecified)
@@ -57,7 +57,7 @@ def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_executor_options_empty_when_all_implicit() -> None:
+def test_executor_options_empty_when_all_unspecified() -> None:
     assert StreamingOptions().to_executor_options() == {}
 
 
@@ -120,6 +120,15 @@ def test_executor_options_max_concurrent_io_tasks_local_remote_env(
         assert opts.to_executor_options()["max_concurrent_io_tasks"] == {
             "remote": 7,
         }
+
+
+def test_executor_options_max_concurrent_io_tasks_auto_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "auto")
+    opts = StreamingOptions()
+    assert opts.max_concurrent_io_tasks is None
+    assert opts.to_executor_options()["max_concurrent_io_tasks"] is None
 
 
 def test_executor_options_kvikio_nthreads() -> None:
@@ -306,8 +315,11 @@ def test_from_dict_maps_known_fields() -> None:
 
 
 def test_from_dict_none_value_is_unspecified() -> None:
-    opts = StreamingOptions.from_dict({"fallback_mode": None})
+    opts = StreamingOptions.from_dict(
+        {"fallback_mode": None, "max_concurrent_io_tasks": None}
+    )
     assert isinstance(opts.fallback_mode, Unspecified)
+    assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
 
 
 def test_from_dict_unknown_key_raises() -> None:

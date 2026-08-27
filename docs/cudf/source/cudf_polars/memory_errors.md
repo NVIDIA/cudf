@@ -67,8 +67,8 @@ producer tasks are generally needed to overlap IO with GPU compute on distinct
 CUDA streams.
 
 The `max_concurrent_io_tasks` setting controls the number of IO producer tasks
-for each scan node. The default is selected automatically. See
-{class}`~cudf_polars.engine.options.StreamingOptions` for the current policy.
+for each scan node. See
+{class}`~cudf_polars.engine.options.StreamingOptions` for current defaults.
 More producers can improve high-latency IO throughput in exchange for higher
 memory usage by each Scan actor. If a query is close to the memory limit or
 spilling heavily, reducing `max_concurrent_io_tasks` or `target_partition_size`
@@ -110,7 +110,7 @@ constructing the GPU engine for queries.
 | Option | Default | Effect |
 |---|---|---|
 | `target_partition_size` (executor option or `CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`) | 1.5 GB or 2.5% of smallest GPU | Target chunk size in bytes. Smaller values reduce peak memory at some cost to compute efficiency. |
-| `max_concurrent_io_tasks` (executor option or `CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`) | auto | Number of concurrent IO producer tasks for each scan node. Use a dict or JSON env value to tune local and remote scans separately. Larger values may improve high-latency IO throughput but increase memory pressure. |
+| `max_concurrent_io_tasks` (executor option or `CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`) | auto | Number of concurrent IO producer tasks for each scan node. Larger values may improve high-latency IO throughput but increase memory pressure. |
 | `RAPIDSMPF_SPILL_DEVICE_LIMIT` | `80%` | GPU memory fraction at which spilling begins. Lower values give more headroom for peaks. |
 | `RAPIDSMPF_PINNED_MEMORY` | disabled | Set to `true` to enable pinned host memory for spill buffers. |
 | `RAPIDSMPF_PINNED_INITIAL_POOL_SIZE` | (none) | Size of the pinned memory pool to pre-allocate (e.g. `32GB`). |

@@ -88,6 +88,7 @@ enum class operator_transform : uint8_t {
  * untransformable operators are returned as is (no std::nullopt)
  */
 template <operator_transform mode>
+  requires(mode == operator_transform::INVERT or mode == operator_transform::NEGATE)
 [[nodiscard]] std::optional<ast::ast_operator> transform_operator(ast::ast_operator op);
 
 /**

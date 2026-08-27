@@ -2501,6 +2501,12 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, conjunction));
   }
 
+  // NOT(col_c < NaN) on a float column with no actual NaNs.
+  {
+    auto c_lt_nan = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_c, lit_nan);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, c_lt_nan));
+  }
+
   // Operators with no complement are left intact
   {
     auto a_is_null = cudf::ast::operation(cudf::ast::ast_operator::IS_NULL, col_ref_a);
@@ -4436,8 +4442,8 @@ void filter_unary_operation_typed_test()
     filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, not_expr1, expr2);
     ref_filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, ref_not_expr1, ref_expr2);
-    // Signed numeric types pass RGs 1,2,3, others pass RGs 2,3. Floats keep all 4: NaN makes
-    // every ordered comparison false, so `NOT(col0 < 100)` is not `col0 >= 100` and gets relaxed.
+    // Signed integral types pass RGs 1,2,3, others pass RGs 2,3. Floats keep all 4 as they may
+    // hold NaNs making every ordered comparison false and get relaxed instead.
     auto constexpr expected_filtered_row_groups_with_unary_or =
       cudf::is_floating_point<T>() ? 4 : ((cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2);
     test_predicate_pushdown(filter_expression,

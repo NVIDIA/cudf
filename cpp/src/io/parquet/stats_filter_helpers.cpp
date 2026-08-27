@@ -14,10 +14,39 @@
 
 namespace cudf::io::parquet::detail {
 
-stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
-  : _num_columns(static_cast<size_type>(output_dtypes.size())), _output_dtypes(output_dtypes)
+namespace {
+
+/**
+ * @brief Returns whether a comparison operator can prune row groups via statistics
+ *
+ * Some Parquet writers exclude `NaN`s from stats, so a floating-point chunk holding a NaN is
+ * indistinguishable from one that does not. `col != val` is the only comparison leaf a NaN
+ * satisfies, so it is the only one we cannot prune.
+ *
+ * @param op The comparison operator
+ * @param dtype The data type of the column being compared
+ * @return true if the comparison can be used to prune row groups
+ */
+[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op, cudf::data_type dtype)
 {
-  _columns_mask.resize(_num_columns, false);
+  using cudf::ast::ast_operator;
+  switch (op) {
+    case ast_operator::EQUAL: [[fallthrough]];
+    case ast_operator::LESS: [[fallthrough]];
+    case ast_operator::LESS_EQUAL: [[fallthrough]];
+    case ast_operator::GREATER: [[fallthrough]];
+    case ast_operator::GREATER_EQUAL: return true;
+    case ast_operator::NOT_EQUAL: return not cudf::is_floating_point(dtype);
+    default: return false;
+  }
+}
+
+}  // namespace
+
+stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
+  : _output_dtypes(output_dtypes)
+{
+  _columns_mask.resize(_output_dtypes.size(), false);
 }
 
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
@@ -38,7 +67,7 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
 {
   CUDF_EXPECTS(expr.get_table_source() == ast::table_reference::LEFT,
                "Statistics AST supports only left table");
-  CUDF_EXPECTS(expr.get_column_index() < _num_columns,
+  CUDF_EXPECTS(static_cast<size_t>(expr.get_column_index()) < _output_dtypes.size(),
                "Column index cannot be more than number of columns in the table");
   return expr;
 }
@@ -77,15 +106,9 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
 
   if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
     col_ref->accept(*this);
-    if (op == ast_operator::EQUAL or op == ast_operator::NOT_EQUAL or op == ast_operator::LESS or
-        op == ast_operator::LESS_EQUAL or op == ast_operator::GREATER or
-        op == ast_operator::GREATER_EQUAL) {
-      // NOT_EQUAL leaf for floating points relaxes to always true as Parquet statistics do not
-      // record NaNs.
-      if (op != ast_operator::NOT_EQUAL or
-          not cudf::is_floating_point(_output_dtypes[col_ref->get_column_index()])) {
-        _columns_mask[col_ref->get_column_index()] = true;
-      }
+    auto const col_index = col_ref->get_column_index();
+    if (is_prunable_comparison(op, _output_dtypes[col_index])) {
+      _columns_mask[col_index] = true;
     }
   } else {
     // Visit the operands and ignore any output as we only want to build the column mask
@@ -143,9 +166,11 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         return *_always_true;
       }
     } else {
-      // Special handling for the NOT operator since is necessary as stats transforms use different
-      // columns (vmin, vmax, is_null) for different operators such that NOT(col < val) is not
-      // equivalent to NOT(vmin < val) and instead is equivalent to vmax >= val.
+      // `parquet_filter_normalizer::push_down_negation` deliberately does not complement ordering
+      // comparisons (NaN makes `NOT(a < b)` differ from `a >= b`), so `NOT(col op lit)` forms
+      // reach here. Stats transforms use different columns (vmin, vmax, is_null) for different
+      // operators such that NOT(col < val) is not equivalent to NOT(vmin < val) and instead is
+      // equivalent to vmax >= val.
       if (input_op == ast_operator::NOT) {
         auto const* child_operation =
           dynamic_cast<ast::operation const*>(&expr.get_operands().front().get());
@@ -173,12 +198,13 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             // `col_ref` is only non-null for the `col op lit` form, so both checks below must
             // stay inside this branch
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
+              binary_operands.col_ref->accept(*this);
               // Equality is always exact
               auto const is_equality =
                 child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
 
-              // An ordering comparison is only exact when the column cannot hold a `NaN`. i.e., not
-              // a floating point type
+              // An ordering comparison is only exact when the column cannot hold a `NaN`,
+              // i.e., not a floating-point type
               auto const can_negate_ordering = not cudf::is_floating_point(
                 _output_dtypes[binary_operands.col_ref->get_column_index()]);
 
@@ -211,6 +237,14 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
     col_ref->accept(*this);
 
     auto const col_index = col_ref->get_column_index();
+
+    // Some Parquet writers exclude `NaN`s from stats, so we can't reliably prune row groups for
+    // columns that may contain them.
+    if (not is_prunable_comparison(op, _output_dtypes[col_index])) {
+      _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+      return *_always_true;
+    }
+
     // Push literal into the ast::tree
     auto const& literal = _stats_expr.push(*literal_ptr);
 
@@ -235,12 +269,6 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         break;
       }
       case ast_operator::NOT_EQUAL: {
-        // Some Parquet writers exclude `NaN`s from stats so we can't reliably prune row groups for
-        // columns that may contain them.
-        if (cudf::is_floating_point(_output_dtypes[col_index])) {
-          _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-          return *_always_true;
-        }
         auto const& vmin =
           _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column});
         auto const& vmax =

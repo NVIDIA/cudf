@@ -563,7 +563,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
       auto page_stats_table = cudf::table(std::move(columns));
       // Converts AST to StatsAST with reference to min, max columns in above `stats_table`.
       parquet::detail::stats_expression_converter const stats_expr{
-        filter.get(), std::span<cudf::data_type const>{&dtype, 1}, has_is_null_operator, stream};
+        filter.get(), std::span{&dtype, 1}, has_is_null_operator, stream};
 
       // Filter the input table using AST expression and return the (BOOL8) predicate column.
       auto const page_mask = cudf::detail::compute_column(page_stats_table,

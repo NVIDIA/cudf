@@ -784,14 +784,15 @@ def run_pandas_query_iteration(
         if result_casts:
             for col, dtype in result_casts.items():
                 result[col] = result[col].astype(dtype)
-        result_for_validation = result._fsproxy_slow
+        result_for_validation = getattr(result, "_fsproxy_slow", result)
         comparison_options = (
             run_config.validation_method.comparison_options
             if run_config.validation_method is not None
             else PANDAS_VALIDATION_OPTIONS
         )
         try:
-            pd._fsproxy_slow.testing.assert_frame_equal(
+            native_pd = getattr(pd, "_fsproxy_slow", pd)
+            native_pd.testing.assert_frame_equal(
                 result_for_validation, expected, **comparison_options
             )
         except Exception as e:

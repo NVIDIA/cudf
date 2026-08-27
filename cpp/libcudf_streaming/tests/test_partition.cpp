@@ -147,6 +147,23 @@ TEST_F(PartitionReservation, empty_table)
   EXPECT_EQ(reservation.size(), 0);
 }
 
+TEST_F(PartitionReservation, cost_rejects_unusable_partitions)
+{
+  auto stream = cudf::get_default_stream();
+  auto br     = rapidsmpf::BufferResource::create(mr());
+  auto table  = random_table_with_index(42, 100, 0, 10);
+  auto chunks = rapidsmpf::to_vector(
+    partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get()));
+
+  std::vector<rapidsmpf::PackedData const*> null_partition{nullptr};
+  EXPECT_THROW(std::ignore = unpack_and_concat_cost(null_partition), std::invalid_argument);
+
+  // Moving a partition away leaves the source with null members.
+  auto const moved_away = std::move(chunks.at(0));
+  std::vector<rapidsmpf::PackedData const*> consumed{&chunks.at(0)};
+  EXPECT_THROW(std::ignore = unpack_and_concat_cost(consumed), std::invalid_argument);
+}
+
 TEST_F(PartitionReservation, unspill_consumes_the_reservation_exactly)
 {
   auto stream = cudf::get_default_stream();

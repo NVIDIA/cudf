@@ -221,8 +221,12 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
         }),
         cuda::std::plus<NodeIndexT>{});
     } else {
-      auto single_node = 1;
-      row_idx.set_element_async(1, single_node, stream);
+      // Uses thrust::fill instead of device_uvector::set_element_async to prevent the case where
+      // single_node goes out of scope before the memcpy-async(stream) completes. This is also
+      // allows us to make the copy without incurring a stream synchronize.
+      auto single_node = NodeIndexT{1};
+      auto exec_policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+      thrust::fill(exec_policy, row_idx.begin() + 1, row_idx.end(), single_node);
     }
 
 #ifdef CSR_DEBUG_PRINT

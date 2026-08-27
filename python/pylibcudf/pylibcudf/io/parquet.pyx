@@ -900,7 +900,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.key_value_metadata(
             [
@@ -924,7 +924,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.compression(compression)
         return self
@@ -940,7 +940,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.stats_level(sf)
         return self
@@ -956,7 +956,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.row_group_size_bytes(val)
         return self
@@ -972,7 +972,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.row_group_size_rows(val)
         return self
@@ -988,7 +988,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.max_page_size_bytes(val)
         return self
@@ -1004,7 +1004,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.max_page_size_rows(val)
         return self
@@ -1020,7 +1020,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.max_dictionary_size(val)
         return self
@@ -1036,7 +1036,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.write_arrow_schema(enabled)
         return self
@@ -1206,7 +1206,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.metadata(metadata.c_obj)
         return self
@@ -1224,7 +1224,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.key_value_metadata(
             [
@@ -1245,7 +1245,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.compression(compression)
         return self
@@ -1261,7 +1261,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.stats_level(sf)
         return self
@@ -1277,7 +1277,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.int96_timestamps(enabled)
         return self
@@ -1293,7 +1293,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.write_v2_headers(enabled)
         return self
@@ -1313,7 +1313,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.page_level_compression(enabled)
         return self
@@ -1329,7 +1329,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.dictionary_policy(val)
         return self
@@ -1345,7 +1345,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.utc_timestamps(enabled)
         return self
@@ -1361,7 +1361,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.write_arrow_schema(enabled)
         return self
@@ -1377,7 +1377,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.row_group_size_rows(val)
         return self
@@ -1393,7 +1393,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.max_page_size_bytes(val)
         return self

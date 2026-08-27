@@ -156,6 +156,24 @@ public class VariantUtilsTest extends CudfTestBase {
       return concat(bytes(header, fields.size()), fieldIds, offsets, encodedValues);
     }
 
+    @SafeVarargs
+    private static List<Byte> array(List<Byte>... values) {
+      List<Byte> offsets = new ArrayList<>(values.length + 1);
+      List<Byte> encodedValues = new ArrayList<>();
+      int offset = 0;
+      for (List<Byte> value : values) {
+        offsets.add(oneByte(offset, "array offset"));
+        offset += value.size();
+        encodedValues.addAll(value);
+      }
+      offsets.add(oneByte(offset, "array offset"));
+
+      int header = header(0x03,
+          ((SMALL_OFFSET_SIZE - 1) & 0x03)
+              | ((SMALL_CONTAINER & 0x01) << 2));
+      return concat(bytes(header, values.length), offsets, encodedValues);
+    }
+
     private static List<String> sortedFieldNames(Map<String, List<Byte>> fields) {
       List<String> sortedNames = new ArrayList<>(fields.keySet());
       sortedNames.sort(VariantEncoder::compareUtf8Unsigned);
@@ -207,6 +225,36 @@ public class VariantUtilsTest extends CudfTestBase {
           (int) ((value >>> 40) & 0xff),
           (int) ((value >>> 48) & 0xff),
           (int) ((value >>> 56) & 0xff));
+    }
+
+    private static List<Byte> float32(float value) {
+      int bits = Float.floatToRawIntBits(value);
+      return bytes(simple(0x0e),
+          bits & 0xff,
+          (bits >>> 8) & 0xff,
+          (bits >>> 16) & 0xff,
+          (bits >>> 24) & 0xff);
+    }
+
+    private static List<Byte> float64(double value) {
+      long bits = Double.doubleToRawLongBits(value);
+      return bytes(simple(0x07),
+          (int) (bits & 0xff),
+          (int) ((bits >>> 8) & 0xff),
+          (int) ((bits >>> 16) & 0xff),
+          (int) ((bits >>> 24) & 0xff),
+          (int) ((bits >>> 32) & 0xff),
+          (int) ((bits >>> 40) & 0xff),
+          (int) ((bits >>> 48) & 0xff),
+          (int) ((bits >>> 56) & 0xff));
+    }
+
+    private static List<Byte> bool(boolean value) {
+      return bytes(simple(value ? 0x01 : 0x02));
+    }
+
+    private static List<Byte> nullValue() {
+      return bytes(simple(0x00));
     }
 
     private static List<Byte> string(String value) {
@@ -317,6 +365,66 @@ public class VariantUtilsTest extends CudfTestBase {
             field("l", VariantEncoder.int64(1234567890123456789L))))));
   }
 
+  private static ColumnVector makeArrayVariantColumn() {
+    VariantEncoder encoder = new VariantEncoder();
+    return ColumnVector.fromStructs(
+        VARIANT_TYPE,
+        variant(encoder.metadata(), VariantEncoder.array(
+            VariantEncoder.int8(2), VariantEncoder.int8(1), VariantEncoder.int8(5))),
+        variant(encoder.metadata(), VariantEncoder.array(
+            VariantEncoder.int8(9), VariantEncoder.int8(8))));
+  }
+
+  private static ColumnVector makeNestedArrayVariantColumn() {
+    VariantEncoder encoder = new VariantEncoder();
+    return ColumnVector.fromStructs(
+        VARIANT_TYPE,
+        variant(encoder.metadata(), VariantEncoder.array(
+            VariantEncoder.array(VariantEncoder.int8(2), VariantEncoder.int8(1)),
+            VariantEncoder.array(VariantEncoder.int8(5)))),
+        variant(encoder.metadata(), VariantEncoder.array(
+            VariantEncoder.array(VariantEncoder.int8(9)),
+            VariantEncoder.array(VariantEncoder.int8(8), VariantEncoder.int8(7)))));
+  }
+
+  private static ColumnVector makeMixedArrayVariantColumn() {
+    VariantEncoder encoder = new VariantEncoder("a", "b");
+    return ColumnVector.fromStructs(VARIANT_TYPE, variant(
+        encoder.metadata(),
+        encoder.object(fields(field("a", VariantEncoder.array(
+            encoder.object(fields(field("b", VariantEncoder.int32(7)))),
+            encoder.object(fields(field("b", VariantEncoder.int32(42))))))))));
+  }
+
+  private static ColumnVector makeFloatVariantColumn() {
+    VariantEncoder encoder = new VariantEncoder("f", "d");
+    return ColumnVector.fromStructs(
+        VARIANT_TYPE,
+        variant(encoder.metadata(), encoder.object(fields(
+            field("f", VariantEncoder.float32(1.25f)),
+            field("d", VariantEncoder.float64(-2.5))))),
+        variant(encoder.metadata(), encoder.object(fields(
+            field("f", VariantEncoder.float32(-4.5f)),
+            field("d", VariantEncoder.float64(8.125))))));
+  }
+
+  private static ColumnVector makeBoolVariantColumn() {
+    VariantEncoder encoder = new VariantEncoder("b");
+    return ColumnVector.fromStructs(
+        VARIANT_TYPE,
+        variant(encoder.metadata(), encoder.object(fields(
+            field("b", VariantEncoder.int8(0))))),
+        variant(encoder.metadata(), encoder.object(fields(
+            field("b", VariantEncoder.bool(true))))),
+        variant(encoder.metadata(), encoder.object(fields(
+            field("b", VariantEncoder.bool(false))))),
+        variant(encoder.metadata(), encoder.object(fields(
+            field("b", VariantEncoder.nullValue())))),
+        variant(encoder.metadata(), encoder.object(fields(
+            field("b", VariantEncoder.int8(1))))),
+        null);
+  }
+
   @Test
   void extractStringField() {
     try (ColumnVector variant = makeXyzVariantColumn();
@@ -398,6 +506,161 @@ public class VariantUtilsTest extends CudfTestBase {
          ColumnVector valueBytes = VariantUtils.getVariantFieldValue(variant, "z");
          ColumnVector result = VariantUtils.castVariantValue(valueBytes, DType.INT32);
          ColumnVector expected = ColumnVector.fromBoxedInts(null, 99, null)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void extractRootArrayElement() {
+    try (ColumnVector variant = makeArrayVariantColumn();
+         ColumnVector result = VariantUtils.extractVariantField(variant, "$[0]", DType.INT8);
+         ColumnVector expected = ColumnVector.fromBoxedBytes((byte) 2, (byte) 9)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void getThenCastArrayElement() {
+    try (ColumnVector variant = makeArrayVariantColumn();
+         ColumnVector valueBytes = VariantUtils.getVariantFieldValue(variant, "$[1]");
+         ColumnVector result = VariantUtils.castVariantValue(valueBytes, DType.INT8);
+         ColumnVector expected = ColumnVector.fromBoxedBytes((byte) 1, (byte) 8)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void extractNestedArrayElement() {
+    try (ColumnVector variant = makeNestedArrayVariantColumn();
+         ColumnVector result = VariantUtils.extractVariantField(variant, "$[0][0]", DType.INT8);
+         ColumnVector expected = ColumnVector.fromBoxedBytes((byte) 2, (byte) 9)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void extractMixedObjectArrayPath() {
+    try (ColumnVector variant = makeMixedArrayVariantColumn();
+         ColumnVector result = VariantUtils.extractVariantField(
+             variant, "$.a[1].b", DType.INT32);
+         ColumnVector expected = ColumnVector.fromBoxedInts(42)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void arrayIndexResolutionFailuresProduceNulls() {
+    try (ColumnVector variant = makeArrayVariantColumn();
+         ColumnVector outOfBounds = VariantUtils.extractVariantField(
+             variant, "$[99]", DType.INT8);
+         ColumnVector containerMismatch = VariantUtils.extractVariantField(
+             variant, "$[0][0]", DType.INT8);
+         ColumnVector expected = ColumnVector.fromBoxedBytes(null, null)) {
+      assertColumnsAreEqual(expected, outOfBounds);
+      assertColumnsAreEqual(expected, containerMismatch);
+    }
+  }
+
+  @Test
+  void extractArrayElementFromSlice() {
+    try (ColumnVector variant = makeArrayVariantColumn();
+         ColumnVector sliced = variant.subVector(1, 2);
+         ColumnVector result = VariantUtils.extractVariantField(sliced, "$[0]", DType.INT8);
+         ColumnVector expected = ColumnVector.fromBoxedBytes((byte) 9)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void castFloatFields() {
+    try (ColumnVector variant = makeFloatVariantColumn();
+         ColumnVector floatBytes = VariantUtils.getVariantFieldValue(variant, "f");
+         ColumnVector doubleBytes = VariantUtils.getVariantFieldValue(variant, "d");
+         ColumnVector floats = VariantUtils.castVariantValue(floatBytes, DType.FLOAT32);
+         ColumnVector doubles = VariantUtils.castVariantValue(doubleBytes, DType.FLOAT64);
+         ColumnVector expectedFloats = ColumnVector.fromBoxedFloats(1.25f, -4.5f);
+         ColumnVector expectedDoubles = ColumnVector.fromBoxedDoubles(-2.5, 8.125)) {
+      assertColumnsAreEqual(expectedFloats, floats);
+      assertColumnsAreEqual(expectedDoubles, doubles);
+    }
+  }
+
+  @Test
+  void extractFloatFields() {
+    try (ColumnVector variant = makeFloatVariantColumn();
+         ColumnVector floats = VariantUtils.extractVariantField(variant, "f", DType.FLOAT32);
+         ColumnVector doubles = VariantUtils.extractVariantField(variant, "d", DType.FLOAT64);
+         ColumnVector expectedFloats = ColumnVector.fromBoxedFloats(1.25f, -4.5f);
+         ColumnVector expectedDoubles = ColumnVector.fromBoxedDoubles(-2.5, 8.125)) {
+      assertColumnsAreEqual(expectedFloats, floats);
+      assertColumnsAreEqual(expectedDoubles, doubles);
+    }
+  }
+
+  @Test
+  void floatWidthMismatchProducesNulls() {
+    try (ColumnVector variant = makeFloatVariantColumn();
+         ColumnVector result = VariantUtils.extractVariantField(variant, "f", DType.FLOAT64);
+         ColumnVector expected = ColumnVector.fromBoxedDoubles(null, null)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void castFloatWidthMismatchesProduceNulls() {
+    try (ColumnVector variant = makeFloatVariantColumn();
+         ColumnVector floatBytes = VariantUtils.getVariantFieldValue(variant, "f");
+         ColumnVector doubleBytes = VariantUtils.getVariantFieldValue(variant, "d");
+         ColumnVector floatsAsDoubles = VariantUtils.castVariantValue(floatBytes, DType.FLOAT64);
+         ColumnVector doublesAsFloats = VariantUtils.castVariantValue(doubleBytes, DType.FLOAT32);
+         ColumnVector expectedDoubles = ColumnVector.fromBoxedDoubles(null, null);
+         ColumnVector expectedFloats = ColumnVector.fromBoxedFloats(null, null)) {
+      assertColumnsAreEqual(expectedDoubles, floatsAsDoubles);
+      assertColumnsAreEqual(expectedFloats, doublesAsFloats);
+    }
+  }
+
+  @Test
+  void castFloatNullInputIsPreserved() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE, VariantEncoder.float32(1.25f), null);
+         ColumnVector result = VariantUtils.castVariantValue(values, DType.FLOAT32);
+         ColumnVector expected = ColumnVector.fromBoxedFloats(1.25f, null)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void castBooleanValues() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.int8(0),
+             VariantEncoder.bool(true),
+             VariantEncoder.bool(false),
+             VariantEncoder.nullValue(),
+             VariantEncoder.int8(1),
+             null);
+         ColumnVector sliced = values.subVector(1, 6);
+         ColumnVector unslicedResult = VariantUtils.castVariantValue(values, DType.BOOL8);
+         ColumnVector result = VariantUtils.castVariantValue(sliced, DType.BOOL8);
+         ColumnVector unslicedExpected = ColumnVector.fromBoxedBooleans(
+             null, true, false, null, null, null);
+         ColumnVector expected = ColumnVector.fromBoxedBooleans(true, false, null, null, null)) {
+      assertColumnsAreEqual(unslicedExpected, unslicedResult);
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void extractBooleanFieldFromSlice() {
+    try (ColumnVector variant = makeBoolVariantColumn();
+         ColumnVector sliced = variant.subVector(1, 6);
+         ColumnVector unslicedResult = VariantUtils.extractVariantField(variant, "b", DType.BOOL8);
+         ColumnVector result = VariantUtils.extractVariantField(sliced, "b", DType.BOOL8);
+         ColumnVector unslicedExpected = ColumnVector.fromBoxedBooleans(
+             null, true, false, null, null, null);
+         ColumnVector expected = ColumnVector.fromBoxedBooleans(true, false, null, null, null)) {
+      assertColumnsAreEqual(unslicedExpected, unslicedResult);
       assertColumnsAreEqual(expected, result);
     }
   }
@@ -588,6 +851,28 @@ public class VariantUtilsTest extends CudfTestBase {
   }
 
   @Test
+  void emptyInputSupportsFloatOutput() {
+    try (ColumnVector variant = ColumnVector.fromStructs(VARIANT_TYPE);
+         ColumnVector result = VariantUtils.extractVariantField(variant, "x", DType.FLOAT32);
+         ColumnVector expected = ColumnVector.fromBoxedFloats()) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void emptyInputSupportsBooleanOutput() {
+    try (ColumnVector values = ColumnVector.fromLists(BINARY_TYPE);
+         ColumnVector directResult = VariantUtils.castVariantValue(values, DType.BOOL8);
+         ColumnVector variant = ColumnVector.fromStructs(VARIANT_TYPE);
+         ColumnVector extractedResult = VariantUtils.extractVariantField(
+             variant, "x", DType.BOOL8);
+         ColumnVector expected = ColumnVector.fromBoxedBooleans()) {
+      assertColumnsAreEqual(expected, directResult);
+      assertColumnsAreEqual(expected, extractedResult);
+    }
+  }
+
+  @Test
   void emptyPathThrows() {
     try (ColumnVector variant = makeXyzVariantColumn()) {
       assertThrows(CudfException.class, () -> VariantUtils.getVariantFieldValue(variant, ""));
@@ -629,19 +914,48 @@ public class VariantUtilsTest extends CudfTestBase {
     try (ColumnVector variant = makeXyzVariantColumn();
          ColumnVector valueBytes = VariantUtils.getVariantFieldValue(variant, "x")) {
       assertThrows(IllegalArgumentException.class,
-          () -> VariantUtils.castVariantValue(valueBytes, DType.FLOAT64));
+          () -> VariantUtils.castVariantValue(valueBytes, DType.UINT32));
       assertThrows(IllegalArgumentException.class,
-          () -> VariantUtils.extractVariantField(variant, "x", DType.FLOAT64));
+          () -> VariantUtils.extractVariantField(variant, "x", DType.UINT32));
     }
   }
 
   @Test
-  void nullCastArgumentsThrow() {
-    assertThrows(NullPointerException.class, () -> VariantUtils.castVariantValue(null, null));
-    assertThrows(NullPointerException.class,
-        () -> VariantUtils.castVariantValue(null, DType.INT32));
-    assertThrows(NullPointerException.class,
-        () -> VariantUtils.castVariantValue(null, DType.FLOAT64));
+  void nullArgumentsThrow() {
+    try (ColumnVector values = ColumnVector.fromLists(BINARY_TYPE, VariantEncoder.int32(1));
+         ColumnVector variant = makeXyzVariantColumn()) {
+      assertThrows(NullPointerException.class, () -> VariantUtils.castVariantValue(null, null));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.castVariantValue(null, DType.INT32));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.castVariantValue(null, DType.FLOAT64));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.castVariantValue(values, null));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.extractVariantField(variant, "x", null));
+    }
+  }
+
+  @Test
+  void invalidInputShapesThrow() {
+    try (ColumnVector nonVariant = ColumnVector.fromInts(1, 2, 3)) {
+      assertThrows(CudfException.class,
+          () -> VariantUtils.getVariantFieldValue(nonVariant, "x"));
+      assertThrows(CudfException.class,
+          () -> VariantUtils.castVariantValue(nonVariant, DType.INT32));
+      assertThrows(CudfException.class,
+          () -> VariantUtils.extractVariantField(nonVariant, "x", DType.INT32));
+    }
+  }
+
+  @Test
+  void truncatedFloatPayloadProducesNull() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE, bytes(VariantEncoder.simple(0x07), 0x00, 0x00));
+         ColumnVector result = VariantUtils.castVariantValue(values, DType.FLOAT64);
+         ColumnVector expected = ColumnVector.fromBoxedDoubles((Double) null)) {
+      assertColumnsAreEqual(expected, result);
+    }
   }
 
   @Test

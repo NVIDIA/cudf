@@ -881,13 +881,13 @@ class StreamingExecutor:
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
         default_factory=JoinFilterPushdownOptions
     )
-    max_concurrent_io_tasks: int | dict[str, int] | MaxConcurrentIOTasks | None = (
-        dataclasses.field(
-            default_factory=_make_default_factory(
-                f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS",
-                MaxConcurrentIOTasks.parse_env,
-                default=MaxConcurrentIOTasks(),
-            )
+    max_concurrent_io_tasks: MaxConcurrentIOTasks = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS",
+            lambda raw: MaxConcurrentIOTasks.from_config(
+                MaxConcurrentIOTasks.parse_env(raw)
+            ),
+            default=MaxConcurrentIOTasks(),
         )
     )
     num_py_executors: int = dataclasses.field(
@@ -971,12 +971,6 @@ class StreamingExecutor:
             object.__setattr__(self, "sink_to_directory", True)
         elif self.sink_to_directory is None:
             object.__setattr__(self, "sink_to_directory", False)
-        object.__setattr__(
-            self,
-            "max_concurrent_io_tasks",
-            MaxConcurrentIOTasks.from_config(self.max_concurrent_io_tasks),
-        )
-
         # Type / value check everything else
         if not isinstance(self.max_rows_per_partition, int):
             raise TypeError("max_rows_per_partition must be an int")
@@ -1199,6 +1193,12 @@ class ConfigOptions(Generic[ExecutorType]):
                 user_executor_options = user_executor_options.copy()
                 if "min_device_size" not in user_executor_options:
                     user_executor_options["min_device_size"] = get_total_device_memory()
+                if "max_concurrent_io_tasks" in user_executor_options:
+                    user_executor_options["max_concurrent_io_tasks"] = (
+                        MaxConcurrentIOTasks.from_config(
+                            user_executor_options["max_concurrent_io_tasks"]
+                        )
+                    )
 
                 # Handle dynamic_planning: check user config, then env var
                 user_dynamic_planning = user_executor_options.get(

@@ -500,7 +500,12 @@ def test_max_concurrent_io_tasks_rejects_non_positive(
     value: int | dict[str, int],
 ) -> None:
     with pytest.raises(ValueError, match="must be positive"):
-        StreamingExecutor(max_concurrent_io_tasks=value)
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"max_concurrent_io_tasks": value},
+            )
+        )
 
 
 @pytest.mark.parametrize(
@@ -509,7 +514,12 @@ def test_max_concurrent_io_tasks_rejects_non_positive(
 )
 def test_max_concurrent_io_tasks_rejects_bool(value: object) -> None:
     with pytest.raises(TypeError, match="must be ints"):
-        StreamingExecutor(max_concurrent_io_tasks=value)  # type: ignore[arg-type]
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"max_concurrent_io_tasks": value},
+            )
+        )
 
 
 def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

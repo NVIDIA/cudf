@@ -684,9 +684,12 @@ nitpick_ignore = [
     ("py:class", "ColumnNameSpec"),
     ("py:class", "CudaStreamLike"),
     ("py:class", "Datasource"),
+    ("py:class", "Kind"),
+    ("py:class", "PyarrowDataType"),
     ("py:class", "Span"),
     ("py:class", "SupportsArrayInterface"),
     ("py:class", "SupportsCudaArrayInterface"),
+    ("py:class", "T"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [

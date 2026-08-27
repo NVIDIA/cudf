@@ -34,7 +34,7 @@ repos:
           )
       - id: check-xml
   - repo: https://github.com/MarcoGorelli/cython-lint
-    rev: v0.21.0
+    rev: v0.21.1
     hooks:
       - id: cython-lint
         additional_dependencies: ["cython>=3.2.2,<3.3.0a0"]

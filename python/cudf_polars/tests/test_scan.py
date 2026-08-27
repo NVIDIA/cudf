@@ -179,14 +179,14 @@ def test_scan_parquet_prefetch_file_metadata_in_memory_raises():
         ConfigOptions.from_polars_engine(
             pl.GPUEngine(
                 executor="in-memory",
-                parquet_options=ParquetOptions(prefetch_file_metadata=True),
+                parquet_options=ParquetOptions(prefetch_file_metadata="always"),
             )
         )
 
 
 def test_scan_do_evaluate_missing_prefetch_metadata() -> None:
     paths = ["/some/missing/file.parquet"]
-    parquet_options = ParquetOptions(prefetch_file_metadata=True)
+    parquet_options = ParquetOptions(prefetch_file_metadata="always")
     context = IRExecutionContext()
     schema = {"a": DataType(pl.Int64())}
 

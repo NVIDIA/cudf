@@ -733,9 +733,7 @@ class RunConfig:
             config_options = config_options.drop_unserializable()
             rapidsmpf_options = engine.rapidsmpf_options.get_strings()
             result["config_options"] = {
-                "config_options": dataclasses.asdict(
-                    config_options, dict_factory=ConfigOptions.dict_factory
-                ),
+                "config_options": dataclasses.asdict(config_options),
                 "rapidsmpf_options": rapidsmpf_options,
             }
             # discard unserializable / unnecessary UUIDs

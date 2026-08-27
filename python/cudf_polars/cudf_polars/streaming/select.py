@@ -440,7 +440,7 @@ def _(
             scan_child.skip_rows,
             scan_child.n_rows,
             dataclasses.replace(
-                scan_child.parquet_options, prefetch_file_metadata=False
+                scan_child.parquet_options, prefetch_file_metadata="never"
             ),
             None,
         )

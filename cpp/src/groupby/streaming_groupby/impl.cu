@@ -89,7 +89,7 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
   : _max_distinct_keys{max_distinct_keys},
     _null_handling{null_handling},
     _mr{std::move(mr)},
-    _d_agg_kinds{0, rmm::cuda_stream_default, cudf::get_current_device_resource_ref()},
+    _d_agg_kinds{0, cuda::stream_ref{cudaStreamLegacy}, cudf::get_current_device_resource_ref()},
     _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);

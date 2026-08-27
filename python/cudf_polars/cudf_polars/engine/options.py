@@ -18,14 +18,18 @@ from rapidsmpf.utils.string import parse_boolean
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
 )
-from cudf_polars.utils.config import UNSPECIFIED, MemoryResourceConfig, Unspecified
+from cudf_polars.utils.config import (
+    UNSPECIFIED,
+    DynamicPlanningOptions,
+    MemoryResourceConfig,
+    Unspecified,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from cudf_polars.quent import QuentContext
     from cudf_polars.utils.config import (
-        DynamicPlanningOptions,
         JoinFilterPushdownOptions,
         ParquetOptions,
     )
@@ -197,6 +201,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS``.
         Default: ``8``.
         Category: executor.
+    kvikio_statistics
+        Collect KvikIO I/O statistics, reachable through
+        :meth:`~cudf_polars.engine.core.StreamingEngine.gather_io_summary`.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS``.
+        Default: ``False``.
+        Category: executor.
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
@@ -324,6 +334,9 @@ class StreamingOptions:
     )
     kvikio_nthreads: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", int
+    )
+    kvikio_statistics: bool | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", parse_boolean
     )
     max_concurrent_io_tasks: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", int
@@ -467,7 +480,10 @@ class StreamingOptions:
 
         Designed to work with namespaces produced by :func:`argparse.ArgumentParser`
         parsers that have been augmented with :meth:`_add_cli_args`. Fields not present
-        in the namespace (or set to ``None``) remain :data:`UNSPECIFIED`.
+        in the namespace (or set to ``None``) let their default factories read the
+        environment variable. Fields with no explicit value or environment variable
+        remain :data:`UNSPECIFIED`; their downstream consumer applies its built-in
+        default.
 
         Parameters
         ----------
@@ -490,12 +506,19 @@ class StreamingOptions:
             v = getattr(args, attr, None)
             return UNSPECIFIED if v is None else v
 
-        # Special: dynamic_planning bool → None (disabled) or UNSPECIFIED
-        # True (the build_parser default) → UNSPECIFIED (use library default)
-        # False → explicitly disable (None)
-        # absent / None → UNSPECIFIED
+        # dynamic_planning is a BooleanOptionalAction with default=None, so
+        # dyn is True only when --dynamic-planning was passed explicitly,
+        # False only for --no-dynamic-planning, and None when absent.
+        # An explicit True must be preserved (not UNSPECIFIED), otherwise an
+        # env var disabling dynamic planning would silently override it.
         dyn = getattr(args, "dynamic_planning", None)
-        dynamic_planning: Any = None if dyn is False else UNSPECIFIED
+        dynamic_planning: Any = (
+            UNSPECIFIED
+            if dyn is None
+            else None
+            if dyn is False
+            else DynamicPlanningOptions()
+        )
 
         # target_partition_size: canonical dest from _add_cli_args; fall back to
         # "blocksize" for legacy benchmark scripts that predate this module.
@@ -505,30 +528,28 @@ class StreamingOptions:
             else _get("blocksize")
         )
 
+        # A field's CLI dest is usually its own name, except where a bare name
+        # would be ambiguous on the command line (e.g. "log" -> "--log" reads as
+        # a generic logging flag, so its dest is namespaced to "rapidsmpf_log").
+        cli_dest_overrides = {
+            "log": "rapidsmpf_log",
+            "statistics": "rapidsmpf_statistics",
+        }
+        special_cased = {
+            "target_partition_size": target_partition_size,
+            "dynamic_planning": dynamic_planning,
+        }
+        kwargs: dict[str, Any] = {
+            f.name: special_cased.get(
+                f.name, _get(cli_dest_overrides.get(f.name, f.name))
+            )
+            for f in dataclasses.fields(cls)
+        }
+        # Omit UNSPECIFIED entries rather than passing them explicitly, so
+        # each field's own default_factory (env var, then built-in default)
+        # runs instead of being short-circuited.
         return cls(
-            num_streaming_threads=_get("num_streaming_threads"),
-            num_streams=_get("num_streams"),
-            log=_get("rapidsmpf_log"),  # renamed: dest rapidsmpf_log → log
-            statistics=_get("rapidsmpf_statistics"),  # renamed
-            memory_reserve_timeout=_get("memory_reserve_timeout"),
-            allow_overbooking_by_default=_get("allow_overbooking_by_default"),
-            pinned_memory=_get("pinned_memory"),
-            pinned_initial_pool_size=_get("pinned_initial_pool_size"),
-            pinned_max_pool_size=_get("pinned_max_pool_size"),
-            spill_device_limit=_get("spill_device_limit"),
-            periodic_spill_check=_get("periodic_spill_check"),
-            unbounded_file_read_cache=_get("unbounded_file_read_cache"),
-            hardware_binding=_get("hardware_binding"),
-            num_py_executors=_get("num_py_executors"),
-            max_concurrent_io_tasks=_get("max_concurrent_io_tasks"),
-            fallback_mode=_get("fallback_mode"),
-            max_rows_per_partition=_get("max_rows_per_partition"),
-            broadcast_limit=_get("broadcast_limit"),
-            target_partition_size=target_partition_size,
-            dynamic_planning=dynamic_planning,
-            raise_on_fail=_get("raise_on_fail"),
-            parquet_options=_get("parquet_options"),
-            memory_resource_config=_get("memory_resource_config"),
+            **{k: v for k, v in kwargs.items() if not isinstance(v, Unspecified)}
         )
 
     @staticmethod
@@ -683,6 +704,16 @@ class StreamingOptions:
                 Max workers for the Python ThreadPoolExecutor inside RapidsMPF.
                 Env: CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS.
                 Built-in default: 8."""),
+        )
+        g.add_argument(
+            "--kvikio-statistics",
+            dest="kvikio_statistics",
+            default=None,
+            action=argparse.BooleanOptionalAction,
+            help=textwrap.dedent("""\
+                Collect KvikIO I/O statistics, reported per rank.
+                Env: CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS.
+                Built-in default: false."""),
         )
         g.add_argument(
             "--max-concurrent-io-tasks",

@@ -1277,6 +1277,7 @@ dependencies:
           - hypothesis>=6.131.7
           - pytest-benchmark
           - pytest-cases>=3.8.2
+          - rapids-cli
           - scipy
           - zstandard
       - output_types: conda

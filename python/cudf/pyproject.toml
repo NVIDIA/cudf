@@ -61,6 +61,7 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     "pytest<9.1.0",
+    "rapids-cli",
     "s3fs>=2022.3.0",
     "scipy",
     "tzdata",

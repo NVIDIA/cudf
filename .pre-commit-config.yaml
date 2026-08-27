@@ -235,6 +235,11 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+  - repo: https://github.com/numpy/numpydoc
+    rev: v1.10.0
+    hooks:
+      - id: numpydoc-validation
+        files: ^python/cudf/cudf/
   - repo: https://github.com/rapidsai/pre-commit-hooks
     rev: v1.6.0
     hooks:

@@ -349,6 +349,78 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
   device_span<uint8_t const> val,
   cudf::string_view key)
 {
+<<<<<<< HEAD
+=======
+  // Parse the metadata offset table up front, before even inspecting `val`: metadata correctness
+  // is a per-row property that every path step through an object needs (each probe of the binary
+  // search below resolves a candidate field id to a name), so -- matching the once-per-row
+  // dictionary validation this replaces -- a malformed blob is reported as such regardless of
+  // what shape `val` turns out to have.
+  size_type meta_offset_size      = 0;
+  size_type meta_offsets_start    = 0;
+  size_type meta_strings_base     = 0;
+  size_type meta_strings_declared = 0;
+  size_type meta_num_entries      = 0;
+  {
+    auto const meta_len = static_cast<size_type>(meta.size());
+    if (meta_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
+    auto const meta_header = meta[0];
+    if ((meta_header & 0x0F) != variant_version_v1) { return {{}, op_status::MALFORMED_VARIANT}; }
+    meta_offset_size = ((meta_header >> 6) & 0x03) + 1;
+
+    size_type meta_pos          = 1;
+    auto const num_meta_entries = narrow_cast(read_uint64(meta, meta_pos, meta_offset_size));
+    if (!num_meta_entries.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+    meta_pos += meta_offset_size;
+
+    meta_offsets_start = meta_pos;
+    auto const meta_offsets_bytes =
+      (static_cast<uint64_t>(num_meta_entries.value()) + 1) * meta_offset_size;
+    if (cuda::std::cmp_greater(meta_offsets_bytes, meta_len - meta_offsets_start)) {
+      return {{}, op_status::MALFORMED_VARIANT};
+    }
+    meta_strings_base = meta_offsets_start + static_cast<size_type>(meta_offsets_bytes);
+    auto const meta_strings_extent = meta_len - meta_strings_base;
+
+    // Parquet VARIANT spec requires offsets[0] == 0; any other value is malformed.
+    auto const first_off = read_uint64(meta, meta_offsets_start, meta_offset_size);
+    if (!first_off.has_value() || first_off.value() != 0) {
+      return {{}, op_status::MALFORMED_VARIANT};
+    }
+
+    // Read the terminal offset offsets[num_entries] up front: it is the authoritative size of the
+    // string-data region, so every individual entry's end offset must be bounded by it below
+    auto const terminal_off_pos =
+      meta_offsets_start + static_cast<size_type>(num_meta_entries.value()) * meta_offset_size;
+    auto const terminal_off = read_uint64(meta, terminal_off_pos, meta_offset_size);
+    if (!terminal_off.has_value() ||
+        cuda::std::cmp_greater(terminal_off.value(), meta_strings_extent)) {
+      return {{}, op_status::MALFORMED_VARIANT};
+    }
+    meta_strings_declared = static_cast<size_type>(terminal_off.value());
+    meta_num_entries      = num_meta_entries.value();
+  }
+
+  // O(1) name lookup by id: two offset reads into the metadata table
+  auto name_for_id = [&](size_type field_id) -> cuda::std::optional<cudf::string_view> {
+    if (field_id < 0 || cuda::std::cmp_greater_equal(field_id, meta_num_entries)) {
+      return cuda::std::nullopt;
+    }
+    auto const start_pos = static_cast<uint64_t>(meta_offsets_start) +
+                           static_cast<uint64_t>(field_id) * meta_offset_size;
+    auto const end_pos = start_pos + static_cast<uint64_t>(meta_offset_size);
+    auto const s       = read_uint64(meta, static_cast<size_type>(start_pos), meta_offset_size);
+    auto const e       = read_uint64(meta, static_cast<size_type>(end_pos), meta_offset_size);
+    if (!s.has_value() || !e.has_value()) { return cuda::std::nullopt; }
+    if (e.value() < s.value() || cuda::std::cmp_greater(e.value(), meta_strings_declared)) {
+      return cuda::std::nullopt;
+    }
+    return cudf::string_view{
+      reinterpret_cast<char const*>(meta.data() + meta_strings_base + s.value()),
+      static_cast<size_type>(e.value() - s.value())};
+  };
+
+>>>>>>> c5326c18ab0f35203604a609b3f627ab0e2c092c
   auto const val_len = static_cast<size_type>(val.size());
   if (val_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
   auto const value_metadata = val[0];
@@ -387,7 +459,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
   auto const values_region = static_cast<size_type>(sentinel_raw.value());
 
   // Binary search field_ids[0..N-1] by resolving each probe to its name and comparing against
-  // `key` directly -- no separate id lookup for `key` itself is needed.
+  // `key` directly
   bool found           = false;
   uint64_t match_start = 0;
   size_type lo         = 0;
@@ -639,6 +711,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
       if (st != op_status::SUCCESS) { return {{}, st}; }
       sub_val = span;
     } else {
+<<<<<<< HEAD
       if (!dict.has_value()) {
         auto [parsed, st] = parse_metadata_dictionary(meta);
         if (st != op_status::SUCCESS) { return {{}, st}; }
@@ -652,6 +725,9 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
       // MALFORMED_VARIANT (from parsing the object) instead of MISSING_PATH (from never having
       // parsed the object at all) -- same null output, different status byte.
       auto const [span, st] = locate_object_field(*dict, meta, sub_val, step);
+=======
+      auto const [span, st] = locate_object_field(meta, sub_val, step);
+>>>>>>> c5326c18ab0f35203604a609b3f627ab0e2c092c
       if (st != op_status::SUCCESS) { return {{}, st}; }
       sub_val = span;
     }

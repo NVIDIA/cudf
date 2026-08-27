@@ -880,9 +880,9 @@ bool expect_columns_equal(cudf::column_view const& lhs,
                           cuda::stream_ref stream,
                           cudf::memory_resources mr)
 {
-  // TODO: equality row preprocessing (two_table_comparator / preprocessed_table::create) still
-  // allocates from the current device resource; pass `mr` through once that path accepts
-  // memory_resources so callers need not disable failing current-resource scopes.
+  // TODO: check_non_empty_nulls (via has_nonempty_nulls) still allocates temporaries from the
+  // current device resource. Once it accepts a memory resource, callers can guard comparisons
+  // with fail_on_current_device_resource_use().
   check_non_empty_nulls(lhs, rhs, stream);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);

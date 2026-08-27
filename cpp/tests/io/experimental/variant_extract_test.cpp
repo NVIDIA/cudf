@@ -556,12 +556,7 @@ inline std::vector<uint8_t> build_single_field_object(uint8_t fid,
 }
 
 // Build a VARIANT object blob with `n_fields` fields, each holding a bare INT32 equal to its own
-// field id.  Per the VARIANT spec, an object's field_ids are ordered by name, not by numeric id,
-// so `descending_ids` selects which id order to emit: ascending (0..n_fields-1) when the
-// dictionary was built in ascending name order, or descending (n_fields-1..0) when the dictionary
-// was built in descending name order -- either way the emitted id order matches name order, as
-// real VARIANT data requires.  Uses 1-byte field_id_size and 1-byte field_off_size, so the total
-// value bytes (5 * n_fields) must fit in a 1-byte offset (enforced below).
+// field id.
 inline std::vector<uint8_t> build_sequential_int32_object(int n_fields, bool descending_ids = false)
 {
   CUDF_EXPECTS(n_fields <= 51, "n_fields too large for 1-byte offset header");
@@ -881,12 +876,7 @@ TEST_F(ExtractVariantFieldTest, MixedObjectArrayTraversal)
 
 TEST_F(ExtractVariantFieldTest, LargeDictionaryAndObjectScan)
 {
-  // Dictionary keys are inserted in descending name order ("k49" gets id 0, ..., "k00" gets id
-  // 49), the reverse of their lexicographic order. This decouples dictionary id order from name
-  // order, so the lookup can't get by on ids happening to already be name-ordered -- it must
-  // genuinely translate each probed id to a name via `name_for_id` and compare, exercising the
-  // O(1) id-to-name lookup this test targets. The object's field_ids are therefore emitted in
-  // descending order (`descending_ids=true`) to stay ordered by name, per the VARIANT spec.
+  // Dictionary keys are inserted in descending name order
   auto const ascending_keys = make_numeric_keys(50);
   std::vector<std::string> const keys(ascending_keys.rbegin(), ascending_keys.rend());
   auto const meta        = build_metadata(keys);
@@ -959,7 +949,7 @@ TEST_F(ExtractVariantFieldTest, SortedDictionaryBinarySearch)
   // corresponding field id in the object (as opposed to a key absent from the dictionary
   // altogether).
   auto const keys = make_numeric_keys(50);
-  auto const meta = build_metadata(keys, /*sorted=*/true);
+  auto const meta = build_metadata(keys);
   // Only 49 fields (ids 0..48); dictionary index 49 ("k49") has no matching field id.
   auto const val         = build_sequential_int32_object(49);
   auto col               = wrap_single_variant(meta, val);
@@ -1125,12 +1115,6 @@ TEST_F(ExtractVariantFieldTest, MalformedVariantDataYieldsNull)
 
 TEST_F(ExtractVariantFieldTest, ObjectFieldIdBeyondDictionarySizeIsRejected)
 {
-  // Regression test: locate_object_field's name_for_id lookup must reject an object field id
-  // that is out of range for the metadata dictionary instead of computing an out-of-bounds
-  // offset position. The dictionary here has a single key "x" (meta_num_entries == 1); the
-  // object below claims field id INT32_MAX for its single field, which is both out of range and
-  // large enough that `field_id * meta_offset_size` would overflow if computed in `size_type`
-  // (32-bit) arithmetic rather than being bounds-checked first.
   auto const meta = build_metadata({"x"});
 
   // Object header: field_id_size = 4 bytes, field_offset_size = 1 byte, is_large = false.

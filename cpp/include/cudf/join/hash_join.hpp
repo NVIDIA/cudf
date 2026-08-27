@@ -134,7 +134,10 @@ class hash_join {
    * not constructed with null check.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -159,7 +162,10 @@ class hash_join {
    * not constructed with null check.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -184,7 +190,10 @@ class hash_join {
    * not constructed with null check.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.

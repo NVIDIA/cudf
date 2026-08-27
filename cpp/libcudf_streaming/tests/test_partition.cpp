@@ -78,7 +78,7 @@ TEST_P(NumOfPartitions, round_trip_with_reservations)
 
   // Each reservation is sized by the matching cost function and must come back empty,
   // having been consumed as the allocations landed.
-  auto pack_res = br->reserve_or_fail(partition_and_pack_cost(expect, stream, br.get()),
+  auto pack_res = br->reserve_or_fail(partition_and_pack_cost(expect, stream, br->device_mr()),
                                       rapidsmpf::MemoryType::DEVICE);
   auto packed =
     partition_and_pack(expect, {1}, num_partitions, hash_fn, seed, stream, br.get(), pack_res);
@@ -89,7 +89,7 @@ TEST_P(NumOfPartitions, round_trip_with_reservations)
   for (int i = 1; i < num_partitions; ++i) {
     splits.emplace_back(i * num_rows / num_partitions);
   }
-  auto split_res = br->reserve_or_fail(split_and_pack_cost(expect, stream, br.get()),
+  auto split_res = br->reserve_or_fail(split_and_pack_cost(expect, stream, br->device_mr()),
                                        rapidsmpf::MemoryType::DEVICE);
   auto split     = split_and_pack(expect, splits, stream, br.get(), split_res);
   EXPECT_EQ(split.size(), num_partitions);
@@ -114,7 +114,7 @@ TEST_F(PartitionReservation, rejects_invalid_reservations)
   auto br         = rapidsmpf::BufferResource::create(mr());
   auto other      = rapidsmpf::BufferResource::create(mr());
   auto table      = random_table_with_index(42, 100, 0, 10);
-  auto const cost = partition_and_pack_cost(table, stream, br.get());
+  auto const cost = partition_and_pack_cost(table, stream, br->device_mr());
   ASSERT_GT(cost, 1);
 
   auto const pack = [&](rapidsmpf::MemoryReservation& res) {
@@ -139,7 +139,7 @@ TEST_F(PartitionReservation, empty_table)
   auto table  = random_table_with_index(42, 0, 0, 10);
 
   // An empty table skips the reorder, so the cost is the packed size alone.
-  auto reservation = br->reserve_or_fail(partition_and_pack_cost(table, stream, br.get()),
+  auto reservation = br->reserve_or_fail(partition_and_pack_cost(table, stream, br->device_mr()),
                                          rapidsmpf::MemoryType::DEVICE);
   auto packed      = partition_and_pack(
     table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get(), reservation);

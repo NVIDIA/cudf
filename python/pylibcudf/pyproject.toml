@@ -37,7 +37,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = [
-    "cupy-cuda13x>=14.0.1,!=14.1.0",
+    "cupy-cuda13x[ctk]>=14.0.1,!=14.1.0",
     "fastavro>=0.22.9",
     "mmh3",
     "nanoarrow",

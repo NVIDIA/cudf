@@ -216,12 +216,12 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
 }  // namespace
 
 std::size_t partition_and_pack_cost(cudf::table_view const& table,
-                                    rmm::cuda_stream_view stream,
-                                    rapidsmpf::BufferResource* br)
+                                    cuda::stream_ref stream,
+                                    rmm::device_async_resource_ref temp_mr)
 {
   // The reorder and the packed partitions are each about one packed table, and an
   // empty table skips the reorder entirely.
-  auto const packed_size = cudf::packed_size(table, stream, br->device_mr());
+  auto const packed_size = cudf::packed_size(table, stream, temp_mr);
   return table.num_rows() == 0 ? packed_size : 2 * packed_size;
 }
 
@@ -252,7 +252,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::MemoryReservation& reservation)
 {
@@ -308,10 +308,10 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
 }  // namespace
 
 std::size_t split_and_pack_cost(cudf::table_view const& table,
-                                rmm::cuda_stream_view stream,
-                                rapidsmpf::BufferResource* br)
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref temp_mr)
 {
-  return cudf::packed_size(table, stream, br->device_mr());
+  return cudf::packed_size(table, stream, temp_mr);
 }
 
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
@@ -327,7 +327,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::MemoryReservation& reservation)
 {
@@ -421,7 +421,7 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
 }
 
 std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData>&& partitions,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rapidsmpf::BufferResource* br,
                                                rapidsmpf::MemoryReservation& reservation)
 {

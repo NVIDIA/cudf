@@ -8,6 +8,8 @@
 #include <cudf/partitioning.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cuda/stream_ref>
+
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/buffer.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
@@ -63,14 +65,14 @@ partition_and_split(
  *
  * @param table The table to partition.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param br Buffer resource used for temporary allocations.
+ * @param temp_mr Memory resource used for temporary allocations.
  * @return The peak size in bytes.
  *
  * @see partition_and_pack
  */
 [[nodiscard]] std::size_t partition_and_pack_cost(cudf::table_view const& table,
-                                                  rmm::cuda_stream_view stream,
-                                                  rapidsmpf::BufferResource* br);
+                                                  cuda::stream_ref stream,
+                                                  rmm::device_async_resource_ref temp_mr);
 
 /**
  * @brief Partitions rows from the input table into multiple packed (serialized) tables.
@@ -139,7 +141,7 @@ partition_and_pack(cudf::table_view const& table,
                    int num_partitions,
                    cudf::hash_id hash_function,
                    std::uint32_t seed,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    rapidsmpf::BufferResource* br,
                    rapidsmpf::MemoryReservation& reservation);
 
@@ -156,14 +158,14 @@ partition_and_pack(cudf::table_view const& table,
  *
  * @param table The table to split and pack into partitions.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param br Buffer resource used for temporary allocations.
+ * @param temp_mr Memory resource used for temporary allocations.
  * @return The peak size in bytes.
  *
  * @see split_and_pack
  */
 [[nodiscard]] std::size_t split_and_pack_cost(cudf::table_view const& table,
-                                              rmm::cuda_stream_view stream,
-                                              rapidsmpf::BufferResource* br);
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref temp_mr);
 
 /**
  * @brief Splits rows from the input table into multiple packed (serialized) tables.
@@ -220,7 +222,7 @@ partition_and_pack(cudf::table_view const& table,
 [[nodiscard]] std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::MemoryReservation& reservation);
 
@@ -315,7 +317,7 @@ partition_and_pack(cudf::table_view const& table,
  */
 [[nodiscard]] std::unique_ptr<cudf::table> unpack_and_concat(
   std::vector<rapidsmpf::PackedData>&& partitions,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::MemoryReservation& reservation);
 

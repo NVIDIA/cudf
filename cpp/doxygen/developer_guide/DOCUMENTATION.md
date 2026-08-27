@@ -214,7 +214,7 @@ Also, \@copydoc is useful when documenting a `detail` function that differs only
      */
     std::vector<size_type> segmented_count_set_bits(bitmask_type const* bitmask,
                                                     std::vector<size_type> const& indices,
-                                                    rmm::cuda_stream_view stream = cudf::get_default_stream());
+                                                    cuda::stream_ref stream = cudf::get_default_stream());
 
 Note, you must specify the whole signature of the function, including optional parameters, so that doxygen will be able to locate it.
 

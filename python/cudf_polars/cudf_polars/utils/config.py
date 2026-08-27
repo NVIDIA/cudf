@@ -112,8 +112,6 @@ class MaxConcurrentIOTasks:
     def parse_env(raw: str) -> int | dict[str, int] | None:
         """Parse an environment-variable value."""
         raw = raw.strip()
-        if raw.lower() == "auto":
-            return None
         try:
             return int(raw)
         except ValueError:
@@ -138,9 +136,7 @@ class MaxConcurrentIOTasks:
 
     def __post_init__(self) -> None:
         """Validate local and remote values."""
-        if isinstance(self.local, bool) or isinstance(self.remote, bool):
-            raise TypeError("max_concurrent_io_tasks values must be ints")
-        if not isinstance(self.local, int) or not isinstance(self.remote, int):
+        if type(self.local) is not int or type(self.remote) is not int:
             raise TypeError("max_concurrent_io_tasks values must be ints")
         if self.local < 1 or self.remote < 1:
             raise ValueError("max_concurrent_io_tasks values must be positive")
@@ -790,12 +786,12 @@ class StreamingExecutor:
         uses ``2`` for local paths and ``8`` for scans with remote URIs.
         Passing an ``int`` uses the same value for all scans. Passing a dict
         with ``local`` and/or ``remote`` keys tunes local and remote paths
-        separately. Passing ``None`` uses the automatic policy. This can be
-        set via
+        separately. Omit the option, or pass ``None``, to use the default
+        policy. This can be set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment
-          variable, as an int, ``auto``, or JSON dict
+          variable, as an int or JSON dict
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.

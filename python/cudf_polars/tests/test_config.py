@@ -448,7 +448,7 @@ def test_max_concurrent_io_tasks_local_remote_env(
         )
 
 
-def test_max_concurrent_io_tasks_default_auto(
+def test_max_concurrent_io_tasks_default_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", raising=False)
@@ -486,12 +486,6 @@ def test_max_concurrent_io_tasks_default_auto(
     assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
 
 
-def test_max_concurrent_io_tasks_auto_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "auto")
-    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
-    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
-
-
 @pytest.mark.parametrize(
     "value",
     [0, -1, {"local": 0}, {"remote": 0}, {"local": -1}, {"remote": -1}],
@@ -510,9 +504,16 @@ def test_max_concurrent_io_tasks_rejects_non_positive(
 
 @pytest.mark.parametrize(
     "value",
-    [True, False, {"local": True}, {"remote": False}],
+    [
+        True,
+        False,
+        {"local": True},
+        {"remote": False},
+        {"local": 1.5},
+        {"remote": "8"},
+    ],
 )
-def test_max_concurrent_io_tasks_rejects_bool(value: object) -> None:
+def test_max_concurrent_io_tasks_rejects_non_int(value: object) -> None:
     with pytest.raises(TypeError, match="must be ints"):
         ConfigOptions.from_polars_engine(
             pl.GPUEngine(

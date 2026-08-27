@@ -98,7 +98,7 @@ def test_executor_options_partial_dict_max_concurrent_io_tasks() -> None:
     assert result["max_concurrent_io_tasks"] == {"remote": 7}
 
 
-def test_executor_options_none_max_concurrent_io_tasks_means_auto() -> None:
+def test_executor_options_none_max_concurrent_io_tasks_means_default() -> None:
     result = StreamingOptions(max_concurrent_io_tasks=None).to_executor_options()
     assert result["max_concurrent_io_tasks"] is None
 
@@ -127,13 +127,12 @@ def test_executor_options_max_concurrent_io_tasks_local_remote_env(
         }
 
 
-def test_executor_options_max_concurrent_io_tasks_auto_env(
+def test_executor_options_max_concurrent_io_tasks_env_rejects_auto(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "auto")
-    opts = StreamingOptions()
-    assert opts.max_concurrent_io_tasks is None
-    assert opts.to_executor_options()["max_concurrent_io_tasks"] is None
+    with pytest.raises(json.JSONDecodeError):
+        StreamingOptions()
 
 
 def test_executor_options_kvikio_nthreads() -> None:

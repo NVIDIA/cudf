@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -102,7 +102,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   cudf::host_span<cudf::size_type> input_row_group_indices,
   cudf::io::parquet_reader_options const& options,
   bool verbose,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Span to track current row group indices
   auto current_row_group_indices = cudf::host_span<cudf::size_type>(input_row_group_indices);
@@ -226,7 +226,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
   bool verbose,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (verbose) { std::cout << "READER: Single step materialize...\n"; }
@@ -273,7 +273,7 @@ std::unique_ptr<cudf::table> two_step_materialize(
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
   bool verbose,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Check whether to prune filter column data pages
@@ -379,7 +379,7 @@ std::unique_ptr<cudf::table> hybrid_scan(
   std::optional<cudf::ast::operation const> filter_expression,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   bool verbose,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -434,7 +434,7 @@ std::unique_ptr<cudf::table> inline hybrid_scan(
   std::optional<cudf::ast::operation const> filter_expression,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   bool verbose,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   static_assert(single_step_read or use_page_index,
@@ -449,7 +449,7 @@ template std::unique_ptr<cudf::table> hybrid_scan<true, false>(
   std::optional<cudf::ast::operation const>,
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
-  rmm::cuda_stream_view,
+  cuda::stream_ref,
   rmm::device_async_resource_ref);
 
 template std::unique_ptr<cudf::table> hybrid_scan<true, true>(
@@ -457,7 +457,7 @@ template std::unique_ptr<cudf::table> hybrid_scan<true, true>(
   std::optional<cudf::ast::operation const>,
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
-  rmm::cuda_stream_view,
+  cuda::stream_ref,
   rmm::device_async_resource_ref);
 
 template std::unique_ptr<cudf::table> hybrid_scan<false, true>(
@@ -465,5 +465,5 @@ template std::unique_ptr<cudf::table> hybrid_scan<false, true>(
   std::optional<cudf::ast::operation const>,
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
-  rmm::cuda_stream_view,
+  cuda::stream_ref,
   rmm::device_async_resource_ref);

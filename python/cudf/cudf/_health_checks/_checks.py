@@ -65,11 +65,24 @@ def _is_libnvvm_missing_error(exc: OSError) -> bool:
     )
 
 
+def _is_nvjitlink_version_mismatch_error(exc: ValueError) -> bool:
+    """True for the common incompatible-nvJitLink failure."""
+    cause = exc.__cause__
+    if cause is None:
+        return False
+
+    msg = str(cause)
+    return (
+        "nvJitLink error log:" in msg
+        and "may need newer version of nvJitLink library" in msg
+    )
+
+
 def functional_numba_check(verbose=False, **kwargs):
     """Exercise ``Series.apply`` (Numba path).
 
-    Only the specific ``libnvvm.so`` missing-library ``OSError`` is rewritten
-    with install guidance; other ``OSError``s propagate unchanged.
+    Specific CUDA library failures are rewritten with installation guidance;
+    other exceptions propagate unchanged.
     """
     import cudf
 
@@ -83,6 +96,19 @@ def functional_numba_check(verbose=False, **kwargs):
                     "cuDF Series.apply failed: libnvvm.so could not be loaded. "
                     "This is likely due to a missing CUDA toolkit or the CUDA toolkit not being on the dynamic linker path. "
                     f"Please follow the installation instructions carefully: {_INSTALL_DOCS}"
+                )
+            ) from e
+        raise
+    except ValueError as e:
+        if _is_nvjitlink_version_mismatch_error(e):
+            raise ValueError(
+                (
+                    "cuDF Series.apply failed because nvJitLink is incompatible "
+                    "with this cuDF installation. Ensure that "
+                    "the installed nvidia-nvjitlink-cu* package is compatible "
+                    "with the CUDA toolkit version required by cuDF; another package may be pinning an "
+                    "older version. Please follow the installation instructions "
+                    f"carefully: {_INSTALL_DOCS}"
                 )
             ) from e
         raise

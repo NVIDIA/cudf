@@ -492,6 +492,26 @@ def test_max_concurrent_io_tasks_auto_env(monkeypatch: pytest.MonkeyPatch) -> No
     assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
 
 
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, {"local": 0}, {"remote": 0}, {"local": -1}, {"remote": -1}],
+)
+def test_max_concurrent_io_tasks_rejects_non_positive(
+    value: int | dict[str, int],
+) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        StreamingExecutor(max_concurrent_io_tasks=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, False, {"local": True}, {"remote": False}],
+)
+def test_max_concurrent_io_tasks_rejects_bool(value: object) -> None:
+    with pytest.raises(TypeError, match="must be ints"):
+        StreamingExecutor(max_concurrent_io_tasks=value)  # type: ignore[arg-type]
+
+
 def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "0")

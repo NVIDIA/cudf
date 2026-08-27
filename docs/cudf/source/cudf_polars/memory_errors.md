@@ -63,16 +63,10 @@ chunks much larger than `target_partition_size`.
 ### Concurrent file reads
 
 Each scan node may read more than one input chunk at a time. At least two IO
-producer tasks are generally needed to overlap IO with GPU compute on distinct
-CUDA streams.
-
-The `max_concurrent_io_tasks` setting controls the number of IO producer tasks
-for each scan node. See
+producer tasks help overlap IO with GPU compute. Larger
+`max_concurrent_io_tasks` values may improve high-latency IO throughput but
+increase memory use per Scan actor. See
 {class}`~cudf_polars.engine.options.StreamingOptions` for current defaults.
-More producers can improve high-latency IO throughput in exchange for higher
-memory usage by each Scan actor. If a query is close to the memory limit or
-spilling heavily, reducing `max_concurrent_io_tasks` or `target_partition_size`
-can reduce peak memory use.
 
 ## Spilling to host memory
 

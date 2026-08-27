@@ -342,7 +342,7 @@ class StreamingOptions:
     kvikio_statistics: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", parse_boolean
     )
-    max_concurrent_io_tasks: int | dict[str, int] | None | Unspecified = _opt(
+    max_concurrent_io_tasks: int | dict[str, int] | Unspecified | None = _opt(
         "executor",
         "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS",
         MaxConcurrentIOTasks.parse_env,

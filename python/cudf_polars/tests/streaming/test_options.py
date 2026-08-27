@@ -57,7 +57,12 @@ def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_executor_options_empty_when_all_unspecified() -> None:
+def test_executor_options_empty_when_all_unspecified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in list(os.environ):
+        if key.startswith(("RAPIDSMPF_", "CUDF_POLARS__")):
+            monkeypatch.delenv(key, raising=False)
     assert StreamingOptions().to_executor_options() == {}
 
 

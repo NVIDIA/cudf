@@ -138,6 +138,8 @@ class MaxConcurrentIOTasks:
 
     def __post_init__(self) -> None:
         """Validate local and remote values."""
+        if isinstance(self.local, bool) or isinstance(self.remote, bool):
+            raise TypeError("max_concurrent_io_tasks values must be ints")
         if not isinstance(self.local, int) or not isinstance(self.remote, int):
             raise TypeError("max_concurrent_io_tasks values must be ints")
         if self.local < 1 or self.remote < 1:

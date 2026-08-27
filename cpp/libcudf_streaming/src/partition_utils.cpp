@@ -113,6 +113,11 @@ template <typename Range>
   std::size_t total_size      = 0;
   std::size_t non_device_size = 0;
   for (auto const& packed_data : partitions) {
+    // A moved-from `PackedData` keeps its outer object but nulls its members, and
+    // `PackedData::empty()` dereferences both.
+    RAPIDSMPF_EXPECTS(packed_data.metadata != nullptr && packed_data.data != nullptr,
+                      "partition has already been consumed",
+                      std::invalid_argument);
     if (!packed_data.empty()) {
       std::size_t const size = packed_data.data->size;
       total_size += size;
@@ -402,11 +407,6 @@ std::size_t unpack_and_concat_cost(std::vector<rapidsmpf::PackedData const*> con
   auto const [total_size, non_device_size] = partition_sizes(
     partitions | std::views::transform([](auto const* p) -> rapidsmpf::PackedData const& {
       RAPIDSMPF_EXPECTS(p != nullptr, "partition cannot be NULL", std::invalid_argument);
-      // A moved-from `PackedData` keeps its outer object but nulls its members, and
-      // `PackedData::empty()` dereferences both.
-      RAPIDSMPF_EXPECTS(p->metadata != nullptr && p->data != nullptr,
-                        "partition has already been consumed",
-                        std::invalid_argument);
       return *p;
     }));
   return total_size + non_device_size;

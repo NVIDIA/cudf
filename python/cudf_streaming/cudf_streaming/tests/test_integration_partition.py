@@ -167,9 +167,11 @@ def test_unpack_and_concat_cost_does_not_consume(
     got = unpack_and_concat(packed, stream, br)
     assert_eq(expect, got, sort_rows=0)
 
-    # They are consumed now, so asking again must raise rather than crash.
+    # They are consumed now, so using them again must raise rather than crash.
     with pytest.raises(ValueError):
         unpack_and_concat_cost(packed)
+    with pytest.raises(ValueError):
+        unpack_and_concat(packed, stream, br)
 
 
 def test_round_trip_with_reservations(

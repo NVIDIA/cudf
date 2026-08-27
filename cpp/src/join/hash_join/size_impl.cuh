@@ -86,12 +86,13 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
 
   auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
     left, stream, cudf::get_current_device_resource_ref());
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto match_counts =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, mr);
+    cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, temp_mr);
   auto matched_slots = cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
-    _impl->_capacity, stream, mr);
-  auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr);
-  auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, mr).first;
+    _impl->_capacity, stream, temp_mr);
+  auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
+  auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, temp_mr).first;
   auto const valid_rows   = _nulls_equal == null_equality::UNEQUAL
                               ? static_cast<bitmask_type const*>(row_bitmask.data())
                               : nullptr;

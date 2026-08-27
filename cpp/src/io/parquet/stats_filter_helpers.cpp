@@ -107,9 +107,7 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
   if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
     col_ref->accept(*this);
     auto const col_index = col_ref->get_column_index();
-    if (is_prunable_comparison(op, _output_dtypes[col_index])) {
-      _columns_mask[col_index] = true;
-    }
+    if (is_prunable_comparison(op, _output_dtypes[col_index])) { _columns_mask[col_index] = true; }
   } else {
     // Visit the operands and ignore any output as we only want to build the column mask
     std::ignore = visit_operands(expr.get_operands());

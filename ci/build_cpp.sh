@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -24,6 +24,8 @@ export RAPIDS_ARTIFACTS_DIR
 
 # populates `RATTLER_CHANNELS` array and `RATTLER_ARGS` array
 source rapids-rattler-channel-string
+
+conda install -c rapidsai librapidsmpf=26.08.01 -y
 
 # --no-build-id allows for caching with `sccache`
 # more info is available at

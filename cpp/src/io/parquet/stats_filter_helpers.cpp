@@ -197,6 +197,7 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             // stay inside this branch
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
               binary_operands.col_ref->accept(*this);
+
               // Equality is always exact
               auto const is_equality =
                 child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;

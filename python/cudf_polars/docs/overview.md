@@ -424,6 +424,10 @@ engine = pl.GPUEngine(
 )
 ```
 
+Passing an integer uses the same limit for all scans. Pass a
+`{"local": ..., "remote": ...}` dict, or set the environment variable to a
+JSON value like `{"remote": 16}`, to tune local and remote scans separately.
+
 Before each read is submitted, it waits for a device-memory reservation.
 This makes aggregate read concurrency respond to memory pressure across all
 scan nodes on the rank.

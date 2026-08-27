@@ -21,7 +21,7 @@ from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
     prefetch_parquet_file_metadata_for_ir,
 )
-from cudf_polars.engine.options import UNSPECIFIED, StreamingOptions
+from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.io import resolve_max_concurrent_io_tasks
 from cudf_polars.streaming.base import (
     DataSourceInfo,
@@ -41,7 +41,11 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import SMALL_MAX_ROWS_PER_PARTITION
 from cudf_polars.testing.io import make_partitioned_source
-from cudf_polars.utils.config import ConfigOptions, ParquetOptions
+from cudf_polars.utils.config import (
+    ConfigOptions,
+    MaxConcurrentIOTasks,
+    ParquetOptions,
+)
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -160,11 +164,45 @@ def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
 def test_resolve_max_concurrent_io_tasks_default(
     paths: list[str], expected: int
 ) -> None:
-    assert resolve_max_concurrent_io_tasks(UNSPECIFIED, paths) == expected
+    assert resolve_max_concurrent_io_tasks(MaxConcurrentIOTasks(), paths) == expected
 
 
 def test_resolve_max_concurrent_io_tasks_explicit() -> None:
-    assert resolve_max_concurrent_io_tasks(6, ["s3://bucket/file.parquet"]) == 6
+    assert (
+        resolve_max_concurrent_io_tasks(
+            MaxConcurrentIOTasks(local=6, remote=6), ["s3://bucket/file.parquet"]
+        )
+        == 6
+    )
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        (["file.parquet"], 3),
+        (["s3://bucket/file.parquet"], 7),
+    ],
+)
+def test_resolve_max_concurrent_io_tasks_local_remote_policy(
+    paths: list[str], expected: int
+) -> None:
+    assert (
+        resolve_max_concurrent_io_tasks(MaxConcurrentIOTasks(local=3, remote=7), paths)
+        == expected
+    )
+
+
+def test_resolve_max_concurrent_io_tasks_partial_override() -> None:
+    max_concurrent_io_tasks = MaxConcurrentIOTasks(remote=7)
+    assert (
+        resolve_max_concurrent_io_tasks(max_concurrent_io_tasks, ["file.parquet"]) == 2
+    )
+    assert (
+        resolve_max_concurrent_io_tasks(
+            max_concurrent_io_tasks, ["s3://bucket/file.parquet"]
+        )
+        == 7
+    )
 
 
 def test_prefetch_file_metadata_select_fast_count(

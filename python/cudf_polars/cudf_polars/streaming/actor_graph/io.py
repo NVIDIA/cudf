@@ -42,7 +42,6 @@ from cudf_polars.streaming.io import (
     _sink_to_file,
 )
 from cudf_polars.streaming.rank_aware_source import RankAwareSource
-from cudf_polars.utils.config import Unspecified
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -59,21 +58,17 @@ if TYPE_CHECKING:
         PartitionInfo,
     )
     from cudf_polars.streaming.io import FusedScan, SplitScan
-
-
-_DEFAULT_LOCAL_MAX_CONCURRENT_IO_TASKS = 2
-_DEFAULT_REMOTE_MAX_CONCURRENT_IO_TASKS = 8
+    from cudf_polars.utils.config import MaxConcurrentIOTasks
 
 
 def resolve_max_concurrent_io_tasks(
-    max_concurrent_io_tasks: int | Unspecified, paths: Iterable[str]
+    max_concurrent_io_tasks: MaxConcurrentIOTasks,
+    paths: Iterable[str],
 ) -> int:
     """Resolve the scan-local IO producer count."""
-    if not isinstance(max_concurrent_io_tasks, Unspecified):
-        return max_concurrent_io_tasks
     if any(plc.io.SourceInfo._is_remote_uri(path) for path in paths):
-        return _DEFAULT_REMOTE_MAX_CONCURRENT_IO_TASKS
-    return _DEFAULT_LOCAL_MAX_CONCURRENT_IO_TASKS
+        return max_concurrent_io_tasks.remote
+    return max_concurrent_io_tasks.local
 
 
 class Lineariser:

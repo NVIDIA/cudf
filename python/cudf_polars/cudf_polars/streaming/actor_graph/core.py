@@ -23,7 +23,7 @@ from cudf_polars.streaming.actor_graph.nodes import (
     metadata_drain_node,
 )
 from cudf_polars.streaming.over import Over
-from cudf_polars.utils.config import SPMDContext
+from cudf_polars.utils.config import MaxConcurrentIOTasks, SPMDContext
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -256,6 +256,8 @@ def generate_network(
 
     # Determine which nodes need fanout
     fanout_nodes = determine_fanout_nodes(ir, partition_info, ir_dep_count)
+    max_concurrent_io_tasks = config_options.executor.max_concurrent_io_tasks
+    assert isinstance(max_concurrent_io_tasks, MaxConcurrentIOTasks)
 
     # Generate the network
     state: GenState = {
@@ -265,7 +267,7 @@ def generate_network(
         "partition_info": partition_info,
         "fanout_nodes": fanout_nodes,
         "ir_context": ir_context,
-        "max_concurrent_io_tasks": config_options.executor.max_concurrent_io_tasks,
+        "max_concurrent_io_tasks": max_concurrent_io_tasks,
         "stats": stats,
         "collective_id_map": collective_id_map,
     }

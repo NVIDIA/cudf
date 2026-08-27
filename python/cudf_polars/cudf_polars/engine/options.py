@@ -21,6 +21,7 @@ from cudf_polars.engine.hardware_binding import (
 from cudf_polars.utils.config import (
     UNSPECIFIED,
     DynamicPlanningOptions,
+    MaxConcurrentIOTasks,
     MemoryResourceConfig,
     Unspecified,
 )
@@ -58,8 +59,7 @@ def _opt(
         Environment variable to read at field-default time.  When a
         :class:`StreamingOptions` is instantiated without an explicit value for
         this field, the factory reads the environment variable (if set) on the constructing
-        process.  ``None`` means no environment variable; the field defaults to
-        :data:`UNSPECIFIED`.
+        process.  ``None`` means no environment variable.
     coerce
         Callable used to convert the raw env-var string to the field's type.
         Defaults to ``str`` (no conversion).
@@ -81,7 +81,7 @@ def _opt(
 def _category_opts(
     obj: Any, category: str, fallback: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Return fields of *obj* in *category*, falling back to *fallback* for UNSPECIFIED fields."""
+    """Return explicit fields of *obj* in *category*."""
     result = {}
     for f in dataclasses.fields(obj):
         if f.metadata.get("category") != category:
@@ -119,10 +119,13 @@ class StreamingOptions:
       - **Executor**: query execution and partitioning behavior.
       - **Engine**: Polars integration, IO configuration, hardware binding.
 
-    All fields default to :data:`UNSPECIFIED` and follow this precedence:
+    Fields generally default to :data:`UNSPECIFIED` and follow this precedence:
       1. Explicit value.
       2. Environment variable.
       3. Built-in default.
+
+    ``max_concurrent_io_tasks`` may be ``"auto"``, an integer, or a dict with
+    ``local`` and/or ``remote`` keys.
 
     Parameters
     ----------
@@ -210,9 +213,11 @@ class StreamingOptions:
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
-        Default: auto. The current automatic policy uses ``2`` producer tasks
-        for local paths and ``8`` producer tasks for scans that include remote
-        URIs.
+        Default: auto, resolved separately for each scan based on its paths.
+        Passing an ``int`` uses the same value for all scans. Passing a dict
+        with ``local`` and/or ``remote`` keys tunes local and remote paths
+        separately. The environment variable accepts an int, ``auto``, or a
+        JSON dict. Passing ``None`` uses the automatic policy.
         Category: executor.
     fallback_mode
         Fallback behavior (``"warn"``, ``"raise"``, ``"silent"``).
@@ -340,8 +345,10 @@ class StreamingOptions:
     kvikio_statistics: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", parse_boolean
     )
-    max_concurrent_io_tasks: int | Unspecified = _opt(
-        "executor", "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", int
+    max_concurrent_io_tasks: int | dict[str, int] | None | Unspecified = _opt(
+        "executor",
+        "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS",
+        MaxConcurrentIOTasks.parse_env,
     )
     fallback_mode: str | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__FALLBACK_MODE"
@@ -389,8 +396,9 @@ class StreamingOptions:
 
         ``RAPIDSMPF_*`` environment variables are resolved at
         :class:`StreamingOptions` construction time, so any field still
-        :data:`UNSPECIFIED` here has no environment variable and no explicit value; the
-        rapidsmpf C++ library will apply its own built-in default for those.
+        :data:`UNSPECIFIED` here has no environment variable and no explicit
+        value. The rapidsmpf C++ library will apply its own built-in default
+        for those.
         """
         return Options(
             {k: str(v) for k, v in _category_opts(self, "rapidsmpf").items()}
@@ -400,9 +408,8 @@ class StreamingOptions:
         """
         Build a ``StreamingExecutor`` kwargs dict from the executor fields.
 
-        Only fields that are not :data:`UNSPECIFIED` are included.
-        ``StreamingExecutor`` reads ``CUDF_POLARS__EXECUTOR__*`` environment
-        variables for any omitted fields.
+        Only explicit fields are included. ``StreamingExecutor`` reads
+        ``CUDF_POLARS__EXECUTOR__*`` environment variables for omitted fields.
         """
         return _category_opts(self, "executor")
 
@@ -452,7 +459,9 @@ class StreamingOptions:
         Build a :class:`StreamingOptions` from a plain dictionary.
 
         Keys must be field names of :class:`StreamingOptions`. Values of ``None``
-        and missing keys both leave the corresponding field at :data:`UNSPECIFIED`.
+        and missing keys both leave the corresponding field at :data:`UNSPECIFIED`,
+        except for ``max_concurrent_io_tasks`` where ``None`` selects the
+        automatic policy.
 
         Parameters
         ----------
@@ -470,10 +479,18 @@ class StreamingOptions:
         ...     {"fallback_mode": "silent", "num_streaming_threads": 4}
         ... )  # doctest: +ELLIPSIS
         StreamingOptions(...)
-        >>> StreamingOptions.from_dict({})  # all fields UNSPECIFIED
+        >>> StreamingOptions.from_dict({})  # all fields implicit
         StreamingOptions(...)
         """
-        return cls(**{k: (UNSPECIFIED if v is None else v) for k, v in data.items()})
+
+        def decode_value(key: str, value: Any) -> Any:
+            if value is None:
+                if key == "max_concurrent_io_tasks":
+                    return None
+                return UNSPECIFIED
+            return value
+
+        return cls(**{k: decode_value(k, v) for k, v in data.items()})
 
     @classmethod
     def _from_argparse(cls, args: argparse.Namespace) -> StreamingOptions:
@@ -483,9 +500,9 @@ class StreamingOptions:
         Designed to work with namespaces produced by :func:`argparse.ArgumentParser`
         parsers that have been augmented with :meth:`_add_cli_args`. Fields not present
         in the namespace (or set to ``None``) let their default factories read the
-        environment variable. Fields with no explicit value or environment variable
-        remain :data:`UNSPECIFIED`; their downstream consumer applies its built-in
-        default.
+        environment variable. Fields with no explicit value or environment
+        variable either remain :data:`UNSPECIFIED` or use a field-specific
+        automatic policy.
 
         Parameters
         ----------

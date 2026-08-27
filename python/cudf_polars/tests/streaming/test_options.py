@@ -38,12 +38,13 @@ def test_unspecified_repr() -> None:
 
 
 def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Clear all env vars that StreamingOptions reads so every field stays UNSPECIFIED.
+    # Clear all env vars that StreamingOptions reads.
     for key in list(os.environ):
         if key.startswith(("RAPIDSMPF_", "CUDF_POLARS__")):
             monkeypatch.delenv(key, raising=False)
     opts = StreamingOptions()
-    # Fields with no env var are always UNSPECIFIED.
+    # Fields with no env var are UNSPECIFIED.
+    assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
     assert isinstance(opts.raise_on_fail, Unspecified)
     assert isinstance(opts.parquet_options, Unspecified)
     # Fields whose env vars were cleared are also UNSPECIFIED.
@@ -56,7 +57,7 @@ def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_executor_options_empty_when_all_unspecified() -> None:
+def test_executor_options_empty_when_all_implicit() -> None:
     assert StreamingOptions().to_executor_options() == {}
 
 
@@ -76,6 +77,49 @@ def test_executor_options_num_py_executors() -> None:
 def test_executor_options_max_concurrent_io_tasks() -> None:
     result = StreamingOptions(max_concurrent_io_tasks=6).to_executor_options()
     assert result["max_concurrent_io_tasks"] == 6
+
+
+def test_executor_options_dict_max_concurrent_io_tasks() -> None:
+    result = StreamingOptions(
+        max_concurrent_io_tasks={"local": 3, "remote": 7}
+    ).to_executor_options()
+    assert result["max_concurrent_io_tasks"] == {"local": 3, "remote": 7}
+
+
+def test_executor_options_partial_dict_max_concurrent_io_tasks() -> None:
+    result = StreamingOptions(
+        max_concurrent_io_tasks={"remote": 7}
+    ).to_executor_options()
+    assert result["max_concurrent_io_tasks"] == {"remote": 7}
+
+
+def test_executor_options_none_max_concurrent_io_tasks_means_auto() -> None:
+    result = StreamingOptions(max_concurrent_io_tasks=None).to_executor_options()
+    assert result["max_concurrent_io_tasks"] is None
+
+
+def test_executor_options_max_concurrent_io_tasks_local_remote_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv(
+            "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS",
+            '{"local": 2, "remote": 7}',
+        )
+        opts = StreamingOptions()
+        assert opts.max_concurrent_io_tasks == {"local": 2, "remote": 7}
+        assert opts.to_executor_options()["max_concurrent_io_tasks"] == {
+            "local": 2,
+            "remote": 7,
+        }
+
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", '{"remote": 7}')
+        opts = StreamingOptions()
+        assert opts.max_concurrent_io_tasks == {"remote": 7}
+        assert opts.to_executor_options()["max_concurrent_io_tasks"] == {
+            "remote": 7,
+        }
 
 
 def test_executor_options_kvikio_nthreads() -> None:
@@ -393,6 +437,12 @@ def test_to_dict_contains_only_set_fields() -> None:
     opts = StreamingOptions(fallback_mode="silent", num_streaming_threads=4)
     d = opts.to_dict()
     assert d == {"fallback_mode": "silent", "num_streaming_threads": 4}
+
+
+def test_to_dict_includes_explicit_max_concurrent_io_tasks() -> None:
+    assert StreamingOptions(max_concurrent_io_tasks=6).to_dict() == {
+        "max_concurrent_io_tasks": 6
+    }
 
 
 def test_to_dict_roundtrip() -> None:

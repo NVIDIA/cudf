@@ -48,6 +48,10 @@ if TYPE_CHECKING:
     from cudf_polars.quent._logging import QuentLogger
 
 
+DefaultT = TypeVar("DefaultT")
+T = TypeVar("T")
+
+
 __all__ = [
     "UNSPECIFIED",
     "Cluster",
@@ -56,6 +60,7 @@ __all__ = [
     "DynamicPlanningOptions",
     "InMemoryExecutor",
     "JoinFilterPushdownOptions",
+    "MaxConcurrentIOTasks",
     "ParquetOptions",
     "RayContext",
     "SPMDContext",
@@ -71,8 +76,7 @@ class Unspecified:
 
     The singleton instance :data:`UNSPECIFIED` is used as the default for every
     :class:`StreamingOptions` field, as well as for
-    ``ParquetOptions.prefetch_file_metadata`` and
-    ``StreamingExecutor.max_concurrent_io_tasks``. When a field is still
+    ``ParquetOptions.prefetch_file_metadata``. When a field is still
     ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
     matching environment variable was provided), the consuming component decides
     on the semantics.
@@ -93,13 +97,58 @@ class Unspecified:
 
 UNSPECIFIED = Unspecified()
 """Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
-``ParquetOptions.prefetch_file_metadata`` and
-``StreamingExecutor.max_concurrent_io_tasks``.
+``ParquetOptions.prefetch_file_metadata``.
 
 A field set to ``UNSPECIFIED`` after construction means no explicit value and no
 matching environment variable was found; the consuming component decides on the
 semantics.
 """
+
+
+@dataclasses.dataclass(frozen=True)
+class MaxConcurrentIOTasks:
+    """Concurrent IO task defaults for local and remote scan paths."""
+
+    local: int = 2
+    remote: int = 8
+
+    @staticmethod
+    def parse_env(raw: str) -> int | dict[str, int] | None:
+        """Parse an environment-variable value."""
+        raw = raw.strip()
+        if raw.lower() == "auto":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            value = json.loads(raw)
+            MaxConcurrentIOTasks.from_config(value)
+            return value
+
+    @classmethod
+    def from_config(
+        cls, value: int | dict[str, int] | MaxConcurrentIOTasks | None
+    ) -> MaxConcurrentIOTasks:
+        """Construct from the supported configuration shapes."""
+        if value is None:
+            return cls()
+        if isinstance(value, int):
+            return cls(local=value, remote=value)
+        if isinstance(value, MaxConcurrentIOTasks):
+            return value
+        if not isinstance(value, dict):
+            raise TypeError(
+                "max_concurrent_io_tasks must be an int, dict, "
+                "MaxConcurrentIOTasks, or None"
+            )
+        return cls(**value)
+
+    def __post_init__(self) -> None:
+        """Validate local and remote values."""
+        if not isinstance(self.local, int) or not isinstance(self.remote, int):
+            raise TypeError("max_concurrent_io_tasks values must be ints")
+        if self.local < 1 or self.remote < 1:
+            raise ValueError("max_concurrent_io_tasks values must be positive")
 
 
 def _env_get_int(name: str, default: int) -> int:
@@ -182,10 +231,6 @@ class Cluster(enum.StrEnum):
     SPMD = "spmd"
     RAY = "ray"
     DASK = "dask"
-
-
-T = TypeVar("T")
-DefaultT = TypeVar("DefaultT")
 
 
 def _make_default_factory(
@@ -742,12 +787,15 @@ class StreamingExecutor:
         Enable through environment variables with
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
     max_concurrent_io_tasks
-        Maximum number of concurrent IO tasks for each scan node. By default,
-        this is selected automatically based on the scan's paths. This can be
-        set via
+        Maximum number of concurrent IO tasks for each scan node. The default
+        uses ``2`` for local paths and ``8`` for scans with remote URIs.
+        Passing an ``int`` uses the same value for all scans. Passing a dict
+        with ``local`` and/or ``remote`` keys tunes local and remote paths
+        separately. This can be set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
-        - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment variable
+        - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment
+          variable, as an int, ``auto``, or JSON dict
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
@@ -833,9 +881,13 @@ class StreamingExecutor:
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
         default_factory=JoinFilterPushdownOptions
     )
-    max_concurrent_io_tasks: int | Unspecified = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS", int, default=UNSPECIFIED
+    max_concurrent_io_tasks: int | dict[str, int] | MaxConcurrentIOTasks | None = (
+        dataclasses.field(
+            default_factory=_make_default_factory(
+                f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS",
+                MaxConcurrentIOTasks.parse_env,
+                default=MaxConcurrentIOTasks(),
+            )
         )
     )
     num_py_executors: int = dataclasses.field(
@@ -919,6 +971,11 @@ class StreamingExecutor:
             object.__setattr__(self, "sink_to_directory", True)
         elif self.sink_to_directory is None:
             object.__setattr__(self, "sink_to_directory", False)
+        object.__setattr__(
+            self,
+            "max_concurrent_io_tasks",
+            MaxConcurrentIOTasks.from_config(self.max_concurrent_io_tasks),
+        )
 
         # Type / value check everything else
         if not isinstance(self.max_rows_per_partition, int):
@@ -931,8 +988,6 @@ class StreamingExecutor:
             raise TypeError("sink_to_directory must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
-        if not isinstance(self.max_concurrent_io_tasks, (int, Unspecified)):
-            raise TypeError("max_concurrent_io_tasks must be an int when specified")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
         if not isinstance(self.kvikio_nthreads, int):
@@ -946,6 +1001,9 @@ class StreamingExecutor:
         d = dataclasses.asdict(self)
         d["dynamic_planning"] = json.dumps(d["dynamic_planning"])
         d["join_filter_pushdown"] = json.dumps(d["join_filter_pushdown"])
+        d["max_concurrent_io_tasks"] = json.dumps(
+            d["max_concurrent_io_tasks"], sort_keys=True
+        )
 
         # Hash the quent context UUIDs as ints
         quent_context = d["quent_context"]

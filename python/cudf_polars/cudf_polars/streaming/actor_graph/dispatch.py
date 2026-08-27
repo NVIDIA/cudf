@@ -21,7 +21,11 @@ if TYPE_CHECKING:
         PartitionInfo,
         StatsCollector,
     )
-    from cudf_polars.utils.config import ConfigOptions, StreamingExecutor, Unspecified
+    from cudf_polars.utils.config import (
+        ConfigOptions,
+        MaxConcurrentIOTasks,
+        StreamingExecutor,
+    )
 
 
 class FanoutInfo(NamedTuple):
@@ -52,8 +56,7 @@ class GenState(TypedDict):
     ir_context
         The execution context for the IR node.
     max_concurrent_io_tasks
-        The maximum number of concurrent IO tasks to use for a single IO node,
-        or ``UNSPECIFIED`` to choose a scan-local default.
+        The local and remote IO task limits to use for scan nodes.
     stats
         Statistics collector.
     collective_id_map
@@ -66,7 +69,7 @@ class GenState(TypedDict):
     partition_info: MutableMapping[IR, PartitionInfo]
     fanout_nodes: dict[IR, FanoutInfo]
     ir_context: IRExecutionContext
-    max_concurrent_io_tasks: int | Unspecified
+    max_concurrent_io_tasks: MaxConcurrentIOTasks
     stats: StatsCollector
     collective_id_map: dict[IR, list[int]]
 

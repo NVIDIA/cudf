@@ -3633,6 +3633,50 @@ TEST_F(JoinTest, HashJoinPartitionedWholeTable)
 
 // Exercises both a sliced (non-zero offset) left view and a partition size large enough
 // to span multiple kernel blocks.
+// An empty build table sends the partitioned join down the trivial path, which must still emit
+// left indices in the coordinate space of the whole left table rather than of the partition.
+TEST_F(JoinTest, HashJoinPartitionedEmptyBuildTableUsesGlobalLeftIndices)
+{
+  auto constexpr left_rows  = 10;
+  auto constexpr part_start = 4;
+  auto constexpr part_end   = 9;
+
+  column_wrapper<int32_t> left_col{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}};
+  CVector left_cols;
+  left_cols.push_back(left_col.release());
+  Table left(std::move(left_cols));
+  EXPECT_EQ(left.num_rows(), left_rows);
+
+  // Build side is empty, so every left row is unmatched.
+  column_wrapper<int32_t> empty_col{};
+  CVector empty_cols;
+  empty_cols.push_back(empty_col.release());
+  Table empty_right(std::move(empty_cols));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  cudf::hash_join hash_joiner(empty_right.view(), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.left_join_match_context(left.view(), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), part_start, part_end};
+
+  auto const [left_idx, right_idx] = hash_joiner.partitioned_left_join(part_ctx, stream, mr);
+
+  // Left indices must be the global rows [part_start, part_end), not [0, part_end - part_start).
+  column_wrapper<cudf::size_type> expected_left{{4, 5, 6, 7, 8}};
+  column_wrapper<cudf::size_type> expected_right{{cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch}};
+
+  auto const left_view  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+  auto const right_view = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left, left_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right, right_view);
+}
+
 TEST_F(JoinTest, HashJoinPartitionedSlicedMultiBlock)
 {
   auto constexpr left_full_rows = 4000;

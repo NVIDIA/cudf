@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 namespace cudf {
 namespace test {
 
-rmm::cuda_stream_view const get_default_stream() { return cudf::get_default_stream(); }
+cuda::stream_ref const get_default_stream() { return cudf::get_default_stream(); }
 
 }  // namespace test
 }  // namespace cudf

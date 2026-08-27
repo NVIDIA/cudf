@@ -340,8 +340,8 @@ TEST_F(ArrowTableTest, ToFromHost)
 
 TEST_F(ArrowTableTest, FromArrowArrayStream)
 {
-  auto num_copies         = 3;
-  auto [tbl, sch, stream] = get_nanoarrow_stream(num_copies);
+  auto num_copies    = 3;
+  auto [tbl, stream] = get_nanoarrow_stream(num_copies);
 
   auto result = cudf::interop::arrow_table(std::move(stream));
   CUDF_TEST_EXPECT_TABLES_EQUAL(tbl->view(), result.view());

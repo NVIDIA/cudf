@@ -64,6 +64,7 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
     StreamingExecutor,
+    configure_kvikio,
     resolve_kvikio_nthreads,
     resolve_kvikio_statistics,
 )
@@ -438,7 +439,7 @@ class SPMDEngine(StreamingEngine):
         )
         bind_to_gpu(hw_binding)
 
-        kvikio.defaults.set("num_threads", executor_options["kvikio_nthreads"])
+        configure_kvikio(executor_options["kvikio_nthreads"])
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -629,10 +630,10 @@ class SPMDEngine(StreamingEngine):
             existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
             if existing_kvikio_nthreads is not None:
                 executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
+        configure_kvikio(executor_options["kvikio_nthreads"])
         executor_options.setdefault(
             "kvikio_statistics", resolve_kvikio_statistics(executor_options)
         )
-        kvikio.defaults.set("num_threads", executor_options["kvikio_nthreads"])
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"

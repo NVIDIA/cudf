@@ -10,12 +10,9 @@ metadata:
     - pandas
     - dask-cudf
     - etl
-    - test_tag
 ---
 
 # cuDF & dask-cuDF Implementer's Guide
-
-Testing update to skill
 
 ## Compatibility
 

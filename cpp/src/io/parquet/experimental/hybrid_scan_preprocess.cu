@@ -18,12 +18,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 
 #include <numeric>
@@ -48,7 +48,7 @@ void decode_dictionary_page_headers(
   cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
   cudf::detail::hostdevice_span<PageInfo> pages,
   cudf::host_span<cudf::device_span<uint8_t const> const> dict_page_data,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -93,7 +93,7 @@ void decode_dictionary_page_headers(
 
   pages.device_to_host_async(stream);
   chunks.device_to_host_async(stream);
-  stream.synchronize();
+  stream.sync();
 }
 
 }  // namespace
@@ -211,6 +211,42 @@ void hybrid_scan_reader_impl::setup_compressed_data(
                "Encountered page_offsets / num_columns mismatch");
 }
 
+void hybrid_scan_reader_impl::setup_sparse_compressed_data(
+  std::span<cudf::device_span<uint8_t const> const> page_data)
+{
+  auto& pass = *_pass_itm_data;
+
+  // This function should never be called if `num_rows == 0`.
+  CUDF_EXPECTS(_pass_itm_data->num_rows > 0, "Number of reading rows must not be zero.");
+  CUDF_EXPECTS(_has_offset_index, "Sparse page I/O requires complete offset indexes");
+
+  auto& chunks           = pass.chunks;
+  auto const total_pages = count_page_headers_with_pgidx(chunks, _stream);
+  CUDF_EXPECTS(total_pages == page_data.size(),
+               "Sparse page span count does not match page-index metadata");
+  if (total_pages == 0) { return; }
+
+  pass.has_compressed_data = false;
+  std::size_t page_idx     = 0;
+
+  for (auto const& chunk : chunks) {
+    auto const num_pages         = chunk.num_data_pages + chunk.num_dict_pages;
+    auto const has_resident_page = std::any_of(page_data.begin() + page_idx,
+                                               page_data.begin() + page_idx + num_pages,
+                                               [](auto const& page) { return not page.empty(); });
+    pass.has_compressed_data |= chunk.codec != Compression::UNCOMPRESSED and has_resident_page;
+    page_idx += num_pages;
+  }
+
+  // `decode_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
+  // PageInfo as whole objects.
+  auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
+    total_pages, _stream, cudf::get_current_device_resource_ref());
+  parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
+  CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
+               "Encountered page_offsets / num_columns mismatch");
+}
+
 std::tuple<bool,
            cudf::detail::hostdevice_vector<ColumnChunkDesc>,
            cudf::detail::hostdevice_vector<PageInfo>>
@@ -219,7 +255,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   std::span<int const> dictionary_col_schemas,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Create row group information for the input row group indices
   auto const row_groups_info = std::get<2>(
@@ -313,7 +349,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
   // Create page infos for each column chunk's dictionary page
   cudf::detail::hostdevice_vector<PageInfo> pages(total_column_chunks, stream);
-  CUDF_CUDA_TRY(cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream));
+  CUDF_CUDA_TRY(
+    cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream.get()));
 
   // Decode dictionary page headers
   decode_dictionary_page_headers(
@@ -329,7 +366,7 @@ namespace {
 
 /**
  * @brief Computes the updated row mask value such that out_row_mask[i] = true, iff in_row_mask[i]
- * is valid and true. This is inline with the masking behavior of cudf::apply_boolean_mask.
+ * is valid and true. This is inline with the masking behavior of cudf::apply_retention_mask.
  */
 struct row_mask_update_fn {
   bool is_nullable;
@@ -360,7 +397,7 @@ struct is_row_pruned_fn {
 }  // namespace
 
 bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_mask,
-                                                  rmm::cuda_stream_view stream) const
+                                                  cuda::stream_ref stream) const
 {
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
@@ -374,7 +411,7 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,
                                               cudf::mutable_column_view& out_row_mask,
                                               cudf::size_type out_row_mask_offset,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -393,7 +430,7 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
     out_row_mask.begin<bool>() + out_row_mask_offset,
     total_rows,
     row_mask_update_fn{in_row_mask.nullable(), in_row_mask.begin<bool>(), in_row_mask.null_mask()},
-    stream.value()));
+    stream.get()));
 
   // Make sure the null mask of the output row mask column is all valid after the update. This is
   // to correctly assess if a payload column data page can be pruned. An invalid row in the row mask

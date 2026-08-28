@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,8 +23,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -32,6 +30,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
@@ -55,7 +54,7 @@ struct encode_fn {
 
 std::unique_ptr<column> encode(column_view const& input,
                                data_type indices_type,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_signed(indices_type) && is_index_type(indices_type),
@@ -82,36 +81,35 @@ std::unique_ptr<column> encode(column_view const& input,
 
   auto const has_nulls  = nullate::DYNAMIC{input.has_nulls()};
   auto const tv         = cudf::table_view({input});
-  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream);
-  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream);
+  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream, temp_mr);
+  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream, temp_mr);
   auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
   auto const d_equal    = row_equal.equal_to<false>(has_nulls, null_equality::EQUAL, comparator);
   auto const empty_key  = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
   auto probe            = encode_probe_t{row_hash.device_hasher(has_nulls)};
-  auto allocator        = rmm::mr::polymorphic_allocator<char>{};
-  auto set              = cuco::static_set{
-    input.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.value()};
+  auto allocator        = rmm::mr::polymorphic_allocator<char>{temp_mr};
+  auto set =
+    cuco::static_set{input.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
   auto set_ref    = set.ref(cuco::insert_and_find);
   using set_ref_t = decltype(set_ref);
 
   // build a static_set of the input values
   // and keep track of the indices of the unique values
-  auto d_indices = rmm::device_uvector<size_type>(input.size(), stream);
-  auto d_input   = column_device_view::create(input, stream);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto d_indices = rmm::device_uvector<size_type>(input.size(), stream, temp_mr);
+  auto d_input   = column_device_view::create(input, stream, temp_mr);
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     d_indices.begin(),
                     encode_fn{set_ref, *d_input});
 
-  auto keys_indices = rmm::device_uvector<size_type>(input.size(), stream);
-  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.value());
+  auto keys_indices = rmm::device_uvector<size_type>(input.size(), stream, temp_mr);
+  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
   keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 
   // sort the keys_indices so we can use lower-bound on them
-  thrust::sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               keys_indices.begin(),
-               keys_indices.end());
+  thrust::sort(rmm::exec_policy_nosync(stream, temp_mr), keys_indices.begin(), keys_indices.end());
 
   // use keys_indices to retrieve the keys
   auto const oob_policy   = cudf::out_of_bounds_policy::DONT_CHECK;
@@ -124,7 +122,7 @@ std::unique_ptr<column> encode(column_view const& input,
   // call lower-bound with keys_indices and d_indices to get the output indices_column
   auto d_result =
     cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
-  thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
                       keys_indices.begin(),
                       keys_indices.end(),
                       d_indices.begin(),
@@ -154,7 +152,7 @@ data_type get_indices_type_for_size(size_type keys_size)
 
 std::unique_ptr<column> encode(column_view const& input_column,
                                data_type indices_type,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

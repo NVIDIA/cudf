@@ -13,13 +13,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
@@ -33,9 +33,9 @@ using row_offset_t = size_type;
 
 #ifdef CSR_DEBUG_PRINT
 template <typename T>
-void print(device_span<T const> d_vec, std::string name, rmm::cuda_stream_view stream)
+void print(device_span<T const> d_vec, std::string name, cuda::stream_ref stream)
 {
-  stream.synchronize();
+  stream.sync();
   auto h_vec = cudf::detail::make_std_vector(d_vec, stream);
   std::cout << name << " = ";
   for (auto e : h_vec) {
@@ -99,7 +99,7 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
   device_span<row_offset_t const> row_offsets,
   bool is_array_of_arrays,
   NodeIndexT row_array_parent_col_id,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -221,8 +221,12 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
         }),
         cuda::std::plus<NodeIndexT>{});
     } else {
-      auto single_node = 1;
-      row_idx.set_element_async(1, single_node, stream);
+      // Uses thrust::fill instead of device_uvector::set_element_async to prevent the case where
+      // single_node goes out of scope before the memcpy-async(stream) completes. This is also
+      // allows us to make the copy without incurring a stream synchronize.
+      auto single_node = NodeIndexT{1};
+      auto exec_policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+      thrust::fill(exec_policy, row_idx.begin() + 1, row_idx.end(), single_node);
     }
 
 #ifdef CSR_DEBUG_PRINT

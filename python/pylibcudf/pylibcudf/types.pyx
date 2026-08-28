@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -26,13 +26,12 @@ from pylibcudf.libcudf.types import order as Order  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import sorted as Sorted  # no-cython-lint, isort:skip
 
 from functools import cache
+from typing import Any, TYPE_CHECKING, TypeAlias
 
-try:
+if TYPE_CHECKING:
     import pyarrow as pa
-    pa_err = None
-except ImportError as e:
-    pa = None
-    pa_err = e
+
+PyarrowDataType: TypeAlias = Any
 
 try:
     import pyarrow as pa
@@ -197,7 +196,7 @@ cdef class DataType:
         ret.c_obj = dt
         return ret
 
-    def to_arrow(self, **kwargs):
+    def to_arrow(self, **kwargs) -> PyarrowDataType:
         """
         Convert a datatype to arrow.
 
@@ -252,7 +251,7 @@ cdef class DataType:
                 )
 
     @staticmethod
-    def from_arrow(pa_typ) -> DataType:
+    def from_arrow(pa_typ: PyarrowDataType) -> DataType:
         """
         Construct a DataType from a Python type.
 
@@ -332,7 +331,7 @@ cpdef size_t size_of(DataType t):
 
 
 @cache
-def _from_arrow(obj: pa.DataType) -> DataType:
+def _from_arrow(obj: PyarrowDataType) -> DataType:
     if pa_err is not None:
         raise RuntimeError(
             "pyarrow was not found on your system. Please "

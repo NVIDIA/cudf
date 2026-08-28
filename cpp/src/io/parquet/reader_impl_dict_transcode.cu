@@ -144,7 +144,7 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
 [[nodiscard]] std::unique_ptr<column> make_keys_column_from_index_pairs(
   string_index_pair const* begin,
   size_type entry_count,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (entry_count <= 0) { return cudf::make_empty_column(data_type{type_id::STRING}); }

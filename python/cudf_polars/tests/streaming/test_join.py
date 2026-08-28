@@ -192,7 +192,7 @@ def test_join_and_slice(request, zlice, streaming_engine_factory):
         # than the CPU baseline.
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/22405",
+                reason="https://github.com/NVIDIA/cudf/issues/22405",
                 strict=False,
             )
         )
@@ -212,7 +212,7 @@ def test_join_and_slice(request, zlice, streaming_engine_factory):
     )
     q = left.join(right, on="a", how="inner").slice(*zlice)
     # Check that we get the correct row count
-    # See: https://github.com/rapidsai/cudf/issues/19153
+    # See: https://github.com/NVIDIA/cudf/issues/19153
     with warns_on_spmd(
         streaming_engine,
         UserWarning,

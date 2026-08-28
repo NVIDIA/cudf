@@ -329,7 +329,9 @@ class StringColumn(ColumnBase, Scannable):
                     "cuDF does not yet support timezone-aware datetimes"
                 )
             is_nat = self == "NaT"
-            without_nat = self.apply_boolean_mask(is_nat.unary_operator("not"))
+            without_nat = self.apply_retention_mask(
+                is_nat.unary_operator("not")
+            )
             char_counts = without_nat.count_characters()  # type: ignore[attr-defined]
             if char_counts.distinct_count(dropna=True) != 1:
                 # Unfortunately disables OK cases like:
@@ -353,7 +355,7 @@ class StringColumn(ColumnBase, Scannable):
             if target_unit != "s" and len(without_nat):
                 # libcudf parses directly into int64 values of the
                 # target unit and silently wraps on overflow
-                # (see https://github.com/rapidsai/cudf/issues/23247).
+                # (see https://github.com/NVIDIA/cudf/issues/23247).
                 # Parse to seconds first (which cannot realistically
                 # overflow) and reject values whose whole-second part
                 # falls outside the target unit's range, like pandas
@@ -393,7 +395,7 @@ class StringColumn(ColumnBase, Scannable):
         return result_col
 
     def as_datetime_column(self, dtype: np.dtype) -> DatetimeColumn:
-        not_null = self.apply_boolean_mask(self.notnull())
+        not_null = self.apply_retention_mask(self.notnull())
         if len(not_null) == 0:
             # We should hit the self.null_count == len(self) condition
             # so format doesn't matter

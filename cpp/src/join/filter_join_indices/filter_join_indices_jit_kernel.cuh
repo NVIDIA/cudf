@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <string>
@@ -47,13 +48,13 @@ filter_join_indices_jit(cudf::table_view const& left,
                         std::string const& predicate_code,
                         join_kind join_kind,
                         bool is_ptx,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::filter_join_indices_jit(table_view const&, table_view const&,
  *   device_span<size_type const>, device_span<size_type const>,
- *   ast::expression const&, join_kind, rmm::cuda_stream_view,
+ *   ast::expression const&, join_kind, cuda::stream_ref,
  *   rmm::device_async_resource_ref)
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
@@ -64,7 +65,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         ast::expression const& predicate,
                         join_kind join_kind,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr);
 
 }  // namespace detail

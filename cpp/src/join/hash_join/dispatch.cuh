@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -49,6 +49,25 @@ struct output_fn {
     cuco::pair<hash_value_type, cudf::size_type> const& slot) const
   {
     return slot.second;
+  }
+};
+
+/**
+ * @brief Extracts a right-side row index and marks it as matched.
+ *
+ * This is used while retrieving a full join to build the right-side match set without a
+ * subsequent pass over the join output.
+ */
+struct mark_matched_output_fn {
+  size_type* right_matches;
+  size_type right_table_num_rows;
+
+  __device__ cudf::size_type operator()(
+    cuco::pair<hash_value_type, cudf::size_type> const& slot) const
+  {
+    auto const index = slot.second;
+    if (index >= 0 && index < right_table_num_rows) { right_matches[index] = 1; }
+    return index;
   }
 };
 

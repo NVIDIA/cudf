@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,8 +15,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
@@ -33,7 +32,7 @@ struct tile_functor {
 namespace detail {
 std::unique_ptr<table> tile(table_view const& in,
                             size_type count,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(count >= 0, "Count cannot be negative");
@@ -41,6 +40,11 @@ std::unique_ptr<table> tile(table_view const& in,
   auto const in_num_rows = in.num_rows();
 
   if (count == 0 or in_num_rows == 0) { return empty_like(in); }
+
+  CUDF_EXPECTS(static_cast<int64_t>(in_num_rows) * static_cast<int64_t>(count) <=
+                 static_cast<int64_t>(std::numeric_limits<size_type>::max()),
+               "Output column size exceeds the column size limit",
+               std::overflow_error);
 
   auto out_num_rows = in_num_rows * count;
   auto tiled_it     = cudf::detail::make_counting_transform_iterator(0, tile_functor{in_num_rows});
@@ -52,7 +56,7 @@ std::unique_ptr<table> tile(table_view const& in,
 
 std::unique_ptr<table> tile(table_view const& in,
                             size_type count,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

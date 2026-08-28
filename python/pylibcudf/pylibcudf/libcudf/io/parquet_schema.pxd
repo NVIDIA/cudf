@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from libc.stdint cimport int16_t, int32_t, int64_t
+from libc.stdint cimport int16_t, int32_t, int64_t, uint8_t
+from libcpp cimport bool
 from libcpp.optional cimport optional
 from libcpp.string cimport string
 from libcpp.vector cimport vector
@@ -9,6 +10,16 @@ from pylibcudf.exception_handler cimport libcudf_exception_handler
 
 
 cdef extern from "cudf/io/parquet_schema.hpp" namespace "cudf::io::parquet" nogil:
+    cdef cppclass Statistics:
+        optional[vector[uint8_t]] max
+        optional[vector[uint8_t]] min
+        optional[int64_t] null_count
+        optional[int64_t] distinct_count
+        optional[vector[uint8_t]] max_value
+        optional[vector[uint8_t]] min_value
+        optional[bool] is_max_value_exact
+        optional[bool] is_min_value_exact
+
     cdef cppclass SortingColumn:
         int32_t column_idx
         bint descending
@@ -22,6 +33,7 @@ cdef extern from "cudf/io/parquet_schema.hpp" namespace "cudf::io::parquet" nogi
         int64_t data_page_offset
         int64_t index_page_offset
         int64_t dictionary_page_offset
+        Statistics statistics
 
     cdef cppclass ColumnChunk:
         string file_path

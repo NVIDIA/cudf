@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -49,7 +49,7 @@ struct preprocessed_group_info {
 [[nodiscard]] rmm::device_uvector<cudf::size_type> nulls_per_group(
   column_view const& orderby,
   rmm::device_uvector<size_type> const& offsets,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @copydoc std::unique_ptr<column> rolling_window(
@@ -67,7 +67,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        column_view const& following_window,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -96,7 +96,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
   order order,
   null_order null_order,
   range_window_type window,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace detail

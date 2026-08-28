@@ -16,6 +16,7 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
+    POLARS_VERSION_LT_138,
 )
 
 
@@ -57,10 +58,10 @@ def is_sorted(request):
 
 @pytest.fixture
 def xfail_if_sorted(is_sorted, request):
-    # See https://github.com/rapidsai/cudf/pull/20791#issuecomment-3750528419
-    if is_sorted:
+    # See https://github.com/NVIDIA/cudf/pull/20791#issuecomment-3750528419
+    if is_sorted and POLARS_VERSION_LT_138:
         request.applymarker(
-            pytest.mark.xfail(reason="See https://github.com/pola-rs/polars/pull/24981")
+            pytest.mark.xfail(reason="set_sorted lowers to unsupported hint ir")
         )
 
 
@@ -195,12 +196,21 @@ def test_cum_count(engine: pl.GPUEngine, data):
 
 
 @pytest.mark.parametrize("cum_agg", sorted(expr.UnaryFunction._supported_cum_aggs))
-def test_cum_agg_reverse_unsupported(engine: pl.GPUEngine, cum_agg):
-    df = pl.LazyFrame({"a": [1, 2, 3]})
-    expr = getattr(pl.col("a"), cum_agg)(reverse=True)
-    q = df.select(expr)
-
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+@pytest.mark.parametrize(
+    "data,dtype",
+    [
+        ([1, 2, 3, 4, 5], pl.Int32),
+        ([1, None, 3, None, 5], pl.Int32),
+        ([None, None, None], pl.Int32),
+        ([2, 3, 4], pl.Int8),
+        ([1.5, 2.0, 0.5, 4.0], pl.Float64),
+        ([], pl.Int32),
+    ],
+)
+def test_cum_agg_reverse(engine: pl.GPUEngine, cum_agg, data, dtype):
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = df.select(getattr(pl.col("a"), cum_agg)(reverse=True))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
 @pytest.mark.parametrize("q", [0.5, pl.lit(0.5)])
@@ -312,27 +322,68 @@ def test_sum_all_null_decimal_dtype(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("expr", [pl.col("a").median(), pl.col("a").quantile(0.5)])
-def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
-    df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
-    q = df.select(expr)
+@pytest.mark.parametrize("bin_count", [0, 1, 3, 10])
+@pytest.mark.parametrize(
+    "data",
+    [
+        pl.Series([1, 2, 2, None, 3, 1], dtype=pl.Int64),
+        pl.Series([17, 12, 10, 5, 6, 0, 1, 0, 3, 16], dtype=pl.Int64),
+        pl.Series([-3, -1, -2, 0, 2], dtype=pl.Int32),
+        pl.Series([1.5, 2.0, 3.0, 2.5, 3.0], dtype=pl.Float64),
+        pl.Series([1.0, 2.0, float("nan"), 3.0, None], dtype=pl.Float64),
+        pl.Series([5, 5, 5], dtype=pl.Int64),
+        pl.Series([7], dtype=pl.Int64),
+        pl.Series([], dtype=pl.Int64),
+        pl.Series([None, None], dtype=pl.Int64),
+        pl.Series([float("nan"), float("nan")], dtype=pl.Float64),
+        pl.Series([1.0, float("inf")], dtype=pl.Float64),
+        pl.Series([float("-inf"), 1.0], dtype=pl.Float64),
+        pl.Series([float("-inf"), float("inf")], dtype=pl.Float64),
+        pl.Series([1.0, 2.0, float("inf"), 3.0], dtype=pl.Float64),
+        pl.Series([float("inf"), float("inf")], dtype=pl.Float64),
+        pl.Series([float("-inf"), float("-inf")], dtype=pl.Float64),
+    ],
+)
+def test_hist(engine: pl.GPUEngine, bin_count: int, data: pl.Series) -> None:
+    df = pl.LazyFrame({"a": data})
+    q = df.select(pl.col("a").hist(bin_count=bin_count))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"include_category": True},
+        {"include_breakpoint": True},
+    ],
+)
+def test_hist_category_breakpoint_unsupported(engine: pl.GPUEngine, kwargs):
+    df = pl.LazyFrame({"a": pl.Series([1, 2, 3], dtype=pl.Int64())})
+    q = df.select(pl.col("a").hist(bin_count=3, **kwargs))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(
-    "expr",
+    "data",
     [
-        pl.col("a").entropy(),
-        pl.col("a").skew(),
-        pl.col("a").kurtosis(),
-    ],
-    ids=[
-        "entropy",
-        "skew",
-        "kurtosis",
+        pl.Series([True, False, True], dtype=pl.Boolean),
+        pl.Series([Decimal("1.00"), Decimal("2.00")], dtype=pl.Decimal(10, 2)),
     ],
 )
-def test_agg_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
-    df = pl.LazyFrame({"a": [1, 2, 3, 2, 1]})
+def test_hist_invalid_dtype_raises(engine: pl.GPUEngine, data: pl.Series) -> None:
+    df = pl.LazyFrame({"a": data})
+    q = df.select(pl.col("a").hist(bin_count=3))
+    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
+
+
+def test_hist_no_bin_count_unsupported(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": pl.Series([1, 2, 3], dtype=pl.Int64())})
+    q = df.select(pl.col("a").hist(include_category=False, include_breakpoint=False))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("expr", [pl.col("a").median(), pl.col("a").quantile(0.5)])
+def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
+    df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
     q = df.select(expr)
     assert_ir_translation_raises(q, engine, NotImplementedError)

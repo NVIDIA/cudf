@@ -362,7 +362,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnNegativeScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -408,7 +408,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnPositiveScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -944,6 +944,24 @@ TEST_F(CsvReaderTest, Strings)
   expect_column_data_equal(
     std::vector<std::string>{"abc def ghi", "\"jkl mno pqr\"", R"(stu ""vwx"" yz)"},
     view.column(1));
+}
+
+TEST_F(CsvReaderTest, WindowsLineTerminators)
+{
+  std::string const buffer{"1,alpha\r\n2,beta\r\n"};
+  auto options =
+    cudf::io::csv_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      .dtypes(std::vector<data_type>{data_type{type_id::INT64}, data_type{type_id::STRING}})
+      .header(-1);
+
+  auto const result = cudf::io::read_csv(options);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const expected_values{1, 2};
+  cudf::test::strings_column_wrapper const expected_names{"alpha", "beta"};
+  table_view const expected{{expected_values, expected_names}};
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result.tbl->view());
 }
 
 TEST_F(CsvReaderTest, StringsQuotes)

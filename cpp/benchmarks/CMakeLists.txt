@@ -138,7 +138,7 @@ ConfigureNVBench(FILTER_NVBENCH filter/minmax_filter.cpp)
 # * stream_compaction benchmark -------------------------------------------------------------------
 ConfigureNVBench(
   STREAM_COMPACTION_NVBENCH
-  stream_compaction/apply_boolean_mask.cpp
+  stream_compaction/apply_mask.cpp
   stream_compaction/distinct.cpp
   stream_compaction/stable_distinct.cpp
   stream_compaction/stream_compaction_common.cpp
@@ -352,6 +352,11 @@ target_compile_definitions(
 target_link_libraries(PARQUET_DELETION_VECTORS_NVBENCH PRIVATE roaring)
 
 # ##################################################################################################
+# * parquet variant extract benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
+
+# ##################################################################################################
 # * parquet multithread reader benchmark
 # ----------------------------------------------------------------------
 ConfigureNVBench(PARQUET_MULTITHREAD_READER_NVBENCH io/parquet/parquet_reader_multithread.cpp)
@@ -414,8 +419,13 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 # * transform benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  TRANSFORM_NVBENCH transform/encode.cpp transform/polynomials.cpp
-  transform/polynomials_concurrent.cpp transform/transform.cpp
+  TRANSFORM_NVBENCH
+  transform/encode.cpp
+  transform/polynomials.cpp
+  transform/polynomials_concurrent.cpp
+  transform/transform.cpp
+  transform/transform_dispatch.cpp
+  transform/transform_widetable.cpp
 )
 
 # ##################################################################################################

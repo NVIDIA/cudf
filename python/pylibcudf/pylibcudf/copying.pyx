@@ -40,6 +40,10 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _as_vector, _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -55,6 +59,7 @@ __all__ = [
     "empty_like",
     "gather",
     "get_element",
+    "reverse",
     "scatter",
     "shift",
     "slice",
@@ -65,7 +70,7 @@ cpdef Table gather(
     Table source_table,
     Column gather_map,
     out_of_bounds_policy bounds_policy,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Select rows from source_table according to the provided gather_map.
@@ -114,10 +119,10 @@ cpdef Table gather(
 
 
 cpdef Table scatter(
-    TableOrListOfScalars source,
+    TableOrListOfScalars source: Table | list[Scalar],
     Column scatter_map,
     Table target_table,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Scatter from source into target_table according to scatter_map.
@@ -195,7 +200,7 @@ cpdef Table scatter(
 
 
 cpdef ColumnOrTable empty_like(
-    ColumnOrTable input, object stream=None, DeviceMemoryResource mr=None
+    ColumnOrTable input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Create an empty column or table with the same type as ``input``.
 
@@ -235,8 +240,8 @@ cpdef ColumnOrTable empty_like(
 cpdef Column allocate_like(
     Column input_column,
     mask_allocation_policy policy,
-    size=None,
-    object stream=None,
+    object size: int | None = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Allocate a column with the same type as input_column.
@@ -286,7 +291,7 @@ cpdef Column copy_range_in_place(
     size_type input_begin,
     size_type input_end,
     size_type target_begin,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Copy a range of elements from input_column to target_column.
 
@@ -344,7 +349,7 @@ cpdef Column copy_range(
     size_type input_begin,
     size_type input_end,
     size_type target_begin,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copy a range of elements from input_column to target_column.
@@ -404,7 +409,7 @@ cpdef Column shift(
     Column input,
     size_type offset,
     Scalar fill_value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Shift the elements of input by offset.
@@ -451,7 +456,52 @@ cpdef Column shift(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef list slice(ColumnOrTable input, list indices, object stream=None):
+cpdef ColumnOrTable reverse(
+    ColumnOrTable input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
+):
+    """Reverse the rows of a column or table.
+
+    For details, see :cpp:func:`reverse`.
+
+    Parameters
+    ----------
+    input : Union[Column, Table]
+        The column or table to reverse.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned result's memory.
+
+    Returns
+    -------
+    Union[Column, Table]
+        The reversed column or table.
+    """
+    cdef unique_ptr[table] c_tbl_result
+    cdef unique_ptr[column] c_col_result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().value()
+    cdef column_view c_input_column
+    cdef table_view c_input_table
+
+    mr = _get_memory_resource(mr)
+    if ColumnOrTable is Column:
+        c_input_column = input.view()
+        with nogil:
+            c_col_result = cpp_copying.reverse(c_input_column, _cs, mr.get_mr())
+        return Column.from_libcudf(move(c_col_result), _stream, mr)
+    else:
+        c_input_table = input.view()
+        with nogil:
+            c_tbl_result = cpp_copying.reverse(c_input_table, _cs, mr.get_mr())
+        return Table.from_libcudf(move(c_tbl_result), _stream, mr)
+
+
+cpdef list[ColumnOrTable] slice(
+    ColumnOrTable input,
+    list indices: list[int],
+    object stream: CudaStreamLike | None = None,
+):
     """Slice input according to indices.
 
     For details on the implementation, see :cpp:func:`slice`.
@@ -508,7 +558,11 @@ cpdef list slice(ColumnOrTable input, list indices, object stream=None):
         ]
 
 
-cpdef list split(ColumnOrTable input, list splits, object stream=None):
+cpdef list[ColumnOrTable] split(
+    ColumnOrTable input,
+    list splits: list[int],
+    object stream: CudaStreamLike | None = None,
+):
     """Split input into multiple.
 
     For details on the implementation, see :cpp:func:`split`.
@@ -561,7 +615,7 @@ cpdef Column copy_if_else(
     LeftCopyIfElseOperand lhs,
     RightCopyIfElseOperand rhs,
     Column boolean_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copy elements from lhs or rhs into a new column according to boolean_mask.
@@ -653,10 +707,10 @@ cpdef Column copy_if_else(
 
 
 cpdef Table boolean_mask_scatter(
-    TableOrListOfScalars input,
+    TableOrListOfScalars input: Table | list[Scalar],
     Table target,
     Column boolean_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Scatter rows from input into target according to boolean_mask.
@@ -733,7 +787,7 @@ cpdef Table boolean_mask_scatter(
 cpdef Scalar get_element(
     Column input_column,
     size_type index,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Get the element at index from input_column.

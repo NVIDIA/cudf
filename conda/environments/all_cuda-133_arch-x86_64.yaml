@@ -43,6 +43,7 @@ dependencies:
 - ipykernel
 - ipython
 - jupyter_client
+- kvikio==26.10.*,>=0.0.0a0
 - libcufile-dev
 - libcurand-dev
 - libkvikio==26.10.*,>=0.0.0a0
@@ -64,6 +65,7 @@ dependencies:
 - nbsphinx
 - ninja
 - notebook
+- numba-cuda-mlir>=0.3.0
 - numba-cuda>=0.22.2
 - numba>=0.60.0,<0.65.0
 - numexpr
@@ -79,7 +81,7 @@ dependencies:
 - polars>=1.35,<1.43
 - pre-commit
 - psutil
-- pyarrow>=19.0.0,<24
+- pyarrow>=19.0.0
 - pytables
 - pytest-benchmark
 - pytest-cases>=3.8.2

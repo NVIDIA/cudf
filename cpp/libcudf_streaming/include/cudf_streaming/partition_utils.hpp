@@ -17,6 +17,7 @@
 #include <rapidsmpf/shuffler/shuffler.hpp>
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -33,7 +34,6 @@ namespace cudf_streaming {
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param br Buffer resource for memory allocations.
  * @param allow_overbooking If true, allow overbooking (true by default)
- *
  * @return A vector of each partition and a table that owns the device memory.
  *
  * @throws std::out_of_range if index is `columns_to_hash` is invalid
@@ -84,9 +84,8 @@ partition_and_split(
  * @param seed Seed value to the hash function.
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param br Buffer resource for memory allocations.
- * @param allow_overbooking If true, allow overbooking (true by default)
- * // TODO: disable this by default https://github.com/rapidsmpf/rapidsmpf/issues/449
- *
+ * @param allow_overbooking If true, allow overbooking (true by default). TODO: disable this by
+ * default https://github.com/rapidsmpf/rapidsmpf/issues/449
  * @return A map of partition IDs and their packed tables.
  *
  * @throws std::out_of_range if index is `columns_to_hash` is invalid
@@ -123,6 +122,8 @@ partition_and_pack(
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param br Buffer resource for memory allocations.
  * @param reservation Device memory reservation covering `partition_and_pack_cost()`.
+ * @param packed_bytes `cudf::packed_size()` of @p table, when the caller already has
+ * it. Computed internally when not given, which syncs the stream.
  * @return A map of partition IDs and their packed tables.
  *
  * @throws std::out_of_range if index is `columns_to_hash` is invalid
@@ -143,7 +144,8 @@ partition_and_pack(cudf::table_view const& table,
                    std::uint32_t seed,
                    cuda::stream_ref stream,
                    rapidsmpf::BufferResource* br,
-                   rapidsmpf::MemoryReservation& reservation);
+                   rapidsmpf::MemoryReservation& reservation,
+                   std::optional<std::size_t> packed_bytes = std::nullopt);
 
 /**
  * @brief Peak device memory (in bytes) required by `split_and_pack()`.
@@ -175,9 +177,8 @@ partition_and_pack(cudf::table_view const& table,
  * the number of result partitions.
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param br Buffer resource for memory allocations.
- * @param allow_overbooking If true, allow overbooking (true by default)
- * // TODO: disable this by default https://github.com/rapidsmpf/rapidsmpf/issues/449
- *
+ * @param allow_overbooking If true, allow overbooking (true by default). TODO: disable this by
+ * default https://github.com/rapidsmpf/rapidsmpf/issues/449
  * @return A map of partition IDs and their packed tables.
  *
  * @throws std::out_of_range if the splits are invalid.
@@ -208,6 +209,8 @@ partition_and_pack(cudf::table_view const& table,
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param br Buffer resource for memory allocations.
  * @param reservation Device memory reservation covering `split_and_pack_cost()`.
+ * @param packed_bytes `cudf::packed_size()` of @p table, when the caller already has
+ * it. Computed internally when not given, which syncs the stream.
  * @return A map of partition IDs and their packed tables.
  *
  * @throws std::out_of_range if the splits are invalid.
@@ -224,7 +227,8 @@ partition_and_pack(cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::MemoryReservation& reservation);
+  rapidsmpf::MemoryReservation& reservation,
+  std::optional<std::size_t> packed_bytes = std::nullopt);
 
 /**
  * @brief Peak device memory (in bytes) required by `unpack_and_concat()`.

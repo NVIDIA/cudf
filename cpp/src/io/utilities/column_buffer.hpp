@@ -132,7 +132,7 @@ class column_buffer_base {
    * @brief Creates a column from an existing set of device memory buffers.
    *
    * The buffer contents are moved into the returned column where possible; the buffer must be
-   * treated as consumed and must not be reused after the call. The method is only invokable on
+   * treated as consumed and must not be reused after the call. The method is only callable on
    * rvalues so that call sites make the consumption explicit via `std::move`.
    *
    * @throws std::bad_alloc if device memory allocation fails

@@ -35,6 +35,22 @@ namespace cudf_streaming {
 namespace {
 
 /**
+ * @brief Verify that a reservation covers the bytes about to be split off it.
+ *
+ * @param reservation The caller's reservation.
+ * @param size The number of bytes needed.
+ *
+ * @throws rapidsmpf::reservation_error if the reservation does not cover @p size.
+ */
+void check_reservation(rapidsmpf::MemoryReservation const& reservation, std::size_t size)
+{
+  RAPIDSMPF_EXPECTS(reservation.size() >= size,
+                    "MemoryReservation(" + rapidsmpf::format_nbytes(reservation.size()) +
+                      ") isn't big enough (" + rapidsmpf::format_nbytes(size) + ")",
+                    rapidsmpf::reservation_error);
+}
+
+/**
  * @brief The packed size of @p table and the total cost of partitioning and packing it.
  *
  * The reorder and the packed partitions are each about one packed table, and an empty
@@ -178,17 +194,23 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   RAPIDSMPF_NVTX_FUNC_RANGE();
   RAPIDSMPF_MEMORY_PROFILE(br->statistics(), br->device_mr());
   RAPIDSMPF_EXPECTS(num_partitions > 0, "Need to split to at least one partition");
-  if (table.num_rows() == 0) {
-    auto splits =
-      std::vector<cudf::size_type>(rapidsmpf::safe_cast<std::uint64_t>(num_partitions - 1), 0);
-    return split_and_pack(table, splits, stream, br, reservation, packed_bytes);
-  }
 
   // hash_partition does a deep-copy. Therefore, we need to reserve memory for
   // at least the size of the table. `packed_size()` measures the same bytes as the
   // copy needs, rounded up to the packing alignment, so it is a safe over-estimate.
-  auto const reorder_bytes =
-    packed_and_total_size(table, stream, br->device_mr(), packed_bytes).first;
+  auto const [reorder_bytes, cost] =
+    packed_and_total_size(table, stream, br->device_mr(), packed_bytes);
+
+  // Checked up front so an undersized reservation is caught before the first split
+  // mutates it, leaving the caller free to reserve more and retry.
+  check_reservation(reservation, cost);
+
+  if (table.num_rows() == 0) {
+    auto splits =
+      std::vector<cudf::size_type>(rapidsmpf::safe_cast<std::uint64_t>(num_partitions - 1), 0);
+    return split_and_pack(table, splits, stream, br, reservation, reorder_bytes);
+  }
+
   auto res                       = reservation.split(reorder_bytes);
   auto [reordered, split_points] = cudf::hash_partition(
     table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
@@ -301,6 +323,10 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
   unpacked.reserve(partitions.size());
   references.reserve(partitions.size());
   packed_data_streams.reserve(partitions.size());
+
+  // Checked up front so an undersized reservation is caught before the first split
+  // mutates it, leaving the caller free to reserve more and retry.
+  check_reservation(reservation, total_size + non_device_size);
 
   // The unspill consumes its reservation as it moves each partition, the concatenation
   // only needs its bytes accounted for until it has allocated them.

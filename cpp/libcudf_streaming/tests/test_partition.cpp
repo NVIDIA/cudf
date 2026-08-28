@@ -130,6 +130,9 @@ TEST_F(PartitionReservation, rejects_invalid_reservations)
 
   auto too_small = br->reserve_or_fail(cost - 1, rapidsmpf::MemoryType::DEVICE);
   EXPECT_THROW(std::ignore = pack(too_small), rapidsmpf::reservation_error);
+  // The reorder and the pack are split off separately, so the total is checked before
+  // either. Nothing was taken, leaving the caller free to reserve more and retry.
+  EXPECT_EQ(too_small.size(), cost - 1);
 }
 
 TEST_F(PartitionReservation, empty_table)
@@ -164,7 +167,7 @@ TEST_F(PartitionReservation, cost_rejects_unusable_partitions)
   EXPECT_THROW(std::ignore = unpack_and_concat_cost(consumed), std::invalid_argument);
 }
 
-TEST_F(PartitionReservation, unspill_consumes_the_reservation_exactly)
+TEST_F(PartitionReservation, unspill_reservation)
 {
   auto stream = cudf::get_default_stream();
   auto br     = rapidsmpf::BufferResource::create(mr());
@@ -174,14 +177,23 @@ TEST_F(PartitionReservation, unspill_consumes_the_reservation_exactly)
     partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get()));
   auto const device_cost = unpack_and_concat_cost(chunks);
 
-  // Spill the partitions so the unspill below actually allocates. The unspill is the
-  // one part of `unpack_and_concat()` whose reservation is consumed by the buffer
-  // resource rather than merely accounted for, so its share must be exact.
-  chunks                  = rapidsmpf::spill_partitions(std::move(chunks), br.get());
-  auto const spilled_cost = unpack_and_concat_cost(chunks);
-  ASSERT_EQ(spilled_cost, 2 * device_cost);  // Every partition now needs unspilling.
+  // Spill the partitions so the unspill actually allocates. The unspill is the one part
+  // of `unpack_and_concat()` whose reservation is consumed by the buffer resource rather
+  // than merely accounted for, so its share must be exact.
+  chunks          = rapidsmpf::spill_partitions(std::move(chunks), br.get());
+  auto const cost = unpack_and_concat_cost(chunks);
+  ASSERT_EQ(cost, 2 * device_cost);  // Every partition now needs unspilling.
+  ASSERT_GT(cost, 1);
 
-  auto reservation = br->reserve_or_fail(spilled_cost, rapidsmpf::MemoryType::DEVICE);
+  // The unspill and the concatenation are split off separately, so the total is checked
+  // before either. Without that the first split would have consumed the reservation.
+  auto too_small = br->reserve_or_fail(cost - 1, rapidsmpf::MemoryType::DEVICE);
+  EXPECT_THROW(std::ignore = unpack_and_concat(std::move(chunks), stream, br.get(), too_small),
+               rapidsmpf::reservation_error);
+  EXPECT_EQ(too_small.size(), cost - 1);
+
+  // Nothing was consumed, so reserving more and retrying works.
+  auto reservation = br->reserve_or_fail(cost, rapidsmpf::MemoryType::DEVICE);
   auto result      = unpack_and_concat(std::move(chunks), stream, br.get(), reservation);
   EXPECT_EQ(reservation.size(), 0);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sort_table(table), sort_table(result));

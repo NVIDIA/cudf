@@ -19,13 +19,13 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
@@ -174,7 +174,7 @@ CUDF_KERNEL void compute_percentiles_kernel(device_span<int32_t const> tdigest_o
  */
 std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& input,
                                                    column_view const& percentiles,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   tdigest_column_view tdv(input);
@@ -232,8 +232,8 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
 
   constexpr size_type block_size = 256;
   cudf::detail::grid_1d const grid(percentiles.size() * input.size(), block_size);
-  compute_percentiles_kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(
-    {offsets.begin<int32_t>(), static_cast<size_t>(offsets.size())},
+  compute_percentiles_kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
+    {offsets.begin<size_type>(), static_cast<size_t>(offsets.size())},
     *percentiles_cdv,
     centroids,
     tdv.min_begin(),
@@ -251,7 +251,7 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
                                             std::unique_ptr<column>&& tdigest_offsets,
                                             std::unique_ptr<column>&& min_values,
                                             std::unique_ptr<column>&& max_values,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(tdigest_offsets->size() == num_rows + 1,
@@ -284,7 +284,7 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
 }
 
 std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   auto offsets = cudf::make_fixed_width_column(
@@ -327,7 +327,7 @@ std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
  *
  * @returns An empty tdigest scalar.
  */
-std::unique_ptr<scalar> make_empty_tdigest_scalar(rmm::cuda_stream_view stream,
+std::unique_ptr<scalar> make_empty_tdigest_scalar(cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
 {
   auto contents = make_empty_tdigests_column(1, stream, mr)->release();
@@ -339,7 +339,7 @@ std::unique_ptr<scalar> make_empty_tdigest_scalar(rmm::cuda_stream_view stream,
 
 std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
                                           column_view const& percentiles,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   tdigest_column_view tdv(input);
@@ -367,7 +367,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
       cudf::make_empty_column(type_id::FLOAT64),
       input.size(),
       cudf::detail::create_null_mask(
-        input.size(), mask_state::ALL_NULL, rmm::cuda_stream_view(stream), mr));
+        input.size(), mask_state::ALL_NULL, cuda::stream_ref(stream), mr));
   }
 
   // if any of the input digests are empty, nullify the corresponding output rows (values will be
@@ -400,7 +400,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
 
 std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
                                           column_view const& percentiles,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -376,6 +376,30 @@ class Column:
             if rep.id() != plc_dtype.id():
                 plc_col = plc.unary.cast(plc_col, plc_dtype, stream=stream)
             return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
+        elif plc.traits.is_floating_point(plc_dtype) and (
+            plc.traits.is_timestamp(self.obj.type())
+            or plc.traits.is_duration(self.obj.type())
+        ):
+            phys = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id()
+                in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                phys,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            return Column(
+                plc.unary.cast(plc_col, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
+            ).sorted_like(self)
         elif plc.traits.is_floating_point(
             self.obj.type()
         ) and plc.traits.is_fixed_point(plc_dtype):

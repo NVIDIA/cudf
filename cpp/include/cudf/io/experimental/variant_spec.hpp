@@ -47,6 +47,20 @@ enum class variant_primitive_type : uint8_t {
 };
 
 /**
+ * @brief VARIANT status types.
+ */
+enum class variant_operation_status : uint8_t {
+  SUCCESS            = 0,  ///< operation completed successfully
+  ROW_NULL           = 1,  ///< the SQL row itself was null (no VARIANT data to decode)
+  MISSING_PATH       = 2,  ///< the requested path does not exist in the VARIANT
+  VARIANT_NULL       = 3,  ///< the value at the path is a VARIANT null
+  TYPE_MISMATCH      = 4,  ///< the value's type does not match the requested type
+  MALFORMED_VARIANT  = 5,  ///< the VARIANT binary encoding is invalid
+  OVERFLOW           = 6,  ///< the value overflows the target numeric type
+  INVALID_CONVERSION = 7,  ///< the value cannot be converted to the requested type
+};
+
+/**
  * @brief Logical type of a VARIANT value as returned by get_variant_type_id.
  */
 enum class variant_logical_type : uint8_t {

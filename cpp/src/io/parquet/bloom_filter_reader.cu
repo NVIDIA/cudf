@@ -45,7 +45,7 @@ namespace {
  * `XXHash_64` (so that `cudf::string_view` and other cudf types are hashed by content, matching the
  * Apache Parquet/Arrow bloom filter specification).
  *
- * Uses cuco's `parametric_filter_policy` with the Apache Arrow layout: 256-bit blocks (8 x
+ * Uses cuco's `bloom_filter_policy` with the Apache Arrow layout: 256-bit blocks (8 x
  * `uint32_t`), 8 fingerprint bits per key, fully horizontal add (Theta=8) and fully vertical
  * contains (Phi=8). This layout is bit-compatible with Apache Arrow, as verified by cuCollections
  * `tests/bloom_filter/arrow_compat_test.cu`.
@@ -53,7 +53,8 @@ namespace {
  * @tparam Key The type of the values to generate a fingerprint for.
  */
 template <class Key>
-using arrow_filter_policy = cudf::arrow_filter_policy<cudf::hashing::detail::XXHash_64<Key>>;
+using arrow_filter_policy =
+  cudf::arrow_bloom_filter_policy<Key, cudf::hashing::detail::XXHash_64<Key>>;
 
 /**
  * @brief Converts bloom filter membership results (for each column chunk) to a device column.
@@ -225,13 +226,11 @@ class bloom_filter_expression_converter : public equality_literals_collector {
     auto const input_op       = expr.get_operator();
     auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
 
-    // Unary operation
+    // Membership filters cannot evaluate unary operations. Visit operands and push always true
     if (operator_arity == 1) {
-      auto visit_operands_fn = [this](auto const& operands) {
-        return this->visit_operands(operands);
-      };
-      return parquet::detail::apply_unary_membership_transform(
-        expr, _bloom_filter_expr, *_always_true, *this, visit_operands_fn);
+      std::ignore = this->visit_operands(expr.get_operands());
+      _bloom_filter_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+      return *_always_true;
     }
 
     // Binary operation
@@ -554,18 +553,6 @@ std::reference_wrapper<ast::expression const> equality_literals_collector::visit
 std::vector<std::vector<ast::literal*>> equality_literals_collector::get_literals() &&
 {
   return std::move(_literals);
-}
-
-std::vector<std::reference_wrapper<ast::expression const>>
-equality_literals_collector::visit_operands(
-  cudf::host_span<std::reference_wrapper<ast::expression const> const> operands)
-{
-  std::vector<std::reference_wrapper<ast::expression const>> transformed_operands;
-  for (auto const& operand : operands) {
-    auto const new_operand = operand.get().accept(*this);
-    transformed_operands.push_back(new_operand);
-  }
-  return transformed_operands;
 }
 
 }  // namespace cudf::io::parquet::detail

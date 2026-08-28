@@ -12,8 +12,9 @@
 #include <cudf_streaming/channel_metadata.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <rapidsmpf/memory/buffer_resource.hpp>
 
@@ -160,13 +161,14 @@ TEST_F(StreamingChannelMetadata, MessageRoundTrip)
 
 class StreamingChannelMetadataGPU : public ::testing::Test {
  protected:
-  rmm::cuda_stream_view stream{cudf::get_default_stream()};
+  cuda::stream_ref stream{cudf::get_default_stream()};
   std::shared_ptr<rapidsmpf::BufferResource> br =
     rapidsmpf::BufferResource::create(cudf::get_current_device_resource_ref());
 
   std::shared_ptr<table_chunk> make_chunk(std::vector<int32_t> vals)
   {
     rmm::device_buffer buf(vals.data(), vals.size() * sizeof(int32_t), stream);
+    stream.sync();
     auto col = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                               static_cast<cudf::size_type>(vals.size()),
                                               std::move(buf),

@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,7 +52,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   cudf::host_span<cudf::size_type> input_row_group_indices,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Span to track current row group indices
@@ -127,7 +127,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
   hybrid_scan_reader const& reader,
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const all_column_chunk_byte_ranges =
@@ -146,7 +146,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
 
 std::unique_ptr<cudf::table> hybrid_scan(cudf::io::parquet_reader_options const& options,
                                          std::unordered_set<hybrid_scan_filter_type> const& filters,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // Input file buffer span

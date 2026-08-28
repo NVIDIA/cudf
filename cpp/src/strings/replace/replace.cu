@@ -345,12 +345,11 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     });
 
   // use this utility to gather the string parts into a contiguous chars column
-  auto chars      = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto chars      = cudf::make_strings_column(indices, stream, mr);
   auto chars_data = chars->release().data;
 
   // create offsets from the sizes
-  offsets = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr));
+  offsets = std::get<0>(cudf::strings::detail::make_offsets_child_column(counts, stream, mr));
 
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,

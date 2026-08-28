@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -372,7 +372,7 @@ TEST_F(ContainsTest, BoolScalarWithNullsInLists)
     cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
   auto search_space = cudf::make_lists_column(
     8,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
     numerals.release(),
     null_count,
     std::move(null_mask));
@@ -772,7 +772,7 @@ TEST_F(ContainsTest, StringKeyVectorWithNullsInListsAndInSearchKeys)
     cudf::test::detail::make_null_mask(input_null_mask_iter, input_null_mask_iter + 8);
   auto search_space = cudf::make_lists_column(
     8,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
     strings.release(),
     null_count,
     std::move(null_mask));

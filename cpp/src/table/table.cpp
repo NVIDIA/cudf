@@ -8,14 +8,14 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <numeric>
 
 namespace cudf {
 
 // Copy the columns from another table
-table::table(table const& other, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+table::table(table const& other, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
   : _num_rows{other.num_rows()}
 {
   CUDF_FUNC_RANGE();
@@ -55,7 +55,7 @@ table::table(std::vector<std::unique_ptr<column>>&& columns, size_type num_rows)
 }
 
 // Copy the contents of a `table_view`
-table::table(table_view view, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+table::table(table_view view, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
   : _num_rows{view.num_rows()}
 {
   CUDF_FUNC_RANGE();

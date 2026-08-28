@@ -20,7 +20,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_140
+from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -127,7 +127,7 @@ def test_unique_hash():
 def test_set_sorted_then_inner_join(
     engine: pl.GPUEngine, request: pytest.FixtureRequest
 ):
-    if POLARS_VERSION_LT_140:
+    if POLARS_VERSION_LT_138:
         request.applymarker(
             pytest.mark.xfail(reason="set_sorted lowers to unsupported hint ir")
         )

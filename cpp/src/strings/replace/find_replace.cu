@@ -69,7 +69,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(
                     indices.begin(),
                     find_replace_fn{*d_input, *d_values_to_replace, *d_replacements});
 
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

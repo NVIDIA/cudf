@@ -138,7 +138,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
     cuda::counting_iterator<int64_t>(0),
     static_cast<int64_t>(other_distinct_keys) * num_agg_cols,
     merge_single_pass_aggs_fn{
-      result.target_indices.begin(), _d_agg_kinds.data(), *d_source, *_d_agg_results});
+      result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
 }
 
 }  // namespace cudf::groupby

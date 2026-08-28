@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -215,7 +215,7 @@ struct compare_sv {
  * Creates an ArrowBinaryView vector and data buffer from a strings column.
  */
 std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_array(
-  cudf::strings_column_view const& input, rmm::cuda_stream_view stream)
+  cudf::strings_column_view const& input, cuda::stream_ref stream)
 {
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
   auto d_offsets =
@@ -250,7 +250,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_ar
         }));
     auto longer_strings = cudf::strings::detail::make_strings_column(
       indices, indices + input.size(), stream, cudf::get_current_device_resource_ref());
-    stream.synchronize();
+    stream.sync();
     auto const sv = cudf::strings_column_view(longer_strings->view());
     return std::pair{std::move(longer_strings), sv};
   }();
@@ -274,7 +274,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_ar
   rmm::device_buffer data_buffer(longer_chars_size, stream);
   auto const chars_data = longer_strings.chars_begin(stream);
   CUDF_CUDA_TRY(cudaMemcpyAsync(
-    data_buffer.data(), chars_data, longer_chars_size, cudaMemcpyDefault, stream.value()));
+    data_buffer.data(), chars_data, longer_chars_size, cudaMemcpyDefault, stream.get()));
 
   return std::pair{std::move(d_items), std::move(data_buffer)};
 }
@@ -285,7 +285,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> gather_sv_ar
   rmm::device_buffer const& data,
   MapIterator begin,
   cudf::size_type map_size,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto output   = rmm::device_uvector<ArrowBinaryView>(map_size, stream);
   auto d_output = output.data();

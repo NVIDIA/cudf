@@ -64,7 +64,7 @@ cdef Column _column_from_gather_map(
     )
 
 
-cpdef tuple inner_join(
+cpdef tuple[Column, Column] inner_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
@@ -112,7 +112,7 @@ cpdef tuple inner_join(
     )
 
 
-cpdef tuple left_join(
+cpdef tuple[Column, Column] left_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
@@ -160,7 +160,7 @@ cpdef tuple left_join(
     )
 
 
-cpdef tuple full_join(
+cpdef tuple[Column, Column] full_join(
     Table left_keys,
     Table right_keys,
     null_equality nulls_equal,
@@ -348,7 +348,7 @@ cpdef Table cross_join(
     return Table.from_libcudf(move(result), _stream, mr)
 
 
-cpdef tuple conditional_inner_join(
+cpdef tuple[Column, Column] conditional_inner_join(
     Table left,
     Table right,
     Expression binary_predicate,
@@ -398,7 +398,7 @@ cpdef tuple conditional_inner_join(
     )
 
 
-cpdef tuple conditional_left_join(
+cpdef tuple[Column, Column] conditional_left_join(
     Table left,
     Table right,
     Expression binary_predicate,
@@ -448,7 +448,7 @@ cpdef tuple conditional_left_join(
     )
 
 
-cpdef tuple conditional_full_join(
+cpdef tuple[Column, Column] conditional_full_join(
     Table left,
     Table right,
     Expression binary_predicate,
@@ -588,7 +588,7 @@ cpdef Column conditional_left_anti_join(
     return _column_from_gather_map(move(c_result), _stream, mr)
 
 
-cpdef tuple mixed_inner_join(
+cpdef tuple[Column, Column] mixed_inner_join(
     Table left_keys,
     Table right_keys,
     Table left_conditional,
@@ -652,7 +652,7 @@ cpdef tuple mixed_inner_join(
     )
 
 
-cpdef tuple mixed_left_join(
+cpdef tuple[Column, Column] mixed_left_join(
     Table left_keys,
     Table right_keys,
     Table left_conditional,
@@ -716,7 +716,7 @@ cpdef tuple mixed_left_join(
     )
 
 
-cpdef tuple mixed_full_join(
+cpdef tuple[Column, Column] mixed_full_join(
     Table left_keys,
     Table right_keys,
     Table left_conditional,
@@ -915,7 +915,7 @@ cdef class FilteredJoin:
         null_equality compare_nulls=null_equality.EQUAL,
         double load_factor=0.5,
         object stream: CudaStreamLike | None = None,
-    ):
+    ) -> None:
         """
         Construct a filtered hash join object for subsequent probe calls.
 
@@ -950,7 +950,7 @@ cdef class FilteredJoin:
         Table left,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """
         Returns a column of row indices corresponding to a semi-join
         between the right (filter) table and left table.
@@ -991,7 +991,7 @@ cdef class FilteredJoin:
         Table left,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
-    ):
+    ) -> Column:
         """
         Returns a column of row indices corresponding to an anti-join
         between the right (filter) table and left table.

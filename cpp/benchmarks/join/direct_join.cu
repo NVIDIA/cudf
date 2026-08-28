@@ -77,10 +77,9 @@ void nvbench_direct_inner_join(nvbench::state& state)
       auto result = hj_obj.inner_join(left_keys);
     });
   } else if (algorithm == "streaming_hash") {
-    std::array<cudf::data_type, 1> const right_schema{right_view.type()};
     std::array<cudf::size_type, 1> const right_key_indices{0};
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-      auto hj_obj = cudf::streaming_hash_join{right_schema,
+      auto hj_obj = cudf::streaming_hash_join{right_keys,
                                               right_key_indices,
                                               right_size,
                                               /*max_num_batches=*/1,

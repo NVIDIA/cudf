@@ -313,6 +313,52 @@ def test_groupby_max_min_by_nested_unsupported(engine: pl.GPUEngine, agg: str) -
     POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
+@pytest.mark.parametrize(
+    "by",
+    [
+        pl.lit(1),
+        pl.lit(None),
+        pl.lit(1) + pl.lit(2),
+        pl.lit(pl.Series("s", [7, 3])),
+        pl.lit(pl.Series("s", [7, 3, 1, 9])),
+    ],
+)
+def test_groupby_max_min_by_group_length_unsupported(
+    engine: pl.GPUEngine, agg: str, by
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2, 2], "a": [10, 20, 30, 40], "b": [1, 5, 2, 1]})
+    q = df.group_by("g").agg(getattr(pl.col("a"), agg)(by))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+)
+@pytest.mark.parametrize("agg", ["max_by", "min_by"])
+def test_groupby_max_min_by_literal_column_value_unsupported(
+    engine: pl.GPUEngine, agg: str
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2, 2], "a": [10, 20, 30, 40], "b": [1, 5, 2, 1]})
+    q = df.group_by("g").agg(
+        getattr(pl.lit(pl.Series("s", [7, 3, 1, 9])), agg)(pl.col("b"))
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+)
+@pytest.mark.parametrize("agg", ["max_by", "min_by"])
+def test_groupby_max_min_by_scalar_value(engine: pl.GPUEngine, agg: str) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2, 2], "a": [10, 20, 30, 40], "b": [1, 5, 2, 1]})
+    q = df.group_by("g").agg(getattr(pl.lit(99), agg)(pl.col("b")).alias("v")).sort("g")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+)
+@pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_rolling_max_min_by_unsupported(engine: pl.GPUEngine, agg: str) -> None:
     df = pl.LazyFrame(
         {

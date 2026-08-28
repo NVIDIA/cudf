@@ -133,6 +133,14 @@ def decompose_single_agg(
             )
             if any(nested_agg for _, nested_agg in child_aggs):
                 raise NotImplementedError("Nested aggs in groupby not supported")
+        if any(isinstance(node, expr.LiteralColumn) for node in traversal([val, by])):
+            raise NotImplementedError(
+                f"{agg.name} in groupby not supported with a literal column"
+            )
+        if not any(isinstance(node, expr.Col) for node in traversal([by])):
+            raise NotImplementedError(
+                f"{agg.name} in groupby requires 'by' to reference a column"
+            )
         is_null = expr.BooleanFunction(
             DataType(pl.Boolean()),
             expr.BooleanFunction.Name.IsNull,

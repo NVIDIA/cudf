@@ -2507,10 +2507,10 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, conjunction));
   }
 
-  // NOT(col_d < NaN) has valid stats.
+  // NOT(col_d < NaN), ordered comparisons against NaN are always false, even with valid stats.
   {
     auto d_lt_nan = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_d, lit_nan);
-    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, d_lt_nan));
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, d_lt_nan), 4);
   }
 
   // Operators with no complement are left intact

@@ -198,8 +198,9 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
               binary_operands.col_ref->accept(*this);
 
+              // A comparison cannot be negated when the column may hold a `NaN` (floating points).
               if (not cudf::is_floating_point(
-                    _output_dtypes[binary_operands.col_ref->get_column_index()])) {
+                _output_dtypes[binary_operands.col_ref->get_column_index()])) {
                 auto const negated_op =
                   transform_operator<operator_transform::NEGATE>(child_operation->get_operator());
                 if (negated_op.has_value()) {

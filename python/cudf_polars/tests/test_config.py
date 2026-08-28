@@ -33,6 +33,7 @@ from cudf_polars.utils.config import (
     DynamicPlanningOptions,
     InMemoryExecutor,
     JoinFilterPushdownOptions,
+    MaxConcurrentIOTasks,
     MemoryResourceConfig,
     ParquetOptions,
     StreamingExecutor,
@@ -425,8 +426,117 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.executor.max_rows_per_partition == 42
         assert config.executor.target_partition_size == 100
         assert config.executor.broadcast_limit == 44
-        assert config.executor.max_concurrent_io_tasks == 6
+        assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+            local=6, remote=6
+        )
         assert config.executor.quent_context is not None
+
+
+def test_max_concurrent_io_tasks_local_remote_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv(
+            "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS",
+            '{"local": 2, "remote": 7}',
+        )
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+            local=2, remote=7
+        )
+
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", '{"remote": 7}')
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+            local=2, remote=7
+        )
+
+
+def test_max_concurrent_io_tasks_default_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", raising=False)
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": 6},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+        local=6, remote=6
+    )
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={
+                "max_concurrent_io_tasks": {"local": 3, "remote": 7},
+            },
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+        local=3, remote=7
+    )
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": None},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
+
+
+def test_max_concurrent_io_tasks_accepts_dataclass() -> None:
+    value = MaxConcurrentIOTasks(local=3, remote=7)
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": value},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks is value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, {"local": 0}, {"remote": 0}, {"local": -1}, {"remote": -1}],
+)
+def test_max_concurrent_io_tasks_rejects_non_positive(
+    value: int | dict[str, int],
+) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"max_concurrent_io_tasks": value},
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        True,
+        False,
+        {"local": True},
+        {"remote": False},
+        {"local": 1.5},
+        {"remote": "8"},
+    ],
+)
+def test_max_concurrent_io_tasks_rejects_non_int(value: object) -> None:
+    with pytest.raises(TypeError, match="must be ints"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"max_concurrent_io_tasks": value},
+            )
+        )
 
 
 def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -583,6 +693,7 @@ def test_parquet_options_unspecified_dict_factory() -> None:
     assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
     result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
     assert result["parquet_options"]["prefetch_file_metadata"] is None
+    assert result["executor"]["max_concurrent_io_tasks"] == {"local": 2, "remote": 8}
 
 
 def test_validate_raise_on_fail() -> None:

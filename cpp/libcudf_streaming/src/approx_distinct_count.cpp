@@ -75,16 +75,16 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
   if (ch_sampled != nullptr) { co_await ch_sampled->shutdown_metadata(); }
   co_await ch_out->shutdown_metadata();
 
-  auto const& br              = ctx_->br();
-  auto const sketch_stream    = br->stream_pool()->get_stream();
-  auto const sketch_bytes     = cudf::approx_distinct_count::sketch_bytes(precision_);
-  auto const row_count_offset = sketch_bytes;
-  auto const storage_bytes    = sketch_bytes + sizeof(std::uint64_t);
+  auto const& br                       = ctx_->br();
+  cuda::stream_ref const sketch_stream = br->stream_pool()->get_stream();
+  auto const sketch_bytes              = cudf::approx_distinct_count::sketch_bytes(precision_);
+  auto const row_count_offset          = sketch_bytes;
+  auto const storage_bytes             = sketch_bytes + sizeof(std::uint64_t);
   auto reservation =
     co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)->reserve_or_wait(storage_bytes, 0);
   auto buf = rmm::device_buffer(
     storage_bytes, cudf::approx_distinct_count::sketch_alignment(), sketch_stream, br->device_mr());
-  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream));
+  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream.get()));
   reservation.clear();
   rapidsmpf::CudaEvent init_event;
   rapidsmpf::CudaEvent add_event;

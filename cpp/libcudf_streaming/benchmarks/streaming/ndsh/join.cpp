@@ -58,7 +58,7 @@ coro::task<streaming::Message> broadcast(std::shared_ptr<streaming::Context> ctx
   if (comm->nranks() == 1) {
     std::vector<cudf_streaming::table_chunk> chunks;
     std::vector<cudf::table_view> views;
-    auto gather_stream = ctx->br()->stream_pool()->get_stream();
+    cuda::stream_ref gather_stream = ctx->br()->stream_pool()->get_stream();
     while (true) {
       auto msg = co_await ch_in->receive();
       if (msg.empty()) { break; }

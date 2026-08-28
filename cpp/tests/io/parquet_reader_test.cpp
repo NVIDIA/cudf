@@ -6465,11 +6465,11 @@ TEST_F(ParquetReaderTest, ListOfStructRequiredStringChildNullGaps)
   auto const written = table_view{{list_col->view()}};
   cudf::io::table_input_metadata input_metadata(written);
   input_metadata.column_metadata[0]
-    .set_name("l")
+    .set_name("outer")
     .child(1)
-    .set_name("s")
+    .set_name("inner")
     .child(0)
-    .set_name("a")
+    .set_name("value")
     .set_nullability(false);
 
   auto const filepath =

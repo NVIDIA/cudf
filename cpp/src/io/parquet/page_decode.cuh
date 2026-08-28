@@ -1464,8 +1464,8 @@ inline __device__ bool setup_local_page_info(auto* const s,
  * ancestors are zero-filled by `reader_impl::allocate_columns` because an ancestor's validity map
  * may not be available to this leaf.
  *
- * Callers use this for structural outputs: string lengths, list offsets, and dictionary indices.
- * Fixed-width null values need no initialization because they are masked.
+ * Callers use this for structural outputs: nullable string lengths, list offsets, and dictionary
+ * indices. Fixed-width null values need no initialization because they are masked.
  *
  * @tparam block_size CUDA block size for the kernel
  * @param s Page state containing all necessary information

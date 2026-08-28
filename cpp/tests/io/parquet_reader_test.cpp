@@ -6485,5 +6485,3 @@ TEST_F(ParquetReaderTest, ListOfStructRequiredStringChildNullGaps)
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build());
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected->view()}}, result.tbl->view());
 }
-
-

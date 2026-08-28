@@ -947,6 +947,24 @@ TEST_F(CsvReaderTest, Strings)
     view.column(1));
 }
 
+TEST_F(CsvReaderTest, WindowsLineTerminators)
+{
+  std::string const buffer{"1,alpha\r\n2,beta\r\n"};
+  auto options =
+    cudf::io::csv_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      .dtypes(std::vector<data_type>{data_type{type_id::INT64}, data_type{type_id::STRING}})
+      .header(-1);
+
+  auto const result = cudf::io::read_csv(options);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const expected_values{1, 2};
+  cudf::test::strings_column_wrapper const expected_names{"alpha", "beta"};
+  table_view const expected{{expected_values, expected_names}};
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result.tbl->view());
+}
+
 TEST_F(CsvReaderTest, StringsQuotes)
 {
   std::vector<std::string> names{"line", "verse"};

@@ -81,7 +81,7 @@ class Filter(Expr):
         values, mask = (child.evaluate(df, context=context) for child in self.children)
         # polars type-puns length-1 columns as scalars.
         values, mask = broadcast(values, mask, stream=df.stream)
-        table = plc.stream_compaction.apply_boolean_mask(
+        table = plc.stream_compaction.apply_retention_mask(
             plc.Table([values.obj]), mask.obj, stream=df.stream
         )
         return Column(table.columns()[0], dtype=self.dtype).sorted_like(values)

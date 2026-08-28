@@ -110,6 +110,10 @@ class streaming_hash_join {
    * in an unspecified order when calls overlap. All `insert()` calls must return, and the caller
    * must establish the necessary CUDA stream dependencies, before calling `inner_join()`.
    *
+   * The hash table is constructed on the stream passed to the constructor. If `stream` differs
+   * from that one, the caller must synchronize the constructor's stream before calling this
+   * function, otherwise the insert may race the hash table's construction.
+   *
    * @throws std::invalid_argument if `right_partition`'s schema does not match the schema passed
    *                               to the constructor
    * @throws std::invalid_argument if inserting this partition would push the cumulative row count

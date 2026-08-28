@@ -385,6 +385,48 @@ TEST_F(StreamingHashJoinTest, SlicedPartitionReturnsSliceLocalRows)
   EXPECT_EQ(left_indices->size(), 2);
 }
 
+TEST_F(StreamingHashJoinTest, GetPartitionResolvesBatchIds)
+{
+  auto const stream               = cudf::test::get_default_stream();
+  constexpr size_type num_batches = 4;
+  std::vector<int32_t> values(num_batches);
+  std::iota(values.begin(), values.end(), 0);
+  column_wrapper<int32_t> right(values.begin(), values.end());
+  cudf::table_view const right_view{{right}};
+  std::vector<size_type> slice_indices;
+  slice_indices.reserve(2 * num_batches);
+  for (size_type i = 0; i < num_batches; ++i) {
+    slice_indices.push_back(i);
+    slice_indices.push_back(i + 1);
+  }
+  auto const right_partitions = cudf::slice(right_view, slice_indices);
+
+  std::vector<size_type> const keys{0};
+  cudf::streaming_hash_join joiner{right_view,
+                                   keys,
+                                   /*total_right_rows=*/num_batches,
+                                   /*max_num_batches=*/num_batches,
+                                   cudf::nullable_join::NO,
+                                   cudf::null_equality::EQUAL,
+                                   /*load_factor=*/0.5,
+                                   stream};
+  for (auto const& partition : right_partitions) {
+    joiner.insert(partition, stream);
+  }
+
+  // Every batch ID resolves to a partition holding the value that batch was built from, without
+  // the caller tracking which `insert()` call was assigned which ID.
+  for (size_type batch_id = 0; batch_id < num_batches; ++batch_id) {
+    auto const resolved = joiner.get_partition(batch_id);
+    ASSERT_EQ(resolved.num_columns(), 1);
+    ASSERT_EQ(resolved.num_rows(), 1);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(resolved.column(0), right_partitions[batch_id].column(0));
+  }
+
+  EXPECT_THROW(static_cast<void>(joiner.get_partition(-1)), std::out_of_range);
+  EXPECT_THROW(static_cast<void>(joiner.get_partition(num_batches)), std::out_of_range);
+}
+
 TEST_F(StreamingHashJoinTest, MemoryResources)
 {
   auto const stream = cudf::test::get_default_stream();

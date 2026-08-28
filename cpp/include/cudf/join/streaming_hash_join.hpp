@@ -130,6 +130,25 @@ class streaming_hash_join {
               cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
+   * @brief Returns the right-side partition that was inserted with the given batch ID.
+   *
+   * `inner_join()` identifies each match by `(batch_idx, row_idx)`. This function resolves
+   * `batch_idx` back to the partition it came from, so a caller inserting concurrently does not
+   * need to track which batch ID each of its `insert()` calls was assigned.
+   *
+   * The returned view is non-owning. The caller must keep every inserted partition alive for as
+   * long as the returned view is used.
+   *
+   * This function must not be called concurrently with `insert()`.
+   *
+   * @param batch_id A batch ID reported in `inner_join()`'s `right_batch_indices`
+   * @return View of the partition that was inserted with `batch_id`
+   *
+   * @throws std::out_of_range if no partition has been inserted with `batch_id`
+   */
+  [[nodiscard]] cudf::table_view get_partition(size_type batch_id) const;
+
+  /**
    * @brief Returns the row indices that can be used to construct the result of an inner join
    *        between the accumulated right-side partitions and the given `left` table.
    *
@@ -142,9 +161,9 @@ class streaming_hash_join {
    * @param mr Memory resources used to allocate the returned device memory and any scratch
    *           needed while probing.
    * @return Pair `[left_indices, [right_batch_indices, right_row_indices]]`. For each match the
-   *         right side is identified by `(batch_idx, row_idx)`, where `batch_idx` is the
-   *         insertion order of the partition this row came from and `row_idx` is the local
-   *         row index within that partition.
+   *         right side is identified by `(batch_idx, row_idx)`, where `batch_idx` identifies the
+   *         partition this row came from, resolvable with `get_partition()`, and `row_idx` is the
+   *         local row index within that partition.
    */
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

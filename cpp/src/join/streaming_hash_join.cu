@@ -284,6 +284,9 @@ class streaming_hash_join_impl {
   hash_table_type hash_table;
 
   std::vector<std::shared_ptr<row::equality::preprocessed_table>> preprocessed_right;
+  // Views of the inserted partitions, indexed by batch ID so callers can resolve the batch IDs
+  // reported by `inner_join()` without tracking concurrent insert ordering themselves.
+  std::vector<table_view> right_partitions;
 
   streaming_hash_join_impl(table_view const& schema,
                            std::span<size_type const> key_indices,
@@ -320,7 +323,8 @@ class streaming_hash_join_impl {
         {},
         rmm::mr::polymorphic_allocator<char>{mr.get_output_mr()},
         stream.get()},
-      preprocessed_right(static_cast<std::size_t>(max_num_batches))
+      preprocessed_right(static_cast<std::size_t>(max_num_batches)),
+      right_partitions(static_cast<std::size_t>(max_num_batches))
   {
     CUDF_EXPECTS(right_schema->num_columns() > 0,
                  "streaming_hash_join requires at least one right-side column.",
@@ -379,6 +383,7 @@ class streaming_hash_join_impl {
       !inserted_batches.compare_exchange_weak(batch_id, batch_id + 1, std::memory_order_relaxed));
 
     preprocessed_right[batch_id] = std::move(preprocessed);
+    right_partitions[batch_id]   = right_partition;
 
     if (batch_rows > 0) {
       auto const nulls = nullate::DYNAMIC{has_nulls};
@@ -483,6 +488,14 @@ class streaming_hash_join_impl {
                      std::pair{std::move(batch_indices), std::move(row_indices)}};
   }
 
+  [[nodiscard]] table_view get_partition(size_type batch_id) const
+  {
+    CUDF_EXPECTS(batch_id >= 0 and batch_id < inserted_batches.load(std::memory_order_relaxed),
+                 "streaming_hash_join: no partition has been inserted with this batch ID.",
+                 std::out_of_range);
+    return right_partitions[batch_id];
+  }
+
   auto inner_join(table_view const& left,
                   std::optional<std::size_t> output_size,
                   cuda::stream_ref stream,
@@ -541,6 +554,11 @@ void streaming_hash_join::insert(table_view const& right_partition, cuda::stream
 {
   CUDF_FUNC_RANGE();
   _impl->insert(right_partition, stream);
+}
+
+table_view streaming_hash_join::get_partition(size_type batch_id) const
+{
+  return _impl->get_partition(batch_id);
 }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

@@ -513,10 +513,11 @@ def _make_ordered_strategy(
         left_keys,
         right_keys,
     ) = _get_key_indices(ir, reference_key_count)
-    if (
-        len(left_key_indices) != reference_key_count
-        or len(right_key_indices) != reference_key_count
-        or len(output_key_indices) != reference_key_count
+    if not (
+        len(left_key_indices)
+        == len(right_key_indices)
+        == len(output_key_indices)
+        == reference_key_count
     ):
         return None
     if not _ordering_prefix_matches(left_ordering, reference, left_key_indices):
@@ -921,7 +922,7 @@ async def _aggregate_estimates(
     return new_left_sample, new_right_sample
 
 
-async def _choose_strategy_from_samples(
+def _choose_strategy_from_samples(
     comm: Communicator,
     ir: Join,
     left_metadata: ChannelMetadata,
@@ -1159,7 +1160,7 @@ async def _choose_strategy(
             collective_ids,
         )
 
-    strategy = await _choose_strategy_from_samples(
+    strategy = _choose_strategy_from_samples(
         comm,
         ir,
         left_metadata,

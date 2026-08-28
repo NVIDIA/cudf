@@ -132,6 +132,61 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
     assert result == {}
 
 
+def test_prefetch_skips_paths_cached_by_stats_collection(
+    tmp_path,
+    df: pl.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    parquet_stats_executor,
+) -> None:
+    import cudf_polars.dsl.utils.io as io_module
+    from cudf_polars.streaming.io import _clear_source_info_cache
+
+    _clear_source_info_cache()
+    n_files = 5
+    max_footer_samples = 2
+    make_partitioned_source(df, tmp_path, "parquet", n_files=n_files)
+    paths = sorted(str(p) for p in tmp_path.glob("*.parquet"))
+
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        parquet_options={"max_footer_samples": max_footer_samples},
+    )
+    q = pl.scan_parquet(tmp_path)
+    from cudf_polars import Translator
+
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    config = ConfigOptions.from_polars_engine(engine)
+    stats = collect_statistics(ir, config, parquet_stats_executor)
+
+    source = stats.scan_stats[ir]
+    assert source.cached_parquet_info is not None
+    sampled_paths = {info.path for info in source.cached_parquet_info}
+    assert len(sampled_paths) == max_footer_samples
+
+    fetched_paths: list[str] = []
+    real_prefetch = io_module._prefetch_parquet_footers_for_paths
+
+    def recording_prefetch(paths_arg: list[str]) -> list:
+        fetched_paths.extend(paths_arg)
+        return real_prefetch(paths_arg)
+
+    monkeypatch.setattr(
+        io_module, "_prefetch_parquet_footers_for_paths", recording_prefetch
+    )
+
+    scan = _make_parquet_scan(paths)
+    fused = FusedScan(scan.schema, scan, paths, scan.parquet_options, None)
+    streaming_scan = StreamingScan([fused], scan, "fused")
+
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=stats
+    )
+
+    assert set(result) == set(paths)
+    assert set(fetched_paths) == set(paths) - sampled_paths
+
+
 def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
     make_partitioned_source(df, tmp_path, "parquet", n_files=1)
     local_path = str(next(tmp_path.glob("*.parquet")))

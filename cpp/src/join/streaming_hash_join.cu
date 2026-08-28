@@ -5,6 +5,7 @@
 
 #include "join/join_common_utils.cuh"
 
+#include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/join/join.hpp>
 #include <cudf/detail/null_mask.hpp>
@@ -14,6 +15,7 @@
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -260,7 +262,8 @@ struct decode_slot_fn {
 
 class streaming_hash_join_impl {
  public:
-  std::vector<data_type> right_schema;
+  // Empty copy of the right-side schema, owned so validation never depends on caller lifetimes.
+  std::unique_ptr<table> right_schema;
   std::vector<size_type> right_key_indices;
   size_type total_right_rows;
   size_type max_num_batches;
@@ -275,12 +278,9 @@ class streaming_hash_join_impl {
   cuda::mr::any_resource<cuda::mr::device_accessible> mr;
   hash_table_type hash_table;
 
-  std::mutex right_key_schema_mutex;
-  std::optional<table_view> right_key_schema;
-  std::optional<table_view> right_partition_schema;
   std::vector<std::shared_ptr<row::equality::preprocessed_table>> preprocessed_right;
 
-  streaming_hash_join_impl(std::span<data_type const> schema,
+  streaming_hash_join_impl(table_view const& schema,
                            std::span<size_type const> key_indices,
                            size_type total_rows,
                            size_type maximum_batches,
@@ -289,7 +289,10 @@ class streaming_hash_join_impl {
                            double load_factor,
                            cuda::stream_ref stream,
                            cuda::mr::any_resource<cuda::mr::device_accessible> resource)
-    : right_schema{schema.begin(), schema.end()},
+    // Deep copy a zero-row slice rather than `empty_like`, which drops children such as a
+    // dictionary's keys column and would make `have_same_types` reject every partition.
+    : right_schema{std::make_unique<table>(
+        cudf::slice(schema, {0, 0}).front(), stream, cudf::get_current_device_resource_ref())},
       right_key_indices{key_indices.begin(), key_indices.end()},
       total_right_rows{total_rows},
       max_num_batches{checked_batch_count(maximum_batches)},
@@ -314,44 +317,34 @@ class streaming_hash_join_impl {
         stream.get()},
       preprocessed_right(static_cast<std::size_t>(max_num_batches))
   {
-    CUDF_EXPECTS(!right_schema.empty(),
+    CUDF_EXPECTS(right_schema->num_columns() > 0,
                  "streaming_hash_join requires at least one right-side column.",
                  std::invalid_argument);
     CUDF_EXPECTS(!right_key_indices.empty(),
                  "streaming_hash_join requires at least one right-side key column.",
                  std::invalid_argument);
-    auto const schema_size = static_cast<size_type>(right_schema.size());
+    auto const schema_size = right_schema->num_columns();
     for (auto const index : right_key_indices) {
       CUDF_EXPECTS(index >= 0 && index < schema_size,
                    "streaming_hash_join key index is out of range for the provided schema.",
                    std::invalid_argument);
     }
+    // The schema exemplar carries nesting, so this is settled once here rather than on first
+    // insert, which is what previously forced the insert path to lock.
+    has_nested_keys =
+      cudf::detail::has_nested_columns(right_schema->view().select(right_key_indices));
   }
 
   void insert(table_view const& right_partition, cuda::stream_ref stream)
   {
-    CUDF_EXPECTS(right_partition.num_columns() == static_cast<size_type>(right_schema.size()),
+    CUDF_EXPECTS(right_partition.num_columns() == right_schema->num_columns(),
                  "streaming_hash_join: inserted partition column count does not match schema.",
                  std::invalid_argument);
-    for (size_type i = 0; i < right_partition.num_columns(); ++i) {
-      CUDF_EXPECTS(right_partition.column(i).type() == right_schema[i],
-                   "streaming_hash_join: inserted partition column type does not match schema.",
-                   std::invalid_argument);
-    }
+    CUDF_EXPECTS(cudf::have_same_types(right_schema->view(), right_partition),
+                 "streaming_hash_join: inserted partition schema does not match the schema passed "
+                 "to the constructor.",
+                 cudf::data_type_error);
     auto const keys = right_partition.select(right_key_indices);
-    {
-      std::scoped_lock lock{right_key_schema_mutex};
-      if (right_partition_schema.has_value()) {
-        CUDF_EXPECTS(
-          cudf::have_same_types(*right_partition_schema, right_partition),
-          "streaming_hash_join: inserted partition schema does not match prior partitions.",
-          cudf::data_type_error);
-      } else {
-        right_partition_schema = right_partition;
-        right_key_schema       = keys;
-        has_nested_keys        = cudf::detail::has_nested_columns(keys);
-      }
-    }
 
     auto preprocessed = row::equality::preprocessed_table::create(
       keys, stream, cudf::get_current_device_resource_ref());
@@ -486,7 +479,7 @@ class streaming_hash_join_impl {
     CUDF_EXPECTS(inserted_batches.load(std::memory_order_relaxed) > 0,
                  "streaming_hash_join: inner_join called before any insert().",
                  std::logic_error);
-    validate_hash_join_probe(*right_key_schema, left, has_nulls);
+    validate_hash_join_probe(right_schema->view().select(right_key_indices), left, has_nulls);
 
     if (left.num_rows() == 0 || inserted_rows.load(std::memory_order_relaxed) == 0) {
       return std::pair{
@@ -506,7 +499,7 @@ class streaming_hash_join_impl {
 
 namespace cudf {
 
-streaming_hash_join::streaming_hash_join(std::span<data_type const> right_schema,
+streaming_hash_join::streaming_hash_join(table_view const& right_schema,
                                          std::span<size_type const> right_key_indices,
                                          size_type total_right_rows,
                                          size_type max_num_batches,

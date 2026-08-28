@@ -165,16 +165,10 @@ std::unique_ptr<cudf::table> inner_join(
          cudf::null_equality compare_nulls,
          rmm::cuda_stream_view stream,
          rmm::device_async_resource_ref mr) {
-        std::vector<cudf::data_type> right_schema;
-        right_schema.reserve(right.num_columns());
-        for (auto column_index = 0; column_index < right.num_columns(); ++column_index) {
-          right_schema.push_back(right.column(column_index).type());
-        }
-
         std::vector<cudf::size_type> right_key_indices(right.num_columns());
         std::iota(right_key_indices.begin(), right_key_indices.end(), 0);
 
-        cudf::streaming_hash_join joiner{right_schema,
+        cudf::streaming_hash_join joiner{right,
                                          right_key_indices,
                                          right.num_rows(),
                                          /*max_num_batches=*/1,

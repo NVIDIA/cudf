@@ -73,8 +73,10 @@ class streaming_hash_join {
    * @throws std::invalid_argument if `max_num_batches` is not positive
    * @throws std::invalid_argument if `load_factor` is not in (0, 1]
    *
-   * @param right_schema Column types of every right-side partition. All partitions inserted later
-   *                     must have the same schema.
+   * @param right_schema Exemplar of the right-side schema. Only its column types and nesting are
+   *                     used; the rows are ignored and an empty copy is retained, so the caller
+   *                     need not keep these columns alive. All partitions inserted later must
+   *                     have the same schema.
    * @param right_key_indices Indices into `right_schema` identifying the join-key columns.
    * @param total_right_rows Upper bound on the cumulative number of right-side rows that will be
    *                         inserted; the persistent hash table is sized accordingly.
@@ -88,7 +90,7 @@ class streaming_hash_join {
    * @param mr Device memory resource used for persistent allocations. The resource is owned by the
    *           join object and must be copyable.
    */
-  streaming_hash_join(std::span<data_type const> right_schema,
+  streaming_hash_join(cudf::table_view const& right_schema,
                       std::span<size_type const> right_key_indices,
                       size_type total_right_rows,
                       size_type max_num_batches,

@@ -65,10 +65,9 @@ TEST_F(JoinTest, StreamingHashJoin)
   cudf::test::fixed_width_column_wrapper<int32_t> left_keys{{2, 4}};
   cudf::table_view const right{{right_keys}};
   cudf::table_view const left{{left_keys}};
-  std::vector<cudf::data_type> const schema{right.column(0).type()};
   std::vector<cudf::size_type> const key_indices{0};
 
-  cudf::streaming_hash_join joiner{schema,
+  cudf::streaming_hash_join joiner{right,
                                    key_indices,
                                    right.num_rows(),
                                    /*max_num_batches=*/1,

@@ -73,10 +73,9 @@ TEST_F(StreamingHashJoinTest, MultiplePartitionsReturnBatchLocalIndices)
   column_wrapper<int32_t> left{2, 5, 3, 7};
   cudf::table_view left_view{{left}};
 
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
   std::vector<size_type> const keys{0};
   cudf::streaming_hash_join joiner{
-    schema,
+    right0_view,
     keys,
     right0_view.num_rows() + right1_view.num_rows() + right2_view.num_rows(),
     // A non-power-of-two maximum requires two batch-ID bits.
@@ -118,12 +117,11 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
     streams.push_back(std::make_unique<rmm::cuda_stream>());
   }
 
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
   std::vector<size_type> const keys{0};
   // Construct on a stream of its own so the inserts below run on different streams than the
   // hash table was built on, then synchronize it as the `insert()` docs require.
   rmm::cuda_stream const build_stream;
-  cudf::streaming_hash_join joiner{schema,
+  cudf::streaming_hash_join joiner{right_view,
                                    keys,
                                    /*total_right_rows=*/num_batches,
                                    /*max_num_batches=*/num_batches,
@@ -195,7 +193,8 @@ TEST_F(StreamingHashJoinTest, MaxNumBatchesCountsEmptyBatches)
 {
   auto const stream = cudf::test::get_default_stream();
 
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
+  column_wrapper<int32_t> schema_exemplar{};
+  cudf::table_view const schema{{schema_exemplar}};
   std::vector<size_type> const keys{0};
   cudf::streaming_hash_join joiner{schema,
                                    keys,
@@ -215,7 +214,8 @@ TEST_F(StreamingHashJoinTest, InnerJoinBeforeInsertThrows)
 {
   auto const stream = cudf::test::get_default_stream();
 
-  std::vector<cudf::data_type> const right_schema{cudf::data_type{cudf::type_id::INT32}};
+  column_wrapper<int32_t> right_schema_exemplar{};
+  cudf::table_view const right_schema{{right_schema_exemplar}};
   std::vector<size_type> const right_key_indices{0};
 
   cudf::streaming_hash_join streaming_joiner{right_schema,
@@ -234,7 +234,8 @@ TEST_F(StreamingHashJoinTest, SchemaMismatchThrows)
 {
   auto const stream = cudf::test::get_default_stream();
 
-  std::vector<cudf::data_type> const right_schema{cudf::data_type{cudf::type_id::INT32}};
+  column_wrapper<int32_t> right_schema_exemplar{};
+  cudf::table_view const right_schema{{right_schema_exemplar}};
   std::vector<size_type> const right_key_indices{0};
   cudf::streaming_hash_join streaming_joiner{right_schema,
                                              right_key_indices,
@@ -268,10 +269,8 @@ TEST_F(StreamingHashJoinTest, UsesSelectedKeysAndPreservesEmptyBatchIds)
   column_wrapper<int64_t> left_keys{7, 9};
   cudf::table_view left{{left_keys}};
 
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32},
-                                            cudf::data_type{cudf::type_id::INT64}};
   std::vector<size_type> const key_indices{1};
-  cudf::streaming_hash_join joiner{schema,
+  cudf::streaming_hash_join joiner{right,
                                    key_indices,
                                    right.num_rows(),
                                    /*max_num_batches=*/2,
@@ -296,11 +295,10 @@ TEST_F(StreamingHashJoinTest, NullEqualityAcrossPartitions)
   cudf::table_view right1_view{{right1}};
   column_wrapper<int32_t> left_keys{{0, 1, 2}, {0, 1, 1}};
   cudf::table_view left{{left_keys}};
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
   std::vector<size_type> const key_indices{0};
 
   auto run = [&](cudf::null_equality nulls_equal) {
-    cudf::streaming_hash_join joiner{schema,
+    cudf::streaming_hash_join joiner{right0_view,
                                      key_indices,
                                      right0_view.num_rows() + right1_view.num_rows(),
                                      /*max_num_batches=*/2,
@@ -332,9 +330,8 @@ TEST_F(StreamingHashJoinTest, NestedKeysAcrossPartitions)
   cudf::table_view right1{{right1_struct}};
   cudf::table_view left{{left_struct}};
 
-  std::vector<cudf::data_type> const schema{right0.column(0).type()};
   std::vector<size_type> const key_indices{0};
-  cudf::streaming_hash_join joiner{schema,
+  cudf::streaming_hash_join joiner{right0,
                                    key_indices,
                                    right0.num_rows() + right1.num_rows(),
                                    /*max_num_batches=*/2,
@@ -361,9 +358,8 @@ TEST_F(StreamingHashJoinTest, SlicedPartitionReturnsSliceLocalRows)
   column_wrapper<int32_t> left_keys{5};
   cudf::table_view left{{left_keys}};
 
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
   std::vector<size_type> const key_indices{0};
-  cudf::streaming_hash_join joiner{schema,
+  cudf::streaming_hash_join joiner{right0_owner_view,
                                    key_indices,
                                    right0.num_rows() + right1.num_rows(),
                                    /*max_num_batches=*/2,
@@ -388,12 +384,11 @@ TEST_F(StreamingHashJoinTest, MemoryResources)
   cudf::table_view right{{right_keys}};
   column_wrapper<int32_t> left_keys{2};
   cudf::table_view left{{left_keys}};
-  std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
   std::vector<size_type> const key_indices{0};
 
   auto persistent_mr =
     rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
-  cudf::streaming_hash_join joiner{schema,
+  cudf::streaming_hash_join joiner{right,
                                    key_indices,
                                    right.num_rows(),
                                    /*max_num_batches=*/1,
@@ -415,7 +410,9 @@ TEST_F(StreamingHashJoinTest, MemoryResources)
 
 TEST_F(StreamingHashJoinTest, ConstructorValidatesArguments)
 {
-  std::vector<cudf::data_type> const single_schema{cudf::data_type{cudf::type_id::INT32}};
+  column_wrapper<int32_t> single_schema_exemplar{};
+  cudf::table_view const single_schema{{single_schema_exemplar}};
+  cudf::table_view const empty_schema{};
   std::vector<size_type> const single_key{0};
 
   EXPECT_THROW(cudf::streaming_hash_join(single_schema,
@@ -426,7 +423,7 @@ TEST_F(StreamingHashJoinTest, ConstructorValidatesArguments)
                                          cudf::null_equality::EQUAL),
                std::invalid_argument);
 
-  EXPECT_THROW(cudf::streaming_hash_join(std::vector<cudf::data_type>{},
+  EXPECT_THROW(cudf::streaming_hash_join(empty_schema,
                                          single_key,
                                          4,
                                          /*max_num_batches=*/1,

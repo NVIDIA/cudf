@@ -120,6 +120,9 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
 
   std::vector<cudf::data_type> const schema{cudf::data_type{cudf::type_id::INT32}};
   std::vector<size_type> const keys{0};
+  // Construct on a stream of its own so the inserts below run on different streams than the
+  // hash table was built on, then synchronize it as the `insert()` docs require.
+  rmm::cuda_stream const build_stream;
   cudf::streaming_hash_join joiner{schema,
                                    keys,
                                    /*total_right_rows=*/num_batches,
@@ -127,8 +130,8 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
                                    cudf::nullable_join::NO,
                                    cudf::null_equality::EQUAL,
                                    /*load_factor=*/0.5,
-                                   stream};
-  stream.sync();
+                                   build_stream.view()};
+  build_stream.synchronize();
 
   auto const device = rmm::get_current_cuda_device();
   std::vector<std::thread> threads;

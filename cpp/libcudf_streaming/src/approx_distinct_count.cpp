@@ -116,8 +116,9 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
     auto const table =
       column_indices.empty() ? chunk.table_view() : chunk.table_view().select(column_indices);
     sketch.add(table, chunk.stream());
-    rapidsmpf::cuda_stream_join(
-      sketch_stream, detail::as_rmm_cuda_stream_view(chunk.stream()), &add_event);
+    rapidsmpf::cuda_stream_join(detail::as_cuda_stream_ref(sketch_stream),
+                                detail::as_cuda_stream_ref(chunk.stream()),
+                                &add_event);
     reservation.clear();
     if (ch_sampled != nullptr) {
       co_await ch_sampled->send(

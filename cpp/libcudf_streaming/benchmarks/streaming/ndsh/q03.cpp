@@ -253,8 +253,8 @@ rapidsmpf::streaming::Actor top_k_by(std::shared_ptr<rapidsmpf::streaming::Conte
   auto out_stream = chunk_streams.front();
   rapidsmpf::CudaEvent event;
   rapidsmpf::cuda_stream_join(
-    std::ranges::single_view{cudf_streaming::detail::as_rmm_cuda_stream_view(out_stream)},
-    cudf_streaming::detail::as_rmm_cuda_stream_view_range(chunk_streams),
+    std::ranges::single_view{cudf_streaming::detail::as_cuda_stream_ref(out_stream)},
+    cudf_streaming::detail::as_cuda_stream_ref_range(chunk_streams),
     &event);
   std::vector<cudf::table_view> views;
   std::ranges::transform(partials, std::back_inserter(views), [](auto& t) { return t->view(); });

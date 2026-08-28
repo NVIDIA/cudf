@@ -56,17 +56,18 @@ streaming::Actor concatenate(std::shared_ptr<streaming::Context> ctx,
     views.reserve(messages.size());
     for (auto&& msg : messages) {
       auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
-      rapidsmpf::cuda_stream_join(
-        concat_stream, cudf_streaming::detail::as_rmm_cuda_stream_view(chunk.stream()), &event);
+      rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_cuda_stream_ref(concat_stream),
+                                  cudf_streaming::detail::as_cuda_stream_ref(chunk.stream()),
+                                  &event);
       views.push_back(chunk.table_view());
       chunks.push_back(std::move(chunk));
     }
     auto result = std::make_unique<cudf_streaming::table_chunk>(
       cudf::concatenate(views, concat_stream, ctx->br()->device_mr()), concat_stream);
     rapidsmpf::cuda_stream_join(
-      cudf_streaming::detail::as_rmm_cuda_stream_view_range(
+      cudf_streaming::detail::as_cuda_stream_ref_range(
         chunks | std::views::transform([](auto&& chunk) { return chunk.stream(); })),
-      std::ranges::single_view(cudf_streaming::detail::as_rmm_cuda_stream_view(concat_stream)),
+      std::ranges::single_view(cudf_streaming::detail::as_cuda_stream_ref(concat_stream)),
       &event);
     chunks.clear();
     co_await ch_out->send(cudf_streaming::to_message(0, std::move(result)));

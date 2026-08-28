@@ -45,8 +45,8 @@ using cudf_streaming::partition_and_split;
 using cudf_streaming::table_chunk;
 using cudf_streaming::to_message;
 using cudf_streaming::unpack_and_concat;
-using cudf_streaming::detail::as_rmm_cuda_stream_view;
-using cudf_streaming::detail::as_rmm_cuda_stream_view_range;
+using cudf_streaming::detail::as_cuda_stream_ref;
+using cudf_streaming::detail::as_cuda_stream_ref_range;
 
 coro::task<streaming::Message> broadcast(std::shared_ptr<streaming::Context> ctx,
                                          std::shared_ptr<Communicator> comm,
@@ -66,7 +66,8 @@ coro::task<streaming::Message> broadcast(std::shared_ptr<streaming::Context> ctx
       auto msg = co_await ch_in->receive();
       if (msg.empty()) { break; }
       auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
-      rapidsmpf::cuda_stream_join(gather_stream, as_rmm_cuda_stream_view(chunk.stream()), &event);
+      rapidsmpf::cuda_stream_join(
+        as_cuda_stream_ref(gather_stream), as_cuda_stream_ref(chunk.stream()), &event);
       views.push_back(chunk.table_view());
       chunks.push_back(std::move(chunk));
     }
@@ -78,9 +79,9 @@ coro::task<streaming::Message> broadcast(std::shared_ptr<streaming::Context> ctx
       // So that deallocation of the consitutent tables is stream-ordered wrt the
       // concatenation.
       rapidsmpf::cuda_stream_join(
-        as_rmm_cuda_stream_view_range(
+        as_cuda_stream_ref_range(
           chunks | std::views::transform([](auto&& chunk) { return chunk.stream(); })),
-        std::ranges::single_view(as_rmm_cuda_stream_view(gather_stream)),
+        std::ranges::single_view(as_cuda_stream_ref(gather_stream)),
         &event);
       co_return to_message(
         0, std::make_unique<cudf_streaming::table_chunk>(std::move(result), gather_stream));
@@ -181,8 +182,8 @@ streaming::Message semi_join_chunk(std::shared_ptr<streaming::Context> ctx,
 
   auto result_table = std::make_unique<cudf::table>(std::move(result_columns));
   // Deallocation of the join indices will happen on chunk_stream, so add stream dep
-  rapidsmpf::cuda_stream_join(as_rmm_cuda_stream_view(left_chunk.stream()),
-                              as_rmm_cuda_stream_view(chunk_stream));
+  rapidsmpf::cuda_stream_join(as_cuda_stream_ref(left_chunk.stream()),
+                              as_cuda_stream_ref(chunk_stream));
 
   return to_message(
     sequence, std::make_unique<cudf_streaming::table_chunk>(std::move(result_table), chunk_stream));
@@ -249,7 +250,7 @@ streaming::Message inner_join_chunk(std::shared_ptr<streaming::Context> ctx,
   // Deallocation of the join indices will happen on build_stream, so add stream dep
   // This also ensure deallocation of the hash_join object waits for completion.
   rapidsmpf::cuda_stream_join(
-    as_rmm_cuda_stream_view(build_stream), as_rmm_cuda_stream_view(chunk_stream), tmp_event);
+    as_cuda_stream_ref(build_stream), as_cuda_stream_ref(chunk_stream), tmp_event);
   return to_message(sequence,
                     std::make_unique<cudf_streaming::table_chunk>(
                       std::make_unique<cudf::table>(std::move(result_columns)), chunk_stream));

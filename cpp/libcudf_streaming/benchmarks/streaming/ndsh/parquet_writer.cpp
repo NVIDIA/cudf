@@ -52,12 +52,12 @@ rapidsmpf::streaming::Actor write_parquet(std::shared_ptr<rapidsmpf::streaming::
     table = chunk.table_view();
     RAPIDSMPF_EXPECTS(static_cast<std::size_t>(table.num_columns()) == column_names.size(),
                       "Mismatching number of column names and chunk columns");
-    rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_rmm_cuda_stream_view(write_stream),
-                                cudf_streaming::detail::as_rmm_cuda_stream_view(chunk.stream()),
+    rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_cuda_stream_ref(write_stream),
+                                cudf_streaming::detail::as_cuda_stream_ref(chunk.stream()),
                                 &event);
     writer.write(table);
-    rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_rmm_cuda_stream_view(chunk.stream()),
-                                cudf_streaming::detail::as_rmm_cuda_stream_view(write_stream),
+    rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_cuda_stream_ref(chunk.stream()),
+                                cudf_streaming::detail::as_cuda_stream_ref(write_stream),
                                 &event);
   }
   writer.close();

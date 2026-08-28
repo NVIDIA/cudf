@@ -321,10 +321,10 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
     // Let's just join all the possible streams here rather than inducing cross-stream
     // deps in the tasks
     rapidsmpf::cuda_stream_join(
-      std::ranges::transform_view(
+      detail::as_cuda_stream_ref_range(std::ranges::transform_view(
         std::ranges::iota_view(std::size_t{0}, ctx->br()->stream_pool()->get_pool_size()),
-        [&](auto i) { return ctx->br()->stream_pool()->get_stream(i); }),
-      std::ranges::single_view(detail::as_rmm_cuda_stream_view(filter->stream)));
+        [&](auto i) { return ctx->br()->stream_pool()->get_stream(i); })),
+      std::ranges::single_view(detail::as_cuda_stream_ref(filter->stream)));
   }
   // TODO: Handle case where multiple ranks are reading from a single file.
   auto const files_per_rank =
@@ -400,10 +400,10 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
     // Let's just join all the possible streams here rather than inducing cross-stream
     // deps in the tasks
     rapidsmpf::cuda_stream_join(
-      std::ranges::single_view(detail::as_rmm_cuda_stream_view(filter->stream)),
-      std::ranges::transform_view(
+      std::ranges::single_view(detail::as_cuda_stream_ref(filter->stream)),
+      detail::as_cuda_stream_ref_range(std::ranges::transform_view(
         std::ranges::iota_view(std::size_t{0}, ctx->br()->stream_pool()->get_pool_size()),
-        [&](auto i) { return ctx->br()->stream_pool()->get_stream(i); }));
+        [&](auto i) { return ctx->br()->stream_pool()->get_stream(i); })));
   }
 }
 }  // namespace cudf_streaming::actor

@@ -14,21 +14,18 @@
 
 namespace cudf_streaming::detail {
 
-inline rmm::cuda_stream_view as_rmm_cuda_stream_view(rmm::cuda_stream_view stream) noexcept
-{
-  return stream;
-}
+inline cuda::stream_ref as_cuda_stream_ref(cuda::stream_ref stream) noexcept { return stream; }
 
-inline rmm::cuda_stream_view as_rmm_cuda_stream_view(cuda::stream_ref stream) noexcept
+inline cuda::stream_ref as_cuda_stream_ref(rmm::cuda_stream_view stream) noexcept
 {
-  return rmm::cuda_stream_view{stream.get()};
+  return cuda::stream_ref{stream.value()};
 }
 
 template <typename Range>
-auto as_rmm_cuda_stream_view_range(Range&& streams)
+auto as_cuda_stream_ref_range(Range&& streams)
 {
   return std::forward<Range>(streams) |
-         std::views::transform([](auto stream) { return as_rmm_cuda_stream_view(stream); });
+         std::views::transform([](auto stream) { return as_cuda_stream_ref(stream); });
 }
 
 }  // namespace cudf_streaming::detail

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,7 +51,6 @@ void BM_csv_read_varying_options(
       .compression(cudf::io::compression_type::NONE)
       .use_cols_indexes(cols_to_read)
       .thousands('\'')
-      .windowslinetermination(true)
       .comment('#')
       .prefix("BM_");
 

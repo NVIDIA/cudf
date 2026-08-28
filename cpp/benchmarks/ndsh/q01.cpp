@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -56,7 +56,7 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_disc_price(
   cudf::column_view const& discount,
   cudf::column_view const& extendedprice,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto const one = discount.type().id() == cudf::type_id::DECIMAL64
@@ -83,7 +83,7 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_charge(
   cudf::column_view const& tax,
   cudf::column_view const& disc_price,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto const one = tax.type().id() == cudf::type_id::DECIMAL64

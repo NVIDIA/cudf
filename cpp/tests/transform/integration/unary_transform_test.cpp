@@ -148,6 +148,76 @@ TEST_F(AssertsTest, NullSupport)
       .front()));
 }
 
+TEST_F(RuntimeSupportTest, TransformProgram)
+{
+  cudf::transform_input inputs[] = {a, b, cudf::scalar_column_view(t)};
+  std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
+                                            cudf::output_nullability::ALL_VALID}};
+
+  cudf::transform_program program{
+    udf, cudf::udf_source_type::CUDA, cudf::null_aware::NO, std::nullopt, inputs, outputs, {}};
+
+  std::array input_specs{
+    cudf::transform_input_spec{.type = cudf::type_id::FLOAT32},
+    cudf::transform_input_spec{.type = cudf::type_id::FLOAT32},
+    cudf::transform_input_spec{.type = cudf::type_id::FLOAT32, .is_scalar = true}};
+  std::array output_specs{cudf::transform_output_spec{
+    .type = cudf::type_id::FLOAT32, .nullability = cudf::output_nullability::ALL_VALID}};
+  cudf::transform_program spec_program{udf,
+                                       cudf::udf_source_type::CUDA,
+                                       cudf::null_aware::NO,
+                                       std::nullopt,
+                                       input_specs,
+                                       output_specs};
+
+  auto expected = cudf::transform(udf,
+                                  cudf::udf_source_type::CUDA,
+                                  cudf::null_aware::NO,
+                                  std::nullopt,
+                                  inputs,
+                                  outputs,
+                                  {},
+                                  std::nullopt);
+  auto result   = program.run(inputs, outputs, {}, std::nullopt);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+
+  result = spec_program.run(inputs, outputs, {}, std::nullopt);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+
+  std::array compatible_outputs{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
+                                                       cudf::output_nullability::PRESERVE}};
+  result = spec_program.run(inputs, compatible_outputs, {}, std::nullopt);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(RuntimeSupportTest, TransformProgramIncompatibleSpecifications)
+{
+  cudf::transform_input inputs[] = {a, b, cudf::scalar_column_view(t)};
+  std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
+                                            cudf::output_nullability::ALL_VALID}};
+  cudf::transform_program program{
+    udf, cudf::udf_source_type::CUDA, cudf::null_aware::NO, std::nullopt, inputs, outputs, {}};
+
+  auto integers = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  cudf::transform_input different_type[] = {a, integers, cudf::scalar_column_view(t)};
+  EXPECT_THROW((void)program.run(different_type, outputs, {}, std::nullopt), std::invalid_argument);
+
+  cudf::transform_input different_input_kind[] = {a, b, a};
+  EXPECT_THROW((void)program.run(different_input_kind, outputs, {}, std::nullopt),
+               std::invalid_argument);
+
+  std::array<cudf::transform_input, 2> fewer_inputs{a, b};
+  EXPECT_THROW((void)program.run(fewer_inputs, outputs, {}, std::nullopt), std::invalid_argument);
+
+  std::array different_output_type{cudf::transform_output{cudf::data_type{cudf::type_id::INT32},
+                                                          cudf::output_nullability::ALL_VALID}};
+  EXPECT_THROW((void)program.run(inputs, different_output_type, {}, std::nullopt),
+               std::invalid_argument);
+
+  std::array<cudf::transform_output, 0> fewer_outputs{};
+  EXPECT_THROW((void)program.run(inputs, fewer_outputs, {}, std::nullopt), std::invalid_argument);
+}
+
 struct UnaryOperationIntegrationTest : public cudf::test::BaseFixture {};
 
 template <class dtype, class Op, class Data>
@@ -1140,6 +1210,28 @@ TEST_F(StringOperationTest, OutputOffsetted)
                                 std::nullopt);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0));
+
+  auto program_offsets =
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 9, 15, 22, 30, 39}.release();
+  std::vector<std::unique_ptr<cudf::column>> program_string_offsets;
+  program_string_offsets.push_back(std::move(program_offsets));
+  cudf::transform_program program{cuda,
+                                  cudf::udf_source_type::CUDA,
+                                  cudf::null_aware::NO,
+                                  std::nullopt,
+                                  inputs,
+                                  outputs,
+                                  program_string_offsets};
+
+  auto int64_offsets =
+    cudf::test::fixed_width_column_wrapper<int64_t>{0, 4, 9, 15, 22, 30, 39}.release();
+  std::vector<std::unique_ptr<cudf::column>> int64_string_offsets;
+  int64_string_offsets.push_back(std::move(int64_offsets));
+  result = program.run(inputs, outputs, std::move(int64_string_offsets), std::nullopt);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0));
+
+  EXPECT_THROW((void)program.run(inputs, outputs, {}, std::nullopt), std::invalid_argument);
 }
 
 TEST_F(StringOperationTest, OutputOffsettedMixed)

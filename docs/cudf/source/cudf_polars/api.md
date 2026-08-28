@@ -9,15 +9,15 @@ multi-GPU engines.
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.ray.RayEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.dask.DaskEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.spmd.SPMDEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks, rank, comm, context
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks, rank, comm, context
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.default_singleton_engine.DefaultSingletonEngine
@@ -29,7 +29,7 @@ The engine classes share a common base class:
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.core.StreamingEngine
-   :members: gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.core.ClusterInfo

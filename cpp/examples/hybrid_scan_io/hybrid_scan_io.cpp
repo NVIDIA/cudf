@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,7 +35,7 @@ namespace {
  */
 cudf::io::table_with_metadata read_parquet(io_source const& io_source,
                                            cudf::ast::operation const& filter_expression,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   auto source_info = io_source.get_source_info();
   auto options =

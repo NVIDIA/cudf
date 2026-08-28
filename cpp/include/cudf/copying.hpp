@@ -868,8 +868,9 @@ enum class sample_with_replacement : bool {
  * output:       {col1: {3, 1, 1}, col2: {8, 6, 6}}
  * @endcode
  *
- * @throws cudf::logic_error if `n` > `input.num_rows()` and `replacement` == FALSE.
- * @throws cudf::logic_error if `n` < 0.
+ * @throws std::invalid_argument if `n < 0`.
+ * @throws std::invalid_argument if `n > 0` and `input.num_rows() == 0`.
+ * @throws std::invalid_argument if `n > input.num_rows()` and `replacement == FALSE`.
  *
  * @param input View of a table to sample
  * @param n non-negative number of samples expected from `input`

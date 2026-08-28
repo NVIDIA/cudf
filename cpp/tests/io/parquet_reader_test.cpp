@@ -2371,8 +2371,14 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
   auto const floats = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i % 2 == 0 ? NAN : static_cast<float>(i); });
   auto col_c = cudf::test::fixed_width_column_wrapper<float>(floats, floats + num_rows);
+  // NaN-free float column so that stats are generated and the NOT(col < NaN) test exercises the
+  // stats path
+  auto const clean_floats = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<float>(i); });
+  auto col_d =
+    cudf::test::fixed_width_column_wrapper<float>(clean_floats, clean_floats + num_rows);
 
-  auto const written_table = cudf::table_view{{col_a, col_b, col_c}};
+  auto const written_table = cudf::table_view{{col_a, col_b, col_c, col_d}};
   auto const filepath      = temp_env->get_temp_filepath("FilterNegationPushdown.parquet");
   cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written_table)
@@ -2398,6 +2404,7 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
   auto col_ref_a = cudf::ast::column_reference(0);
   auto col_ref_b = cudf::ast::column_reference(1);
   auto col_ref_c = cudf::ast::column_reference(2);
+  auto col_ref_d = cudf::ast::column_reference(3);
 
   auto lit_10_value  = cudf::numeric_scalar<int32_t>(10);
   auto lit_10        = cudf::ast::literal(lit_10_value);
@@ -2502,10 +2509,12 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
     expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, conjunction));
   }
 
-  // NOT(col_c < NaN) on a float column with no actual NaNs.
+  // NOT(col_d < NaN) on a NaN-free float column (which has valid stats). Before the fix, the
+  // negation would be rewritten to `vmax >= NaN`, which is always false and would incorrectly
+  // drop all row groups even though every valid row matches the original filter.
   {
-    auto c_lt_nan = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_c, lit_nan);
-    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, c_lt_nan));
+    auto d_lt_nan = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_d, lit_nan);
+    expect_matches_unrewritten(cudf::ast::operation(cudf::ast::ast_operator::NOT, d_lt_nan));
   }
 
   // Operators with no complement are left intact
@@ -4489,7 +4498,7 @@ void filter_unary_operation_typed_test()
     ref_filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, ref_not_expr1, ref_expr2);
     // Signed integral types pass RGs 1,2,3, others pass RGs 2,3. Floats keep all 4 as they may
-    // hold NaNs making every ordered comparison false and get relaxed instead.
+    // hold NaNs, making every ordered comparison false, and get relaxed instead.
     auto constexpr expected_filtered_row_groups_with_unary_or =
       cudf::is_floating_point<T>() ? 4 : ((cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2);
     test_predicate_pushdown(filter_expression,

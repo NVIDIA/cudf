@@ -198,16 +198,8 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
               binary_operands.col_ref->accept(*this);
 
-              // Equality is always exact
-              auto const is_equality =
-                child_op == ast_operator::EQUAL or child_op == ast_operator::NOT_EQUAL;
-
-              // An ordering comparison is only exact when the column cannot hold a `NaN`,
-              // i.e., not a floating-point type
-              auto const can_negate_ordering = not cudf::is_floating_point(
-                _output_dtypes[binary_operands.col_ref->get_column_index()]);
-
-              if (is_equality or can_negate_ordering) {
+              if (not cudf::is_floating_point(
+                    _output_dtypes[binary_operands.col_ref->get_column_index()])) {
                 auto const negated_op =
                   transform_operator<operator_transform::NEGATE>(child_operation->get_operator());
                 if (negated_op.has_value()) {
@@ -250,7 +242,7 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
     switch (op) {
       /* transform to stats conditions
       col == val --> vmin <= val && vmax >= val
-      col != val --> !(vmin == val && vmax == val)
+      col != val --> vmin != vmax || vmax != val
       col >  val --> vmax > val
       col <  val --> vmin < val
       col >= val --> vmax >= val
@@ -292,10 +284,7 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         _stats_expr.push(ast::operation{op, vmax, literal});
         break;
       }
-      default: {
-        _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-        return *_always_true;
-      }
+      default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
     };
   }  // Visit operands and push expression for `expr op expr` form
   else if (lhs_kind == operand_kind::EXPRESSION and rhs_kind == operand_kind::EXPRESSION) {

@@ -306,8 +306,6 @@ class stats_caster_base {
  */
 class stats_columns_collector : public ast::detail::expression_transformer {
  public:
-  stats_columns_collector() = default;
-
   stats_columns_collector(ast::expression const& expr,
                           std::span<cudf::data_type const> output_dtypes);
 

@@ -226,7 +226,8 @@ class hybrid_scan_metadata {
  * if (dict_page_byte_ranges.size()) {
  *   // Fetch dictionary page byte ranges into device buffers and create spans
  *   auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource, dict_page_byte_ranges, stream, mr);
+ *     parquet::fetch_byte_ranges_to_device_async(
+ *       datasource, dict_page_byte_ranges, parquet::io_submission_policy::SERIALIZE, stream, mr);
  *   dict_page_tasks.get();
  *
  *   // Prune row groups using dictionaries
@@ -243,8 +244,9 @@ class hybrid_scan_metadata {
  * if (bloom_filter_byte_ranges.size()) {
  *   // Fetch bloom filter byte ranges into device buffers and create spans
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource, bloom_filter_byte_ranges, stream, mr);
- *   bloom_filter_tasks.get();
+ *     parquet::fetch_byte_ranges_to_device_async(
+ *       datasource, bloom_filter_byte_ranges, parquet::io_submission_policy::SERIALIZE, stream,
+ * mr); bloom_filter_tasks.get();
  *
  *   // Prune row groups using bloom filters
  *   bloom_filtered_row_group_indices = reader->filter_row_groups_with_bloom_filters(
@@ -300,7 +302,8 @@ class hybrid_scan_metadata {
  *
  * // Fetch column chunk data into device buffers and create spans
  * auto [filter_col_buffers, filter_col_data, filter_col_tasks] =
- *   parquet::fetch_byte_ranges_to_device_async(datasource, filter_col_byte_ranges, stream, mr);
+ *   parquet::fetch_byte_ranges_to_device_async(
+ *     datasource, filter_col_byte_ranges, parquet::io_submission_policy::SERIALIZE, stream, mr);
  * filter_col_tasks.get();
  *
  * // Materialize the table with only the filter columns
@@ -327,7 +330,8 @@ class hybrid_scan_metadata {
  *
  * // Fetch column chunk data into device buffers and create spans
  * auto [payload_col_buffers, payload_col_data, payload_col_tasks] =
- *   parquet::fetch_byte_ranges_to_device_async(datasource, payload_col_byte_ranges, stream, mr);
+ *   parquet::fetch_byte_ranges_to_device_async(
+ *     datasource, payload_col_byte_ranges, parquet::io_submission_policy::SERIALIZE, stream, mr);
  * payload_col_tasks.get();
  *
  * // Materialize the table with only the payload columns

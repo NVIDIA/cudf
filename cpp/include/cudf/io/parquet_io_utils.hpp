@@ -7,6 +7,7 @@
 
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
@@ -36,6 +37,14 @@ namespace io::parquet {
 
 //! Using `byte_range_info` from cudf::io::text
 using cudf::io::text::byte_range_info;
+
+/**
+ * @brief Controls whether I/O submissions are serialized across callers.
+ */
+enum class io_submission_policy : bool {
+  SERIALIZE,  ///< Serialize submissions across callers.
+  INTERLEAVE  ///< Allow submissions from different callers to interleave.
+};
 
 /**
  * @brief Returns the Parquet reader's footer speculative read size in bytes.
@@ -117,9 +126,9 @@ using cudf::io::text::byte_range_info;
  *
  * @param datasource Input datasource
  * @param byte_ranges Byte ranges to fetch
+ * @param policy Whether to serialize I/O submissions from callers
  * @param stream CUDA stream
- * @param mr Device memory resource
- * @param serialize_submissions Whether to serialize I/O submissions from callers
+ * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A tuple containing the device buffers, the device spans of the fetched data, and a future
  * to wait on the read tasks
@@ -127,11 +136,12 @@ using cudf::io::text::byte_range_info;
 std::tuple<std::vector<rmm::device_buffer>,
            std::vector<cudf::device_span<uint8_t const>>,
            std::future<void>>
-fetch_byte_ranges_to_device_async(cudf::io::datasource& datasource,
-                                  std::span<byte_range_info const> byte_ranges,
-                                  cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr,
-                                  bool serialize_submissions = true);
+fetch_byte_ranges_to_device_async(
+  cudf::io::datasource& datasource,
+  std::span<byte_range_info const> byte_ranges,
+  io_submission_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Fetches lists of byte ranges from multiple datasources into device buffers
@@ -140,9 +150,9 @@ fetch_byte_ranges_to_device_async(cudf::io::datasource& datasource,
  *
  * @param datasources Input datasources
  * @param byte_ranges_per_source Vector of byte ranges to fetch, one per datasource
+ * @param policy Whether to serialize I/O submissions from callers
  * @param stream CUDA stream
- * @param mr Device memory resource
- * @param serialize_submissions Whether to serialize I/O submissions from callers
+ * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A tuple containing a vector of device buffers, a vector of vectors of device spans (one
  * per byte range per datasource), and a future to wait on the read tasks
@@ -153,9 +163,9 @@ std::tuple<std::vector<rmm::device_buffer>,
 fetch_byte_ranges_to_device_async(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<std::vector<byte_range_info> const> byte_ranges_per_source,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  bool serialize_submissions = true);
+  io_submission_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Fetches Parquet bloom filter bitsets from a datasource into device buffers
@@ -165,9 +175,9 @@ fetch_byte_ranges_to_device_async(
  * @param datasource Input datasource
  * @param bloom_filter_byte_ranges Byte ranges of complete bloom filters to fetch, must span a
  * complete bloom filter
+ * @param policy Whether to serialize I/O submissions from callers
  * @param stream CUDA stream
- * @param mr Device memory resource used to allocate the returned device buffers
- * @param serialize_submissions Whether to serialize I/O submissions from callers
+ * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and one device span per input byte
  * range
@@ -175,9 +185,9 @@ fetch_byte_ranges_to_device_async(
 std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
 fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
                               cudf::host_span<byte_range_info const> bloom_filter_byte_ranges,
-                              cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr,
-                              bool serialize_submissions = true);
+                              io_submission_policy policy,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Fetches Parquet bloom filter bitsets from multiple datasources into device buffers
@@ -187,9 +197,9 @@ fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
  * @param datasources Input datasources
  * @param bloom_filter_byte_ranges_per_source Byte ranges of complete bloom filters to fetch, one
  * vector per datasource. Each byte range must span a complete bloom filter.
+ * @param policy Whether to serialize I/O submissions from callers
  * @param stream CUDA stream
- * @param mr Device memory resource used to allocate the returned device buffers
- * @param serialize_submissions Whether to serialize I/O submissions from callers
+ * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and per-source device spans, with
  * one inner vector per datasource
@@ -199,9 +209,107 @@ std::pair<std::vector<rmm::device_buffer>,
 fetch_bloom_filters_to_device(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<std::vector<byte_range_info> const> bloom_filter_byte_ranges_per_source,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  bool serialize_submissions = true);
+  io_submission_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Fetches a list of byte ranges from a datasource into device buffers
+ *
+ * @ingroup io_utils
+ *
+ * @deprecated Use the overload that takes `io_submission_policy`.
+ *
+ * @param datasource Input datasource
+ * @param byte_ranges Byte ranges to fetch
+ * @param stream CUDA stream
+ * @param mr Memory resources used to allocate the returned device buffers
+ *
+ * @return A tuple containing the device buffers, the device spans of the fetched data, and a future
+ * to wait on the read tasks
+ */
+[[deprecated("Use the overload that takes io_submission_policy.")]]
+std::tuple<std::vector<rmm::device_buffer>,
+           std::vector<cudf::device_span<uint8_t const>>,
+           std::future<void>>
+fetch_byte_ranges_to_device_async(
+  cudf::io::datasource& datasource,
+  std::span<byte_range_info const> byte_ranges,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Fetches lists of byte ranges from multiple datasources into device buffers
+ *
+ * @ingroup io_utils
+ *
+ * @deprecated Use the overload that takes `io_submission_policy`.
+ *
+ * @param datasources Input datasources
+ * @param byte_ranges_per_source Vector of byte ranges to fetch, one per datasource
+ * @param stream CUDA stream
+ * @param mr Memory resources used to allocate the returned device buffers
+ *
+ * @return A tuple containing a vector of device buffers, a vector of vectors of device spans (one
+ * per byte range per datasource), and a future to wait on the read tasks
+ */
+[[deprecated("Use the overload that takes io_submission_policy.")]]
+std::tuple<std::vector<rmm::device_buffer>,
+           std::vector<std::vector<cudf::device_span<uint8_t const>>>,
+           std::future<void>>
+fetch_byte_ranges_to_device_async(
+  cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
+  cudf::host_span<std::vector<byte_range_info> const> byte_ranges_per_source,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Fetches Parquet bloom filter bitsets from a datasource into device buffers
+ *
+ * @ingroup io_utils
+ *
+ * @deprecated Use the overload that takes `io_submission_policy`.
+ *
+ * @param datasource Input datasource
+ * @param bloom_filter_byte_ranges Byte ranges of complete bloom filters to fetch, must span a
+ * complete bloom filter
+ * @param stream CUDA stream
+ * @param mr Memory resources used to allocate the returned device buffers
+ *
+ * @return A pair containing buffers that own the fetched bitsets and one device span per input byte
+ * range
+ */
+[[deprecated("Use the overload that takes io_submission_policy.")]]
+std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
+                              cudf::host_span<byte_range_info const> bloom_filter_byte_ranges,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Fetches Parquet bloom filter bitsets from multiple datasources into device buffers
+ *
+ * @ingroup io_utils
+ *
+ * @deprecated Use the overload that takes `io_submission_policy`.
+ *
+ * @param datasources Input datasources
+ * @param bloom_filter_byte_ranges_per_source Byte ranges of complete bloom filters to fetch, one
+ * vector per datasource. Each byte range must span a complete bloom filter.
+ * @param stream CUDA stream
+ * @param mr Memory resources used to allocate the returned device buffers
+ *
+ * @return A pair containing buffers that own the fetched bitsets and per-source device spans, with
+ * one inner vector per datasource
+ */
+[[deprecated("Use the overload that takes io_submission_policy.")]]
+std::pair<std::vector<rmm::device_buffer>,
+          std::vector<std::vector<cudf::device_span<uint8_t const>>>>
+fetch_bloom_filters_to_device(
+  cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
+  cudf::host_span<std::vector<byte_range_info> const> bloom_filter_byte_ranges_per_source,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace io::parquet

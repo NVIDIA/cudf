@@ -382,14 +382,13 @@ CUDF_KERNEL void contains_string_per_thread_heterogeneous(column_device_view con
   }
 
   // Long row: defer to the warp-parallel pass. Coalesced long-row threads aggregate their appends
-  // into a single atomicAdd, then each writes its index at a distinct offset.
-  namespace cg      = cooperative_groups;
-  auto const active = cg::coalesced_threads();
-  size_type offset  = 0;
-  if (active.thread_rank() == 0) {
-    offset = atomicAdd(d_long_count, static_cast<size_type>(active.num_threads()));
-  }
-  offset                                                                = active.shfl(offset, 0);
+  // into a single atomic fetch_add, then each writes its index at a distinct offset.
+  namespace cg           = cooperative_groups;
+  auto const active      = cg::coalesced_threads();
+  size_type const offset = cg::invoke_one_broadcast(active, [&]() {
+    return cuda::atomic_ref<size_type, cuda::thread_scope_device>(*d_long_count)
+      .fetch_add(static_cast<size_type>(active.num_threads()), cuda::memory_order_relaxed);
+  });
   d_long_indices[offset + static_cast<size_type>(active.thread_rank())] = str_idx;
 }
 
@@ -424,11 +423,11 @@ CUDF_KERNEL void contains_warp_parallel_fn_heterogeneous(column_device_view cons
   auto const lane_idx = warp.thread_rank();
 
   // Grid-stride over the deferred long rows, one warp per row.
-  auto const first_warp = cudf::detail::grid_1d::global_thread_id() / cudf::detail::warp_size;
+  auto const warp_id = cudf::detail::grid_1d::global_thread_id() / cudf::detail::warp_size;
   auto const warp_stride =
     (static_cast<cudf::thread_index_type>(gridDim.x) * blockDim.x) / cudf::detail::warp_size;
 
-  for (auto str_idx = first_warp; str_idx < static_cast<cudf::thread_index_type>(long_count);
+  for (auto str_idx = warp_id; str_idx < static_cast<cudf::thread_index_type>(long_count);
        str_idx += warp_stride) {
     // Long indices are guaranteed non-null by the partitioning kernel.
     auto const real_str_idx = d_long_indices[str_idx];
@@ -689,7 +688,7 @@ CUDF_KERNEL void contains_warp_parallel_fn(column_device_view const d_strings,
     }
   }
   auto const result = warp.any(found);
-  if (lane_idx == 0) { d_results[str_idx] = result; }
+  cg::invoke_one(warp, [&]() { d_results[str_idx] = result; });
 }
 
 std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
@@ -736,19 +735,17 @@ std::unique_ptr<column> contains(strings_column_view const& input,
   // Compute avg_bytes to dispatch. The baseline (main branch) already pays this O(1) D2H cost.
   auto const avg_bytes = static_cast<size_type>(input.chars_size(stream) / input.size());
 
-  // Warp-per-string: best when most strings are long (avg >= threshold).
+  // Warp-per-string approach.
   if (avg_bytes >= HETERO_LENGTH_THRESHOLD) {
     return contains_warp_parallel(input, target, stream, mr);
   }
 
-  // Heterogeneous: thread-per-short + warp-per-long. Gives large speedups vs the old
-  // warp-per-all path for mixed-width columns. Selected on average width only; the two-pass
-  // overhead is bounded because the second launch reads `*d_long_count == 0` and exits.
+  // Heterogeneous approach.
   if (avg_bytes > AVG_CHAR_BYTES_THRESHOLD) {
     return contains_heterogeneous(input, target, stream, mr);
   }
 
-  // Thread-per-string: matches baseline for mostly-short columns (avg <= 64).
+  // Thread-per-string approach.
   auto pfn = [] __device__(string_view d_string, string_view d_target) {
     for (size_type i = 0; i <= (d_string.size_bytes() - d_target.size_bytes()); ++i) {
       if (d_target.compare(d_string.data() + i, d_target.size_bytes()) == 0) { return true; }

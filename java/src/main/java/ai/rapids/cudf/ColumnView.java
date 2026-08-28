@@ -4442,34 +4442,42 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Filters elements in each row of this LIST column using `booleanMaskView`
+   * Filters elements in each row of this LIST column using `retentionMaskView`
    * LIST of booleans as a mask.
    * <p>
    * Given a list-of-bools column, the function produces
    * a new `LIST` column of the same type as this column, where each element is copied
-   * from the row *only* if the corresponding `boolean_mask` is non-null and `true`.
+   * from the row *only* if the corresponding `retention_mask` is non-null and `true`.
    * <p>
    * E.g.
-   * column       = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
-   * boolean_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
-   * results      = { {1,2},   {3},   {5,6,7}, {} };
+   * column         = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
+   * retention_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
+   * results        = { {1,2},   {3},   {5,6,7}, {} };
    * <p>
-   * This column and `boolean_mask` must have the same number of rows.
+   * This column and `retention_mask` must have the same number of rows.
    * The output column has the same number of rows as this column.
    * An element is copied to an output row *only*
-   * if the corresponding boolean_mask element is `true`.
+   * if the corresponding retention_mask element is `true`.
    * An output row is invalid only if the row is invalid.
    *
-   * @param booleanMaskView A nullable list of bools column used to filter elements in this column
+   * @param retentionMaskView A nullable list of bools column used to filter elements in this column
    * @return List column of the same type as this column, containing filtered list rows
-   * @throws CudfException if `boolean_mask` is not a "lists of bools" column
-   * @throws CudfException if this column and `boolean_mask` have different number of rows
+   * @throws CudfException if `retention_mask` is not a "lists of bools" column
+   * @throws CudfException if this column and `retention_mask` have different number of rows
    */
-  public final ColumnVector applyBooleanMask(ColumnView booleanMaskView) {
+  public final ColumnVector applyRetentionMask(ColumnView retentionMaskView) {
     assert (getType().equals(DType.LIST));
-    assert (booleanMaskView.getType().equals(DType.LIST));
-    assert (getRowCount() == booleanMaskView.getRowCount());
-    return new ColumnVector(applyBooleanMask(getNativeView(), booleanMaskView.getNativeView()));
+    assert (retentionMaskView.getType().equals(DType.LIST));
+    assert (getRowCount() == retentionMaskView.getRowCount());
+    return new ColumnVector(applyRetentionMask(getNativeView(), retentionMaskView.getNativeView()));
+  }
+
+  /**
+   * @deprecated Use {@link #applyRetentionMask(ColumnView)} instead.
+   */
+  @Deprecated
+  public final ColumnVector applyBooleanMask(ColumnView booleanMaskView) {
+    return applyRetentionMask(booleanMaskView);
   }
 
   /**
@@ -5249,7 +5257,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   static native long generateListOffsets(long handle) throws CudfException;
 
-  static native long applyBooleanMask(long arrayColumnView, long booleanMaskHandle) throws CudfException;
+  static native long applyRetentionMask(long arrayColumnView, long retentionMaskHandle)
+      throws CudfException;
 
   static native boolean hasNonEmptyNulls(long handle) throws CudfException;
 

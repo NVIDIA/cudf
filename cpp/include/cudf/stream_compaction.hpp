@@ -244,8 +244,7 @@ std::unique_ptr<table> apply_retention_mask(
  * if the corresponding element `i` in the mask is non-null and `false`.
  * This operation is stable: the input order is preserved.
  *
- * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,
- * an empty table is returned.
+ * @note If @p deletion_mask is empty, or @p input has zero rows, an empty table is returned.
  *
  * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
  * deletion_mask.

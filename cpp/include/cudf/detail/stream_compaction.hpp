@@ -53,8 +53,6 @@ enum class mask_type : bool {
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned table's device memory
- * @note An empty mask returns an empty table for @p mask_kind `RETENTION` and a copy of @p input
- * for @p mask_kind `DELETION`.
  * @return A table containing the rows of @p input selected by @p boolean_mask and @p mask_kind
  */
 std::unique_ptr<table> apply_mask(table_view const& input,

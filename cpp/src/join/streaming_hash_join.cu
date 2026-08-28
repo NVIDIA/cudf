@@ -284,6 +284,7 @@ struct streaming_hash_join::impl {
 
   std::mutex right_key_schema_mutex;
   std::optional<table_view> right_key_schema;
+  std::optional<table_view> right_partition_schema;
   std::vector<std::shared_ptr<row::equality::preprocessed_table>> preprocessed_right;
 
   impl(std::span<data_type const> schema,
@@ -342,13 +343,15 @@ struct streaming_hash_join::impl {
     auto const keys = right_partition.select(right_key_indices);
     {
       std::scoped_lock lock{right_key_schema_mutex};
-      if (right_key_schema.has_value()) {
-        CUDF_EXPECTS(cudf::have_same_types(*right_key_schema, keys),
-                     "streaming_hash_join: inserted key schema does not match prior partitions.",
-                     cudf::data_type_error);
+      if (right_partition_schema.has_value()) {
+        CUDF_EXPECTS(
+          cudf::have_same_types(*right_partition_schema, right_partition),
+          "streaming_hash_join: inserted partition schema does not match prior partitions.",
+          cudf::data_type_error);
       } else {
-        right_key_schema = keys;
-        has_nested_keys  = cudf::detail::has_nested_columns(keys);
+        right_partition_schema = right_partition;
+        right_key_schema       = keys;
+        has_nested_keys        = cudf::detail::has_nested_columns(keys);
       }
     }
 

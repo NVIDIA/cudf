@@ -378,8 +378,6 @@ struct split_ws_tokenizer_fn : base_ws_split_tokenizer<split_ws_tokenizer_fn> {
   {
     auto const base_ptr = d_strings.head<char>();  // d_delimiters, pos_begin/end based on this ptr
     auto const token_count = static_cast<size_type>(d_tokens.size());
-    auto const all_tokens =
-      (max_tokens == cuda::std::numeric_limits<size_type>::max()) || (token_count == 1);
 
     // build the index-pair of each token for this string
     size_type token_idx = 0;
@@ -390,7 +388,8 @@ struct split_ws_tokenizer_fn : base_ws_split_tokenizer<split_ws_tokenizer_fn> {
         ++last_pos;
         continue;
       }
-      auto const end_pos    = all_tokens || (token_idx + 1 < token_count) ? d_pos : pos_end;
+      auto const end_pos =
+        (token_count < max_tokens) || (token_idx + 1 < token_count) ? d_pos : pos_end;
       d_tokens[token_idx++] = string_index_pair{base_ptr + last_pos, end_pos - last_pos};
 
       last_pos = d_pos + 1;
@@ -421,8 +420,6 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
     auto const base_ptr = d_strings.head<char>();  // d_delimiters, pos_begin/end based on this ptr
     auto const token_count = static_cast<size_type>(d_tokens.size());
     auto const delim_count = static_cast<size_type>(delimiters.size());
-    auto const all_tokens =
-      (max_tokens == cuda::std::numeric_limits<size_type>::max()) || (token_count == 1);
 
     // build the index-pair of each token for this string
     auto last_pos       = pos_end;
@@ -434,7 +431,8 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
         continue;
       }
       // store the token into the output vector right-to-left
-      auto const start_pos = all_tokens || (token_idx + 1 < token_count) ? d_pos + 1 : pos_begin;
+      auto const start_pos =
+        (token_count < max_tokens) || (token_idx + 1 < token_count) ? d_pos + 1 : pos_begin;
       d_tokens[token_count - token_idx - 1] =
         string_index_pair{base_ptr + start_pos, last_pos - start_pos};
 

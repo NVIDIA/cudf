@@ -921,6 +921,34 @@ TEST_F(StringsSplitTest, AllNullsCase)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(part_result->view(), input);
 }
 
+TEST_F(StringsSplitTest, SplitWhitespaceCapNotReachedWideStrings)
+{
+  auto const pad = std::string(200, 'x');
+  using LCW      = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  {
+    auto const h_input =
+      std::vector<std::string>({"a  " + pad + "  ", " " + pad + " ", "a  " + pad + "  b  c"});
+    auto const input = cudf::test::strings_column_wrapper(h_input.begin(), h_input.end());
+    auto const sv    = cudf::strings_column_view(input);
+
+    auto const result = cudf::strings::split_record(sv, cudf::string_scalar(""), 2);
+    LCW expected({LCW{"a", pad}, LCW{pad}, LCW{"a", pad, "b  c"}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+
+  {
+    auto const h_input =
+      std::vector<std::string>({"  " + pad + "  a", " " + pad + " ", "c  b  " + pad + "  a"});
+    auto const input = cudf::test::strings_column_wrapper(h_input.begin(), h_input.end());
+    auto const sv    = cudf::strings_column_view(input);
+
+    auto const result = cudf::strings::rsplit_record(sv, cudf::string_scalar(""), 2);
+    LCW expected({LCW{pad, "a"}, LCW{pad}, LCW{"c  b", pad, "a"}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+}
+
 TEST_F(StringsSplitTest, SplitPart)
 {
   cudf::test::strings_column_wrapper input({"a-b-c", "é-bb-c", "a-bé-ccc", "", "", "xx-yy zz"},

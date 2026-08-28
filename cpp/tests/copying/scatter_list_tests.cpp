@@ -115,13 +115,13 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfStructs)
   using offsets_column  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
   using numerics_column = cudf::test::fixed_width_column_wrapper<T>;
 
-  auto src_numerics = numerics_column{0, 1, 2, 3, 4, 5};
+  auto src_numerics = numerics_column{0, 1, 2, 3};
   auto src_structs  = cudf::test::structs_column_wrapper{{src_numerics}};
   auto src_validity = cudf::test::iterators::null_at(2);
   auto [src_mask, src_null_count] =
     cudf::test::detail::make_null_mask(src_validity, src_validity + 3);
   auto src_list_column = cudf::make_lists_column(3,
-                                                 offsets_column{0, 2, 4, 6}.release(),
+                                                 offsets_column{0, 2, 4, 4}.release(),
                                                  src_structs.release(),
                                                  src_null_count,
                                                  std::move(src_mask));
@@ -137,13 +137,13 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfStructs)
   auto ret = cudf::scatter(
     cudf::table_view({src_sliced}), scatter_map, cudf::table_view({target_list_column->view()}));
 
-  auto expected_numerics = numerics_column{4, 5, 1, 2, 3, 3, 4};
+  auto expected_numerics = numerics_column{1, 2, 3, 3, 4};
   auto expected_structs  = cudf::test::structs_column_wrapper{{expected_numerics}};
   auto expected_validity = cudf::test::iterators::null_at(0);
   auto [expected_mask, expected_null_count] =
     cudf::test::detail::make_null_mask(expected_validity, expected_validity + 5);
   auto expected = cudf::make_lists_column(5,
-                                          offsets_column{0, 2, 3, 5, 6, 7}.release(),
+                                          offsets_column{0, 0, 1, 3, 4, 5}.release(),
                                           expected_structs.release(),
                                           expected_null_count,
                                           std::move(expected_mask));

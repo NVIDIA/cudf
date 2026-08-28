@@ -128,7 +128,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
                                    cudf::null_equality::EQUAL,
                                    /*load_factor=*/0.5,
                                    stream};
-  stream.synchronize();
+  stream.sync();
 
   auto const device = rmm::get_current_cuda_device();
   std::vector<std::thread> threads;

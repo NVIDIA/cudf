@@ -10,8 +10,11 @@ from pylibcudf.io.text import ByteRangeInfo
 from pylibcudf.io.types import SourceInfo
 from pylibcudf.utils import CudaStreamLike
 
-__all__ = ["IOSubmissionPolicy", "fetch_byte_ranges_to_device", "fetch_page_index_to_host"]
-
+__all__ = [
+    "IOSubmissionPolicy",
+    "fetch_byte_ranges_to_device",
+    "fetch_page_index_to_host",
+]
 
 class IOSubmissionPolicy(IntEnum):
     SERIALIZE = 0

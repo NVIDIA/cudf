@@ -48,13 +48,13 @@ rapidsmpf::streaming::Actor bloom_filter::build(
   co_await ctx_->executor()->schedule();
   co_await ch_in->shutdown_metadata();
   co_await ch_out->shutdown_metadata();
-  auto const& br     = ctx_->br();
-  auto mr            = br->device_mr();
-  auto filter_stream = br->stream_pool()->get_stream();
+  auto const& br                       = ctx_->br();
+  auto mr                              = br->device_mr();
+  cuda::stream_ref const filter_stream = br->stream_pool()->get_stream();
   rapidsmpf::CudaEvent event;
   auto storage =
     cudf_streaming::detail::device_bloom_filter::storage(filter_size_, filter_stream, mr);
-  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream));
+  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream.get()));
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage->data());
   rapidsmpf::CudaEvent build_event;
   build_event.record(filter_stream);
@@ -91,7 +91,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
       tag,
       [filter_size = filter_size_, seed = seed_](rapidsmpf::Buffer const* left,
                                                  rapidsmpf::Buffer* right) {
-        right->write_access([&](std::byte* out_bytes, rmm::cuda_stream_view stream) {
+        right->write_access([&](std::byte* out_bytes, cuda::stream_ref stream) {
           auto const in =
             cudf_streaming::detail::device_bloom_filter::view(filter_size, seed, left->data());
           cudf_streaming::detail::device_bloom_filter(filter_size, seed, out_bytes)
@@ -117,7 +117,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
   auto storage = (co_await bloom_filter->receive()).release<rmm::device_buffer>();
   RAPIDSMPF_EXPECTS((co_await bloom_filter->receive()).empty(),
                     "Bloom filter channel contained more than one message");
-  auto stream = storage.stream();
+  cuda::stream_ref const stream = storage.stream();
   rapidsmpf::CudaEvent event;
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage.data());
   auto meta   = co_await ch_in->receive_metadata();

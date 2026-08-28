@@ -12,8 +12,9 @@
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/utils.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/error.hpp>
@@ -111,7 +112,7 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -157,7 +158,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   int num_partitions,
   cudf::hash_id hash_function,
   std::uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -230,7 +231,7 @@ std::size_t split_and_pack_cost(cudf::table_view const& table,
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -292,7 +293,7 @@ std::size_t unpack_and_concat_cost(std::vector<rapidsmpf::PackedData const*> con
 }
 
 std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData>&& partitions,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rapidsmpf::BufferResource* br,
                                                rapidsmpf::AllowOverbooking allow_overbooking)
 {
@@ -319,7 +320,7 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
 
   std::vector<cudf::table_view> unpacked;
   std::vector<cudf::packed_columns> references;
-  std::vector<rmm::cuda_stream_view> packed_data_streams;
+  std::vector<cuda::stream_ref> packed_data_streams;
   unpacked.reserve(partitions.size());
   references.reserve(partitions.size());
   packed_data_streams.reserve(partitions.size());

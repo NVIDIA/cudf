@@ -666,29 +666,32 @@ CUDF_KERNEL void contains_warp_parallel_fn(column_device_view const d_strings,
                                            string_view const d_target,
                                            bool* d_results)
 {
-  auto const idx     = cudf::detail::grid_1d::global_thread_id();
-  auto const str_idx = idx / cudf::detail::warp_size;
-  if (str_idx >= d_strings.size()) { return; }
-
   namespace cg        = cooperative_groups;
   auto const warp     = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
   auto const lane_idx = warp.thread_rank();
 
-  if (d_strings.is_null(str_idx)) { return; }
-  auto const d_str              = d_strings.element<string_view>(str_idx);
-  auto constexpr bytes_per_warp = 4;
-  auto found                    = false;
-  for (auto i = lane_idx * bytes_per_warp;
-       !found && ((i + d_target.size_bytes()) <= d_str.size_bytes());
-       i += cudf::detail::warp_size * bytes_per_warp) {
-    for (auto j = 0; !found && (j < bytes_per_warp); j++) {
-      if (((i + j + d_target.size_bytes()) <= d_str.size_bytes()) &&
-          d_target.compare(d_str.data() + i + j, d_target.size_bytes()) == 0)
-        found = true;
+  auto const warp_id = cudf::detail::grid_1d::global_thread_id() / cudf::detail::warp_size;
+  auto const warp_stride =
+    (static_cast<cudf::thread_index_type>(gridDim.x) * blockDim.x) / cudf::detail::warp_size;
+
+  for (auto str_idx = warp_id; str_idx < static_cast<cudf::thread_index_type>(d_strings.size());
+       str_idx += warp_stride) {
+    if (d_strings.is_null(str_idx)) { continue; }
+    auto const d_str              = d_strings.element<string_view>(str_idx);
+    auto constexpr bytes_per_warp = 4;
+    auto found                    = false;
+    for (auto i = lane_idx * bytes_per_warp;
+         !found && ((i + d_target.size_bytes()) <= d_str.size_bytes());
+         i += cudf::detail::warp_size * bytes_per_warp) {
+      for (auto j = 0; !found && (j < bytes_per_warp); j++) {
+        if (((i + j + d_target.size_bytes()) <= d_str.size_bytes()) &&
+            d_target.compare(d_str.data() + i + j, d_target.size_bytes()) == 0)
+          found = true;
+      }
     }
+    auto const result = warp.any(found);
+    cg::invoke_one(warp, [&]() { d_results[str_idx] = result; });
   }
-  auto const result = warp.any(found);
-  cg::invoke_one(warp, [&]() { d_results[str_idx] = result; });
 }
 
 std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
@@ -711,11 +714,22 @@ std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
                  results_view.end<bool>(),
                  true);
   } else {
-    auto const d_strings                   = column_device_view::create(input.parent(), stream);
-    constexpr thread_index_type block_size = 256;
-    constexpr thread_index_type warp_size  = cudf::detail::warp_size;
-    cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
-    contains_warp_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+    auto const d_strings           = column_device_view::create(input.parent(), stream);
+    constexpr int block_size       = 256;
+    auto constexpr warps_per_block = block_size / cudf::detail::warp_size;
+
+    // A fixed grid-stride launch is used so the kernel scales to any row count: size it for full
+    // occupancy but never exceed the worst case of one warp per row.
+    int max_blocks_per_sm = 0;
+    CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+      &max_blocks_per_sm, contains_warp_parallel_fn, block_size, 0));
+    auto const persistent_blocks =
+      static_cast<int64_t>(max_blocks_per_sm) * cudf::detail::num_multiprocessors();
+    auto const worst_case_blocks =
+      cudf::util::div_rounding_up_safe<int64_t>(input.size(), warps_per_block);
+    auto const num_blocks = std::max<int64_t>(1, std::min(persistent_blocks, worst_case_blocks));
+
+    contains_warp_parallel_fn<<<num_blocks, block_size, 0, stream.get()>>>(
       *d_strings, d_target, results_view.data<bool>());
     CUDF_CUDA_TRY(cudaGetLastError());
   }

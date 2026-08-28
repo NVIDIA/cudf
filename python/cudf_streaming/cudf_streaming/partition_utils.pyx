@@ -52,7 +52,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
     cdef size_t cpp_partition_and_pack_cost \
         "cudf_streaming::partition_and_pack_cost"(
             const table_view& table,
-            cuda_stream_view stream,
+            stream_ref stream,
             device_async_resource_ref temp_mr,
         ) except +ex_handler
 
@@ -63,7 +63,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             int num_partitions,
             int hash_function,
             uint32_t seed,
-            cuda_stream_view stream,
+            stream_ref stream,
             cpp_BufferResource* br,
             cpp_MemoryReservation& reservation,
         ) except +ex_handler
@@ -79,7 +79,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
     cdef size_t cpp_split_and_pack_cost \
         "cudf_streaming::split_and_pack_cost"(
             const table_view& table,
-            cuda_stream_view stream,
+            stream_ref stream,
             device_async_resource_ref temp_mr,
         ) except +ex_handler
 
@@ -87,7 +87,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
         "cudf_streaming::split_and_pack"(
             const table_view& table,
             const vector[size_type] &splits,
-            cuda_stream_view stream,
+            stream_ref stream,
             cpp_BufferResource* br,
             cpp_MemoryReservation& reservation,
         ) except +ex_handler
@@ -121,7 +121,7 @@ cpdef size_t partition_and_pack_cost(
     --------
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef cuda_stream_view _stream = stream.view()
+    cdef stream_ref _stream = stream_ref(stream.view().value())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef table_view tbl = table.view()
     cdef size_t ret
@@ -247,7 +247,7 @@ cpdef size_t split_and_pack_cost(
     --------
     cudf_streaming.partition_utils.split_and_pack
     """
-    cdef cuda_stream_view _stream = stream.view()
+    cdef stream_ref _stream = stream_ref(stream.view().value())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef table_view tbl = table.view()
     cdef size_t ret
@@ -368,7 +368,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
     cdef unique_ptr[cpp_table] cpp_unpack_and_concat_reserved \
         "cudf_streaming::unpack_and_concat"(
             vector[cpp_PackedData] partition,
-            cuda_stream_view stream,
+            stream_ref stream,
             cpp_BufferResource* br,
             cpp_MemoryReservation& reservation,
         ) except +ex_handler

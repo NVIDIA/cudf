@@ -189,11 +189,10 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   // copy needs, rounded up to the packing alignment, so it is a safe over-estimate.
   auto const reorder_bytes =
     packed_and_total_size(table, stream, br->device_mr(), packed_bytes).first;
-  auto [reordered, split_points] = [&] {
-    auto res = reservation.split(reorder_bytes);
-    return cudf::hash_partition(
-      table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
-  }();
+  auto res                       = reservation.split(reorder_bytes);
+  auto [reordered, split_points] = cudf::hash_partition(
+    table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
+  res.clear();  // The reorder has landed, hand its bytes back.
   std::vector<cudf::size_type> splits(split_points.begin() + 1, split_points.end() - 1);
   // Reordering does not change the packed size.
   return split_and_pack(reordered->view(), splits, stream, br, reservation, reorder_bytes);
@@ -240,10 +239,9 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
   // at least the size of the table.
   auto const split_bytes =
     packed_and_total_size(table, stream, br->device_mr(), packed_bytes).first;
-  auto packed = [&] {
-    auto res = reservation.split(split_bytes);
-    return cudf::contiguous_split(table, splits, stream, br->device_mr());
-  }();
+  auto res    = reservation.split(split_bytes);
+  auto packed = cudf::contiguous_split(table, splits, stream, br->device_mr());
+  res.clear();  // The split has landed, hand its bytes back.
   ret.reserve(packed.size());
   for (rapidsmpf::shuffler::PartID i = 0; rapidsmpf::safe_cast<std::size_t>(i) < packed.size();
        i++) {

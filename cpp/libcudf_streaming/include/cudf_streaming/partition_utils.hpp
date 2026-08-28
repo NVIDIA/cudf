@@ -8,7 +8,7 @@
 #include <cudf/partitioning.hpp>
 #include <cudf/table/table.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/buffer.hpp>
@@ -120,7 +120,6 @@ partition_and_pack(
  * @param hash_function Hash function to use.
  * @param seed Seed value to the hash function.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param br Buffer resource for memory allocations.
  * @param reservation Device memory reservation covering `partition_and_pack_cost()`.
  * @param packed_bytes `cudf::packed_size()` of @p table, when the caller already has
  * it. Computed internally when not given, which syncs the stream.
@@ -143,7 +142,6 @@ partition_and_pack(cudf::table_view const& table,
                    cudf::hash_id hash_function,
                    std::uint32_t seed,
                    cuda::stream_ref stream,
-                   rapidsmpf::BufferResource* br,
                    rapidsmpf::MemoryReservation& reservation,
                    std::optional<std::size_t> packed_bytes = std::nullopt);
 
@@ -207,7 +205,6 @@ partition_and_pack(cudf::table_view const& table,
  * @param splits The split points, equivalent to cudf::split(), i.e. one less than
  * the number of result partitions.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param br Buffer resource for memory allocations.
  * @param reservation Device memory reservation covering `split_and_pack_cost()`.
  * @param packed_bytes `cudf::packed_size()` of @p table, when the caller already has
  * it. Computed internally when not given, which syncs the stream.
@@ -226,7 +223,6 @@ partition_and_pack(cudf::table_view const& table,
   cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
   cuda::stream_ref stream,
-  rapidsmpf::BufferResource* br,
   rapidsmpf::MemoryReservation& reservation,
   std::optional<std::size_t> packed_bytes = std::nullopt);
 
@@ -307,7 +303,6 @@ partition_and_pack(cudf::table_view const& table,
  * @param partitions Packed input tables (partitions).
  * @param stream CUDA stream on which concatenation occurs and on which the resulting
  * table is ordered.
- * @param br Buffer resource used for memory allocations.
  * @param reservation Device memory reservation covering `unpack_and_concat_cost()`.
  * @return The concatenated table resulting from unpacking the input partitions.
  *
@@ -322,7 +317,6 @@ partition_and_pack(cudf::table_view const& table,
 [[nodiscard]] std::unique_ptr<cudf::table> unpack_and_concat(
   std::vector<rapidsmpf::PackedData>&& partitions,
   cuda::stream_ref stream,
-  rapidsmpf::BufferResource* br,
   rapidsmpf::MemoryReservation& reservation);
 
 }  // namespace cudf_streaming

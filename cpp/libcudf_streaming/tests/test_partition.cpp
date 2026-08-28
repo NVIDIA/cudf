@@ -80,8 +80,7 @@ TEST_P(NumOfPartitions, round_trip_with_reservations)
   // having been consumed as the allocations landed.
   auto pack_res = br->reserve_or_fail(partition_and_pack_cost(expect, stream, br->device_mr()),
                                       rapidsmpf::MemoryType::DEVICE);
-  auto packed =
-    partition_and_pack(expect, {1}, num_partitions, hash_fn, seed, stream, br.get(), pack_res);
+  auto packed   = partition_and_pack(expect, {1}, num_partitions, hash_fn, seed, stream, pack_res);
   EXPECT_EQ(packed.size(), num_partitions);
   EXPECT_EQ(pack_res.size(), 0);
 
@@ -91,7 +90,7 @@ TEST_P(NumOfPartitions, round_trip_with_reservations)
   }
   auto split_res = br->reserve_or_fail(split_and_pack_cost(expect, stream, br->device_mr()),
                                        rapidsmpf::MemoryType::DEVICE);
-  auto split     = split_and_pack(expect, splits, stream, br.get(), split_res);
+  auto split     = split_and_pack(expect, splits, stream, split_res);
   EXPECT_EQ(split.size(), num_partitions);
   EXPECT_EQ(split_res.size(), 0);
 
@@ -99,7 +98,7 @@ TEST_P(NumOfPartitions, round_trip_with_reservations)
     auto chunks_vector = rapidsmpf::to_vector(std::move(*chunks));
     auto concat_res =
       br->reserve_or_fail(unpack_and_concat_cost(chunks_vector), rapidsmpf::MemoryType::DEVICE);
-    auto result = unpack_and_concat(std::move(chunks_vector), stream, br.get(), concat_res);
+    auto result = unpack_and_concat(std::move(chunks_vector), stream, concat_res);
     EXPECT_EQ(concat_res.size(), 0);
     // `to_vector()` does not preserve partition order, so compare sorted by the index.
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sort_table(expect), sort_table(result));
@@ -112,21 +111,16 @@ TEST_F(PartitionReservation, rejects_invalid_reservations)
 {
   auto stream     = cudf::get_default_stream();
   auto br         = rapidsmpf::BufferResource::create(mr());
-  auto other      = rapidsmpf::BufferResource::create(mr());
   auto table      = random_table_with_index(42, 100, 0, 10);
   auto const cost = partition_and_pack_cost(table, stream, br->device_mr());
   ASSERT_GT(cost, 1);
 
   auto const pack = [&](rapidsmpf::MemoryReservation& res) {
-    return partition_and_pack(
-      table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get(), res);
+    return partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, res);
   };
 
   auto host = br->reserve_or_fail(cost, rapidsmpf::MemoryType::HOST);
   EXPECT_THROW(std::ignore = pack(host), std::invalid_argument);
-
-  auto foreign = other->reserve_or_fail(cost, rapidsmpf::MemoryType::DEVICE);
-  EXPECT_THROW(std::ignore = pack(foreign), std::invalid_argument);
 
   auto too_small = br->reserve_or_fail(cost - 1, rapidsmpf::MemoryType::DEVICE);
   EXPECT_THROW(std::ignore = pack(too_small), rapidsmpf::reservation_error);
@@ -144,8 +138,8 @@ TEST_F(PartitionReservation, empty_table)
   // An empty table skips the reorder, so the cost is the packed size alone.
   auto reservation = br->reserve_or_fail(partition_and_pack_cost(table, stream, br->device_mr()),
                                          rapidsmpf::MemoryType::DEVICE);
-  auto packed      = partition_and_pack(
-    table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get(), reservation);
+  auto packed =
+    partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, reservation);
   EXPECT_EQ(packed.size(), 4);
   EXPECT_EQ(reservation.size(), 0);
 }
@@ -188,13 +182,13 @@ TEST_F(PartitionReservation, unspill_reservation)
   // The unspill and the concatenation are split off separately, so the total is checked
   // before either. Without that the first split would have consumed the reservation.
   auto too_small = br->reserve_or_fail(cost - 1, rapidsmpf::MemoryType::DEVICE);
-  EXPECT_THROW(std::ignore = unpack_and_concat(std::move(chunks), stream, br.get(), too_small),
+  EXPECT_THROW(std::ignore = unpack_and_concat(std::move(chunks), stream, too_small),
                rapidsmpf::reservation_error);
   EXPECT_EQ(too_small.size(), cost - 1);
 
   // Nothing was consumed, so reserving more and retrying works.
   auto reservation = br->reserve_or_fail(cost, rapidsmpf::MemoryType::DEVICE);
-  auto result      = unpack_and_concat(std::move(chunks), stream, br.get(), reservation);
+  auto result      = unpack_and_concat(std::move(chunks), stream, reservation);
   EXPECT_EQ(reservation.size(), 0);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sort_table(table), sort_table(result));
 }

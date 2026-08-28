@@ -64,7 +64,6 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             int hash_function,
             uint32_t seed,
             stream_ref stream,
-            cpp_BufferResource* br,
             cpp_MemoryReservation& reservation,
         ) except +ex_handler
 
@@ -88,7 +87,6 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             const table_view& table,
             const vector[size_type] &splits,
             stream_ref stream,
-            cpp_BufferResource* br,
             cpp_MemoryReservation& reservation,
         ) except +ex_handler
 
@@ -206,7 +204,6 @@ cpdef object partition_and_pack(
                 cpp_HASH_MURMUR3,
                 cpp_DEFAULT_HASH_SEED,
                 _stream,
-                _br,
                 deref(_reservation),
             )
     ret = {}
@@ -323,7 +320,6 @@ cpdef object split_and_pack(
                 tbl,
                 _splits,
                 _stream,
-                _br,
                 deref(_reservation),
             )
     ret = {}
@@ -369,7 +365,6 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
         "cudf_streaming::unpack_and_concat"(
             vector[cpp_PackedData] partition,
             stream_ref stream,
-            cpp_BufferResource* br,
             cpp_MemoryReservation& reservation,
         ) except +ex_handler
 
@@ -486,7 +481,6 @@ cpdef object unpack_and_concat(
             _ret = cpp_unpack_and_concat_reserved(
                 move(_partitions),
                 _stream,
-                _br,
                 deref(_reservation),
             )
     return Table.from_libcudf(move(_ret), stream, br._device_mr)

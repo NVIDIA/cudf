@@ -129,7 +129,8 @@ size_type checked_batch_count(size_type batches)
 /**
  * @brief Describes how a slot's first 32-bit word is divided between hash and batch ID.
  *
- * The high `batch_bits` store the batch ID and the remaining low bits store the row hash. CUCO's
+ * The high `batch_bits` store the batch ID and the remaining low bits store the truncated row
+ * hash. CUCO's
  * probing hash functions use only the low hash bits, ensuring that equal rows from different
  * batches share the same probe sequence.
  */

@@ -1810,6 +1810,64 @@ TEST_F(ParquetReaderTest, StructRequiredChildNullGaps)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+TEST_F(ParquetReaderTest, StructTwoRequiredChildrenNullGaps)
+{
+  // Only the first child column of a nullable struct owns (writes) the struct's validity bitmap
+  // during decode; other children only get a read-only view of it. Both required children must
+  // still have their output gaps zero-filled at struct-null rows, not just the owning one.
+  constexpr auto num_rows = 200;
+
+  auto make_values = [](int multiplier) {
+    return cudf::detail::make_counting_transform_iterator(
+      0, [multiplier](auto i) { return static_cast<int32_t>(i) * multiplier; });
+  };
+
+  auto values_a = make_values(1);
+  auto values_b = make_values(3);
+  column_wrapper<int32_t> child_col_a{
+    values_a, values_a + num_rows, cudf::test::iterators::no_nulls()};
+  column_wrapper<int32_t> child_col_b{
+    values_b, values_b + num_rows, cudf::test::iterators::no_nulls()};
+
+  std::vector<bool> struct_validity(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    struct_validity[i] = (i % 7) != 0;
+  }
+  auto struct_col = cudf::test::structs_column_wrapper{{child_col_a, child_col_b}, struct_validity};
+
+  auto const written = table_view{{struct_col}};
+  cudf::io::table_input_metadata output_metadata(written);
+  output_metadata.column_metadata[0].child(0).set_nullability(false);
+  output_metadata.column_metadata[0].child(1).set_nullability(false);
+
+  auto filepath = temp_env->get_temp_filepath("StructTwoRequiredChildrenNullGaps.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written)
+      .metadata(std::move(output_metadata));
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+
+  ASSERT_FALSE(result.tbl->view().column(0).child(0).nullable());
+  ASSERT_FALSE(result.tbl->view().column(0).child(1).nullable());
+
+  auto expected_values_a = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return (i % 7) == 0 ? 0 : static_cast<int32_t>(i) * 1; });
+  auto expected_values_b = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return (i % 7) == 0 ? 0 : static_cast<int32_t>(i) * 3; });
+  column_wrapper<int32_t> expected_child_col_a{
+    expected_values_a, expected_values_a + num_rows, cudf::test::iterators::no_nulls()};
+  column_wrapper<int32_t> expected_child_col_b{
+    expected_values_b, expected_values_b + num_rows, cudf::test::iterators::no_nulls()};
+  auto expected_struct_col = cudf::test::structs_column_wrapper{
+    {expected_child_col_a, expected_child_col_b}, struct_validity};
+  auto const expected = table_view{{expected_struct_col}};
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetReaderTest, NestingOptimizationTest)
 {
   // test nesting levels > cudf::io::parquet::detail::max_cacheable_nesting_decode_info deep.

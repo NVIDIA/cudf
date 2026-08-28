@@ -872,6 +872,12 @@ __device__ void gpuUpdateValidityOffsetsAndRowIndices(int32_t target_input_value
           nesting_info->valid_map_offset += warp_valid_mask_bit_count;
           nesting_info->null_count += warp_valid_mask_bit_count - __popc(warp_output_valid_mask);
         }
+        // this column does not own (write) the validity bitmap at this level, but still needs to
+        // track how far its read-only view has conceptually advanced, in lockstep with the
+        // owning column's valid_map_offset above, so it can later resolve null positions there.
+        if (nesting_info->null_fill_valid_map != nullptr && warp_valid_mask_bit_count > 0) {
+          nesting_info->null_fill_valid_map_offset += warp_valid_mask_bit_count;
+        }
         nesting_info->valid_count += warp_valid_count;
         nesting_info->value_count += warp_value_count;
       }
@@ -1312,6 +1318,11 @@ inline __device__ bool setup_local_page_info(auto* const s,
                 nesting_info->valid_map += output_offset >> 5;
                 nesting_info->valid_map_offset = (int32_t)(output_offset & 0x1f);
               }
+              nesting_info->null_fill_valid_map = s->setup.col.null_fill_valid_map_base[idx];
+              if (nesting_info->null_fill_valid_map != nullptr) {
+                nesting_info->null_fill_valid_map += output_offset >> 5;
+                nesting_info->null_fill_valid_map_offset = (int32_t)(output_offset & 0x1f);
+              }
             }
           }
         }
@@ -1456,6 +1467,17 @@ inline __device__ bool setup_local_page_info(auto* const s,
 }
 
 /**
+ * @brief A validity bitmap and its current bit offset, used to identify null positions when
+ * zero-filling a leaf's output data. May be a level's own (owned/written) `valid_map`, or, for a
+ * required leaf whose ancestors do not own the shared bitmap, the read-only `null_fill_valid_map`
+ * view of it.
+ */
+struct null_fill_source {
+  bitmask_type* valid_map;
+  int32_t valid_map_offset;
+};
+
+/**
  * @brief Determine which nesting level's validity bitmap should be used to identify null
  * positions when zero-filling the leaf's output data.
  *
@@ -1465,24 +1487,33 @@ inline __device__ bool setup_local_page_info(auto* const s,
  * substitution is only correct when there is no repetition (no list ancestor), since only then
  * does a bit position in the ancestor's bitmap map 1:1 to a row position in the leaf's output.
  *
+ * An ancestor level shared by multiple children (e.g. two required children of the same nullable
+ * struct) is only ever written by one "owning" child (see reader_impl.cpp); the others only have
+ * a read-only `null_fill_valid_map` view of it, which is what is returned here for them.
+ *
  * This resolution only depends on state that is fixed for the page (validity buffer pointers
  * and the column's repetition level), not on decode progress, so it is safe to call both before
  * and after decoding a batch and get a consistent answer.
  *
  * @param s Page state containing all necessary information
- * @return The nesting level whose validity bitmap should be used
+ * @return The validity bitmap and offset that should be used
  */
-__device__ auto& get_null_fill_nesting_info(auto* s)
+__device__ null_fill_source get_null_fill_nesting_info(auto* s)
 {
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-  auto& leaf_ni              = s->nesting.nesting_info[leaf_level_index];
-  if (leaf_ni.valid_map != nullptr) { return leaf_ni; }
-  if (s->setup.col.max_level[level_type::REPETITION] != 0) { return leaf_ni; }
+  auto const& leaf_ni        = s->nesting.nesting_info[leaf_level_index];
+  if (leaf_ni.valid_map != nullptr) { return {leaf_ni.valid_map, leaf_ni.valid_map_offset}; }
+  if (s->setup.col.max_level[level_type::REPETITION] != 0) { return {nullptr, 0}; }
   for (int idx = leaf_level_index - 1; idx >= 0; --idx) {
-    auto& ancestor_ni = s->nesting.nesting_info[idx];
-    if (ancestor_ni.valid_map != nullptr) { return ancestor_ni; }
+    auto const& ancestor_ni = s->nesting.nesting_info[idx];
+    if (ancestor_ni.valid_map != nullptr) {
+      return {ancestor_ni.valid_map, ancestor_ni.valid_map_offset};
+    }
+    if (ancestor_ni.null_fill_valid_map != nullptr) {
+      return {ancestor_ni.null_fill_valid_map, ancestor_ni.null_fill_valid_map_offset};
+    }
   }
-  return leaf_ni;
+  return {nullptr, 0};
 }
 
 /**
@@ -1523,7 +1554,7 @@ __device__ void zero_fill_null_positions_shared(
   // nesting level that is storing actual leaf values
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
   auto const& leaf_ni        = s->nesting.nesting_info[leaf_level_index];
-  auto const& ni             = get_null_fill_nesting_info(s);
+  auto const ni              = get_null_fill_nesting_info(s);
 
   auto const data_out = leaf_ni.data_out;
 
@@ -1628,7 +1659,7 @@ __device__ void zero_fill_null_positions(auto* s,
                                          int init_valid_map_offset,
                                          int t)
 {
-  auto const& ni       = get_null_fill_nesting_info(s);
+  auto const ni        = get_null_fill_nesting_info(s);
   int const num_values = ni.valid_map_offset - init_valid_map_offset;
   if (ni.valid_map == nullptr || num_values == 0) { return; }
   zero_fill_null_positions_shared<block_size>(s, dtype_len, init_valid_map_offset, num_values, t);

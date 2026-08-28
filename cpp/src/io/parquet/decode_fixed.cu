@@ -1301,16 +1301,17 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
     valid_count = next_valid_count;
   }
 
-  // Zero-fill null positions after decoding valid values
-  if constexpr (has_strings_t || has_lists_t || is_dict_int32_t) {
-    if (process_nulls) {
-      uint32_t const dtype_len = [&]() -> uint32_t {
-        if constexpr (is_dict_int32_t) { return sizeof(int32_t); }
-        if constexpr (has_strings_t) { return sizeof(cudf::size_type); }
-        return s->output_cvt.dtype_len;
-      }();
-      zero_fill_null_positions<decode_block_size_t>(s, dtype_len, init_valid_map_offset, t);
-    }
+  // Zero-fill null positions after decoding valid values. zero_fill_null_positions() itself is a
+  // no-op when there is no ancestor validity buffer to resolve, so this must not be gated on
+  // has_strings_t/has_lists_t/is_dict_int32_t alone: plain fixed-width (non-dict, non-string,
+  // non-list) leaves under an optional non-list ancestor need the same zero-fill.
+  if (process_nulls) {
+    uint32_t const dtype_len = [&]() -> uint32_t {
+      if constexpr (is_dict_int32_t) { return sizeof(int32_t); }
+      if constexpr (has_strings_t) { return sizeof(cudf::size_type); }
+      return s->output_cvt.dtype_len;
+    }();
+    zero_fill_null_positions<decode_block_size_t>(s, dtype_len, init_valid_map_offset, t);
   }
 
   if constexpr (has_strings_t) {

@@ -91,6 +91,12 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // offset into `chunk_nested_data`/`chunk_nested_valids` for the array of pointers for chunk `i`
   auto chunk_nested_valids =
     cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream);
+  // read-only view of each nesting level's validity bitmap, populated for every column sharing a
+  // level (unlike chunk_nested_valids, which only the owning column gets). Used to zero-fill null
+  // positions for a required leaf under a nullable ancestor when this column doesn't own (write)
+  // that ancestor's validity buffer.
+  auto chunk_nested_null_fill_valids =
+    cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream);
   auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(sum_max_depths, _stream);
   auto chunk_offsets     = std::vector<size_t>();
   auto chunk_nested_str_data =
@@ -109,6 +115,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     // to validity data
     auto valids                   = chunk_nested_valids.host_ptr(chunk_off);
     pass.chunks[c].valid_map_base = chunk_nested_valids.device_ptr(chunk_off);
+
+    auto null_fill_valids                   = chunk_nested_null_fill_valids.host_ptr(chunk_off);
+    pass.chunks[c].null_fill_valid_map_base = chunk_nested_null_fill_valids.device_ptr(chunk_off);
 
     // get a slice of size `nesting depth` from `chunk_nested_data` to store an array of pointers to
     // out data
@@ -157,6 +166,11 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
       auto& out_buf = (*cols)[input_col.nesting[idx]];
       cols          = &out_buf.children;
 
+      // every column sharing this nesting level gets a read-only view of its validity bitmap
+      // (used only to resolve null positions for zero-filling a required leaf's output data), even
+      // though only the owning column below gets a writable pointer to it.
+      null_fill_valids[idx] = out_buf.null_mask();
+
       int const owning_schema = out_buf.user_data & PARQUET_COLUMN_BUFFER_SCHEMA_MASK;
       if (owning_schema == 0 || owning_schema == input_col.schema_idx) {
         valids[idx] = out_buf.null_mask();
@@ -184,6 +198,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   pass.chunks.host_to_device_async(_stream);
   chunk_nested_valids.host_to_device_async(_stream);
+  chunk_nested_null_fill_valids.host_to_device_async(_stream);
   chunk_nested_data.host_to_device_async(_stream);
   if (has_strings) {
     // Host vector to initialize the initial string offsets

@@ -303,6 +303,14 @@ struct PageNestingDecodeInfo {
   uint8_t* data_out;
   uint8_t* string_out;
   bitmask_type* valid_map;
+
+  // read-only view of this level's validity bitmap, populated even when this column does not
+  // own (write) the bitmap at this nesting level (i.e. a sibling column under the same nullable
+  // struct owns and writes it). Used to resolve null positions for zero-filling a required leaf
+  // whose own nesting level has no validity buffer of its own; never written to, so it carries no
+  // risk of the concurrent-writer race that `valid_map` ownership avoids.
+  int32_t null_fill_valid_map_offset;
+  bitmask_type* null_fill_valid_map;
 };
 
 // Use up to 512 bytes of shared memory as a cache for nesting information.
@@ -493,12 +501,17 @@ struct ColumnChunkDesc {
   int32_t num_data_pages{};                           // number of data pages
   int32_t num_dict_pages{};                           // number of dictionary pages
   PageInfo const* dict_page{};
-  string_index_pair* str_dict_index{};    // index for string dictionary
-  bitmask_type** valid_map_base{};        // base pointers of valid bit map for this column
-  void** column_data_base{};              // base pointers of column data
-  void** column_string_base{};            // base pointers of column string data
-  uint32_t* column_string_offset_base{};  // base pointer of column string offset data
-  Compression codec{};                    // compressed codec enum
+  string_index_pair* str_dict_index{};  // index for string dictionary
+  bitmask_type** valid_map_base{};      // base pointers of valid bit map for this column
+  // base pointers to a read-only view of each nesting level's validity bitmap, populated for
+  // every column sharing a nesting level (not just the owning column that writes valid_map).
+  // Used only to resolve null positions when zero-filling a required leaf's output; never written
+  // to.
+  bitmask_type** null_fill_valid_map_base{};
+  void** column_data_base{};                        // base pointers of column data
+  void** column_string_base{};                      // base pointers of column string data
+  uint32_t* column_string_offset_base{};            // base pointer of column string offset data
+  Compression codec{};                              // compressed codec enum
   cuda::std::optional<LogicalType> logical_type{};  // logical type
   int32_t ts_clock_rate{};  // output timestamp clock frequency (0=default, 1000=ms, 1000000000=ns)
 

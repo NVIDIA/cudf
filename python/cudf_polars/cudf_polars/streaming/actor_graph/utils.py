@@ -74,6 +74,13 @@ if TYPE_CHECKING:
 
 InterRankScheme: TypeAlias = HashScheme | OrderScheme | None
 PartitioningScheme: TypeAlias = InterRankScheme | Literal["inherit"]
+OrderingMetadata: TypeAlias = dict[int, OrderKey]
+
+# Partitioning-level predicates:
+# - "flat": inter-rank scheme with local layout inherited from it.
+# - "inter_rank": inter-rank scheme only.
+# - "local": explicit local scheme only.
+PartitioningLevel: TypeAlias = Literal["flat", "inter_rank", "local"]
 
 # cuDF column/concatenate row limit (int32)
 CUDF_ROW_LIMIT = 2**31 - 1
@@ -725,6 +732,8 @@ def _evaluate_chunk_sync(
     ir: IR,
     ir_context: IRExecutionContext,
     br: BufferResource,
+    *,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> TableChunk:
     """
     Apply an IR node's do_evaluate to a table chunk (synchronous).
@@ -742,17 +751,18 @@ def _evaluate_chunk_sync(
         The IR execution context.
     br
         The buffer resource for lifetime tracking.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from.
 
     Returns
     -------
     The resulting table chunk after evaluation.
     """
-    input_schema = ir.children[0].schema
-    names = list(input_schema.keys())
-    dtypes = list(input_schema.values())
+    df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
     df = ir.do_evaluate(
         *ir._non_child_args,
-        DataFrame.from_table(chunk.table_view(), names, dtypes, chunk.stream),
+        df_in,
         context=ir_context,
     )
     return TableChunk.from_pylibcudf_table(
@@ -765,6 +775,7 @@ async def evaluate_chunk(
     chunk: TableChunk,
     *irs: IR,
     ir_context: IRExecutionContext,
+    ordering_metadata: OrderingMetadata | None = None,
 ) -> TableChunk:
     """
     Make chunk available, reserve memory, and evaluate.
@@ -780,6 +791,9 @@ async def evaluate_chunk(
         in order within a single memory reservation.
     ir_context
         The IR execution context.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from during the first evaluation.
 
     Returns
     -------
@@ -795,8 +809,14 @@ async def evaluate_chunk(
     with opaque_memory_usage(extra):
         for single_ir in irs:
             chunk = await ir_context.to_thread(
-                _evaluate_chunk_sync, chunk, single_ir, ir_context, context.br()
+                _evaluate_chunk_sync,
+                chunk,
+                single_ir,
+                ir_context,
+                context.br(),
+                ordering_metadata=ordering_metadata,
             )
+            ordering_metadata = None
         return chunk
 
 
@@ -935,11 +955,12 @@ async def chunkwise_evaluate(
     ch_in: Channel[TableChunk],
     metadata: ChannelMetadata,
     *,
+    input_metadata: ChannelMetadata | None = None,
     handle_empty_input: bool = False,
     tracer: ActorTracer | None = None,
 ) -> None:
     """
-    Apply IR evaluation chunk-by-chunk, preserving partitioning.
+    Apply IR evaluation chunk-by-chunk.
 
     Use when data is already partitioned on the relevant keys and each
     chunk can be processed independently.
@@ -957,7 +978,10 @@ async def chunkwise_evaluate(
     ch_in
         The input channel.
     metadata
-        The channel metadata to forward (partitioning preserved).
+        The channel metadata to forward.
+    input_metadata
+        The input metadata to synthesize local DataFrame metadata from.
+        Defaults to ``metadata`` for partition-preserving callers.
     handle_empty_input
         If True and no chunks are received, create an empty chunk and evaluate
         it. Use for operations like aggregations that always produce output.
@@ -967,6 +991,10 @@ async def chunkwise_evaluate(
     await send_metadata(ch_out, context, metadata)
     if tracer is not None and metadata.duplicated:
         tracer.set_duplicated()
+
+    input_ordering_metadata = _leading_order_keys(
+        metadata if input_metadata is None else input_metadata
+    )
 
     received_any = False
     while (msg := await ch_in.recv(context)) is not None:
@@ -983,13 +1011,20 @@ async def chunkwise_evaluate(
                 TableChunk.from_message(msg, br=context.br()),
                 ir,
                 ir_context=ir_context,
+                ordering_metadata=input_ordering_metadata,
             )
         del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
         chunk = empty_table_chunk(ir.children[0], context, ir_context.get_cuda_stream())
-        result = await evaluate_chunk(context, chunk, ir, ir_context=ir_context)
+        result = await evaluate_chunk(
+            context,
+            chunk,
+            ir,
+            ir_context=ir_context,
+            ordering_metadata=input_ordering_metadata,
+        )
         del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
@@ -1271,28 +1306,69 @@ class NormalizedPartitioning:  # noqa: PLW1641 (frozen=True generates __hash__ e
             and self.local_scheme == other.local_scheme
         )
 
-    def is_strictly_partitioned(self) -> bool:
-        """True if data is strictly partitioned with no boundary straddling."""
-        if not self:
+    def _scheme_for_level(self, level: PartitioningLevel) -> PartitioningScheme:
+        """Return the scheme relevant to the requested partitioning level."""
+        match level:
+            case "flat":
+                if self.local_scheme != "inherit":
+                    return None
+                return self.inter_rank_scheme
+            case "inter_rank":
+                return self.inter_rank_scheme
+            case "local":
+                return self.local_scheme
+
+    @staticmethod
+    def _scheme_is_strict(scheme: PartitioningScheme) -> bool:
+        """True when one scheme proves strict partitioning."""
+        if scheme is None or scheme == "inherit":
             return False
-        for scheme in [self.inter_rank_scheme, self.local_scheme]:
-            if isinstance(scheme, OrderScheme):
-                ordering = scheme.orderings[0]
-                if ordering.strict_boundaries:
-                    continue
-                return False
+        if isinstance(scheme, OrderScheme):
+            return scheme.orderings[0].strict_boundaries
         return True
 
-    def is_strictly_sorted(self, order_keys: Sequence[OrderKey]) -> bool:
-        """True if the selected ordering proves sortedness for order_keys."""
-        if not self or not isinstance(self.inter_rank_scheme, OrderScheme):
-            return False
-        ordering = self.inter_rank_scheme.orderings[0]
+    @staticmethod
+    def _ordering_covers_keys(
+        ordering: Ordering,
+        order_keys: Sequence[int | OrderKey],
+    ) -> bool:
+        """True when an ordering covers the requested sort keys."""
+        ordering_keys = ordering.keys
         if len(ordering.keys) < len(order_keys):
             # If we are only sorted on a subset of the keys, we need strict
             # boundaries to know later keys cannot interleave across chunks.
-            return ordering.strict_boundaries
+            if not ordering.strict_boundaries:
+                return False
+            order_keys = order_keys[: len(ordering.keys)]
+        else:
+            ordering_keys = ordering.keys[: len(order_keys)]
+        for current, target in zip(ordering_keys, order_keys, strict=True):
+            if isinstance(target, OrderKey):
+                if current != target:
+                    return False
+            elif current.column_index != target:
+                return False
         return True
+
+    def is_strictly_partitioned(
+        self,
+        *,
+        level: PartitioningLevel = "flat",
+    ) -> bool:
+        """True if data is strictly partitioned at the requested level."""
+        return self._scheme_is_strict(self._scheme_for_level(level))
+
+    def is_ordered(
+        self,
+        order_keys: Sequence[int | OrderKey],
+        *,
+        level: PartitioningLevel = "flat",
+    ) -> bool:
+        """True if the selected ordering covers order_keys."""
+        scheme = self._scheme_for_level(level)
+        if not isinstance(scheme, OrderScheme):
+            return False
+        return self._ordering_covers_keys(scheme.orderings[0], order_keys)
 
     def is_aligned_with(
         self, other: NormalizedPartitioning, br: BufferResource
@@ -1317,9 +1393,17 @@ class NormalizedPartitioning:  # noqa: PLW1641 (frozen=True generates __hash__ e
                 )
             return lhs == "inherit" and rhs == "inherit"
 
+        def _local_schemes_strict(
+            lhs: PartitioningScheme, rhs: PartitioningScheme
+        ) -> bool:
+            return (lhs == "inherit" and rhs == "inherit") or (
+                self._scheme_is_strict(lhs) and self._scheme_is_strict(rhs)
+            )
+
         return (
-            self.is_strictly_partitioned()
-            and other.is_strictly_partitioned()
+            self.is_strictly_partitioned(level="inter_rank")
+            and other.is_strictly_partitioned(level="inter_rank")
+            and _local_schemes_strict(self.local_scheme, other.local_scheme)
             and _schemes_aligned(self.inter_rank_scheme, other.inter_rank_scheme)
             and _schemes_aligned(self.local_scheme, other.local_scheme)
         )
@@ -1550,7 +1634,48 @@ def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> TableChunk:
     )
 
 
-def chunk_to_frame(chunk: TableChunk, ir: IR) -> DataFrame:
+def _leading_order_keys(metadata: ChannelMetadata | None) -> OrderingMetadata:
+    """Return unambiguous leading order keys implied by channel metadata."""
+    if metadata is None or metadata.partitioning is None:
+        return {}
+
+    scheme = metadata.partitioning.local
+    if scheme == "inherit":
+        scheme = metadata.partitioning.inter_rank
+    if not isinstance(scheme, OrderScheme):
+        return {}
+
+    candidates: dict[int, OrderKey | None] = {}
+    for ordering in scheme.orderings:
+        if not ordering.keys:
+            continue
+        key = ordering.keys[0]
+        current = candidates.get(key.column_index, key)
+        candidates[key.column_index] = key if current == key else None
+    return {index: key for index, key in candidates.items() if key is not None}
+
+
+def _apply_ordering_metadata(
+    df: DataFrame, ordering_metadata: OrderingMetadata
+) -> DataFrame:
+    """Apply precomputed safe column-level sortedness metadata."""
+    for index, key in ordering_metadata.items():
+        if index >= df.num_columns:
+            continue
+        df.columns[index].set_sorted(
+            is_sorted=plc.types.Sorted.YES,
+            order=key.order,
+            null_order=key.null_order,
+        )
+    return df
+
+
+def chunk_to_frame(
+    chunk: TableChunk,
+    ir: IR,
+    *,
+    ordering_metadata: OrderingMetadata | None = None,
+) -> DataFrame:
     """
     Convert a TableChunk to a DataFrame.
 
@@ -1560,16 +1685,24 @@ def chunk_to_frame(chunk: TableChunk, ir: IR) -> DataFrame:
         The TableChunk to convert.
     ir
         The IR node to use for the schema.
+    ordering_metadata
+        Optional precomputed ordering metadata to synthesize local DataFrame
+        metadata from.
 
     Returns
     -------
     A DataFrame.
     """
-    return DataFrame.from_table(
+    df = DataFrame.from_table(
         chunk.table_view(),
         list(ir.schema.keys()),
         list(ir.schema.values()),
         chunk.stream,
+    )
+    return (
+        df
+        if ordering_metadata is None
+        else _apply_ordering_metadata(df, ordering_metadata)
     )
 
 

@@ -52,7 +52,7 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
   // compute the unique identifiers within each segment
   auto const identifiers = [&] {
     auto const temp_mr = cudf::get_current_device_resource_ref();
-    auto const d_col   = column_device_view::create(col, stream);
+    auto const d_col   = column_device_view::create(col, stream, temp_mr);
     auto const comparator =
       cudf::detail::row::equality::self_comparator{table_view({col}), stream, temp_mr};
     auto const row_equal =

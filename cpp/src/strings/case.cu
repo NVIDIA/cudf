@@ -455,7 +455,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
         ccfn, *d_strings, sizes.data());
     CUDF_CUDA_TRY(cudaGetLastError());
     // convert sizes to offsets
-    return cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
+    return cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
   }();
 
   // build sub-offsets

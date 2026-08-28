@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -883,12 +883,11 @@ TEST_F(StructGetValueTest, multi_level_nested)
   // col fields
   LCW l3({LCW{1, 1, 1}, LCW{2, 2}, LCW{3}}, validity_mask_t{false, true, true}.begin());
   cudf::test::structs_column_wrapper l2{l3};
-  auto l1 =
-    cudf::make_lists_column(1,
-                            cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3}.release(),
-                            l2.release(),
-                            0,
-                            cudf::create_null_mask(1, cudf::mask_state::UNALLOCATED));
+  auto l1 = cudf::make_lists_column(1,
+                                    cudf::test::fixed_width_column_wrapper<int32_t>{0, 3}.release(),
+                                    l2.release(),
+                                    0,
+                                    cudf::create_null_mask(1, cudf::mask_state::UNALLOCATED));
   std::vector<std::unique_ptr<cudf::column>> l0_fields;
   l0_fields.emplace_back(std::move(l1));
   cudf::test::structs_column_wrapper l0(std::move(l0_fields));

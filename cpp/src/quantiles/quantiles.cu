@@ -17,10 +17,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
+#include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
 #include <stdexcept>
@@ -33,7 +33,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  SortMapIterator sortmap,
                                  std::vector<double> const& q,
                                  interpolation interp,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto quantile_idx_lookup = cuda::proclaim_return_type<size_type>(
@@ -61,7 +61,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  cudf::sorted is_input_sorted,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (q.empty()) { return empty_like(input); }
@@ -90,7 +90,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  cudf::sorted is_input_sorted,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

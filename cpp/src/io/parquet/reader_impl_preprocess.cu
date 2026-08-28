@@ -948,11 +948,13 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
   // Validity Buffer is a uint32_t pointer
   std::vector<cudf::device_span<cudf::bitmask_type>> nullmask_bufs;
 
-  // An optional ancestor leaves unwritten output slots until the next repeated level.
-  // Pre-zero non-nullable STRING buffers as their lengths are converted to offsets.
-  // Not handling needed here for nullable strings (zero-filled by decoder using their own validity
-  // bitmap),fixed-width (masked), LIST offsets (never have gaps), and dictionary indices
-  // (have no ancestors).
+  // An optional ancestor leaves unwritten output slots until the next repeated level. So, for a
+  // non-nullable STRING (FIELD) with a nullable ancestor, the column is nullable and not all rows
+  // will be decoded. The decoder may not detect this because it may not have a validity map from
+  // the ancestor. To avoid this, zero-fill such STRING buffers here as their uninitialized lengths
+  // are converted to offsets. No handling needed here for nullable strings (zero-filled by decoder
+  // using their own validity bitmap), fixed-width (masked), LIST offsets (never have gaps), and
+  // dictionary indices (have no ancestors).
   auto const compute_has_unwritten_slots = [](auto const& out_buf, bool has_nullable_ancestor) {
     return has_nullable_ancestor and out_buf.type.id() == type_id::STRING and
            not out_buf.is_nullable;

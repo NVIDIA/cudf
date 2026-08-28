@@ -8,6 +8,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/unary.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -121,7 +122,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     }
 
     auto const num_chars = strings_column_view(input).chars_size(stream);
-    CUDF_EXPECTS(num_chars < static_cast<int64_t>(std::numeric_limits<size_type>::max()),
+    CUDF_EXPECTS(num_chars < static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
                  "Cannot convert strings column to lists column due to size_type limit",
                  std::overflow_error);
 
@@ -130,12 +131,16 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     auto uint8_col = std::make_unique<column>(
       output_type, num_chars, std::move(*(col_content.data)), rmm::device_buffer{}, 0);
 
-    auto result = make_lists_column(
-      input.size(),
-      std::move(col_content.children[cudf::strings_column_view::offsets_column_index]),
-      std::move(uint8_col),
-      input.null_count(),
-      detail::copy_bitmask(input, stream, mr));
+    auto offsets_col = std::move(col_content.children[strings_column_view::offsets_column_index]);
+    if (offsets_col->type().id() != type_id::INT32) {
+      offsets_col = cudf::detail::cast(offsets_col->view(), data_type{type_id::INT32}, stream, mr);
+    }
+
+    auto result = make_lists_column(input.size(),
+                                    std::move(offsets_col),
+                                    std::move(uint8_col),
+                                    input.null_count(),
+                                    detail::copy_bitmask(input, stream, mr));
 
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.

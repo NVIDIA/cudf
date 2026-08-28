@@ -190,7 +190,7 @@ cdef class Ordering:
             Buffer resource to associate with the returned table chunk.
         """
         cdef const cpp_TableChunk* chunk = self._handle.boundaries.get()
-        cdef Stream stream = Stream._from_cudaStream_t(chunk.stream().value())
+        cdef Stream stream = Stream._from_cudaStream_t(chunk.stream().get())
         tbl = Table.from_table_view_of_arbitrary(
             chunk.table_view(), owner=self, stream=stream
         )

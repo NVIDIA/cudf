@@ -246,8 +246,7 @@ class hybrid_scan_metadata {
  * auto bloom_filtered_row_group_indices = std::vector<size_type>{};
  *
  * if (bloom_filter_byte_ranges.size()) {
- *   // Fetch bloom filter byte ranges into device buffers and create spans
- *   // Use a 32-byte aligned memory resource for bloom filter data
+ *   // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
  *   auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
  *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =

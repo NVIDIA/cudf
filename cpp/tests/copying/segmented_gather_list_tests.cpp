@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -520,13 +520,13 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
 
     auto result0 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[0]},
                                                  cudf::lists_column_view{split_m[0]});
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[0], result0->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(split_e[0], result0->view());
     auto result1 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[1]},
                                                  cudf::lists_column_view{split_m[1]});
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[1], result1->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(split_e[1], result1->view());
     auto result2 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[2]},
                                                  cudf::lists_column_view{split_m[2]});
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[2], result2->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(split_e[2], result2->view());
   }
 
   // List<T>, with out-of-bounds gather indices.
@@ -546,13 +546,13 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
 
     auto const result0 = cudf::lists::segmented_gather(
       cudf::lists_column_view{sliced[0]}, cudf::lists_column_view{split_m[0]}, NULLIFY);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[0], result0->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(split_e[0], result0->view());
     auto const result1 = cudf::lists::segmented_gather(
       cudf::lists_column_view{sliced[1]}, cudf::lists_column_view{split_m[1]}, NULLIFY);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[1], result1->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(split_e[1], result1->view());
     auto const result2 = cudf::lists::segmented_gather(
       cudf::lists_column_view{sliced[2]}, cudf::lists_column_view{split_m[2]}, NULLIFY);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_e[2], result2->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(split_e[2], result2->view());
   }
 }
 

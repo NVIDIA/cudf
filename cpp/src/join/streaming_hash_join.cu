@@ -4,7 +4,6 @@
  */
 
 #include "join/join_common_utils.cuh"
-#include "streaming_hash_join.hpp"
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/join/join.hpp>
@@ -266,7 +265,8 @@ struct decode_slot_fn {
 
 }  // namespace
 
-struct streaming_hash_join::impl {
+class streaming_hash_join_impl {
+ public:
   std::vector<data_type> right_schema;
   std::vector<size_type> right_key_indices;
   size_type total_right_rows;
@@ -287,15 +287,15 @@ struct streaming_hash_join::impl {
   std::optional<table_view> right_partition_schema;
   std::vector<std::shared_ptr<row::equality::preprocessed_table>> preprocessed_right;
 
-  impl(std::span<data_type const> schema,
-       std::span<size_type const> key_indices,
-       size_type total_rows,
-       size_type maximum_batches,
-       nullable_join nullable,
-       null_equality nulls_equal,
-       double load_factor,
-       cuda::stream_ref stream,
-       cuda::mr::any_resource<cuda::mr::device_accessible> resource)
+  streaming_hash_join_impl(std::span<data_type const> schema,
+                           std::span<size_type const> key_indices,
+                           size_type total_rows,
+                           size_type maximum_batches,
+                           nullable_join nullable,
+                           null_equality nulls_equal,
+                           double load_factor,
+                           cuda::stream_ref stream,
+                           cuda::mr::any_resource<cuda::mr::device_accessible> resource)
     : right_schema{schema.begin(), schema.end()},
       right_key_indices{key_indices.begin(), key_indices.end()},
       total_right_rows{total_rows},
@@ -502,47 +502,6 @@ struct streaming_hash_join::impl {
   }
 };
 
-streaming_hash_join::streaming_hash_join(std::span<data_type const> right_schema,
-                                         std::span<size_type const> right_key_indices,
-                                         size_type total_right_rows,
-                                         size_type max_num_batches,
-                                         nullable_join has_nulls,
-                                         null_equality compare_nulls,
-                                         double load_factor,
-                                         cuda::stream_ref stream,
-                                         cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<impl>(right_schema,
-                                 right_key_indices,
-                                 total_right_rows,
-                                 max_num_batches,
-                                 has_nulls,
-                                 compare_nulls,
-                                 load_factor,
-                                 stream,
-                                 std::move(mr))}
-{
-}
-
-streaming_hash_join::~streaming_hash_join()                                         = default;
-streaming_hash_join::streaming_hash_join(streaming_hash_join&&) noexcept            = default;
-streaming_hash_join& streaming_hash_join::operator=(streaming_hash_join&&) noexcept = default;
-
-void streaming_hash_join::insert(table_view const& right_partition, cuda::stream_ref stream)
-{
-  _impl->insert(right_partition, stream);
-}
-
-std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-          std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-                    std::unique_ptr<rmm::device_uvector<size_type>>>>
-streaming_hash_join::inner_join(table_view const& left,
-                                std::optional<std::size_t> output_size,
-                                cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr) const
-{
-  return _impl->inner_join(left, output_size, stream, mr);
-}
-
 }  // namespace cudf::detail
 
 namespace cudf {
@@ -556,15 +515,15 @@ streaming_hash_join::streaming_hash_join(std::span<data_type const> right_schema
                                          double load_factor,
                                          cuda::stream_ref stream,
                                          cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<cudf::detail::streaming_hash_join>(right_schema,
-                                                              right_key_indices,
-                                                              total_right_rows,
-                                                              max_num_batches,
-                                                              has_nulls,
-                                                              compare_nulls,
-                                                              load_factor,
-                                                              stream,
-                                                              std::move(mr))}
+  : _impl{std::make_unique<cudf::detail::streaming_hash_join_impl>(right_schema,
+                                                                   right_key_indices,
+                                                                   total_right_rows,
+                                                                   max_num_batches,
+                                                                   has_nulls,
+                                                                   compare_nulls,
+                                                                   load_factor,
+                                                                   stream,
+                                                                   std::move(mr))}
 {
 }
 

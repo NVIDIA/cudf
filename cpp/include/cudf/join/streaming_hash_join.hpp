@@ -30,7 +30,7 @@ namespace CUDF_EXPORT cudf {
  */
 
 namespace detail {
-class streaming_hash_join;
+class streaming_hash_join_impl;
 }  // namespace detail
 
 /**
@@ -147,7 +147,7 @@ class streaming_hash_join {
              rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:
-  std::unique_ptr<cudf::detail::streaming_hash_join> _impl;
+  std::unique_ptr<cudf::detail::streaming_hash_join_impl> _impl;
 };
 
 /** @} */  // end of group

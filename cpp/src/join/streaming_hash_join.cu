@@ -56,7 +56,8 @@ template <typename Equality, typename Factory>
 auto make_device_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   Factory factory,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref temp_mr)
 {
   using allocator_type  = cudf::detail::rmm_host_allocator<Equality>;
   auto host_comparators = std::vector<Equality, allocator_type>{
@@ -70,7 +71,7 @@ auto make_device_comparators(
     cudf::host_span<Equality const>{
       host_comparators.data(), host_comparators.size(), /*is_device_accessible=*/true},
     stream,
-    cudf::get_current_device_resource_ref());
+    temp_mr);
   stream.sync();  // wait for host_comparators to finish copying before it goes out of scope
   return d_comparators;
 }
@@ -81,7 +82,8 @@ auto make_device_row_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref temp_mr)
 {
   using equality_type =
     row::equality::device_row_comparator<has_nested,
@@ -94,7 +96,8 @@ auto make_device_row_comparators(
       auto const comparator = row::equality::two_table_comparator{preprocessed_left, right};
       return comparator.equal_to<has_nested>(has_nulls, compare_nulls).comparator;
     },
-    stream);
+    stream,
+    temp_mr);
 }
 
 auto make_device_primitive_row_comparators(
@@ -102,7 +105,8 @@ auto make_device_primitive_row_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref temp_mr)
 {
   using equality_type = row::primitive::row_equality_comparator;
 
@@ -111,7 +115,8 @@ auto make_device_primitive_row_comparators(
     [&](auto const& right) {
       return equality_type{has_nulls, preprocessed_left, right, compare_nulls};
     },
-    stream);
+    stream,
+    temp_mr);
 }
 
 size_type checked_batch_count(size_type batches)
@@ -275,7 +280,7 @@ class streaming_hash_join_impl {
   batch_hash_layout layout;
 
   // Declared before the hash table so the resource outlives allocations that refer to it.
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr;
+  cudf::memory_resources mr;
   hash_table_type hash_table;
 
   std::vector<std::shared_ptr<row::equality::preprocessed_table>> preprocessed_right;
@@ -288,18 +293,18 @@ class streaming_hash_join_impl {
                            null_equality nulls_equal,
                            double load_factor,
                            cuda::stream_ref stream,
-                           cuda::mr::any_resource<cuda::mr::device_accessible> resource)
+                           cudf::memory_resources resource)
     // Deep copy a zero-row slice rather than `empty_like`, which drops children such as a
     // dictionary's keys column and would make `have_same_types` reject every partition.
     : right_schema{std::make_unique<table>(
-        cudf::slice(schema, {0, 0}).front(), stream, cudf::get_current_device_resource_ref())},
+        cudf::slice(schema, {0, 0}).front(), stream, resource.get_output_mr())},
       right_key_indices{key_indices.begin(), key_indices.end()},
       total_right_rows{total_rows},
       max_num_batches{checked_batch_count(maximum_batches)},
       has_nulls{nullable == nullable_join::YES},
       compare_nulls{nulls_equal},
       layout{max_num_batches},
-      mr{std::move(resource)},
+      mr{resource},
       hash_table{
         cuco::extent{[&] {
           CUDF_EXPECTS(total_rows >= 0,
@@ -313,7 +318,7 @@ class streaming_hash_join_impl {
         probing_scheme{masked_hasher1{layout.hash_mask}, masked_hasher2{layout.hash_mask}},
         {},
         {},
-        rmm::mr::polymorphic_allocator<char>{mr},
+        rmm::mr::polymorphic_allocator<char>{mr.get_output_mr()},
         stream.get()},
       preprocessed_right(static_cast<std::size_t>(max_num_batches))
   {
@@ -346,13 +351,11 @@ class streaming_hash_join_impl {
                  cudf::data_type_error);
     auto const keys = right_partition.select(right_key_indices);
 
-    auto preprocessed = row::equality::preprocessed_table::create(
-      keys, stream, cudf::get_current_device_resource_ref());
+    auto preprocessed = row::equality::preprocessed_table::create(keys, stream, mr.get_output_mr());
     auto const batch_rows = keys.num_rows();
     auto row_bitmask      = [&]() -> std::optional<rmm::device_buffer> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
-        return cudf::detail::bitmask_and(keys, stream, cudf::get_current_device_resource_ref())
-          .first;
+        return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
       }
       return std::nullopt;
     }();
@@ -407,22 +410,30 @@ class streaming_hash_join_impl {
   auto probe(table_view const& left,
              std::optional<std::size_t> output_size,
              cuda::stream_ref stream,
-             rmm::device_async_resource_ref output_mr) const
+             cudf::memory_resources resources) const
   {
     static_assert(!(has_nested && use_primitive),
                   "primitive row comparators are never used for nested keys");
-    auto preprocessed_left = row::equality::preprocessed_table::create(
-      left, stream, cudf::get_current_device_resource_ref());
+    auto preprocessed_left =
+      row::equality::preprocessed_table::create(left, stream, resources.get_temporary_mr());
     auto const num_batches = inserted_batches.load(std::memory_order_relaxed);
     auto const right_comparators =
       std::span{preprocessed_right}.first(static_cast<std::size_t>(num_batches));
     auto comparators = [&] {
       if constexpr (use_primitive) {
-        return make_device_primitive_row_comparators(
-          preprocessed_left, right_comparators, nullate::DYNAMIC{has_nulls}, compare_nulls, stream);
+        return make_device_primitive_row_comparators(preprocessed_left,
+                                                     right_comparators,
+                                                     nullate::DYNAMIC{has_nulls},
+                                                     compare_nulls,
+                                                     stream,
+                                                     resources.get_temporary_mr());
       } else {
-        return make_device_row_comparators<has_nested>(
-          preprocessed_left, right_comparators, nullate::DYNAMIC{has_nulls}, compare_nulls, stream);
+        return make_device_row_comparators<has_nested>(preprocessed_left,
+                                                       right_comparators,
+                                                       nullate::DYNAMIC{has_nulls},
+                                                       compare_nulls,
+                                                       stream,
+                                                       resources.get_temporary_mr());
       }
     }();
     auto const equality   = n_table_pair_equal{comparators.data(), layout};
@@ -443,6 +454,7 @@ class streaming_hash_join_impl {
                                                           hash_table.hash_function(),
                                                           stream.get());
 
+    auto const output_mr = resources.get_output_mr();
     auto left_indices =
       std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, output_mr);
     auto batch_indices =
@@ -474,7 +486,7 @@ class streaming_hash_join_impl {
   auto inner_join(table_view const& left,
                   std::optional<std::size_t> output_size,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref output_mr) const
+                  cudf::memory_resources resources) const
   {
     CUDF_EXPECTS(inserted_batches.load(std::memory_order_relaxed) > 0,
                  "streaming_hash_join: inner_join called before any insert().",
@@ -483,15 +495,16 @@ class streaming_hash_join_impl {
 
     if (left.num_rows() == 0 || inserted_rows.load(std::memory_order_relaxed) == 0) {
       return std::pair{
-        std::make_unique<rmm::device_uvector<size_type>>(0, stream, output_mr),
-        std::pair{std::make_unique<rmm::device_uvector<size_type>>(0, stream, output_mr),
-                  std::make_unique<rmm::device_uvector<size_type>>(0, stream, output_mr)}};
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, resources.get_output_mr()),
+        std::pair{
+          std::make_unique<rmm::device_uvector<size_type>>(0, stream, resources.get_output_mr()),
+          std::make_unique<rmm::device_uvector<size_type>>(0, stream, resources.get_output_mr())}};
     }
     if (cudf::detail::is_primitive_row_op_compatible(left)) {
-      return probe<false, true>(left, output_size, stream, output_mr);
+      return probe<false, true>(left, output_size, stream, resources);
     }
-    return has_nested_keys ? probe<true, false>(left, output_size, stream, output_mr)
-                           : probe<false, false>(left, output_size, stream, output_mr);
+    return has_nested_keys ? probe<true, false>(left, output_size, stream, resources)
+                           : probe<false, false>(left, output_size, stream, resources);
   }
 };
 
@@ -507,7 +520,7 @@ streaming_hash_join::streaming_hash_join(table_view const& right_schema,
                                          null_equality compare_nulls,
                                          double load_factor,
                                          cuda::stream_ref stream,
-                                         cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                         cudf::memory_resources mr)
   : _impl{std::make_unique<cudf::detail::streaming_hash_join_impl>(right_schema,
                                                                    right_key_indices,
                                                                    total_right_rows,
@@ -516,7 +529,7 @@ streaming_hash_join::streaming_hash_join(table_view const& right_schema,
                                                                    compare_nulls,
                                                                    load_factor,
                                                                    stream,
-                                                                   std::move(mr))}
+                                                                   mr)}
 {
 }
 
@@ -536,7 +549,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 streaming_hash_join::inner_join(table_view const& left,
                                 std::optional<std::size_t> output_size,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr) const
+                                cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   return _impl->inner_join(left, output_size, stream, mr);

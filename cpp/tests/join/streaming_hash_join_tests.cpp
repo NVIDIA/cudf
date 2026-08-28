@@ -409,13 +409,18 @@ TEST_F(StreamingHashJoinTest, MemoryResources)
   EXPECT_GT(persistent_mr.get_bytes_counter().peak, 0);
   joiner.insert(right, stream);
 
-  auto output_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto output_mr  = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto scratch_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
   // Snapshot the persistent resource so we can tell the output did not come out of it. Probing does
   // transiently allocate a counter from it, since that comes from the container's own allocator, so
   // compare outstanding bytes rather than the peak.
   auto const persistent_bytes_before = persistent_mr.get_bytes_counter().value;
-  auto [left_indices, right_indices] = joiner.inner_join(left, {}, stream, output_mr);
+  auto [left_indices, right_indices] =
+    joiner.inner_join(left, {}, stream, cudf::memory_resources{output_mr, scratch_mr});
   EXPECT_GT(output_mr.get_bytes_counter().peak, 0);
+  // Probe scratch goes to the temporary resource and is released before the call returns.
+  EXPECT_GT(scratch_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(scratch_mr.get_bytes_counter().value, 0);
   EXPECT_EQ(persistent_mr.get_bytes_counter().value, persistent_bytes_before);
   EXPECT_EQ(left_indices->size(), 1);
   EXPECT_EQ(right_indices.first->size(), 1);

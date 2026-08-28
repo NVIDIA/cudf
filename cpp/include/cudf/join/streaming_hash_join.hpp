@@ -87,8 +87,10 @@ class streaming_hash_join {
    * @param compare_nulls Controls whether null join-key values should match or not.
    * @param load_factor Target hash-table occupancy ratio in (0, 1]. Defaults to 0.5.
    * @param stream CUDA stream used to allocate and initialize the persistent hash table.
-   * @param mr Device memory resource used for persistent allocations. The resource is owned by the
-   *           join object and must be copyable.
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   *           live as long as the join object, such as the hash table; the temporary resource backs
+   *           per-call scratch. Both are non-owning references, so the resources they refer to must
+   *           outlive the join object.
    */
   streaming_hash_join(cudf::table_view const& right_schema,
                       std::span<size_type const> right_key_indices,
@@ -96,10 +98,9 @@ class streaming_hash_join {
                       size_type max_num_batches,
                       nullable_join has_nulls,
                       null_equality compare_nulls,
-                      double load_factor      = 0.5,
-                      cuda::stream_ref stream = cudf::get_default_stream(),
-                      cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                        cudf::get_current_device_resource_ref());
+                      double load_factor        = 0.5,
+                      cuda::stream_ref stream   = cudf::get_default_stream(),
+                      cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Insert a right-side partition into the persistent hash table.
@@ -138,7 +139,8 @@ class streaming_hash_join {
    * @param left The left table, from which the tuples are probed.
    * @param output_size Optional exact output size hint to avoid an extra count pass.
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the returned device memory.
+   * @param mr Memory resources used to allocate the returned device memory and any scratch
+   *           needed while probing.
    * @return Pair `[left_indices, [right_batch_indices, right_row_indices]]`. For each match the
    *         right side is identified by `(batch_idx, row_idx)`, where `batch_idx` is the
    *         insertion order of the partition this row came from and `row_idx` is the local
@@ -150,7 +152,7 @@ class streaming_hash_join {
   inner_join(cudf::table_view const& left,
              std::optional<std::size_t> output_size = {},
              cuda::stream_ref stream                = cudf::get_default_stream(),
-             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+             cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   std::unique_ptr<cudf::detail::streaming_hash_join_impl> _impl;

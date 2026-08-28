@@ -14,13 +14,13 @@ from pylibcudf.libcudf.table.table cimport table as cpp_table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.table cimport Table
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
 from rmm.librmm.device_buffer cimport device_buffer
 from rmm.pylibrmm.stream cimport Stream
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
 from rapidsmpf.memory.buffer_resource cimport BufferResource, cpp_BufferResource
 from rapidsmpf.memory.packed_data cimport PackedData, cpp_PackedData
+from cudf_streaming.stream_ref cimport stream_ref
 
 
 cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
@@ -34,7 +34,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             int num_partitions,
             int hash_function,
             uint32_t seed,
-            cuda_stream_view stream,
+            stream_ref stream,
             cpp_BufferResource* br,
         ) except +ex_handler
 
@@ -42,7 +42,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
         "cudf_streaming::split_and_pack"(
             const table_view& table,
             const vector[size_type] &splits,
-            cuda_stream_view stream,
+            stream_ref stream,
             cpp_BufferResource* br,
         ) except +ex_handler
 
@@ -86,7 +86,7 @@ cpdef object partition_and_pack(
     pylibcudf.contiguous_split.pack
     cudf_streaming.partition_utils.split_and_pack
     """
-    cdef cuda_stream_view _stream = stream.view()
+    cdef stream_ref _stream = stream_ref(stream.view().value())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[size_type] _columns_to_hash = tuple(columns_to_hash)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
@@ -148,7 +148,7 @@ cpdef object split_and_pack(
     pylibcudf.copying.split
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef cuda_stream_view _stream = stream.view()
+    cdef stream_ref _stream = stream_ref(stream.view().value())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[size_type] _splits = tuple(splits)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
@@ -185,7 +185,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
     cdef unique_ptr[cpp_table] cpp_unpack_and_concat \
         "cudf_streaming::unpack_and_concat"(
             vector[cpp_PackedData] partition,
-            cuda_stream_view stream,
+            stream_ref stream,
             cpp_BufferResource* br,
         ) except +ex_handler
 
@@ -241,7 +241,7 @@ cpdef object unpack_and_concat(
     --------
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef cuda_stream_view _stream = stream.view()
+    cdef stream_ref _stream = stream_ref(stream.view().value())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[cpp_PackedData] _partitions = _partitions_py_to_cpp(partitions)
     cdef unique_ptr[cpp_table] _ret
@@ -263,7 +263,7 @@ cdef extern from *:
     std::unique_ptr<rapidsmpf::PackedData> cpp_packed_data_from_buffers(
         std::unique_ptr<std::vector<std::uint8_t>> metadata,
         std::unique_ptr<rmm::device_buffer> gpu_data,
-        rmm::cuda_stream_view stream,
+        cuda::stream_ref stream,
         rapidsmpf::BufferResource* br
     ) {
         return std::make_unique<rapidsmpf::PackedData>(
@@ -274,7 +274,7 @@ cdef extern from *:
     unique_ptr[cpp_PackedData] cpp_packed_data_from_buffers(
         unique_ptr[vector[uint8_t]] metadata,
         unique_ptr[device_buffer] gpu_data,
-        cuda_stream_view stream,
+        stream_ref stream,
         cpp_BufferResource* br,
     ) except +ex_handler nogil
 
@@ -317,7 +317,7 @@ cpdef object packed_data_from_cudf_packed_columns(
     """
     if packed_columns is None or stream is None or br is None:
         raise TypeError("Arguments must not be None")
-    cdef cuda_stream_view _stream = stream.view()
+    cdef stream_ref _stream = stream_ref(stream.view().value())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef PackedData ret = PackedData.__new__(PackedData)
     with nogil:

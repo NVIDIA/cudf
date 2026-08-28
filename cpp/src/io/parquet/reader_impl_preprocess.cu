@@ -696,7 +696,7 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
       key_input,
       key_input + pass.pages.size(),
       page_input,
-      chunk_row_output_iter{pass.pages.device_ptr()});
+      cuda::make_tabulate_output_iterator(set_chunk_row_fn{pass.pages.device_ptr()}));
 
     // To compensate for the list row size estimates, force the row count on the last page for each
     // column chunk (each rowgroup) such that it ends on the real known row count. this is so that
@@ -810,7 +810,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     key_input,
     key_input + pass.pages.size(),
     page_input,
-    chunk_row_output_iter{pass.pages.device_ptr()});
+    cuda::make_tabulate_output_iterator(set_chunk_row_fn{pass.pages.device_ptr()}));
 
   // copy chunk_row into the subpass pages
   // only need to do this if we are not processing the whole pass in one subpass
@@ -1191,7 +1191,7 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
     page_keys,
     page_keys + subpass.pages.size(),
     val_iter,
-    page_offset_output_iter{subpass.pages.device_ptr()});
+    cuda::make_tabulate_output_iterator(set_str_offset_fn{subpass.pages.device_ptr()}));
 
   // now sum up page sizes
   rmm::device_uvector<int> reduce_keys(d_col_sizes.size(), _stream);

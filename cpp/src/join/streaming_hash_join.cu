@@ -65,11 +65,13 @@ auto make_device_comparators(
                  preprocessed_right.end(),
                  std::back_inserter(host_comparators),
                  factory);
-  return cudf::detail::make_device_uvector_async(
+  auto d_comparators = cudf::detail::make_device_uvector_async(
     cudf::host_span<Equality const>{
       host_comparators.data(), host_comparators.size(), /*is_device_accessible=*/true},
     stream,
     cudf::get_current_device_resource_ref());
+  stream.sync();  // wait for host_comparators to finish copying before it goes out of scope
+  return d_comparators;
 }
 
 template <bool has_nested>

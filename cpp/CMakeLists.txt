@@ -924,7 +924,7 @@ add_library(
   src/lists/segmented_sort.cu
   src/lists/sequences.cu
   src/lists/set_operations.cu
-  src/lists/stream_compaction/apply_boolean_mask.cu
+  src/lists/stream_compaction/apply_mask.cu
   src/lists/stream_compaction/distinct.cu
   src/lists/utilities.cu
   src/merge/merge.cu
@@ -1023,7 +1023,7 @@ add_library(
   src/sort/stable_sort_column.cu
   src/sort/stable_sort.cu
   src/sort/top_k.cu
-  src/stream_compaction/apply_boolean_mask.cu
+  src/stream_compaction/apply_mask.cu
   src/stream_compaction/distinct.cu
   src/stream_compaction/distinct_helpers.cu
   src/stream_compaction/distinct_helpers_flat_nan_equal_any.cu

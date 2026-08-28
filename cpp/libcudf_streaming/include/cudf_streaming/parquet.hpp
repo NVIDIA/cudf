@@ -23,7 +23,7 @@ namespace cudf_streaming {
  * @brief Filter ast expression with lifetime/stream management.
  */
 struct filter {
-  rmm::cuda_stream_view stream;      ///< Stream the filter's scalars are valid on.
+  cuda::stream_ref stream;           ///< Stream the filter's scalars are valid on.
   cudf::ast::expression& filter;     ///< Filter expression.
   rapidsmpf::OwningWrapper owner{};  ///< Owner of all objects in the filter.
 };

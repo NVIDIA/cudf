@@ -436,7 +436,7 @@ TEST(HostDeviceSpanTest, CanGetFromDevice)
 {
   auto message = get_test_hostdevice_vector();
   message.host_to_device_async(cudf::get_default_stream());
-  simple_device_char_kernel<<<1, 1, 0, cudf::get_default_stream()>>>(message);
+  simple_device_char_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(message);
 
   message.device_to_host(cudf::get_default_stream());
   expect_match("world hello", cudf::detail::hostdevice_span<char>(message));

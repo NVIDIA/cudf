@@ -18,7 +18,7 @@ LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-na
 CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
 
 read -r -a VERSIONS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_polars_compat polars_compat_version)"
 
@@ -27,6 +27,20 @@ if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -ge 2 ]]
 fi
 
 LATEST_VERSION="${VERSIONS[-1]}"
+
+if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -eq 2 ]]; then
+    # Split the two endpoint versions across the two CUDA-major matrix entries so each
+    # entry tests one version in parallel, instead of both serially in a single job.
+    # LATEST_VERSION (set above) is left untouched, so coverage is still only enforced
+    # on whichever entry ends up testing it.
+    read -r -a CUDA_MAJORS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml all cuda | tr ' ' '\n' | cut -d. -f1 | sort -nu | tr '\n' ' ')"
+    THIS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+    if [[ "${THIS_CUDA_MAJOR}" == "${CUDA_MAJORS[0]}" ]]; then
+        VERSIONS=("${VERSIONS[0]}")
+    else
+        VERSIONS=("${VERSIONS[-1]}")
+    fi
+fi
 
 # shellcheck disable=SC2317
 function set_exitcode()

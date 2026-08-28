@@ -216,7 +216,8 @@ std::unique_ptr<cudf::table> build_expected_table(
                  cuda::counting_iterator(input_table_view.num_columns()),
                  std::back_inserter(index_and_columns),
                  [&](auto col_idx) { return input_table_view.column(col_idx); });
-  return cudf::apply_boolean_mask(cudf::table_view{index_and_columns}, row_mask_column, stream, mr);
+  return cudf::apply_retention_mask(
+    cudf::table_view{index_and_columns}, row_mask_column, stream, mr);
 }
 
 /**

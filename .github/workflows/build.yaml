@@ -160,9 +160,9 @@ jobs:
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
-      docs-projects: cudf,libcudf
+      docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
-      version-map: '{"26.04": "legacy", "26.06": "stable"}'
+      version-map: ${{ vars.VERSION_MAP }}
   wheel-build-libcudf:
     needs: [build-details, telemetry-setup]
     permissions:
@@ -453,6 +453,13 @@ jobs:
       package-name: cudf_polars
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_cudf-polars
+  velox-cudf:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/velox-cudf.yaml
+    with:
+      cudf_commit: ${{ inputs.sha }}
   trigger-pandas-tests:
     if: inputs.build_type == 'nightly'
     needs: wheel-build-cudf

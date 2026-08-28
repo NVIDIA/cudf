@@ -7,7 +7,6 @@ from libcpp.pair cimport pair
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport partitioning as cpp_partitioning
-from pylibcudf.libcudf.partitioning import hash_id as HashId  # no-cython-lint
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
@@ -32,7 +31,7 @@ __all__ = [
 
 cpdef tuple[Table, list] hash_partition(
     Table input,
-    TableOrList keys,
+    TableOrList keys: Table | list[int],
     int num_partitions,
     cpp_partitioning.hash_id hash_function = cpp_partitioning.hash_id.HASH_MURMUR3,
     uint32_t seed = cpp_partitioning.DEFAULT_HASH_SEED,

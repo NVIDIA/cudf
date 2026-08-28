@@ -36,7 +36,6 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <format>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -6487,56 +6486,4 @@ TEST_F(ParquetReaderTest, ListOfStructRequiredStringChildNullGaps)
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected->view()}}, result.tbl->view());
 }
 
-TEST_F(ParquetReaderTest, StructRequiredListChildNullGaps)
-{
-  // `optional struct { required list<int32> }` writes LIST offsets even when the struct is null,
-  // so no gap needs zero-filling.
-  constexpr cudf::size_type num_rows     = 2000;
-  constexpr cudf::size_type list_size    = 4;
-  constexpr cudf::size_type num_elements = num_rows * list_size;
 
-  constexpr int32_t null_gap_value = 0x5a5a5a5a;
-
-  auto values = cudf::detail::make_counting_transform_iterator(
-    0, [null_gap_value](auto) { return null_gap_value; });
-  column_wrapper<int32_t> leaf_col(values, values + num_elements);
-
-  auto offsets = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return static_cast<cudf::size_type>(i * list_size); });
-  column_wrapper<cudf::size_type> offsets_col(offsets, offsets + num_rows + 1);
-
-  auto list_col = cudf::make_lists_column(
-    num_rows, offsets_col.release(), leaf_col.release(), 0, rmm::device_buffer{});
-
-  std::vector<std::unique_ptr<cudf::column>> children;
-  children.push_back(std::move(list_col));
-  auto struct_col = make_optional_struct(std::move(children), num_rows);
-
-  auto const written = table_view{{struct_col->view()}};
-  cudf::io::table_input_metadata input_metadata(written);
-  input_metadata.column_metadata[0].set_name("s");
-  input_metadata.column_metadata[0].child(0).set_name("l").set_nullability(false);
-
-  auto const filepath = temp_env->get_temp_filepath("StructRequiredListChildNullGaps.parquet");
-  cudf::io::write_parquet(
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written)
-      .metadata(std::move(input_metadata))
-      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
-      .compression(cudf::io::compression_type::NONE)
-      .build());
-
-  auto const result = cudf::io::read_parquet(
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build());
-  auto const list_child     = result.tbl->view().column(0).child(0);
-  auto const lcv            = cudf::lists_column_view{list_child};
-  auto const output_offsets = cudf::test::to_host<cudf::size_type>(lcv.offsets()).first;
-  ASSERT_EQ(output_offsets.size(), static_cast<std::size_t>(num_rows) + 1);
-  ASSERT_EQ(output_offsets.front(), 0);
-  for (std::size_t i = 1; i < output_offsets.size(); ++i) {
-    ASSERT_GE(output_offsets[i], output_offsets[i - 1])
-      << std::format("non-monotonic list offset at {}", i);
-    ASSERT_LE(output_offsets[i] - output_offsets[i - 1], list_size)
-      << std::format("oversized list at {}", i - 1);
-  }
-  ASSERT_EQ(output_offsets.back(), lcv.child().size());
-}

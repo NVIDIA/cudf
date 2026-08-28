@@ -217,13 +217,21 @@ def test_resolve_max_concurrent_io_tasks_partial_override() -> None:
     )
 
 
+@pytest.mark.parametrize("use_hybrid_scan", [True, False])
 def test_prefetch_file_metadata_select_fast_count(
     df: pl.DataFrame,
     streaming_engine_factory: Callable[..., StreamingEngine],
     tmp_path: Path,
+    *,
+    use_hybrid_scan: bool,
 ) -> None:
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(
+            parquet_options={
+                "prefetch_file_metadata": True,
+                "use_hybrid_scan": use_hybrid_scan,
+            }
+        ),
     )
     source = tmp_path / "data.parquet"
     df.write_parquet(source)

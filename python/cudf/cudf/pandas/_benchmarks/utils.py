@@ -548,14 +548,15 @@ def execute_duckdb_query(
     """Execute a query with DuckDB and return a pandas DataFrame."""
     if duckdb is None:
         raise ImportError(duckdb_err)
-    with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        for name in PDSH_TABLE_NAMES:
-            pattern = (Path(dataset_path) / name).as_posix() + suffix
-            conn.execute(
-                f"CREATE OR REPLACE VIEW {name} AS "
-                f"SELECT * FROM parquet_scan('{pattern}');"
-            )
-        return conn.execute(query).df()
+    with disable_module_accelerator():
+        with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
+            for name in PDSH_TABLE_NAMES:
+                pattern = (Path(dataset_path) / name).as_posix() + suffix
+                conn.execute(
+                    f"CREATE OR REPLACE VIEW {name} AS "
+                    f"SELECT * FROM parquet_scan('{pattern}');"
+                )
+            return conn.execute(query).df()
 
 
 def execute_query(
@@ -779,21 +780,20 @@ def run_pandas_query_iteration(
     """Run a single query iteration. Caller must wrap in try/except."""
     result, duration = execute_query(q_id, iteration, q, run_config)
 
-    if expected is not None and result_casts:
-        result = result.copy()
-        for col, dtype in result_casts.items():
-            if col in result.columns:
-                result[col] = result[col].astype(dtype)
-
     if expected is not None:
+        if result_casts:
+            for col, dtype in result_casts.items():
+                result[col] = result[col].astype(dtype)
+        result_for_validation = getattr(result, "_fsproxy_slow", result)
         comparison_options = (
             run_config.validation_method.comparison_options
             if run_config.validation_method is not None
             else PANDAS_VALIDATION_OPTIONS
         )
         try:
-            pd.testing.assert_frame_equal(
-                result, expected, **comparison_options
+            native_pd = getattr(pd, "_fsproxy_slow", pd)
+            native_pd.testing.assert_frame_equal(
+                result_for_validation, expected, **comparison_options
             )
         except Exception as e:
             validation_result = ValidationResult.from_error(e)

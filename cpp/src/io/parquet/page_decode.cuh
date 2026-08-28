@@ -1458,7 +1458,8 @@ inline __device__ bool setup_local_page_info(auto* const s,
 /**
  * @brief Zero-fill null positions in output data using parallel per-validity-block processing
  *
- * Each thread handles one 32-bit validity block and zero-fills only its null positions.
+ * Each warp handles one 32-bit validity block, with each lane zero-filling a single null position.
+ * Remaining blocks that exceed the warp count are handled `process_block_sequential`.
  *
  * @note This handles only nulls in a leaf's own bitmap. Nulls inherited from `optional`
  * ancestors are zero-filled by `reader_impl::allocate_columns` because an ancestor's validity map

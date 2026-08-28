@@ -65,7 +65,7 @@ enum class join_prefilter : bool { NO = false, YES = true };
  * Join implementations use this to select row operators that either check or omit null handling.
  * If nullability is unknown, use `YES`.
  */
-enum class nullable_join : bool { YES, NO };
+enum class nullable_join : bool { YES = true, NO = false };
 
 /**
  * @brief Sentinel value used to indicate an unmatched row index in join operations.

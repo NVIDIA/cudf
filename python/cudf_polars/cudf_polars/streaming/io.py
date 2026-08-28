@@ -1070,7 +1070,7 @@ class ParquetMetadata:
     sample_paths: tuple[str, ...]
     """Sampled file paths."""
     cached_parquet_info: list[CachedParquetInfo] | None
-    """Cached parquet info for the sampled paths. Only set if all files were sampled."""
+    """Cached parquet info for the sampled paths."""
 
     @nvtx_annotate_cudf_polars(message="ParquetMetadata")
     def __init__(
@@ -1110,10 +1110,10 @@ class ParquetMetadata:
         )
         sample_footers = [info.file_metadata for info in sample_parquet_info]
 
+        self.cached_parquet_info = sample_parquet_info
         sampled_row_count = sum(fmd.num_rows for fmd in sample_footers)
         if self.total_file_count == sampled_file_count:
             row_count = sampled_row_count
-            self.cached_parquet_info = sample_parquet_info
         else:
             num_rows_per_sampled_file = int(sampled_row_count / sampled_file_count)
             row_count = num_rows_per_sampled_file * self.total_file_count
@@ -1248,9 +1248,14 @@ class ParquetSourceInfo:
 
         file_count = len(paths)
         per_file_means: dict[str, int] = {}
+        cached_parquet_info = (
+            list(metadata.cached_parquet_info)
+            if metadata.cached_parquet_info is not None
+            else None
+        )
 
         if not (file_count and row_count and needed_cols):
-            return cls(row_count, {})
+            return cls(row_count, {}, cached_parquet_info=cached_parquet_info)
 
         rows_per_file = max(1, row_count // file_count)
         schema_map = dict(schema)
@@ -1290,14 +1295,6 @@ class ParquetSourceInfo:
                     else max(footer_mean, decoded_floor)
                 )
 
-        cached_parquet_info: list[CachedParquetInfo] | None
-        if (
-            metadata.sampled_file_count == metadata.total_file_count
-            and metadata.cached_parquet_info is not None
-        ):
-            cached_parquet_info = list(metadata.cached_parquet_info)
-        else:
-            cached_parquet_info = None
         return cls(row_count, per_file_means, cached_parquet_info=cached_parquet_info)
 
     def column_storage_size(self, column: str) -> int | None:

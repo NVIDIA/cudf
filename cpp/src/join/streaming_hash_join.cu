@@ -112,13 +112,6 @@ auto make_device_primitive_row_comparators(
     stream);
 }
 
-std::size_t checked_row_count(size_type rows)
-{
-  CUDF_EXPECTS(
-    rows >= 0, "streaming_hash_join requires total_right_rows >= 0.", std::invalid_argument);
-  return static_cast<std::size_t>(rows);
-}
-
 size_type checked_batch_count(size_type batches)
 {
   CUDF_EXPECTS(
@@ -305,7 +298,12 @@ class streaming_hash_join_impl {
       layout{max_num_batches},
       mr{std::move(resource)},
       hash_table{
-        cuco::extent{checked_row_count(total_rows)},
+        cuco::extent{[&] {
+          CUDF_EXPECTS(total_rows >= 0,
+                       "streaming_hash_join requires total_right_rows >= 0.",
+                       std::invalid_argument);
+          return static_cast<std::size_t>(total_rows);
+        }()},
         checked_load_factor(load_factor),
         cuco::empty_key{slot_type{std::numeric_limits<hash_value_type>::max(), cudf::JoinNoMatch}},
         always_not_equal{},

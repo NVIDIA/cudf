@@ -532,14 +532,13 @@ void write_chunked(data_sink* out_sink,
   if (compression != compression_type::NONE) {
     // The trailing newline that separates this chunk from the next one is compressed as an extra
     // block of the same batched call, so it costs neither a copy of the chunk nor a second write.
-    write_compressed_to_sink(
+    return write_compressed_to_sink(
       out_sink,
       data,
-      device_span<char const>{newline.data(), static_cast<size_t>(newline.size())},
+      device_span{newline.data(), static_cast<size_t>(newline.size())},
       compression,
       block_size,
       stream);
-    return;
   }
 
   write_to_sink(out_sink, data, stream);

@@ -24,35 +24,55 @@ namespace lists {
  */
 
 /**
- * @brief Filters elements in each row of `input` LIST column using `boolean_mask`
+ * @brief Filters elements in each row of `input` LIST column using `retention_mask`
  * LIST of booleans as a mask.
  *
  * Given an input `LIST` column and a list-of-bools column, the function produces
  * a new `LIST` column of the same type as `input`, where each element is copied
- * from the input row *only* if the corresponding `boolean_mask` is non-null and `true`.
+ * from the input row *only* if the corresponding `retention_mask` is non-null and `true`.
  *
  * E.g.
  * @code{.pseudo}
- * input        = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
- * boolean_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
- * results      = { {1,2},   {3},   {5,6,7}, {} };
+ * input          = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
+ * retention_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
+ * results        = { {1,2},   {3},   {5,6,7}, {} };
  * @endcode
  *
- * `input` and `boolean_mask` must have the same number of rows.
- * The output column has the same number of rows as the input column.
- * An element is copied to an output row *only* if the corresponding boolean_mask element is `true`.
+ * An element is copied to an output row *only* if the corresponding @p retention_mask element is
+ * `true`.
  * An output row is invalid only if the input row is invalid.
  *
- * @throws cudf::logic_error if `boolean_mask` is not a "lists of bools" column
- * @throws cudf::logic_error if `input` and `boolean_mask` have different number of rows
+ * @note @p input and @p retention_mask must have the same number of rows. The output column has the
+ * same number of rows as the input column.
+ *
+ * @throws cudf::logic_error if @p retention_mask is not a "lists of bools" column
+ * @throws cudf::logic_error if @p input and @p retention_mask have different number of rows
  *
  * @param input The input list column view to be filtered
- * @param boolean_mask A nullable list of bools column used to filter `input` elements
+ * @param retention_mask A nullable list of bools column used to filter `input` elements
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Device memory resource used to allocate the returned column's device memory
  * @return List column of the same type as `input`, containing filtered list rows
  */
-std::unique_ptr<column> apply_boolean_mask(
+std::unique_ptr<column> apply_retention_mask(
+  lists_column_view const& input,
+  lists_column_view const& retention_mask,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Filters elements in each row of `input` LIST column using `boolean_mask`
+ * LIST of booleans as a mask.
+ *
+ * @deprecated in release 26.10. Use `apply_retention_mask` instead.
+ *
+ * @param input The input list column view to be filtered.
+ * @param boolean_mask A nullable list of bools column used to filter `input` elements.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @return List column of the same type as `input`, containing filtered list rows.
+ */
+[[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<column> apply_boolean_mask(
   lists_column_view const& input,
   lists_column_view const& boolean_mask,
   cuda::stream_ref stream           = cudf::get_default_stream(),

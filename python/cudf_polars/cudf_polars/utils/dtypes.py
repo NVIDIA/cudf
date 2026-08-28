@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Datatype utilities."""
@@ -113,6 +113,11 @@ def can_cast(from_: plc.DataType, to: plc.DataType) -> bool:
             plc.traits.is_integral_not_bool(to)
             and not to_is_empty
             and plc.traits.is_timestamp(from_)
+        )
+        or (
+            (plc.traits.is_timestamp(from_) or plc.traits.is_duration(from_))
+            and not to_is_empty
+            and plc.traits.is_floating_point(to)
         )
     )
 

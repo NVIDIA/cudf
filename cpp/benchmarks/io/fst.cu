@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,11 +15,11 @@
 #include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <nvbench/nvbench.cuh>
 
@@ -68,7 +68,7 @@ void BM_FST_JSON(nvbench::state& state)
   auto const string_size{cudf::size_type(state.get_int64("string_size"))};
   // Prepare cuda stream for data transfers & kernels
   rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  cuda::stream_ref stream_view(stream);
 
   auto input_string = make_test_json_data(state);
   auto& d_input     = static_cast<cudf::scalar_type_t<std::string>&>(*input_string);
@@ -109,7 +109,7 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
   auto const string_size{cudf::size_type(state.get_int64("string_size"))};
   // Prepare cuda stream for data transfers & kernels
   rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  cuda::stream_ref stream_view(stream);
 
   auto input_string = make_test_json_data(state);
   auto& d_input     = static_cast<cudf::scalar_type_t<std::string>&>(*input_string);
@@ -150,7 +150,7 @@ void BM_FST_JSON_no_out(nvbench::state& state)
   auto const string_size{cudf::size_type(state.get_int64("string_size"))};
   // Prepare cuda stream for data transfers & kernels
   rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  cuda::stream_ref stream_view(stream);
 
   auto input_string = make_test_json_data(state);
   auto& d_input     = static_cast<cudf::scalar_type_t<std::string>&>(*input_string);
@@ -189,7 +189,7 @@ void BM_FST_JSON_no_str(nvbench::state& state)
   auto const string_size{cudf::size_type(state.get_int64("string_size"))};
   // Prepare cuda stream for data transfers & kernels
   rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  cuda::stream_ref stream_view(stream);
 
   auto input_string = make_test_json_data(state);
   auto& d_input     = static_cast<cudf::scalar_type_t<std::string>&>(*input_string);

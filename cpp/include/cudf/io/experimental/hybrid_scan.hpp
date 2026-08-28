@@ -247,8 +247,12 @@ class hybrid_scan_metadata {
  *
  * if (bloom_filter_byte_ranges.size()) {
  *   // Fetch bloom filter byte ranges into device buffers and create spans
+ *   // Use a 32-byte aligned memory resource for bloom filter data
+ *   auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
+ *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource, bloom_filter_byte_ranges, stream, mr);
+ *     parquet::fetch_byte_ranges_to_device_async(
+ *       datasource, bloom_filter_byte_ranges, stream, aligned_mr);
  *   bloom_filter_tasks.get();
  *
  *   // Prune row groups using bloom filters

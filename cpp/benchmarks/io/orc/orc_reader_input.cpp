@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,7 +30,7 @@ void orc_read_common(cudf::size_type num_rows_to_read,
     cudf::io::orc_reader_options::builder(source_sink.make_source_info()).build();
 
   auto mem_stats_logger = cudf::memory_stats_logger();  // init stats logger
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   if constexpr (is_chunked_read) {
     state.exec(

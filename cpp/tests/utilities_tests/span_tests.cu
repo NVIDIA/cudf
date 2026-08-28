@@ -238,7 +238,7 @@ TEST(SpanTest, CanUseDeviceSpan)
 
   auto d_span = device_span<bool>(d_message.data(), d_message.size());
 
-  simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(d_span);
+  simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(d_span);
 
   ASSERT_TRUE(d_message.element(0, cudf::get_default_stream()));
 }
@@ -284,8 +284,8 @@ TEST(MdSpanTest, DeviceReadWrite)
 {
   auto vector = hostdevice_2dvector<int>(11, 23, cudf::get_default_stream());
 
-  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(vector);
-  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(vector);
+  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
+  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
   vector.device_to_host(cudf::get_default_stream());
   EXPECT_EQ(vector[5][6], 30);
 }

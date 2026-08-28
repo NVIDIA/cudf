@@ -3,6 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Single batch behavior is covered by parametrizing the shared join tests: the
+// `algorithm::STREAMING_HASH` arm in tests/join/join_tests.cpp runs streaming_hash_join through
+// the same cases as the other join implementations, so result correctness, null handling,
+// dictionary and nested keys, and empty inputs are not duplicated here.
+//
+// This file covers what a single call through that harness cannot reach: inserting more than one
+// batch, concurrent inserts from multiple threads, batch ID capacity limits, schema validation
+// across partitions, and constructor argument validation.
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>

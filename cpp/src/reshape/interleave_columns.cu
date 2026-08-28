@@ -238,6 +238,10 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.num_columns() > 0, "input must have at least one column to determine dtype.");
+  CUDF_EXPECTS(static_cast<int64_t>(input.num_rows()) * static_cast<int64_t>(input.num_columns()) <=
+                 static_cast<int64_t>(std::numeric_limits<size_type>::max()),
+               "Output column size exceeds the column size limit",
+               std::overflow_error);
 
   auto const dtype = input.column(0).type();
   CUDF_EXPECTS(std::all_of(std::cbegin(input),

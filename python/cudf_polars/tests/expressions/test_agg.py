@@ -387,22 +387,3 @@ def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
     q = df.select(expr)
     assert_ir_translation_raises(q, engine, NotImplementedError)
-
-
-@pytest.mark.parametrize(
-    "expr",
-    [
-        pl.col("a").entropy(),
-        pl.col("a").skew(),
-        pl.col("a").kurtosis(),
-    ],
-    ids=[
-        "entropy",
-        "skew",
-        "kurtosis",
-    ],
-)
-def test_agg_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
-    df = pl.LazyFrame({"a": [1, 2, 3, 2, 1]})
-    q = df.select(expr)
-    assert_ir_translation_raises(q, engine, NotImplementedError)

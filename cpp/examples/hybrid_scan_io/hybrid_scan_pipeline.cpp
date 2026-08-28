@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -70,7 +70,7 @@ enum class split_strategy : uint8_t {
  * @return Unique pointer to the resultant concatenated table.
  */
 std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>> tables,
-                                                rmm::cuda_stream_view stream)
+                                                cuda::stream_ref stream)
 {
   if (tables.size() == 1) { return std::move(tables[0]); }
 
@@ -89,7 +89,7 @@ std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf
  * @param io_source io source to read
  * @return cudf::io::table_with_metadata
  */
-cudf::io::table_with_metadata read_parquet(io_source const& io_source, rmm::cuda_stream_view stream)
+cudf::io::table_with_metadata read_parquet(io_source const& io_source, cuda::stream_ref stream)
 {
   auto source_info = io_source.get_source_info();
   auto options     = cudf::io::parquet_reader_options::builder(source_info).build();
@@ -103,7 +103,7 @@ struct hybrid_scan_fn {
   cudf::host_span<cudf::size_type const> row_groups_indices;
   bool use_page_index;
   cudf::io::parquet_reader_options const& options;
-  rmm::cuda_stream_view const stream;
+  cuda::stream_ref const stream;
   rmm::device_async_resource_ref const mr;
   void operator()() const
   {
@@ -126,7 +126,7 @@ struct hybrid_scan_fn {
       reader
         ->materialize_all_columns(row_groups_indices, all_column_chunk_data, options, stream, mr)
         .tbl);
-    stream.synchronize_no_throw();
+    stream.sync();
   }
 };
 

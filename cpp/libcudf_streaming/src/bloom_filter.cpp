@@ -151,7 +151,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
                                        mask.data(),
                                        {},
                                        0};
-    auto result    = cudf::apply_boolean_mask(
+    auto result    = cudf::apply_retention_mask(
       chunk.table_view(), mask_view, chunk_stream, ctx_->br()->device_mr());
     std::ignore = std::move(chunk);
     std::ignore = std::move(res);

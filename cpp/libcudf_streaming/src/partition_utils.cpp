@@ -35,35 +35,6 @@ namespace cudf_streaming {
 namespace {
 
 /**
- * @brief The device memory reservation covering an allocation.
- *
- * Splits @p size bytes off the caller's reservation, or makes one when the caller did
- * not provide one. Either way the result covers exactly the allocation about to be
- * made and releases those bytes when it goes out of scope, so a reservation is never
- * counted on top of memory that has already been allocated.
- *
- * @param reservation The caller's reservation, or `nullptr` to reserve.
- * @param size The number of bytes to cover.
- * @param br Buffer resource to reserve from.
- * @param allow_overbooking Passed to `reserve_device_memory_and_spill()`, ignored when
- * the caller supplied a reservation.
- *
- * @return The reservation covering the allocation.
- *
- * @throws rapidsmpf::reservation_error if @p reservation does not cover @p size. This
- * happens before anything is allocated, so the caller can reserve more and retry.
- */
-[[nodiscard]] rapidsmpf::MemoryReservation reserve_or_split(
-  rapidsmpf::MemoryReservation* reservation,
-  std::size_t size,
-  rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking)
-{
-  return reservation != nullptr ? reservation->split(size)
-                                : br->reserve_device_memory_and_spill(size, allow_overbooking);
-}
-
-/**
  * @brief Total size of the partitions and how much of it is not in device memory.
  *
  * @param partitions The packed partitions.
@@ -91,14 +62,6 @@ template <typename Range>
   }
   return {total_size, non_device_size};
 }
-
-std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack_impl(
-  cudf::table_view const& table,
-  std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
-  rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking,
-  rapidsmpf::MemoryReservation* reservation);
 
 }  // namespace
 
@@ -141,43 +104,6 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
   return {std::move(tbl_partitioned), std::move(partition_table)};
 }
 
-namespace {
-
-std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition_and_pack_impl(
-  cudf::table_view const& table,
-  std::vector<cudf::size_type> const& columns_to_hash,
-  int num_partitions,
-  cudf::hash_id hash_function,
-  std::uint32_t seed,
-  rmm::cuda_stream_view stream,
-  rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking,
-  rapidsmpf::MemoryReservation* reservation)
-{
-  RAPIDSMPF_NVTX_FUNC_RANGE();
-  RAPIDSMPF_MEMORY_PROFILE(br->statistics(), br->device_mr());
-  RAPIDSMPF_EXPECTS(num_partitions > 0, "Need to split to at least one partition");
-  if (table.num_rows() == 0) {
-    auto splits =
-      std::vector<cudf::size_type>(rapidsmpf::safe_cast<std::uint64_t>(num_partitions - 1), 0);
-    return split_and_pack_impl(table, splits, stream, br, allow_overbooking, reservation);
-  }
-
-  // hash_partition does a deep-copy. Therefore, we need to reserve memory for
-  // at least the size of the table. `packed_size()` measures the same bytes as the
-  // copy needs, rounded up to the packing alignment, so it is a safe over-estimate.
-  auto const reorder_bytes       = cudf::packed_size(table, stream, br->device_mr());
-  auto [reordered, split_points] = [&] {
-    auto res = reserve_or_split(reservation, reorder_bytes, br, allow_overbooking);
-    return cudf::hash_partition(
-      table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
-  }();
-  std::vector<cudf::size_type> splits(split_points.begin() + 1, split_points.end() - 1);
-  return split_and_pack_impl(reordered->view(), splits, stream, br, allow_overbooking, reservation);
-}
-
-}  // namespace
-
 std::size_t partition_and_pack_cost(cudf::table_view const& table,
                                     cuda::stream_ref stream,
                                     rmm::device_async_resource_ref temp_mr)
@@ -198,15 +124,10 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
-  return partition_and_pack_impl(table,
-                                 columns_to_hash,
-                                 num_partitions,
-                                 hash_function,
-                                 seed,
-                                 stream,
-                                 br,
-                                 allow_overbooking,
-                                 nullptr);
+  auto reservation = br->reserve_device_memory_and_spill(
+    partition_and_pack_cost(table, stream, br->device_mr()), allow_overbooking);
+  return partition_and_pack(
+    table, columns_to_hash, num_partitions, hash_function, seed, stream, br, reservation);
 }
 
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition_and_pack(
@@ -225,51 +146,27 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   RAPIDSMPF_EXPECTS(reservation.br() == br,
                     "reservation must belong to the given buffer resource",
                     std::invalid_argument);
-  return partition_and_pack_impl(table,
-                                 columns_to_hash,
-                                 num_partitions,
-                                 hash_function,
-                                 seed,
-                                 stream,
-                                 br,
-                                 rapidsmpf::AllowOverbooking::NO,
-                                 &reservation);
-}
-
-namespace {
-
-std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack_impl(
-  cudf::table_view const& table,
-  std::vector<cudf::size_type> const& splits,
-  rmm::cuda_stream_view stream,
-  rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking,
-  rapidsmpf::MemoryReservation* reservation)
-{
   RAPIDSMPF_NVTX_FUNC_RANGE();
   RAPIDSMPF_MEMORY_PROFILE(br->statistics(), br->device_mr());
-  std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> ret;
-
-  // contiguous split does a deep-copy. Therefore, we need to reserve memory for
-  // at least the size of the table.
-  auto const packed_bytes =
-    table.num_rows() == 0 ? 0 : cudf::packed_size(table, stream, br->device_mr());
-  auto packed = [&] {
-    auto res = reserve_or_split(reservation, packed_bytes, br, allow_overbooking);
-    return cudf::contiguous_split(table, splits, stream, br->device_mr());
-  }();
-  ret.reserve(packed.size());
-  for (rapidsmpf::shuffler::PartID i = 0; rapidsmpf::safe_cast<std::size_t>(i) < packed.size();
-       i++) {
-    auto pack = std::move(packed[i].data);
-    ret.emplace(
-      i,
-      rapidsmpf::PackedData(std::move(pack.metadata), br->move(std::move(pack.gpu_data), stream)));
+  RAPIDSMPF_EXPECTS(num_partitions > 0, "Need to split to at least one partition");
+  if (table.num_rows() == 0) {
+    auto splits =
+      std::vector<cudf::size_type>(rapidsmpf::safe_cast<std::uint64_t>(num_partitions - 1), 0);
+    return split_and_pack(table, splits, stream, br, reservation);
   }
-  return ret;
-}
 
-}  // namespace
+  // hash_partition does a deep-copy. Therefore, we need to reserve memory for
+  // at least the size of the table. `packed_size()` measures the same bytes as the
+  // copy needs, rounded up to the packing alignment, so it is a safe over-estimate.
+  auto const reorder_bytes       = cudf::packed_size(table, stream, br->device_mr());
+  auto [reordered, split_points] = [&] {
+    auto res = reservation.split(reorder_bytes);
+    return cudf::hash_partition(
+      table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
+  }();
+  std::vector<cudf::size_type> splits(split_points.begin() + 1, split_points.end() - 1);
+  return split_and_pack(reordered->view(), splits, stream, br, reservation);
+}
 
 std::size_t split_and_pack_cost(cudf::table_view const& table,
                                 cuda::stream_ref stream,
@@ -287,7 +184,9 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
   rapidsmpf::BufferResource* br,
   rapidsmpf::AllowOverbooking allow_overbooking)
 {
-  return split_and_pack_impl(table, splits, stream, br, allow_overbooking, nullptr);
+  auto reservation = br->reserve_device_memory_and_spill(
+    split_and_pack_cost(table, stream, br->device_mr()), allow_overbooking);
+  return split_and_pack(table, splits, stream, br, reservation);
 }
 
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
@@ -303,61 +202,28 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
   RAPIDSMPF_EXPECTS(reservation.br() == br,
                     "reservation must belong to the given buffer resource",
                     std::invalid_argument);
-  return split_and_pack_impl(
-    table, splits, stream, br, rapidsmpf::AllowOverbooking::NO, &reservation);
-}
-
-namespace {
-
-std::unique_ptr<cudf::table> unpack_and_concat_impl(std::vector<rapidsmpf::PackedData>&& partitions,
-                                                    rmm::cuda_stream_view stream,
-                                                    rapidsmpf::BufferResource* br,
-                                                    rapidsmpf::AllowOverbooking allow_overbooking,
-                                                    rapidsmpf::MemoryReservation* reservation)
-{
   RAPIDSMPF_NVTX_FUNC_RANGE();
   RAPIDSMPF_MEMORY_PROFILE(br->statistics(), br->device_mr());
+  std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> ret;
 
-  auto const [total_size, non_device_size] = partition_sizes(partitions);
-
-  std::vector<cudf::table_view> unpacked;
-  std::vector<cudf::packed_columns> references;
-  std::vector<rmm::cuda_stream_view> packed_data_streams;
-  unpacked.reserve(partitions.size());
-  references.reserve(partitions.size());
-  packed_data_streams.reserve(partitions.size());
-
-  // The unspill consumes its reservation as it moves each partition, the concatenation
-  // only needs its bytes accounted for until it has allocated them.
-  auto unspill_res = reserve_or_split(reservation, non_device_size, br, allow_overbooking);
-  auto concat_res  = reserve_or_split(reservation, total_size, br, allow_overbooking);
-
-  // `move_to_device_buffer()` consumes `non_device_size` of the reservation, leaving
-  // `total_size` for the concatenation.
-  for (auto& packed_data : partitions) {
-    if (!packed_data.empty()) {
-      if (packed_data.data->size > 0) {  // No need to sync empty buffers.
-        packed_data_streams.push_back(packed_data.data->stream());
-      }
-      unpacked.push_back(cudf::unpack(references.emplace_back(
-        std::move(packed_data.metadata),
-        br->move_to_device_buffer(std::move(packed_data.data), unspill_res))));
-    }
+  // contiguous split does a deep-copy. Therefore, we need to reserve memory for
+  // at least the size of the table.
+  auto const packed_bytes =
+    table.num_rows() == 0 ? 0 : cudf::packed_size(table, stream, br->device_mr());
+  auto packed = [&] {
+    auto res = reservation.split(packed_bytes);
+    return cudf::contiguous_split(table, splits, stream, br->device_mr());
+  }();
+  ret.reserve(packed.size());
+  for (rapidsmpf::shuffler::PartID i = 0; rapidsmpf::safe_cast<std::size_t>(i) < packed.size();
+       i++) {
+    auto pack = std::move(packed[i].data);
+    ret.emplace(
+      i,
+      rapidsmpf::PackedData(std::move(pack.metadata), br->move(std::move(pack.gpu_data), stream)));
   }
-
-  // We need to synchronize `stream` with the packed_data and update their
-  // underlying device buffers to use `stream` going forward. This ensures
-  // the packed data are not deallocated before we have a chance to
-  // concatenate them on `stream`.
-  rapidsmpf::cuda_stream_join(std::views::single(stream), packed_data_streams);
-  for (cudf::packed_columns& packed_columns : references) {
-    packed_columns.gpu_data->set_stream(stream);
-  }
-
-  return cudf::concatenate(unpacked, stream, br->device_mr());
+  return ret;
 }
-
-}  // namespace
 
 std::size_t unpack_and_concat_cost(std::vector<rapidsmpf::PackedData> const& partitions)
 {
@@ -380,7 +246,9 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
                                                rapidsmpf::BufferResource* br,
                                                rapidsmpf::AllowOverbooking allow_overbooking)
 {
-  return unpack_and_concat_impl(std::move(partitions), stream, br, allow_overbooking, nullptr);
+  auto reservation =
+    br->reserve_device_memory_and_spill(unpack_and_concat_cost(partitions), allow_overbooking);
+  return unpack_and_concat(std::move(partitions), stream, br, reservation);
 }
 
 std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData>&& partitions,
@@ -394,8 +262,44 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
   RAPIDSMPF_EXPECTS(reservation.br() == br,
                     "reservation must belong to the given buffer resource",
                     std::invalid_argument);
-  return unpack_and_concat_impl(
-    std::move(partitions), stream, br, rapidsmpf::AllowOverbooking::NO, &reservation);
+  RAPIDSMPF_NVTX_FUNC_RANGE();
+  RAPIDSMPF_MEMORY_PROFILE(br->statistics(), br->device_mr());
+
+  auto const [total_size, non_device_size] = partition_sizes(partitions);
+
+  std::vector<cudf::table_view> unpacked;
+  std::vector<cudf::packed_columns> references;
+  std::vector<rmm::cuda_stream_view> packed_data_streams;
+  unpacked.reserve(partitions.size());
+  references.reserve(partitions.size());
+  packed_data_streams.reserve(partitions.size());
+
+  // The unspill consumes its reservation as it moves each partition, the concatenation
+  // only needs its bytes accounted for until it has allocated them.
+  auto unspill_res = reservation.split(non_device_size);
+  auto concat_res  = reservation.split(total_size);
+
+  for (auto& packed_data : partitions) {
+    if (!packed_data.empty()) {
+      if (packed_data.data->size > 0) {  // No need to sync empty buffers.
+        packed_data_streams.push_back(packed_data.data->stream());
+      }
+      unpacked.push_back(cudf::unpack(references.emplace_back(
+        std::move(packed_data.metadata),
+        br->move_to_device_buffer(std::move(packed_data.data), unspill_res))));
+    }
+  }
+
+  // We need to synchronize `stream` with the packed_data and update their
+  // underlying device buffers to use `stream` going forward. This ensures
+  // the packed data are not deallocated before we have a chance to
+  // concatenate them on `stream`.
+  rapidsmpf::cuda_stream_join(std::views::single(stream), packed_data_streams);
+  for (cudf::packed_columns& packed_columns : references) {
+    packed_columns.gpu_data->set_stream(stream);
+  }
+
+  return cudf::concatenate(unpacked, stream, br->device_mr());
 }
 
 }  // namespace cudf_streaming

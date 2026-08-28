@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +12,6 @@
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/utilities/default_stream.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
 
 #include <nvbench/nvbench.cuh>
 

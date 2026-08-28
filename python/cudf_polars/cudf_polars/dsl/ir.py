@@ -2524,7 +2524,7 @@ def _add_cast(
     side: expr.ColRef,
     left_casts: dict[str, DataType],
     right_casts: dict[str, DataType],
-) -> None:  # pragma: no cover
+) -> None:
     (col,) = side.children
     assert isinstance(col, expr.Col)
     casts = (
@@ -2540,32 +2540,23 @@ def _align_decimal_binop_types(
     right_casts: dict[str, DataType],
 ) -> None:
     left_type, right_type = left_expr.dtype, right_expr.dtype
-
-    if plc.traits.is_fixed_point(left_type.plc_type) and plc.traits.is_fixed_point(
-        right_type.plc_type
-    ):
-        target = DataType.common_decimal_dtype(left_type, right_type)
-
-        if (
-            left_type.id() != target.id() or left_type.scale() != target.scale()
-        ):  # pragma: no cover
-            _add_cast(target, left_expr, left_casts, right_casts)
-
-        if right_type.id() != target.id() or right_type.scale() != target.scale():
-            _add_cast(target, right_expr, left_casts, right_casts)
-
-    elif (
-        plc.traits.is_fixed_point(left_type.plc_type)
-        and plc.traits.is_floating_point(right_type.plc_type)
-    ) or (
-        plc.traits.is_fixed_point(right_type.plc_type)
-        and plc.traits.is_floating_point(left_type.plc_type)
-    ):  # pragma: no cover
-        is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
-        decimal_expr, float_expr = (
-            (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
+    if not (
+        (
+            plc.traits.is_fixed_point(left_type.plc_type)
+            and plc.traits.is_floating_point(right_type.plc_type)
         )
-        _add_cast(decimal_expr.dtype, float_expr, left_casts, right_casts)
+        or (
+            plc.traits.is_fixed_point(right_type.plc_type)
+            and plc.traits.is_floating_point(left_type.plc_type)
+        )
+    ):
+        return
+
+    is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
+    decimal_expr, float_expr = (
+        (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
+    )
+    _add_cast(decimal_expr.dtype, float_expr, left_casts, right_casts)
 
 
 def _collect_decimal_binop_casts(
@@ -2590,9 +2581,7 @@ def _collect_decimal_binop_casts(
     return left_casts, right_casts
 
 
-def _apply_casts(
-    df: DataFrame, casts: dict[str, DataType]
-) -> DataFrame:  # pragma: no cover
+def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
     if not casts:
         return df
 

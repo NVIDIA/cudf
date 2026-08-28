@@ -3,8 +3,11 @@
 
 from cython.operator import dereference
 
+from libc.stdint cimport uint32_t
 from libcpp.functional cimport reference_wrapper
+from libcpp.optional cimport make_optional, nullopt, optional
 from libcpp.vector cimport vector
+from pylibcudf.libcudf.utilities.config_utils cimport set_up_kvikio as cpp_set_up_kvikio
 
 from pylibcudf.libcudf.scalar.scalar cimport scalar
 
@@ -18,12 +21,16 @@ from rmm.pylibrmm.memory_resource cimport (
 
 from rmm.pylibrmm.stream import DEFAULT_STREAM, PER_THREAD_DEFAULT_STREAM, Stream
 
+from pylibcudf.typing import CudaStreamLike, HasCudaStream
+
 
 import os
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pylibcudf.typing import CudaStreamLike
+
+__all__ = [
+    "CudaStreamLike",
+    "HasCudaStream",
+]
 
 
 # Check the environment for the variable CUDF_PER_THREAD_STREAM. If it is set,
@@ -63,3 +70,11 @@ cdef DeviceMemoryResource _get_memory_resource(DeviceMemoryResource mr = None):
     if mr is None:
         return get_current_device_resource()
     return mr
+
+
+cpdef void _set_up_kvikio(object nthreads=None):
+    cdef optional[uint32_t] c_nthreads = nullopt
+    if nthreads is not None:
+        c_nthreads = make_optional[uint32_t](<uint32_t>nthreads)
+    with nogil:
+        cpp_set_up_kvikio(c_nthreads)

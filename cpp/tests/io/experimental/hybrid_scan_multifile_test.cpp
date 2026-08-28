@@ -354,7 +354,7 @@ TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
 
   auto const input =
     cudf::concatenate(std::vector<cudf::table_view>(num_sources, payload_table), stream, mr);
-  auto const expected = cudf::apply_boolean_mask(input->view(), row_mask, stream, mr);
+  auto const expected = cudf::apply_retention_mask(input->view(), row_mask, stream, mr);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), result.tbl->view());
 }
 

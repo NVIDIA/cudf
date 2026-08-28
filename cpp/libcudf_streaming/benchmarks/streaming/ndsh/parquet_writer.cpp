@@ -8,6 +8,7 @@
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/types.hpp>
 
+#include <cudf_streaming/detail/stream_adapters.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
 #include <rapidsmpf/cuda_stream.hpp>
@@ -51,9 +52,13 @@ rapidsmpf::streaming::Actor write_parquet(std::shared_ptr<rapidsmpf::streaming::
     table = chunk.table_view();
     RAPIDSMPF_EXPECTS(static_cast<std::size_t>(table.num_columns()) == column_names.size(),
                       "Mismatching number of column names and chunk columns");
-    rapidsmpf::cuda_stream_join(write_stream, chunk.stream(), &event);
+    rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_rmm_cuda_stream_view(write_stream),
+                                cudf_streaming::detail::as_rmm_cuda_stream_view(chunk.stream()),
+                                &event);
     writer.write(table);
-    rapidsmpf::cuda_stream_join(chunk.stream(), write_stream, &event);
+    rapidsmpf::cuda_stream_join(cudf_streaming::detail::as_rmm_cuda_stream_view(chunk.stream()),
+                                cudf_streaming::detail::as_rmm_cuda_stream_view(write_stream),
+                                &event);
   }
   writer.close();
 }

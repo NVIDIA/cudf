@@ -9,6 +9,7 @@
 #include <cudf/scalar/scalar.hpp>
 
 #include <cudf_streaming/channel_metadata.hpp>
+#include <cudf_streaming/detail/stream_adapters.hpp>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/error.hpp>
@@ -78,7 +79,8 @@ bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferR
   auto const lhs    = boundaries->table_view();
   auto const rhs    = other.boundaries->table_view();
   auto const stream = boundaries->stream();
-  rapidsmpf::cuda_stream_join(stream, other.boundaries->stream());
+  rapidsmpf::cuda_stream_join(detail::as_rmm_cuda_stream_view(stream),
+                              detail::as_rmm_cuda_stream_view(other.boundaries->stream()));
   for (cudf::size_type i = 0; i < lhs.num_columns(); ++i) {
     auto eq      = cudf::binary_operation(lhs.column(i),
                                      rhs.column(i),

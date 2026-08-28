@@ -11,6 +11,7 @@
 
 #include <cudf_streaming/approx_distinct_count.hpp>
 #include <cudf_streaming/detail/approx_distinct_count.hpp>
+#include <cudf_streaming/detail/stream_adapters.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
 #include <cuda/stream>
@@ -115,7 +116,8 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
     auto const table =
       column_indices.empty() ? chunk.table_view() : chunk.table_view().select(column_indices);
     sketch.add(table, chunk.stream());
-    rapidsmpf::cuda_stream_join(sketch_stream, chunk.stream(), &add_event);
+    rapidsmpf::cuda_stream_join(
+      sketch_stream, detail::as_rmm_cuda_stream_view(chunk.stream()), &add_event);
     reservation.clear();
     if (ch_sampled != nullptr) {
       co_await ch_sampled->send(

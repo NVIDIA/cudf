@@ -19,6 +19,7 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
+    _prefetch_parquet_footers_for_paths,
     prefetch_parquet_file_metadata_for_ir,
 )
 from cudf_polars.engine.options import StreamingOptions
@@ -150,6 +151,17 @@ def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
         streaming_scan, py_executor=None, stats=None
     )
     assert set(result) == {local_path}
+
+
+def test_cached_parquet_info_hybrid_scan_reader_lazy(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    [info] = _prefetch_parquet_footers_for_paths([local_path])
+    assert info._hybrid_scan_metadata is None
+
+    info.hybrid_scan_reader(info.default_reader_options())
+    assert info._hybrid_scan_metadata is not None
 
 
 @pytest.mark.parametrize(
@@ -426,6 +438,44 @@ def test_streaming_scan_raises() -> None:
     ctx = IRExecutionContext()
     with pytest.raises(NotImplementedError, match=r"StreamingScan.do_evaluate"):
         StreamingScan.do_evaluate([fused], scan, context=ctx)
+
+
+@pytest.mark.parametrize(
+    "predicate,use_columns",
+    [
+        # uses hybrid scan reader
+        (pl.col("x") < 1_000, None),
+        (pl.col("x") < 1_000, ["x", "z"]),
+        (pl.col("x") < 1_000, ["z"]),
+        (pl.col("x") < 1_000, ["x"]),
+        # falls back to default parquet reader
+        (pl.col("y").str.contains("cat"), None),
+        (None, None),
+    ],
+)
+def test_split_scan_hybrid(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    predicate: pl.Expr | None,
+    use_columns: list[str] | None,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": True,
+            },
+        ),
+    )
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1, row_group_size=100)
+    q = pl.scan_parquet(tmp_path)
+    if predicate is not None:
+        q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_scan_path_mismatch_raises() -> None:

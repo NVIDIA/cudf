@@ -29,6 +29,11 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
+import kvikio
+import kvikio.defaults
+
+import pylibcudf.utils
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -263,6 +268,22 @@ def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
     )
 
 
+def configure_kvikio(nthreads: int) -> None:
+    """Set the remote I/O backend to ``EASY_THREADPOOL`` with ``nthreads`` threads."""
+    # HACK: libcudf calls set_up_kvikio() on the first IO op and that resets the thread
+    # pool (default is 4 if KVIKIO_NTHREADS is unset), undoing anything we set via
+    # kvikio.defaults. We call it here with our nthreads so later when it's called in
+    # libcudf it's a no-op. The explicit kvikio.defaults.set below handles subsequent
+    # calls to configure_kvikio (call_once only fires once).
+    pylibcudf.utils._set_up_kvikio(nthreads)
+    kvikio.defaults.set(
+        {
+            "num_threads": nthreads,
+            "remote_io_backend": kvikio.RemoteIOBackend.EASY_THREADPOOL,
+        }
+    )
+
+
 def _bool_converter(v: str) -> bool:
     lowered = v.lower()
     if lowered in {"true", "yes", "y", "1"}:
@@ -332,6 +353,10 @@ class ParquetOptions:
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
         improved performance on large datasets with complex filters.
         Default is False.
+    use_hybrid_scan
+        Whether to use the two-pass ``HybridScanReader`` for ``SplitScan``
+        tasks when a predicate can be pushed down to a parquet filter.
+        Default is False.
     """
 
     _env_prefix = "CUDF_POLARS__PARQUET_OPTIONS"
@@ -373,6 +398,25 @@ class ParquetOptions:
             default=UNSPECIFIED,
         )
     )
+    use_hybrid_scan: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__USE_HYBRID_SCAN",
+            _bool_converter,
+            default=False,
+        )
+    )
+    # Internal benchmarking flag. When False, skips stats and bloom-filter pruning
+    # before the first pass of a hybrid scan so you can measure two-pass read
+    # overhead in isolation. No reason to set this to False in production.
+    _hybrid_scan_stats_pruning: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__HYBRID_SCAN_STATS_PRUNING",
+            _bool_converter,
+            default=True,
+        ),
+        init=False,
+        repr=False,
+    )
     use_jit_filter: bool = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__USE_JIT_FILTER",
@@ -396,6 +440,12 @@ class ParquetOptions:
             raise TypeError("max_row_group_samples must be an int")
         if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
             raise TypeError("prefetch_file_metadata must be a bool when specified")
+        if not isinstance(self.use_hybrid_scan, bool):
+            raise TypeError("use_hybrid_scan must be a bool")
+        if self.use_hybrid_scan and self.prefetch_file_metadata is False:
+            raise ValueError(
+                "use_hybrid_scan requires prefetch_file_metadata to be enabled"
+            )
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -796,8 +846,9 @@ class StreamingExecutor:
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
     kvikio_nthreads
-        Number of threads in the kvikio thread pool. Defaults to 256, which is
-        tuned for cloud object-store IO. This can be set via
+        Number of threads in the kvikio ``EASY_THREADPOOL`` thread pool.
+        Defaults to 256, which is tuned for cloud object-store IO. This can be
+        set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable

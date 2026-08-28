@@ -38,6 +38,7 @@ from cudf_polars.utils.config import (
     ParquetOptions,
     StreamingExecutor,
     Unspecified,
+    configure_kvikio,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -374,6 +375,8 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_READ_LIMIT", "200")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_FOOTER_SAMPLES", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_ROW_GROUP_SAMPLES", "0")
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_HYBRID_SCAN", "0")
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__HYBRID_SCAN_STATS_PRUNING", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "1")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_JIT_FILTER", "1")
 
@@ -386,6 +389,8 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.parquet_options.pass_read_limit == 200
         assert config.parquet_options.max_footer_samples == 0
         assert config.parquet_options.max_row_group_samples == 0
+        assert config.parquet_options.use_hybrid_scan is False
+        assert config.parquet_options._hybrid_scan_stats_pruning is False
         assert config.parquet_options.prefetch_file_metadata is True
         assert config.parquet_options.use_jit_filter is True
 
@@ -610,6 +615,7 @@ def test_fallback_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "max_footer_samples",
         "max_row_group_samples",
         "prefetch_file_metadata",
+        "use_hybrid_scan",
         "use_jit_filter",
     ],
 )
@@ -619,6 +625,21 @@ def test_validate_parquet_options(option: str) -> None:
             pl.GPUEngine(
                 executor="streaming",
                 parquet_options={option: object()},
+            )
+        )
+
+
+def test_use_hybrid_scan_requires_prefetch_file_metadata() -> None:
+    with pytest.raises(
+        ValueError, match="use_hybrid_scan requires prefetch_file_metadata"
+    ):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                parquet_options={
+                    "use_hybrid_scan": True,
+                    "prefetch_file_metadata": False,
+                },
             )
         )
 
@@ -1029,6 +1050,21 @@ def test_kvikio_nthreads_cudf_polars_env_takes_precedence(
         m.setenv("KVIKIO_NTHREADS", "32")
         config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
         assert config.executor.kvikio_nthreads == 64
+
+
+def test_configure_kvikio_sets_backend_and_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kvikio
+    import kvikio.defaults
+
+    monkeypatch.delenv("KVIKIO_NTHREADS", raising=False)
+    configure_kvikio(42)
+    assert kvikio.defaults.get("num_threads") == 42
+    assert (
+        kvikio.defaults.get("remote_io_backend")
+        == kvikio.RemoteIOBackend.EASY_THREADPOOL
+    )
 
 
 def test_dask_sink_to_directory_false_raises() -> None:

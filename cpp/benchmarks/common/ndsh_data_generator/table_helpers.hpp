@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,7 +27,7 @@ namespace cudf::datagen {
 std::unique_ptr<cudf::column> add_calendrical_days(
   cudf::column_view const& timestamp_days,
   cudf::column_view const& days,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -46,7 +46,7 @@ std::unique_ptr<cudf::table> perform_left_join(
   cudf::table_view const& right_input,
   std::vector<cudf::size_type> const& left_on,
   std::vector<cudf::size_type> const& right_on,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -58,7 +58,7 @@ std::unique_ptr<cudf::table> perform_left_join(
  */
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_p_retailprice(
   cudf::column_view const& p_partkey,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -74,7 +74,7 @@ std::unique_ptr<cudf::table> perform_left_join(
   cudf::column_view const& l_partkey,
   cudf::size_type scale_factor,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -90,7 +90,7 @@ std::unique_ptr<cudf::table> perform_left_join(
   cudf::column_view const& ps_partkey,
   cudf::size_type scale_factor,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 /**
  * @brief Calculate the cardinality of the `lineitem` table
@@ -101,7 +101,7 @@ std::unique_ptr<cudf::table> perform_left_join(
  */
 [[nodiscard]] cudf::size_type calculate_l_cardinality(
   cudf::column_view const& o_rep_freqs,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 /**
  * @brief Calculate the charge column for the `lineitem` table
@@ -116,7 +116,7 @@ std::unique_ptr<cudf::table> perform_left_join(
   cudf::column_view const& extendedprice,
   cudf::column_view const& tax,
   cudf::column_view const& discount,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -128,7 +128,7 @@ std::unique_ptr<cudf::table> perform_left_join(
  */
 [[nodiscard]] std::unique_ptr<cudf::column> generate_address_column(
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -140,7 +140,7 @@ std::unique_ptr<cudf::table> perform_left_join(
  */
 [[nodiscard]] std::unique_ptr<cudf::column> generate_phone_column(
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace cudf::datagen

@@ -1127,7 +1127,7 @@ def date_range(
             # As mentioned in [1], this is a post processing step to trim extra
             # elements when `periods` is an estimated value. Only offset
             # specified with non fixed frequencies requires trimming.
-            res = res.apply_boolean_mask(
+            res = res.apply_retention_mask(
                 (res <= end) if _is_increment_sequence else (res <= start)
             )
     else:

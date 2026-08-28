@@ -3174,7 +3174,7 @@ def test_binops_float_scalar_decimal():
         [decimal.Decimal("1"), decimal.Decimal("-2.5"), None],
         dtype=cudf.Decimal32Dtype(3, 2),
     )
-    expected = cudf.Series([0.0, -3.5, None], dtype="float64")
+    expected = cudf.Series([0.0, 3.5, None], dtype="float64")
     assert_eq(result, expected)
 
 

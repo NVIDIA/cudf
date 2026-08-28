@@ -164,6 +164,13 @@ class streaming_hash_join {
    *         right side is identified by `(batch_idx, row_idx)`, where `batch_idx` identifies the
    *         partition this row came from, resolvable with `get_partition()`, and `row_idx` is the
    *         local row index within that partition.
+   *
+   * @throws std::logic_error if called before any `insert()`
+   * @throws std::invalid_argument if `left` has no columns
+   * @throws std::invalid_argument if `left` and the right-side keys have different column counts
+   * @throws std::invalid_argument if `left` has nulls but the join was constructed with
+   *                               `nullable_join::NO`
+   * @throws cudf::data_type_error if the `left` and right-side key column types differ
    */
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

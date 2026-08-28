@@ -433,7 +433,8 @@ cpdef object unpack_and_concat(
 
     Notes
     -----
-    The input partitions are released and left empty on return.
+    The input partitions are released and left empty, whether the call succeeds or
+    raises.
 
     Parameters
     ----------

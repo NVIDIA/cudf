@@ -129,9 +129,8 @@ size_type checked_batch_count(size_type batches)
 /**
  * @brief Describes how a slot's first 32-bit word is divided between hash and batch ID.
  *
- * The high `batch_bits` store the batch ID and the remaining low bits store the truncated row
- * hash. CUCO's
- * probing hash functions use only the low hash bits, ensuring that equal rows from different
+ * The high `batch_bits` store the batch ID and the remaining low bits store the truncated row hash.
+ * CUCO's probing hash functions use only the low hash bits, ensuring that equal rows from different
  * batches share the same probe sequence.
  */
 struct batch_hash_layout {
@@ -419,6 +418,8 @@ class streaming_hash_join_impl {
              cuda::stream_ref stream,
              rmm::device_async_resource_ref output_mr) const
   {
+    static_assert(!(has_nested && use_primitive),
+                  "primitive row comparators are never used for nested keys");
     auto preprocessed_left = row::equality::preprocessed_table::create(
       left, stream, cudf::get_current_device_resource_ref());
     auto const num_batches = inserted_batches.load(std::memory_order_relaxed);

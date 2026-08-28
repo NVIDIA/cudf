@@ -410,18 +410,23 @@ engine = pl.GPUEngine(
 )
 ```
 
-Each scan node may run up to `max_concurrent_io_tasks` reads concurrently. The
-limit applies independently to each scan node, each corresponding to a
-single `pl.scan_parquet` call in the query. Configure it through
-`executor_options` or
+Each scan node may run up to `max_concurrent_io_tasks` reads concurrently. By
+default, the streaming executor chooses this limit automatically based on the
+scan's paths. The limit applies independently to each scan node, each
+corresponding to a single `pl.scan_parquet` call in the query. Configure it
+explicitly through `executor_options` or
 `CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`:
 
 ```python
 engine = pl.GPUEngine(
     executor="streaming",
-    executor_options={"max_concurrent_io_tasks": 8},
+    executor_options={"max_concurrent_io_tasks": 4},
 )
 ```
+
+Passing an integer uses the same limit for all scans. Pass a
+`{"local": ..., "remote": ...}` dict, or set the environment variable to a
+JSON value like `{"remote": 16}`, to tune local and remote scans separately.
 
 Before each read is submitted, it waits for a device-memory reservation.
 This makes aggregate read concurrency respond to memory pressure across all

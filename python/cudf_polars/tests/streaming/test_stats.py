@@ -161,7 +161,13 @@ def test_parquet_source_info_uses_decoded_dtype_floor(
         }
         num_row_groups_per_file = (1, 1)
 
-        def __init__(self, paths: tuple[str, ...], max_footer_samples: int) -> None:
+        def __init__(
+            self,
+            paths: tuple[str, ...],
+            max_footer_samples: int,
+            *,
+            parse_hybrid_metadata: bool = False,
+        ) -> None:
             self.paths = paths
             self.max_footer_samples = max_footer_samples
             self.sampled_file_count = 1

@@ -45,7 +45,7 @@ using cudf_streaming::table_chunk;
  * and sent, and the channel has been drained.
  */
 inline Actor random_table_generator(std::shared_ptr<Context> ctx,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     std::shared_ptr<Channel> ch_out,
                                     std::uint64_t num_blocks,
                                     cudf::size_type ncolumns,

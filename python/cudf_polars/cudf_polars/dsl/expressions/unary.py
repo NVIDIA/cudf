@@ -380,7 +380,7 @@ class UnaryFunction(Expr):
             )
         result = column.obj
         if old.obj.null_count() != old.size:
-            nonnull_old, nonnull_new = plc.stream_compaction.apply_boolean_mask(
+            nonnull_old, nonnull_new = plc.stream_compaction.apply_retention_mask(
                 plc.Table([old.obj, new.obj]),
                 plc.unary.is_valid(old.obj, stream=df.stream),
                 stream=df.stream,
@@ -388,7 +388,7 @@ class UnaryFunction(Expr):
             result = plc.replace.find_and_replace_all(
                 result, nonnull_old, nonnull_new, stream=df.stream
             )
-        null_new = plc.stream_compaction.apply_boolean_mask(
+        null_new = plc.stream_compaction.apply_retention_mask(
             plc.Table([new.obj]),
             plc.unary.is_null(old.obj, stream=df.stream),
             stream=df.stream,
@@ -545,7 +545,7 @@ class UnaryFunction(Expr):
                 stream=df.stream,
             )
             return Column(
-                plc.stream_compaction.apply_boolean_mask(
+                plc.stream_compaction.apply_retention_mask(
                     plc.Table([indices]), column.obj, stream=df.stream
                 ).columns()[0],
                 dtype=self.dtype,
@@ -784,7 +784,7 @@ class UnaryFunction(Expr):
                 plc.DataType(plc.TypeId.BOOL8),
                 stream=df.stream,
             )
-            modes = plc.stream_compaction.apply_boolean_mask(
+            modes = plc.stream_compaction.apply_retention_mask(
                 keys_table, mask, stream=df.stream
             )
             return Column(
@@ -1246,7 +1246,7 @@ class UnaryFunction(Expr):
                 plc.Scalar.from_py(1, self.dtype.plc_type, stream=df.stream),
                 stream=df.stream,
             )
-            matched = plc.stream_compaction.apply_boolean_mask(
+            matched = plc.stream_compaction.apply_retention_mask(
                 plc.Table([indices]), mask, stream=df.stream
             ).columns()[0]
             if matched.size() == 0:

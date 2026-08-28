@@ -33,10 +33,12 @@ from cudf_polars.utils.config import (
     DynamicPlanningOptions,
     InMemoryExecutor,
     JoinFilterPushdownOptions,
+    MaxConcurrentIOTasks,
     MemoryResourceConfig,
     ParquetOptions,
     StreamingExecutor,
     Unspecified,
+    configure_kvikio,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -373,6 +375,8 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_READ_LIMIT", "200")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_FOOTER_SAMPLES", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__MAX_ROW_GROUP_SAMPLES", "0")
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_HYBRID_SCAN", "0")
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__HYBRID_SCAN_STATS_PRUNING", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "1")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_JIT_FILTER", "1")
 
@@ -385,6 +389,8 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.parquet_options.pass_read_limit == 200
         assert config.parquet_options.max_footer_samples == 0
         assert config.parquet_options.max_row_group_samples == 0
+        assert config.parquet_options.use_hybrid_scan is False
+        assert config.parquet_options._hybrid_scan_stats_pruning is False
         assert config.parquet_options.prefetch_file_metadata is True
         assert config.parquet_options.use_jit_filter is True
 
@@ -420,8 +426,117 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.executor.max_rows_per_partition == 42
         assert config.executor.target_partition_size == 100
         assert config.executor.broadcast_limit == 44
-        assert config.executor.max_concurrent_io_tasks == 6
+        assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+            local=6, remote=6
+        )
         assert config.executor.quent_context is not None
+
+
+def test_max_concurrent_io_tasks_local_remote_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.setenv(
+            "CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS",
+            '{"local": 2, "remote": 7}',
+        )
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+            local=2, remote=7
+        )
+
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", '{"remote": 7}')
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+            local=2, remote=7
+        )
+
+
+def test_max_concurrent_io_tasks_default_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", raising=False)
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": 6},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+        local=6, remote=6
+    )
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={
+                "max_concurrent_io_tasks": {"local": 3, "remote": 7},
+            },
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks(
+        local=3, remote=7
+    )
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": None},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks == MaxConcurrentIOTasks()
+
+
+def test_max_concurrent_io_tasks_accepts_dataclass() -> None:
+    value = MaxConcurrentIOTasks(local=3, remote=7)
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"max_concurrent_io_tasks": value},
+        )
+    )
+    assert config.executor.max_concurrent_io_tasks is value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, {"local": 0}, {"remote": 0}, {"local": -1}, {"remote": -1}],
+)
+def test_max_concurrent_io_tasks_rejects_non_positive(
+    value: int | dict[str, int],
+) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"max_concurrent_io_tasks": value},
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        True,
+        False,
+        {"local": True},
+        {"remote": False},
+        {"local": 1.5},
+        {"remote": "8"},
+    ],
+)
+def test_max_concurrent_io_tasks_rejects_non_int(value: object) -> None:
+    with pytest.raises(TypeError, match="must be ints"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"max_concurrent_io_tasks": value},
+            )
+        )
 
 
 def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -500,6 +615,7 @@ def test_fallback_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "max_footer_samples",
         "max_row_group_samples",
         "prefetch_file_metadata",
+        "use_hybrid_scan",
         "use_jit_filter",
     ],
 )
@@ -509,6 +625,21 @@ def test_validate_parquet_options(option: str) -> None:
             pl.GPUEngine(
                 executor="streaming",
                 parquet_options={option: object()},
+            )
+        )
+
+
+def test_use_hybrid_scan_requires_prefetch_file_metadata() -> None:
+    with pytest.raises(
+        ValueError, match="use_hybrid_scan requires prefetch_file_metadata"
+    ):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                parquet_options={
+                    "use_hybrid_scan": True,
+                    "prefetch_file_metadata": False,
+                },
             )
         )
 
@@ -562,6 +693,7 @@ def test_parquet_options_unspecified_dict_factory() -> None:
     assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
     result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
     assert result["parquet_options"]["prefetch_file_metadata"] is None
+    assert result["executor"]["max_concurrent_io_tasks"] == {"local": 2, "remote": 8}
 
 
 def test_validate_raise_on_fail() -> None:
@@ -918,6 +1050,21 @@ def test_kvikio_nthreads_cudf_polars_env_takes_precedence(
         m.setenv("KVIKIO_NTHREADS", "32")
         config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
         assert config.executor.kvikio_nthreads == 64
+
+
+def test_configure_kvikio_sets_backend_and_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kvikio
+    import kvikio.defaults
+
+    monkeypatch.delenv("KVIKIO_NTHREADS", raising=False)
+    configure_kvikio(42)
+    assert kvikio.defaults.get("num_threads") == 42
+    assert (
+        kvikio.defaults.get("remote_io_backend")
+        == kvikio.RemoteIOBackend.EASY_THREADPOOL
+    )
 
 
 def test_dask_sink_to_directory_false_raises() -> None:

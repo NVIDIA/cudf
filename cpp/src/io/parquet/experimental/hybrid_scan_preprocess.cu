@@ -269,7 +269,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
                                           {},
                                           {},
                                           {},
-                                          _stream));
+                                          stream));
 
   CUDF_EXPECTS(
     row_groups_info.size() * dictionary_col_schemas.size() == dictionary_page_data.size(),

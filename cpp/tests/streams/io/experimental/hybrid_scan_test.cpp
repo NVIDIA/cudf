@@ -120,7 +120,10 @@ TEST_F(HybridScanTest, DictionaryPageFiltering)
     std::get<1>(reader->secondary_filters_byte_ranges(input_row_group_indices, in_opts));
   auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource_ref, dict_byte_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE);
+      datasource_ref,
+      dict_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      cudf::test::get_default_stream());
   dict_page_tasks.get();
 
   auto result = reader->filter_row_groups_with_dictionary_pages(

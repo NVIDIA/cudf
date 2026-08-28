@@ -133,6 +133,9 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   auto const device = rmm::get_current_cuda_device();
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_batches);
+  // `ready` lets the main thread wait until every worker is spawned and spinning, and `start`
+  // then releases them together, so the inserts actually overlap instead of trickling in as
+  // each thread is created.
   std::atomic<size_type> ready{0};
   std::atomic<bool> start{false};
   threads.reserve(num_batches);

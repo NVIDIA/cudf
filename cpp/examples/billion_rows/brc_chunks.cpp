@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "common.hpp"
@@ -25,7 +25,7 @@ using elapsed_t = std::chrono::duration<double>;
 std::unique_ptr<cudf::table> load_chunk(std::string const& input_file,
                                         std::size_t start,
                                         std::size_t size,
-                                        rmm::cuda_stream_view stream)
+                                        cuda::stream_ref stream)
 {
   cudf::io::csv_reader_options in_opts =
     cudf::io::csv_reader_options::builder(cudf::io::source_info{input_file})

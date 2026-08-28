@@ -10,6 +10,7 @@
 #include "parquet_delta_test_utils.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
@@ -3257,6 +3258,51 @@ TEST_F(ParquetReaderTest, DeltaSkipRowsWithNulls)
 
     CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), result2.tbl->view());
   }
+}
+
+TEST_F(ParquetReaderTest, DeltaBinaryBoundaryWordMerge)
+{
+  // Write two 33-row nullable DELTA_BINARY_PACKED pages so each page ends just past a
+  // 32-bit validity-mask word. Reading the file back verifies that page-local validity
+  // masks are merged into the output mask without shifting bits at word boundaries.
+  using cudf::io::column_encoding;
+  constexpr cudf::size_type page_rows = 33;
+  constexpr cudf::size_type num_rows  = 2 * page_rows;
+
+  auto const values = cuda::counting_iterator<int64_t>{0};
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 2) == 0; });
+  cudf::test::fixed_width_column_wrapper<int64_t> col(values, values + num_rows, valids);
+  cudf::table_view tbl({col});
+
+  auto input_metadata = cudf::io::table_input_metadata{tbl};
+  input_metadata.column_metadata[0].set_encoding(column_encoding::DELTA_BINARY_PACKED);
+
+  auto const filepath = temp_env->get_temp_filepath("DeltaBinaryBoundaryWordMerge.parquet");
+  auto const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, tbl)
+      .metadata(input_metadata)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(num_rows)
+      .max_page_size_rows(page_rows)
+      .write_v2_headers(true)
+      .build();
+  cudf::io::write_parquet(out_opts);
+
+  auto const in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
+  auto const result = cudf::io::read_parquet(in_opts);
+  auto const column = result.tbl->view().column(0);
+
+  EXPECT_EQ(column.null_count(), 33);
+
+  auto const host_column = cudf::test::to_host<int64_t>(column);
+  auto const& null_mask  = host_column.second;
+  ASSERT_EQ(null_mask.size(), 3);
+  EXPECT_EQ(null_mask[0], cudf::bitmask_type{0x55555555});
+  EXPECT_EQ(null_mask[1], cudf::bitmask_type{0x55555555});
+  EXPECT_EQ(null_mask[2] & cudf::bitmask_type{0x3}, cudf::bitmask_type{0x1});
 }
 
 TEST_F(ParquetReaderTest, DeltaByteArraySkipAllValid)

@@ -12,7 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace test::detail {
@@ -41,8 +41,8 @@ void expect_table_properties_equal(cudf::table_view lhs, cudf::table_view rhs);
  */
 void expect_tables_equal(cudf::table_view lhs,
                          cudf::table_view rhs,
-                         rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                         cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+                         cuda::stream_ref stream   = cudf::test::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Verifies the equivalency of two tables.
@@ -60,7 +60,7 @@ void expect_tables_equal(cudf::table_view lhs,
  */
 void expect_tables_equivalent(cudf::table_view lhs,
                               cudf::table_view rhs,
-                              rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
+                              cuda::stream_ref stream   = cudf::test::get_default_stream(),
                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace test::detail

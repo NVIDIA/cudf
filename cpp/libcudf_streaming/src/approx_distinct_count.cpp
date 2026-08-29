@@ -84,7 +84,7 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
     co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)->reserve_or_wait(storage_bytes, 0);
   auto buf = rmm::device_buffer(
     storage_bytes, cudf::approx_distinct_count::sketch_alignment(), sketch_stream, br->device_mr());
-  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream));
+  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream.get()));
   reservation.clear();
   rapidsmpf::CudaEvent init_event;
   rapidsmpf::CudaEvent add_event;

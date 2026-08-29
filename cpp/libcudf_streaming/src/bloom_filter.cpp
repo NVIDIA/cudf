@@ -55,7 +55,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
   rapidsmpf::CudaEvent event;
   auto storage =
     cudf_streaming::detail::device_bloom_filter::storage(filter_size_, filter_stream, mr);
-  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream));
+  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream.get()));
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage->data());
   rapidsmpf::CudaEvent build_event;
   build_event.record(filter_stream);

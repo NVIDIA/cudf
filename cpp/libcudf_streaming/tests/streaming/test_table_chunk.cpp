@@ -36,9 +36,8 @@ class StreamingTableChunk : public BaseStreamingFixture,
     rapidsmpf::config::Options options(rapidsmpf::config::get_environment_variables());
 
     std::unordered_map<rapidsmpf::MemoryType, std::int64_t> memory_limits{};
-    auto stream_pool =
-      std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking);
-    stream = cudf::get_default_stream();
+    auto stream_pool = std::make_shared<rapidsmpf::StreamPool>(16);
+    stream           = cudf::get_default_stream();
     // Enable pinned host memory only when supported; otherwise the non-pinned
     // params still run and the PINNED_HOST cases skip in the test bodies.
     auto pinned_pool_properties = rapidsmpf::is_pinned_memory_resources_supported()

@@ -16,6 +16,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
@@ -398,16 +399,6 @@ using string_type  = cudf::io::detail::inline_column_buffer;
 using pointer_column_buffer = column_buffer_base<pointer_type>;
 using string_column_buffer  = column_buffer_base<string_type>;
 
-template std::unique_ptr<column> column_buffer_base<string_type>::make_column(
-  column_name_info* schema_info,
-  std::optional<reader_column_schema> const& schema,
-  cuda::stream_ref stream) &&;
-
-template std::unique_ptr<column> column_buffer_base<pointer_type>::make_column(
-  column_name_info* schema_info,
-  std::optional<reader_column_schema> const& schema,
-  cuda::stream_ref stream) &&;
-
 template std::unique_ptr<column> empty_like<string_type>(string_column_buffer& buffer,
                                                          column_name_info* schema_info,
                                                          cuda::stream_ref stream,
@@ -420,6 +411,30 @@ template std::unique_ptr<column> empty_like<pointer_type>(pointer_column_buffer&
 
 template std::string type_to_name<string_type>(string_column_buffer const& buffer);
 template std::string type_to_name<pointer_type>(pointer_column_buffer const& buffer);
+
+template CUDF_EXPORT void column_buffer_base<string_type>::create(size_type,
+                                                                  bool,
+                                                                  cuda::stream_ref,
+                                                                  rmm::device_async_resource_ref);
+template CUDF_EXPORT void column_buffer_base<string_type>::create(size_type,
+                                                                  cuda::stream_ref,
+                                                                  rmm::device_async_resource_ref);
+template CUDF_EXPORT void column_buffer_base<string_type>::create_with_mask(
+  size_type, mask_state, bool, cuda::stream_ref, rmm::device_async_resource_ref);
+template CUDF_EXPORT std::unique_ptr<column> column_buffer_base<string_type>::make_column(
+  column_name_info*, std::optional<reader_column_schema> const&, cuda::stream_ref) &&;
+
+template CUDF_EXPORT void column_buffer_base<pointer_type>::create(size_type,
+                                                                   bool,
+                                                                   cuda::stream_ref,
+                                                                   rmm::device_async_resource_ref);
+template CUDF_EXPORT void column_buffer_base<pointer_type>::create(size_type,
+                                                                   cuda::stream_ref,
+                                                                   rmm::device_async_resource_ref);
+template CUDF_EXPORT void column_buffer_base<pointer_type>::create_with_mask(
+  size_type, mask_state, bool, cuda::stream_ref, rmm::device_async_resource_ref);
+template CUDF_EXPORT std::unique_ptr<column> column_buffer_base<pointer_type>::make_column(
+  column_name_info*, std::optional<reader_column_schema> const&, cuda::stream_ref) &&;
 
 template class column_buffer_base<pointer_type>;
 template class column_buffer_base<string_type>;

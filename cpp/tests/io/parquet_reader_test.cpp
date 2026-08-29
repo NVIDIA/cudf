@@ -1965,7 +1965,7 @@ TEST_F(ParquetReaderTest, FilterSimple)
   auto predicate = cudf::compute_column(*written_table, filter_expression);
   EXPECT_EQ(predicate->view().type().id(), cudf::type_id::BOOL8)
     << "Predicate filter should return a boolean";
-  auto expected = cudf::apply_boolean_mask(*written_table, *predicate);
+  auto expected = cudf::apply_retention_mask(*written_table, *predicate);
   // To make sure AST filters out some elements
   EXPECT_LT(expected->num_rows(), written_table->num_rows());
 
@@ -2046,7 +2046,7 @@ TEST_F(ParquetReaderTest, FilterWithColumnProjection)
     auto col_ref         = cudf::ast::column_name_reference{"cOL_uint32"};
     auto read_expr       = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, lit);
     auto projected_table = cudf::table_view{{src.get_column(2)}};
-    auto expected        = cudf::apply_boolean_mask(projected_table, *predicate);
+    auto expected        = cudf::apply_retention_mask(projected_table, *predicate);
 
     auto read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
                        .column_names({"col_Double"})
@@ -2078,7 +2078,7 @@ TEST_F(ParquetReaderTest, FilterWithColumnProjection)
     auto read_ref_expr = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_index2, lit);
 
     auto projected_table = cudf::table_view{{src.get_column(2), src.get_column(0)}};
-    auto expected        = cudf::apply_boolean_mask(projected_table, *predicate);
+    auto expected        = cudf::apply_retention_mask(projected_table, *predicate);
     auto read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
                        .column_names({"col_Double", "col_UInt32"})
                        .case_sensitive_names(false)
@@ -2137,7 +2137,7 @@ TEST_F(ParquetReaderTest, FilterReferenceExpression)
 
   // Expected result
   auto predicate = cudf::compute_column(src, filter_expression);
-  auto expected  = cudf::apply_boolean_mask(src, *predicate);
+  auto expected  = cudf::apply_retention_mask(src, *predicate);
 
   cudf::io::parquet_reader_options read_opts =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
@@ -2174,7 +2174,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_a, col_ref_b);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2194,7 +2194,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, lhs, rhs);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2213,7 +2213,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, lhs, rhs);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2242,7 +2242,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, a_lt_10, and_expr);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2262,7 +2262,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter  = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, literal_0, a_lt_50);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2281,7 +2281,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::NOT, inner);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2299,7 +2299,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::NULL_EQUAL, col_ref_a, literal_10);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2322,7 +2322,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter  = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, lhs, rhs);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2338,7 +2338,7 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
     auto filter = cudf::ast::operation(cudf::ast::ast_operator::NOT, inner);
 
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2384,7 +2384,7 @@ TEST_F(ParquetReaderTest, FilterNegationPushdown)
                                               std::optional<cudf::size_type> expected_row_groups =
                                                 std::nullopt) {
     auto predicate = cudf::compute_column(written_table, filter);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     cudf::io::parquet_reader_options const read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
@@ -2512,7 +2512,7 @@ TEST_F(ParquetReaderTest, FilterNamedExpression)
 
   // Expected result
   auto predicate = cudf::compute_column(src, table_filter);
-  auto expected  = cudf::apply_boolean_mask(src, *predicate);
+  auto expected  = cudf::apply_retention_mask(src, *predicate);
 
   cudf::io::parquet_reader_options read_opts =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
@@ -2544,7 +2544,7 @@ TEST_F(ParquetReaderTest, FilterMultiple1)
 
   // Expected result
   auto predicate = cudf::compute_column(written_table, expr_3);
-  auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+  auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
   auto si                  = cudf::io::source_info(filepath);
   auto builder             = cudf::io::parquet_reader_options::builder(si).filter(expr_3);
@@ -2590,7 +2590,7 @@ TEST_F(ParquetReaderTest, FilterMultiple2)
 
   // Expected result
   auto predicate = cudf::compute_column(written_table, expr_7);
-  auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+  auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
   auto si                  = cudf::io::source_info(filepath);
   auto builder             = cudf::io::parquet_reader_options::builder(si).filter(expr_7);
@@ -2645,7 +2645,7 @@ TEST_F(ParquetReaderTest, FilterMultiple3)
     cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, expr_4_ref, expr_5_ref);
   auto expr_7_ref = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, expr_3, expr_6_ref);
   auto predicate  = cudf::compute_column(written_table, expr_7_ref);
-  auto expected   = cudf::apply_boolean_mask(written_table, *predicate);
+  auto expected   = cudf::apply_retention_mask(written_table, *predicate);
 
   auto si                  = cudf::io::source_info(filepath);
   auto builder             = cudf::io::parquet_reader_options::builder(si).filter(expr_7);
@@ -2696,7 +2696,7 @@ TEST_F(ParquetReaderTest, FilterSupported)
 
   // Expected result
   auto predicate = cudf::compute_column(written_table, expr_9);
-  auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+  auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
   auto si                  = cudf::io::source_info(filepath);
   auto builder             = cudf::io::parquet_reader_options::builder(si).filter(expr_9);
@@ -2738,7 +2738,7 @@ TEST_F(ParquetReaderTest, FilterSupported2)
   auto test_expr = [&](auto& expr) {
     // Expected result
     auto predicate = cudf::compute_column(written_table, expr);
-    auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
     // tests
     auto builder             = cudf::io::parquet_reader_options::builder(si).filter(expr);
@@ -2840,7 +2840,7 @@ TEST_F(ParquetReaderTest, FilterErrors)
     // Expected result throw to show that the filter expression is invalid,
     // not a limitation of the parquet predicate pushdown.
     auto predicate = cudf::compute_column(written_table, expr_8);
-    EXPECT_THROW(cudf::apply_boolean_mask(written_table, *predicate), cudf::logic_error);
+    EXPECT_THROW(cudf::apply_retention_mask(written_table, *predicate), cudf::logic_error);
   }
 
   // Filtering AST - INT64(table[0] < 100) non-bool expression
@@ -2889,7 +2889,7 @@ TEST_F(ParquetReaderTest, FilterNoStats)
 
   // Expected result
   auto predicate = cudf::compute_column(written_table, expr);
-  auto expected  = cudf::apply_boolean_mask(written_table, *predicate);
+  auto expected  = cudf::apply_retention_mask(written_table, *predicate);
 
   // tests
   auto builder             = cudf::io::parquet_reader_options::builder(si).filter(expr);
@@ -2932,9 +2932,9 @@ TEST_F(ParquetReaderTest, FilterFloatNAN)
 
   // Expected result
   auto predicate0 = cudf::compute_column(written_table, expr_eq);
-  auto expected0  = cudf::apply_boolean_mask(written_table, *predicate0);
+  auto expected0  = cudf::apply_retention_mask(written_table, *predicate0);
   auto predicate1 = cudf::compute_column(written_table, expr_neq);
-  auto expected1  = cudf::apply_boolean_mask(written_table, *predicate1);
+  auto expected1  = cudf::apply_retention_mask(written_table, *predicate1);
 
   // tests
   auto builder0             = cudf::io::parquet_reader_options::builder(si).filter(expr_eq);
@@ -4201,7 +4201,7 @@ void filter_typed_test()
     auto const predicate = cudf::compute_column(written_table, ref_filter);
     EXPECT_EQ(predicate->view().type().id(), cudf::type_id::BOOL8)
       << "Predicate filter should return a boolean";
-    auto const expected = cudf::apply_boolean_mask(written_table, *predicate);
+    auto const expected = cudf::apply_retention_mask(written_table, *predicate);
 
     // Reading with Predicate Pushdown
     cudf::io::parquet_reader_options read_opts =
@@ -4343,7 +4343,7 @@ void filter_unary_operation_typed_test()
     auto const predicate = cudf::compute_column(written_table, ref_filter);
     EXPECT_EQ(predicate->view().type().id(), cudf::type_id::BOOL8)
       << "Predicate filter should return a boolean";
-    auto const expected = cudf::apply_boolean_mask(written_table, *predicate);
+    auto const expected = cudf::apply_retention_mask(written_table, *predicate);
 
     // JIT does not support nullness-dependent operators such as IS_NULL
     // Ref: https://github.com/NVIDIA/cudf/issues/20177
@@ -4801,7 +4801,7 @@ void row_bounds_and_filter_test()
         cudf::test::iterators::no_nulls()};
       cudf::table_view const expected_row_bounded({int64_col_row_bounded});
       auto predicate = cudf::compute_column(expected_row_bounded, filter_expression);
-      auto expected  = cudf::apply_boolean_mask(expected_row_bounded, *predicate);
+      auto expected  = cudf::apply_retention_mask(expected_row_bounded, *predicate);
 
       auto const in_opts = cudf::io::parquet_reader_options::builder(
                              cudf::io::source_info{std::vector<std::string>{num_files, filepath}})
@@ -5623,7 +5623,7 @@ TEST_F(ParquetReaderTest, DuplicateColumnSelection)
     auto filter_expr = cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, col_ref, literal);
     auto const predicate =
       cudf::test::fixed_width_column_wrapper<bool>{true, true, true, false, false}.release();
-    auto const expected = cudf::apply_boolean_mask(tbl.select({0, 1}), predicate->view());
+    auto const expected = cudf::apply_retention_mask(tbl.select({0, 1}), predicate->view());
 
     auto const read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})

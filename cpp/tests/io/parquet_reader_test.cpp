@@ -17,7 +17,6 @@
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
-#include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>

@@ -139,7 +139,7 @@ jobs:
       build_type: ${{ inputs.build_type || 'branch' }}
       container_image: "rapidsai/ci-conda:26.10-latest"
       date: ${{ inputs.date }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       script: "ci/build_docs.sh"
       sha: ${{ inputs.sha }}
   publish-api-docs:

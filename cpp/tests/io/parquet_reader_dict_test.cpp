@@ -168,11 +168,9 @@ void write_parquet_adaptive(cudf::table_view const& input,
   cudf::io::write_parquet(options);
 }
 
-// A flat, low-cardinality string column in which one entire row group is all-null while every other
-// row group is normal low-cardinality data. Under `dictionary_policy::ALWAYS` the all-null row
-// group is still dictionary-encoded, but its dictionary carries zero entries -- so its chunk
-// contributes rows but no keys (`chunk_key_counts[k] == 0`), the degenerate case the transcode
-// assembly must tolerate.
+// Build a  flat, low-cardinality string column in which one entire row group is all-null while
+// every other row group is normal low-cardinality data. The column is returned as a DICTIONARY32
+// column when `output_dict_columns` is enabled.
 cudf::test::strings_column_wrapper make_strings_with_null_row_group()
 {
   std::mt19937 engine(seed);
@@ -507,9 +505,7 @@ TEST_F(ParquetReaderDictTest, MultiColumnMixedEligibility)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(key_col, read_key);
 }
 
-// A low-cardinality flat string column spanning multiple row groups must transcode to a
-// DICTIONARY32 with unique keys. Check if deduplication works correctly by checking for unique
-// keys.
+// Test to check if keys across multiple row groups are unique.
 TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
 {
   auto input_col = make_low_cardinality_strings();
@@ -538,10 +534,7 @@ TEST_F(ParquetReaderDictTest, MultiRowGroupKeysAreUnique)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
 }
 
-// Two flat, low-cardinality string columns across multiple row groups. Their per-row-group
-// dictionaries interleave in the reader's shared key buffer (`pass.str_dict_index`), so each
-// column's keys are strided within it. Both columns must transcode to DICTIONARY32
-// and decode back to their (distinct) inputs.
+// Test to check if keys across multiple string columns are unique.
 TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
 {
   auto col_a = make_low_cardinality_strings();  // default seed
@@ -578,8 +571,7 @@ TEST_F(ParquetReaderDictTest, MultiStringColumnsDictTranscode)
 
 // An otherwise-eligible flat string column with one entirely-null row group. That row group has no
 // dictionary entries, so its chunk contributes rows but zero keys.The reader must return a
-// DICTIONARY32 column with deduplicated keys that decodes back to the original input -- nulls
-// included -- without going out of range or corrupting the surviving row groups' indices.
+// DICTIONARY32 column with deduplicated keys that decodes back to the original input.
 TEST_F(ParquetReaderDictTest, NullRowGroupDictTranscode)
 {
   auto input_col = make_strings_with_null_row_group();

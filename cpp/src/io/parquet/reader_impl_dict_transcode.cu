@@ -158,11 +158,8 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
 /**
  * @brief Gathers one column's stacked keys out of the shared `pass.str_dict_index` buffer.
  *
- * Maps a stacked-key position in `[0, total_keys)` to its `string_index_pair`: it finds the owning
- * chunk `k` (the last key-prefix boundary `<=` the position), then indexes into that chunk's base
- * offset within `pass.str_dict_index`. Fed through a counting-transform iterator, this lets a
- * strided (multi-string-column) column materialize its stacked keys in a single
- * `make_strings_column` pass -- fusing the per-chunk build and `concatenate` into one gather.
+ * Maps a stacked-key position in `[0, total_keys)` to its `string_index_pair`.
+ * Fed through a counting-transform iterator.
  */
 struct stacked_key_gather_fn {
   string_index_pair const* str_dict_index;
@@ -182,11 +179,9 @@ struct stacked_key_gather_fn {
 /**
  * @brief Remap each row's dictionary index onto the deduplicated key space (in place).
  *
- * Each row's decoded index is local to its own row group's dictionary. This shifts that index into
- * the row group's region of the stacked (non-deduplicated) key space, then translates it through
- * `stacked_to_unique` -- the position-to-index map produced by encoding the stacked keys -- so it
- * points at the correct entry in the compact, unique keys column. Done in place, in one pass over
- * the rows, in lieu of `cudf::dictionary::detail::concatenate`.
+ * Each input row's decoded index is local to its own row group's dictionary. This function shifts
+ * that index to point at the correct entry in the compact, unique keys column. Done in place, in
+ * one pass over the rows, in lieu of `cudf::dictionary::detail::concatenate`.
  *
  * @param indices INT32 index buffer (one entry per row), mutated in place
  * @param row_offsets Per-chunk row boundaries `[offsets[k], offsets[k+1])`, size num_chunks+1
@@ -456,11 +451,11 @@ void reader_impl::assemble_dict_transcoded_columns(
       // `make_strings_column` stays within the 2 GiB string-offset limit.
       //
       // Contiguous (single eligible string column): one `make_strings_column` over the contiguous
-      // entry range -- no gather, no concatenate. Strided (multiple string columns): a single
-      // gathered `make_strings_column` that pulls each stacked position from the correct place in
-      // `pass.str_dict_index` via a counting-transform iterator, fusing what would otherwise be a
-      // per-chunk build followed by `concatenate` into one pass -- one copy of the key bytes
-      // instead of two.
+      // entry range.
+      //
+      // Strided (multiple string columns): a single gather `make_strings_column` that pulls each
+      // stacked position from the correct place in `pass.str_dict_index` via a counting-transform
+      // iterator.
       std::unique_ptr<column> stacked_keys_owner;
       if (contiguous) {
         stacked_keys_owner =

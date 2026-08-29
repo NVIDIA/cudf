@@ -171,9 +171,7 @@ def test_prefetch_skips_paths_cached_by_stats_collection(
         paths_arg: list[str], *, parse_hybrid_metadata: bool = False
     ) -> list:
         fetched_paths.extend(paths_arg)
-        return real_prefetch(
-            paths_arg, parse_hybrid_metadata=parse_hybrid_metadata
-        )
+        return real_prefetch(paths_arg, parse_hybrid_metadata=parse_hybrid_metadata)
 
     monkeypatch.setattr(
         io_module, "_prefetch_parquet_footers_for_paths", recording_prefetch

@@ -19,8 +19,6 @@
 #include <rapidsmpf/streaming/core/lineariser.hpp>
 #include <rapidsmpf/streaming/core/message.hpp>
 
-#include <ranges>
-
 namespace cudf_streaming {
 
 std::size_t bloom_filter::aligned_size(std::size_t size) noexcept
@@ -80,8 +78,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     // kernels doing that concurrently because the updates are atomic.
     build_event.stream_wait(chunk.stream());
     filter.add(chunk.table_view(), chunk.stream(), mr);
-    rapidsmpf::cuda_stream_join(
-      std::ranges::single_view{filter_stream}, std::ranges::single_view{chunk.stream()}, &event);
+    rapidsmpf::cuda_stream_join(filter_stream, chunk.stream(), &event);
   }
   if (comm_->nranks() > 1) {
     auto reducer = rapidsmpf::streaming::AllReduce(
@@ -133,8 +130,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
       ctx_,
       -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)));
     auto chunk_stream = chunk.stream();
-    rapidsmpf::cuda_stream_join(
-      std::ranges::single_view{chunk_stream}, std::ranges::single_view{stream}, &event);
+    rapidsmpf::cuda_stream_join(chunk_stream, stream, &event);
     // Reservation for the mask construction and guess at output size.
     auto res = co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)
                  ->reserve_or_wait(rapidsmpf::safe_cast<std::size_t>(chunk.table_view().num_rows())
@@ -146,8 +142,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
                                    0);
     auto mask =
       filter.contains(chunk.table_view().select(keys), chunk_stream, ctx_->br()->device_mr());
-    rapidsmpf::cuda_stream_join(
-      std::ranges::single_view{stream}, std::ranges::single_view{chunk_stream}, &event);
+    rapidsmpf::cuda_stream_join(stream, chunk_stream, &event);
     RAPIDSMPF_EXPECTS(mask.size() == static_cast<std::size_t>(chunk.table_view().num_rows()),
                       "Invalid mask size");
     auto mask_view = cudf::column_view{cudf::data_type{cudf::type_id::BOOL8},

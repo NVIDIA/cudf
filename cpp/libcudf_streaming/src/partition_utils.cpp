@@ -199,9 +199,10 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
     return split_and_pack(table, splits, stream, reservation, reorder_bytes);
   }
 
+  auto res                       = reservation.split(reorder_bytes);
   auto [reordered, split_points] = cudf::hash_partition(
     table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
-  br->release(reservation, reorder_bytes);  // The reorder has landed, hand its bytes back.
+  res.clear();  // The reorder has landed, hand its bytes back.
   std::vector<cudf::size_type> splits(split_points.begin() + 1, split_points.end() - 1);
   // Reordering does not change the packed size.
   return split_and_pack(reordered->view(), splits, stream, reservation, reorder_bytes);
@@ -245,9 +246,9 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
   // at least the size of the table.
   auto const split_bytes =
     packed_and_total_size(table, stream, br->device_mr(), packed_bytes).first;
-  check_reservation(reservation, split_bytes);
+  auto res    = reservation.split(split_bytes);
   auto packed = cudf::contiguous_split(table, splits, stream, br->device_mr());
-  br->release(reservation, split_bytes);  // The split has landed, hand its bytes back.
+  res.clear();  // The split has landed, hand its bytes back.
   ret.reserve(packed.size());
   for (rapidsmpf::shuffler::PartID i = 0; rapidsmpf::safe_cast<std::size_t>(i) < packed.size();
        i++) {
@@ -307,17 +308,18 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
 
   // Covers the unspill and the concatenation. `move_to_device_buffer()` consumes
   // `non_device_size` of it as it moves each partition, leaving `total_size` accounted
-  // for until the concatenation has allocated it.
-  check_reservation(reservation, total_size + non_device_size);
+  // for until the concatenation has allocated it. Splitting once means an undersized
+  // reservation throws before it is mutated, so the caller can reserve more and retry.
+  auto res = reservation.split(total_size + non_device_size);
 
   for (auto& packed_data : partitions) {
     if (!packed_data.empty()) {
       if (packed_data.data->size > 0) {  // No need to sync empty buffers.
         packed_data_streams.push_back(packed_data.data->stream());
       }
-      unpacked.push_back(cudf::unpack(references.emplace_back(
-        std::move(packed_data.metadata),
-        br->move_to_device_buffer(std::move(packed_data.data), reservation))));
+      unpacked.push_back(cudf::unpack(
+        references.emplace_back(std::move(packed_data.metadata),
+                                br->move_to_device_buffer(std::move(packed_data.data), res))));
     }
   }
 
@@ -330,9 +332,7 @@ std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData
     packed_columns.gpu_data->set_stream(stream);
   }
 
-  auto result = cudf::concatenate(unpacked, stream, br->device_mr());
-  br->release(reservation, total_size);
-  return result;
+  return cudf::concatenate(unpacked, stream, br->device_mr());
 }
 
 }  // namespace cudf_streaming

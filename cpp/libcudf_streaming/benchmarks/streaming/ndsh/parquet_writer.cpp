@@ -16,7 +16,6 @@
 
 #include <cstddef>
 #include <memory>
-#include <ranges>
 #include <vector>
 
 namespace rapidsmpf::ndsh {
@@ -52,11 +51,9 @@ rapidsmpf::streaming::Actor write_parquet(std::shared_ptr<rapidsmpf::streaming::
     table = chunk.table_view();
     RAPIDSMPF_EXPECTS(static_cast<std::size_t>(table.num_columns()) == column_names.size(),
                       "Mismatching number of column names and chunk columns");
-    rapidsmpf::cuda_stream_join(
-      std::ranges::single_view{write_stream}, std::ranges::single_view{chunk.stream()}, &event);
+    rapidsmpf::cuda_stream_join(write_stream, chunk.stream(), &event);
     writer.write(table);
-    rapidsmpf::cuda_stream_join(
-      std::ranges::single_view{chunk.stream()}, std::ranges::single_view{write_stream}, &event);
+    rapidsmpf::cuda_stream_join(chunk.stream(), write_stream, &event);
   }
   writer.close();
 }

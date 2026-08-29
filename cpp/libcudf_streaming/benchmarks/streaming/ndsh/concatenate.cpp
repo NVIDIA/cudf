@@ -55,8 +55,7 @@ streaming::Actor concatenate(std::shared_ptr<streaming::Context> ctx,
     views.reserve(messages.size());
     for (auto&& msg : messages) {
       auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
-      rapidsmpf::cuda_stream_join(
-        std::ranges::single_view{concat_stream}, std::ranges::single_view{chunk.stream()}, &event);
+      rapidsmpf::cuda_stream_join(concat_stream, chunk.stream(), &event);
       views.push_back(chunk.table_view());
       chunks.push_back(std::move(chunk));
     }

@@ -303,6 +303,8 @@ void expect_approx_percentiles_near_exact(std::vector<double> const& values,
   std::sort(sorted_values.begin(), sorted_values.end());
   for (std::size_t idx = 0; idx < percentiles.size(); ++idx) {
     ASSERT_TRUE(std::isfinite(actual[idx]));
+    ASSERT_GE(actual[idx], sorted_values.front());
+    ASSERT_LE(actual[idx], sorted_values.back());
 
     auto const [rank_low, rank_high] = empirical_rank_interval(sorted_values, actual[idx]);
     auto const nearest_rank          = std::clamp(percentiles[idx], rank_low, rank_high);

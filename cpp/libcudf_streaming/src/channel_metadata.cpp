@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <ranges>
 #include <stdexcept>
 #include <utility>
 
@@ -69,7 +70,8 @@ bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferR
   auto const lhs    = boundaries->table_view();
   auto const rhs    = other.boundaries->table_view();
   auto const stream = boundaries->stream();
-  rapidsmpf::cuda_stream_join(stream, other.boundaries->stream());
+  rapidsmpf::cuda_stream_join(std::ranges::single_view{stream},
+                              std::ranges::single_view{other.boundaries->stream()});
   for (cudf::size_type i = 0; i < lhs.num_columns(); ++i) {
     auto eq      = cudf::binary_operation(lhs.column(i),
                                      rhs.column(i),

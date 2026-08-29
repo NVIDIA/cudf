@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <ranges>
 #include <vector>
 
 namespace rapidsmpf::ndsh {
@@ -63,7 +64,8 @@ coro::task<streaming::Message> broadcast(std::shared_ptr<streaming::Context> ctx
       auto msg = co_await ch_in->receive();
       if (msg.empty()) { break; }
       auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
-      rapidsmpf::cuda_stream_join(gather_stream, chunk.stream(), &event);
+      rapidsmpf::cuda_stream_join(
+        std::ranges::single_view{gather_stream}, std::ranges::single_view{chunk.stream()}, &event);
       views.push_back(chunk.table_view());
       chunks.push_back(std::move(chunk));
     }
@@ -177,7 +179,8 @@ streaming::Message semi_join_chunk(std::shared_ptr<streaming::Context> ctx,
 
   auto result_table = std::make_unique<cudf::table>(std::move(result_columns));
   // Deallocation of the join indices will happen on chunk_stream, so add stream dep
-  rapidsmpf::cuda_stream_join(left_chunk.stream(), chunk_stream);
+  rapidsmpf::cuda_stream_join(std::ranges::single_view{left_chunk.stream()},
+                              std::ranges::single_view{chunk_stream});
 
   return to_message(
     sequence, std::make_unique<cudf_streaming::table_chunk>(std::move(result_table), chunk_stream));
@@ -243,7 +246,8 @@ streaming::Message inner_join_chunk(std::shared_ptr<streaming::Context> ctx,
                     std::back_inserter(result_columns));
   // Deallocation of the join indices will happen on build_stream, so add stream dep
   // This also ensure deallocation of the hash_join object waits for completion.
-  rapidsmpf::cuda_stream_join(build_stream, chunk_stream, tmp_event);
+  rapidsmpf::cuda_stream_join(
+    std::ranges::single_view{build_stream}, std::ranges::single_view{chunk_stream}, tmp_event);
   return to_message(sequence,
                     std::make_unique<cudf_streaming::table_chunk>(
                       std::make_unique<cudf::table>(std::move(result_columns)), chunk_stream));

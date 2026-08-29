@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -115,7 +116,9 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
     auto const table =
       column_indices.empty() ? chunk.table_view() : chunk.table_view().select(column_indices);
     sketch.add(table, chunk.stream());
-    rapidsmpf::cuda_stream_join(sketch_stream, chunk.stream(), &add_event);
+    rapidsmpf::cuda_stream_join(std::ranges::single_view{sketch_stream},
+                                std::ranges::single_view{chunk.stream()},
+                                &add_event);
     reservation.clear();
     if (ch_sampled != nullptr) {
       co_await ch_sampled->send(

@@ -20,6 +20,7 @@
 
 #include <cuda/stream>
 
+#include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 

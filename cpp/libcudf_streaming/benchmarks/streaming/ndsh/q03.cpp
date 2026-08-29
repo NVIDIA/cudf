@@ -26,7 +26,6 @@
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cudf_streaming/bloom_filter.hpp>
-#include <cudf_streaming/detail/stream_adapters.hpp>
 #include <cudf_streaming/parquet.hpp>
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/table_chunk.hpp>
@@ -252,10 +251,7 @@ rapidsmpf::streaming::Actor top_k_by(std::shared_ptr<rapidsmpf::streaming::Conte
   RAPIDSMPF_EXPECTS(chunk_streams.size() > 0, "No chunks to sort");
   auto out_stream = chunk_streams.front();
   rapidsmpf::CudaEvent event;
-  rapidsmpf::cuda_stream_join(
-    std::ranges::single_view{cudf_streaming::detail::as_cuda_stream_ref(out_stream)},
-    cudf_streaming::detail::as_cuda_stream_ref_range(chunk_streams),
-    &event);
+  rapidsmpf::cuda_stream_join(std::ranges::single_view{out_stream}, chunk_streams, &event);
   std::vector<cudf::table_view> views;
   std::ranges::transform(partials, std::back_inserter(views), [](auto& t) { return t->view(); });
   auto merged = cudf::merge(views, keys, order, {}, out_stream, ctx->br()->device_mr());

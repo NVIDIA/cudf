@@ -768,7 +768,8 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   }
 
   // For any columns that were selected for direct parquet-dict → DICTIONARY32 transcode in
-  // `prepare_dict_transcode`, the entries in `out_columns` are currently INT32 indices columns.
+  // `prepare_dict_transcode`, the entries in `out_columns` are currently signed integer indices
+  // columns (INT8/INT16/INT32, sized to the dictionary).
   // Assemble them into DICTIONARY32 columns here by attaching per-chunk keys; concatenate
   // remaps indices to the unified keys child.
   assemble_dict_transcoded_columns(out_columns);

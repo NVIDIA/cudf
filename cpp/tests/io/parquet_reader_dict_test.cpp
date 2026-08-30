@@ -480,8 +480,140 @@ TEST_F(ParquetReaderDictTest, MultiColumnMixedEligibility)
     << "List<string> must remain LIST when output_dict_columns is on (transcode is flat-only)";
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(list_col->view(), read_list);
 
-  // Non-string column: unchanged INT32.
+  // All-unique INT32 column: the writer does not dictionary-encode it (data pages are PLAIN),
+  // so it is ineligible for transcode and stays a plain INT32 column.
   auto const read_key = read_table->view().column(2);
   ASSERT_EQ(read_key.type().id(), cudf::type_id::INT32);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(key_col, read_key);
+}
+
+namespace {
+
+/// A low-cardinality nullable INT32 column.
+cudf::test::fixed_width_column_wrapper<int32_t> make_low_cardinality_ints()
+{
+  std::mt19937 engine(seed ^ 0xF17ED0UL);
+  std::uniform_int_distribution<int> value_dist(0, cardinality - 1);
+  std::bernoulli_distribution null_dist(null_probability);
+  std::vector<int32_t> values(num_rows);
+  std::vector<bool> valids(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values[i] = 1'000'000 + value_dist(engine);
+    valids[i] = not null_dist(engine);
+  }
+  return cudf::test::fixed_width_column_wrapper<int32_t>(
+    values.begin(), values.end(), valids.begin());
+}
+
+/// A low-cardinality INT64 column.
+cudf::test::fixed_width_column_wrapper<int64_t> make_low_cardinality_int64s()
+{
+  std::mt19937 engine(seed ^ 0x64B175UL);
+  std::uniform_int_distribution<int> value_dist(0, cardinality - 1);
+  std::vector<int64_t> values(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values[i] = 3'000'000'000LL + value_dist(engine);
+  }
+  return cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end());
+}
+
+/// A low-cardinality date (TIMESTAMP_DAYS, physical INT32) column.
+cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, int32_t> make_low_cardinality_dates()
+{
+  std::mt19937 engine(seed ^ 0xDA7E5UL);
+  std::uniform_int_distribution<int> value_dist(0, cardinality - 1);
+  std::vector<int32_t> values(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values[i] = 8000 + value_dist(engine);
+  }
+  return cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, int32_t>(values.begin(),
+                                                                            values.end());
+}
+
+}  // namespace
+
+// Flat fixed-width columns (INT32 with nulls, INT64, DATE) written with dictionary encoding must
+// transcode to DICTIONARY32 columns whose keys carry the logical type, across several row groups,
+// and decode back to exactly the input.
+TEST_F(ParquetReaderDictTest, FlatFixedWidthDictTranscode)
+{
+  auto const int32_col = make_low_cardinality_ints();
+  auto const int64_col = make_low_cardinality_int64s();
+  auto const date_col  = make_low_cardinality_dates();
+  auto const input     = cudf::table_view{{int32_col, int64_col, date_col}};
+
+  auto const filepath = temp_env->get_temp_filepath("FlatFixedWidthDictTranscode.parquet");
+  write_parquet(input, filepath);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .output_dict_columns(true)
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+
+  std::array<cudf::type_id, 3> const key_types{
+    cudf::type_id::INT32, cudf::type_id::INT64, cudf::type_id::TIMESTAMP_DAYS};
+  for (cudf::size_type i = 0; i < read_table->num_columns(); ++i) {
+    auto const read_col = read_table->view().column(i);
+    ASSERT_EQ(read_col.type().id(), cudf::type_id::DICTIONARY32) << "column " << i;
+    cudf::dictionary_column_view const dict{read_col};
+    EXPECT_EQ(dict.keys().type().id(), key_types[i]) << "column " << i;
+    // `cardinality` distinct keys fit INT16 indices (get_indices_type_for_size)
+    EXPECT_EQ(dict.indices().type().id(), cudf::type_id::INT16) << "column " << i;
+    auto const decoded = cudf::dictionary::decode(dict);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(input.column(i), decoded->view());
+  }
+}
+
+// Fixed-width columns stay plain by default (option off).
+TEST_F(ParquetReaderDictTest, FlatFixedWidthNoTranscodeByDefault)
+{
+  auto const int32_col = make_low_cardinality_ints();
+  auto const input     = cudf::table_view{{int32_col}};
+  auto const filepath  = temp_env->get_temp_filepath("FlatFixedWidthNoTranscode.parquet");
+  write_parquet(input, filepath);
+
+  auto const read_table =
+    cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build())
+      .tbl;
+  auto const read_col = read_table->view().column(0);
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::INT32);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(int32_col, read_col);
+}
+
+// Under an AST filter the direct fast path is off: string columns are still delivered as
+// DICTIONARY32 via the post-hoc encode, while fixed-width columns fall back to plain.
+TEST_F(ParquetReaderDictTest, FixedWidthFilterFallsBackToPlain)
+{
+  auto const int32_col  = make_low_cardinality_ints();
+  auto const string_col = make_low_cardinality_strings();
+  auto const input      = cudf::table_view{{int32_col, string_col}};
+  auto const filepath   = temp_env->get_temp_filepath("FixedWidthFilterFallback.parquet");
+  write_parquet(input, filepath);
+
+  auto const ref     = cudf::ast::column_reference(0);
+  auto literal_value = cudf::numeric_scalar<int32_t>(1'000'000 + cardinality / 2);
+  auto const literal = cudf::ast::literal(literal_value);
+  auto const expr    = cudf::ast::operation(cudf::ast::ast_operator::LESS, ref, literal);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .filter(expr)
+                           .output_dict_columns(true)
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+
+  auto const read_int = read_table->view().column(0);
+  ASSERT_EQ(read_int.type().id(), cudf::type_id::INT32);
+  auto const read_str = read_table->view().column(1);
+  ASSERT_EQ(read_str.type().id(), cudf::type_id::DICTIONARY32);
+
+  // Cross-check the surviving rows against a plain filtered read.
+  auto const plain_table = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                                                    cudf::io::source_info{filepath})
+                                                    .filter(expr)
+                                                    .build())
+                             .tbl;
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(plain_table->view().column(0), read_int);
+  auto const decoded_str = cudf::dictionary::decode(cudf::dictionary_column_view(read_str));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(plain_table->view().column(1), decoded_str->view());
 }

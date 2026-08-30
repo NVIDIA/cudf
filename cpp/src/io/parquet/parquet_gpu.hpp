@@ -257,7 +257,8 @@ enum class decode_kernel_mask {
   STRING_STREAM_SPLIT_NESTED =
     (1 << 24),  // Run decode kernel for nested BYTE_STREAM_SPLIT string data
   STRING_STREAM_SPLIT_LIST = (1 << 25),  // Run decode kernel for list BYTE_STREAM_SPLIT string data
-  DICT_INT32               = (1 << 26),  // Run decode kernel for dict string → INT32 indices
+  DICT_INT32               = (1 << 26),  // Emit dictionary indices (string or fixed-width chunks)
+                                         // as a signed integer column; name predates sized indices
 };
 
 constexpr uint32_t STRINGS_MASK_NON_DELTA = BitOr(decode_kernel_mask::STRING,
@@ -510,9 +511,10 @@ struct ColumnChunkDesc {
 
   float list_bytes_per_row_est{};  // for LIST columns, an estimate on number of bytes per row
 
-  bool is_strings_to_cat{};    // convert strings to hashes
-  bool is_large_string_col{};  // `true` if string data uses 64-bit offsets
-  int32_t src_file_idx{};      // source file index
+  bool is_strings_to_cat{};     // convert strings to hashes
+  uint8_t dict_index_bytes{4};  // width of the emitted dictionary index for DICT_INT32 (1/2/4)
+  bool is_large_string_col{};   // `true` if string data uses 64-bit offsets
+  int32_t src_file_idx{};       // source file index
 };
 
 /**

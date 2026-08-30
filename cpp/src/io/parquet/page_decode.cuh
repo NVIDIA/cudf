@@ -1257,6 +1257,12 @@ inline __device__ bool setup_local_page_info(auto* const s,
         } else if (data_type == Type::INT96) {
           s->output_cvt.dtype_len = 8;  // Convert to 64-bit timestamp
         }
+        // Parquet-dict -> DICTIONARY32 transcode: the output holds dictionary indices, so both
+        // the per-page output offset and the value width follow the index width, not the
+        // logical type width. (String pages coincidentally match via the string special case.)
+        if (s->setup.page.kernel_mask == decode_kernel_mask::DICT_INT32) {
+          s->output_cvt.dtype_len = s->setup.col.dict_index_bytes;
+        }
       }
 
       // during the decoding step we need to offset the global output buffers
@@ -1301,7 +1307,10 @@ inline __device__ bool setup_local_page_info(auto* const s,
                   idx < max_depth - 1 ? sizeof(cudf::size_type) : s->output_cvt.dtype_len;
                 // if this is a string column, then dtype_len is a lie. data will be offsets rather
                 // than (ptr,len) tuples.
-                if (is_string_col(s->setup.col)) { len = sizeof(cudf::size_type); }
+                if (is_string_col(s->setup.col) &&
+                    s->setup.page.kernel_mask != decode_kernel_mask::DICT_INT32) {
+                  len = sizeof(cudf::size_type);
+                }
                 nesting_info->data_out += (output_offset * len);
               }
               if (nesting_info->string_out != nullptr) {

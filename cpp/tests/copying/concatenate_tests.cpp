@@ -1652,6 +1652,7 @@ TYPED_TEST(DictionaryConcatTestFW, FixedWidthKeys)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, original);
 }
 
+// INT8/INT16 indices survive slice + concatenate and decode back to the original
 TEST_F(DictionaryConcatTest, NarrowIndices)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> original({20, 10, 0, 5, 15, 15, 10, 5, 20},
@@ -1668,6 +1669,7 @@ TEST_F(DictionaryConcatTest, NarrowIndices)
   }
 }
 
+// inputs with different indices types concatenate to the widest of them
 TEST_F(DictionaryConcatTest, MixedIndicesTypes)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> first({1, 2, 3, 2});
@@ -1683,6 +1685,7 @@ TEST_F(DictionaryConcatTest, MixedIndicesTypes)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
 }
 
+// the indices are widened when the concatenated keys no longer fit the input indices type
 TEST_F(DictionaryConcatTest, WidenIndicesWhenKeysOverflow)
 {
   // two INT8 dictionaries with 100 distinct keys each and no overlap: 200 keys need INT16

@@ -252,8 +252,8 @@ class hybrid_scan_metadata {
  *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
  *     parquet::fetch_byte_ranges_to_device_async(
- *       datasource, bloom_filter_byte_ranges, stream, aligned_mr);
- *   bloom_filter_tasks.get();
+ *       datasource, bloom_filter_byte_ranges, parquet::io_submission_policy::SERIALIZE, stream,
+ * aligned_mr); bloom_filter_tasks.get();
  *
  *   // Prune row groups using bloom filters
  *   bloom_filtered_row_group_indices = reader->filter_row_groups_with_bloom_filters(

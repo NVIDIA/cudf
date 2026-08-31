@@ -14,20 +14,37 @@ from numba_cuda_mlir.numba_cuda.typing.templates import (
     AbstractTemplate,
     AttributeTemplate,
     ConcreteTemplate,
+    Signature,
 )
 from numba_cuda_mlir.typing import signature as nb_signature
 
 from cudf.core.missing import NA
+from cudf.core.udf._ops import (
+    arith_ops,
+    bitwise_ops,
+    comparison_ops,
+    unary_ops,
+)
 from cudf.core.udf.api import Masked
+
+# Datetime / timedelta resolutions cudf UDFs support. Mirrors the units
+# used by the column dtypes flowing into the kernels.
+_units = ("ns", "us", "ms", "s")
 
 _SUPPORTED_MASKED_VALUE_TYPE_CLASSES = (
     types.Number,
     types.Boolean,
+    types.NPDatetime,
+    types.NPTimedelta,
 )
 
 
 _supported_value_type_instances = (
-    nb_types.integer_domain | nb_types.real_domain | {nb_types.boolean}
+    nb_types.integer_domain
+    | nb_types.real_domain
+    | {nb_types.boolean}
+    | {nb_types.NPDatetime(u) for u in _units}
+    | {nb_types.NPTimedelta(u) for u in _units}
 )
 
 
@@ -139,6 +156,151 @@ class MaskedNAComparison(AbstractTemplate):
         return None
 
 
+class MaskedScalarArithOp(AbstractTemplate):
+    """``Masked <op> Masked``: resolve the underlying scalar op on the two
+    value types, then wrap the result back in a ``MaskedType``.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType) and isinstance(args[1], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type, args[1].value_type), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        return None
+
+
+class MaskedScalarScalarOp(AbstractTemplate):
+    """``Masked <op> scalar`` and ``scalar <op> Masked`` (scalar may be a
+    ``Literal``, e.g. ``row['a'] == 1``).
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType) and isinstance(
+            args[1], (types.Number, types.Boolean)
+        ):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type, args[1]), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        if isinstance(args[0], MaskedType) and isinstance(
+            args[1], types.Literal
+        ):
+            scalar_ty = unliteral(args[1])
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type, scalar_ty), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        if isinstance(args[0], (types.Number, types.Boolean)) and isinstance(
+            args[1], MaskedType
+        ):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0], args[1].value_type), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        if isinstance(args[0], types.Literal) and isinstance(
+            args[1], MaskedType
+        ):
+            scalar_ty = unliteral(args[0])
+            return_type = self.context.resolve_function_type(
+                self.key, (scalar_ty, args[1].value_type), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        return None
+
+
+class MaskedScalarNullOp(AbstractTemplate):
+    """``Masked <op> NA`` / ``NA <op> Masked``: result type is the Masked
+    operand's type; the lowering produces an invalid (poisoned) value.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType) and isinstance(args[1], NAType):
+            return nb_signature(args[0], args[0], na_type)
+        if isinstance(args[0], NAType) and isinstance(args[1], MaskedType):
+            return nb_signature(args[1], na_type, args[1])
+        return None
+
+
+# Resolve the underlying scalar op on the value type, wrap the result.
+class MaskedScalarUnaryOp(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type,), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0])
+        return None
+
+
+# ``bool(m)`` / ``operator.truth(m)`` -> boolean. The runtime result is
+# ``m.valid and bool(m.value)``; the *type* is a plain boolean (used
+# directly in ``if`` conditions).
+class MaskedScalarTruth(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(types.boolean, args[0])
+        return None
+
+
+# ``float(m)`` -> Masked(float64); ``int(m)`` -> Masked(int64).
+class MaskedScalarFloatCast(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(MaskedType(types.float64), args[0])
+        return None
+
+
+class MaskedScalarIntCast(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(MaskedType(types.int64), args[0])
+        return None
+
+
+# ``abs(m)`` -> Masked(result).
+class MaskedScalarAbsoluteValue(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type,), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0])
+        return None
+
+
+# ``value in (a, b, ...)`` membership -> Masked(boolean). ``value`` is a
+# Masked scalar; the container is a literal Tuple of constants or a
+# homogeneous UniTuple. (String membership -- substr in str -- arrives with
+# the string value type in a later PR.)
+def _is_masked_membership_item(ty):
+    return isinstance(ty, MaskedType) and not isinstance(
+        ty.value_type, types.Poison
+    )
+
+
+class MaskedSequenceContainsTemplate(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) != 2 or kws:
+            return None
+        container, item = args
+        if not _is_masked_membership_item(item):
+            return None
+        if isinstance(container, types.Tuple) and all(
+            isinstance(x, types.Literal) for x in container.types
+        ):
+            return nb_signature(MaskedType(types.boolean), container, item)
+        if isinstance(container, types.UniTuple):
+            return nb_signature(MaskedType(types.boolean), container, item)
+        return None
+
+
 def _register() -> None:
     """Register typing for ``Masked`` and ``MaskedType`` attributes with
     ``numba_cuda_mlir``. Called once at module import.
@@ -147,6 +309,23 @@ def _register() -> None:
     typing_registry.register_attr(MaskedTypeAttrs)
     typing_registry.register_global(operator.is_)(MaskedNAComparison)
     typing_registry.register_global(operator.is_not)(MaskedNAComparison)
+
+    for binary_op in arith_ops + bitwise_ops + comparison_ops:
+        typing_registry.register_global(binary_op)(MaskedScalarArithOp)
+        typing_registry.register_global(binary_op)(MaskedScalarNullOp)
+        typing_registry.register_global(binary_op)(MaskedScalarScalarOp)
+
+    for unary_op in unary_ops:
+        typing_registry.register_global(unary_op)(MaskedScalarUnaryOp)
+    typing_registry.register_global(operator.truth)(MaskedScalarTruth)
+    typing_registry.register_global(bool)(MaskedScalarTruth)
+    typing_registry.register_global(float)(MaskedScalarFloatCast)
+    typing_registry.register_global(int)(MaskedScalarIntCast)
+    typing_registry.register_global(abs)(MaskedScalarAbsoluteValue)
+
+    typing_registry.register_global(operator.contains)(
+        MaskedSequenceContainsTemplate
+    )
 
 
 _register()

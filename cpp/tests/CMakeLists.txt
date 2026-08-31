@@ -514,7 +514,7 @@ ConfigureTest(
 # * stream compaction tests -----------------------------------------------------------------------
 ConfigureTest(
   STREAM_COMPACTION_TEST
-  stream_compaction/apply_boolean_mask_tests.cpp
+  stream_compaction/apply_mask_tests.cpp
   stream_compaction/distinct_tests.cpp
   stream_compaction/drop_nans_tests.cpp
   stream_compaction/drop_nulls_tests.cpp
@@ -655,6 +655,7 @@ ConfigureTest(
   text/stemmer_tests.cpp
   text/subword_tests.cpp
   text/tokenize_tests.cpp
+  text/unicode_normalize_tests.cpp
 )
 
 # ##################################################################################################
@@ -739,7 +740,7 @@ ConfigureTest(
   lists/set_operations/intersect_distinct_tests.cpp
   lists/set_operations/union_distinct_tests.cpp
   lists/sort_lists_tests.cpp
-  lists/stream_compaction/apply_boolean_mask_tests.cpp
+  lists/stream_compaction/apply_mask_tests.cpp
   lists/stream_compaction/distinct_tests.cpp
   GPUS 1
   PERCENT 70
@@ -840,6 +841,7 @@ ConfigureTest(
   streams/text/replace_test.cpp
   streams/text/stemmer_test.cpp
   streams/text/tokenize_test.cpp
+  streams/text/unicode_normalize_test.cpp
   STREAM_MODE
   testing
 )

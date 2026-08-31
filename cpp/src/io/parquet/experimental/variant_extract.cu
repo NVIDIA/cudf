@@ -212,84 +212,105 @@ __device__ cuda::std::optional<uint64_t> variant_value_length(device_span<uint8_
   return values_base + sentinel.value();
 }
 
+// Parsed offset table of a metadata dictionary blob, produced once per row by
+// `parse_metadata_dictionary` and reused for every `name_for_id` lookup along a row's path (a
+// path may step through several objects, each needing id-to-name resolution against the same
+// dictionary) instead of re-parsing and re-validating `meta` on every step.
+struct metadata_dictionary {
+  size_type offset_size;
+  size_type offsets_start;
+  size_type strings_base;
+  size_type strings_declared;
+  size_type num_entries;
+};
+
 /**
- * @brief Find the dictionary index of a key in a VARIANT metadata blob.
+ * @brief Parse and validate a metadata dictionary blob's offset table.
  *
- * The metadata blob is the per-row string dictionary, laid out as:
- *
- *   byte 0:          header        | version (4) | sorted (1) | unused (1) | offset_size-1 (2) |
- *   bytes 1..:       dictionary_size   (offset_size bytes, little-endian) = number of keys N
- *   next (N+1)*offset_size bytes:  offsets[0..N]   (offset_size bytes each, little-endian)
- *   remaining bytes: string_data   (concatenated UTF-8 key bytes)
- *
- * `offset_size` (1..4 bytes, from the header) is the width of every dictionary_size/offset entry.
- * Key `i` occupies `string_data[offsets[i] : offsets[i+1]]`; the trailing offset `offsets[N]` is
- * the total length of `string_data`. Offsets are relative to the start of `string_data`, i.e. to `1
- * + offset_size + (N+1)*offset_size`.
- *
- * @param meta The metadata blob bytes for a single row
- * @param key The key to search for
- * @return The dictionary index of `key`, or nullopt if absent or the blob is malformed
+ * @param meta The metadata blob for this row
+ * @return The parsed offset table, or a failure status if `meta` is malformed
  */
-__device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_in_metadata(
-  device_span<uint8_t const> meta, cudf::string_view key)
+__device__ cuda::std::pair<metadata_dictionary, op_status> parse_metadata_dictionary(
+  device_span<uint8_t const> meta)
 {
   auto const meta_len = static_cast<size_type>(meta.size());
-  if (meta_len < 1) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
+  if (meta_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
+  auto const meta_header = meta[0];
+  if ((meta_header & 0x0F) != variant_version_v1) { return {{}, op_status::MALFORMED_VARIANT}; }
+  auto const meta_offset_size = ((meta_header >> 6) & 0x03) + 1;
 
-  auto const header = meta[0];
-  int const version = header & 0x0F;
-  if (version != variant_version_v1) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
-  int const offset_size = ((header >> 6) & 0x03) + 1;
+  size_type meta_pos          = 1;
+  auto const num_meta_entries = narrow_cast(read_uint64(meta, meta_pos, meta_offset_size));
+  if (!num_meta_entries.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+  meta_pos += meta_offset_size;
 
-  size_type pos          = 1;
-  auto const num_entries = narrow_cast(read_uint64(meta, pos, offset_size));
-  if (!num_entries.has_value()) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
-  pos += offset_size;
-
-  auto const offsets_start = pos;
-  auto const offsets_bytes = (static_cast<uint64_t>(num_entries.value()) + 1) * offset_size;
-  if (cuda::std::cmp_greater(offsets_bytes, meta_len - offsets_start)) {
-    return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
+  auto const meta_offsets_start = meta_pos;
+  auto const meta_offsets_bytes =
+    (static_cast<uint64_t>(num_meta_entries.value()) + 1) * meta_offset_size;
+  if (cuda::std::cmp_greater(meta_offsets_bytes, meta_len - meta_offsets_start)) {
+    return {{}, op_status::MALFORMED_VARIANT};
   }
+  auto const meta_strings_base   = meta_offsets_start + static_cast<size_type>(meta_offsets_bytes);
+  auto const meta_strings_extent = meta_len - meta_strings_base;
 
-  auto start_off = read_uint64(meta, offsets_start, offset_size);
   // Parquet VARIANT spec requires offsets[0] == 0; any other value is malformed.
-  if (!start_off.has_value() || start_off.value() != 0) {
-    return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
+  auto const first_off = read_uint64(meta, meta_offsets_start, meta_offset_size);
+  if (!first_off.has_value() || first_off.value() != 0) {
+    return {{}, op_status::MALFORMED_VARIANT};
   }
-  auto const strings_base   = offsets_start + static_cast<size_type>(offsets_bytes);
-  auto const strings_extent = meta_len - strings_base;
-  // Read the terminal offset offsets[num_entries] before scanning entries. An early key match
-  // must be bounded by this declared extent, not the physical buffer, so validate it upfront.
+
+  // Read the terminal offset offsets[num_entries] up front: it is the authoritative size of the
+  // string-data region, so every individual entry's end offset must be bounded by it below, not
+  // just by the physical buffer remainder (`meta_strings_extent`) -- the same distinction the
+  // object value's own sentinel/values_region check makes for field values.
   auto const terminal_off_pos =
-    offsets_start + static_cast<uint64_t>(num_entries.value()) * offset_size;
-  auto const terminal_off = read_uint64(meta, terminal_off_pos, offset_size);
-  if (!terminal_off.has_value() || cuda::std::cmp_greater(terminal_off.value(), strings_extent)) {
-    return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
+    meta_offsets_start + static_cast<size_type>(num_meta_entries.value()) * meta_offset_size;
+  auto const terminal_off = read_uint64(meta, terminal_off_pos, meta_offset_size);
+  if (!terminal_off.has_value() ||
+      cuda::std::cmp_greater(terminal_off.value(), meta_strings_extent)) {
+    return {{}, op_status::MALFORMED_VARIANT};
   }
-  auto const strings_declared = static_cast<size_type>(terminal_off.value());
-  for (size_type i = 0; i < num_entries.value(); ++i) {
-    auto const end_off = read_uint64(meta, offsets_start + (i + 1) * offset_size, offset_size);
-    if (!end_off.has_value()) { return {cuda::std::nullopt, op_status::MALFORMED_VARIANT}; }
-    if (end_off.value() < start_off.value() || end_off.value() > strings_declared) {
-      return {cuda::std::nullopt, op_status::MALFORMED_VARIANT};
-    }
-    cudf::string_view const entry{
-      reinterpret_cast<char const*>(meta.data() + strings_base + start_off.value()),
-      static_cast<size_type>(end_off.value() - start_off.value())};
-    if (entry == key) { return {i, op_status::SUCCESS}; }
-    start_off = end_off;
+
+  return {metadata_dictionary{.offset_size      = meta_offset_size,
+                              .offsets_start    = meta_offsets_start,
+                              .strings_base     = meta_strings_base,
+                              .strings_declared = static_cast<size_type>(terminal_off.value()),
+                              .num_entries      = num_meta_entries.value()},
+          op_status::SUCCESS};
+}
+
+// O(1) name lookup by id: two offset reads into the metadata table. `field_id` may come directly
+// from untrusted object data (an out-of-range dictionary index), so it is bounds checked against
+// the metadata dictionary size before use, and the offset positions are computed in 64-bit
+// arithmetic to avoid overflowing `size_type` for large ids.
+__device__ cuda::std::optional<cudf::string_view> name_for_id(metadata_dictionary const& dict,
+                                                              device_span<uint8_t const> meta,
+                                                              size_type field_id)
+{
+  if (field_id < 0 || cuda::std::cmp_greater_equal(field_id, dict.num_entries)) {
+    return cuda::std::nullopt;
   }
-  return {cuda::std::nullopt, op_status::MISSING_PATH};
+  auto const start_pos =
+    static_cast<uint64_t>(dict.offsets_start) + static_cast<uint64_t>(field_id) * dict.offset_size;
+  auto const end_pos = start_pos + static_cast<uint64_t>(dict.offset_size);
+  if (cuda::std::cmp_greater(end_pos, meta.size())) { return cuda::std::nullopt; }
+  auto const s = read_uint64(meta, static_cast<size_type>(start_pos), dict.offset_size);
+  auto const e = read_uint64(meta, static_cast<size_type>(end_pos), dict.offset_size);
+  if (!s.has_value() || !e.has_value()) { return cuda::std::nullopt; }
+  if (e.value() < s.value() || cuda::std::cmp_greater(e.value(), dict.strings_declared)) {
+    return cuda::std::nullopt;
+  }
+  return cudf::string_view{
+    reinterpret_cast<char const*>(meta.data() + dict.strings_base + s.value()),
+    static_cast<size_type>(e.value() - s.value())};
 }
 
 /**
- * @brief Locate the encoded bytes of a single field within an object value by field id.
+ * @brief Locate the encoded bytes of a single field within an object value by field name.
  *
- * An object value is laid out as:
+ * Object value layout, following the 1-byte value metadata header (basic_type=object in the low 2
+ * bits; value_header in the high 6 bits, see decode_object_array_header):
  *
- *   byte 0:        value metadata | basic_type=object (2) | value_header (6) |
  *   bytes 1..:     num_elements   (num_elements_size bytes) = number of fields N
  *   next N*field_id_size bytes:        field_ids[0..N-1]   (sorted by field name)
  *   next (N+1)*field_offset_size bytes: field_offsets[0..N] (relative to values_base)
@@ -297,23 +318,36 @@ __device__ cuda::std::pair<cuda::std::optional<size_type>, op_status> find_key_i
  *
  * `num_elements_size`, `field_id_size`, and `field_offset_size` come from the value header (see
  * decode_object_array_header). The trailing offset `field_offsets[N]` is the total size of the
- * values region. This scans `field_ids` for `id`, then uses the matching `field_offsets[i]` to
- * slice out the field's value, whose length is derived from its own header via
- * variant_value_length.
+ * values region.
  *
- * Per the spec, field ids/offsets are ordered by the corresponding field names (lexicographically),
- * but the values themselves may be in any order, so `field_offsets` are not necessarily monotonic —
- * hence the value length is taken from each field's own header rather than from offset deltas.
+ * Per the spec, `field_ids[0..N-1]` are ordered by the corresponding field name
+ * (lexicographically), not by the numeric id value, and the values themselves may be in any order,
+ * so `field_offsets` are not necessarily monotonic -- hence the value length is taken from each
+ * field's own header rather than from offset deltas.
  *
+ * `field_ids[0..N-1]` is ordered by name (a per-object invariant, independent of whether the
+ * metadata dictionary itself happens to be sorted), so it can be binary searched directly against
+ * `key` without first resolving `key` to a dictionary id: each probe turns `field_ids[mid]` into
+ * its dictionary name via an O(1) lookup in `meta` (the metadata offset table is indexed directly
+ * by id) and compares that name against `key`, giving O(log N) with no separate name-to-id lookup
+ * over the (potentially much larger) dictionary.
+ *
+ * Not using thrust::lower_bound since it does not propagate entry read failures.
+ *
+ * @param dict The already-parsed metadata dictionary offset table for `meta` (see
+ *             parse_metadata_dictionary), reused across every path step so it is not re-parsed
+ *             and re-validated once per object
+ * @param meta The metadata blob for this row, used to resolve field ids to names
  * @param val The object value bytes
- * @param id The dictionary index of the field to locate
- * @param is_sorted Whether `field_ids` is known to be sorted in ascending order, allowing a
- *        binary search instead of a linear scan
+ * @param key The name of the field to locate
  * @return The encoded bytes of the field value, or an empty span if `val` is not an object, the
- *         field is absent, or the blob is malformed
+ *         field is absent, or either blob is malformed
  */
 __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_field(
-  device_span<uint8_t const> val, int id, bool is_sorted)
+  metadata_dictionary const& dict,
+  device_span<uint8_t const> meta,
+  device_span<uint8_t const> val,
+  cudf::string_view key)
 {
   auto const val_len = static_cast<size_type>(val.size());
   if (val_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
@@ -352,42 +386,21 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
   }
   auto const values_region = static_cast<size_type>(sentinel_raw.value());
 
-  // Find the matching field ID and its start offset.
-  // When is_sorted, field_ids[0..N-1] are monotonically increasing (the metadata dictionary is
-  // sorted by key name, so ID order == name order), enabling binary search.
-  // Not using thrust::lower_bound since it does not propagate entry read failures.
+  // Binary search field_ids[0..N-1] by resolving each probe to its name and comparing against
+  // `key` directly
   bool found           = false;
   uint64_t match_start = 0;
-  if (is_sorted) {
-    size_type lo = 0;
-    size_type hi = num_fields.value();
-    while (lo < hi) {
-      size_type const mid   = lo + (hi - lo) / 2;
-      auto const current_id = read_uint64(val, ids_start + mid * id_size, id_size);
-      if (!current_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
-      if (cuda::std::cmp_equal(current_id.value(), id)) {
-        auto const match_offset = read_uint64(val, offsets_start + mid * offset_size, offset_size);
-        if (!match_offset.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
-        if (match_offset.value() > static_cast<uint64_t>(values_region)) {
-          return {{}, op_status::MALFORMED_VARIANT};
-        }
-        match_start = match_offset.value();
-        found       = true;
-        break;
-      }
-      if (cuda::std::cmp_less(current_id.value(), id)) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-  } else {
-    for (size_type i = 0; i < num_fields.value(); ++i) {
-      auto const current_id = read_uint64(val, ids_start + i * id_size, id_size);
-      if (!current_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
-      if (cuda::std::cmp_not_equal(current_id.value(), id)) { continue; }
-
-      auto const match_offset = read_uint64(val, offsets_start + i * offset_size, offset_size);
+  size_type lo         = 0;
+  size_type hi         = num_fields.value();
+  while (lo < hi) {
+    size_type const mid = lo + (hi - lo) / 2;
+    auto const probe_id = narrow_cast(read_uint64(val, ids_start + mid * id_size, id_size));
+    if (!probe_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+    auto const probe_name = name_for_id(dict, meta, probe_id.value());
+    if (!probe_name.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+    int const cmp = probe_name.value().compare(key);
+    if (cmp == 0) {
+      auto const match_offset = read_uint64(val, offsets_start + mid * offset_size, offset_size);
       if (!match_offset.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
       if (match_offset.value() > static_cast<uint64_t>(values_region)) {
         return {{}, op_status::MALFORMED_VARIANT};
@@ -395,6 +408,11 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_
       match_start = match_offset.value();
       found       = true;
       break;
+    }
+    if (cmp < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
   }
   if (!found) { return {{}, op_status::MISSING_PATH}; }
@@ -607,8 +625,11 @@ __device__ cuda::std::optional<size_type> parse_index_step(cudf::string_view ste
 __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
   device_span<uint8_t const> meta, device_span<uint8_t const> val, column_device_view path)
 {
-  bool const is_sorted               = !meta.empty() && ((meta[0] >> 4) & 0x01);
   device_span<uint8_t const> sub_val = val;
+  // The metadata dictionary is a per-row property shared by every object-key step of the path, so
+  // it is parsed and validated at most once per row (lazily, on the first object-key step) rather
+  // than being re-parsed on each step -- a path with only array-index steps never touches it.
+  cuda::std::optional<metadata_dictionary> dict;
   for (size_type i = 0; i < path.size(); ++i) {
     auto const step = path.element<cudf::string_view>(i);
     if (step.size_bytes() >= 1 && step.data()[0] == '[') {
@@ -618,10 +639,12 @@ __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
       if (st != op_status::SUCCESS) { return {{}, st}; }
       sub_val = span;
     } else {
-      auto const [field_id, meta_st] = find_key_in_metadata(meta, step);
-      if (meta_st == op_status::MALFORMED_VARIANT) { return {{}, op_status::MALFORMED_VARIANT}; }
-      if (!field_id.has_value()) { return {{}, op_status::MISSING_PATH}; }
-      auto const [span, st] = locate_object_field(sub_val, field_id.value(), is_sorted);
+      if (!dict.has_value()) {
+        auto [parsed, st] = parse_metadata_dictionary(meta);
+        if (st != op_status::SUCCESS) { return {{}, st}; }
+        dict = parsed;
+      }
+      auto const [span, st] = locate_object_field(*dict, meta, sub_val, step);
       if (st != op_status::SUCCESS) { return {{}, st}; }
       sub_val = span;
     }

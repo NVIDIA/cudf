@@ -14,11 +14,45 @@
 
 namespace cudf::io::parquet::detail {
 
-stats_columns_collector::stats_columns_collector(ast::expression const& expr,
-                                                 cudf::size_type num_columns)
-  : _num_columns(num_columns)
+namespace {
+
+/**
+ * @brief Returns whether a comparison operator can prune row groups via statistics
+ *
+ * Some Parquet writers exclude `NaN`s from stats, so a floating-point chunk holding a NaN is
+ * indistinguishable from one that does not. `col != val` is the only comparison leaf a NaN
+ * satisfies, so it is the only one we cannot prune.
+ *
+ * @param op The comparison operator
+ * @param dtype The data type of the column being compared
+ * @return true if the comparison can be used to prune row groups
+ */
+[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op, cudf::data_type dtype)
 {
-  _columns_mask.resize(num_columns, false);
+  using cudf::ast::ast_operator;
+  switch (op) {
+    case ast_operator::EQUAL: [[fallthrough]];
+    case ast_operator::LESS: [[fallthrough]];
+    case ast_operator::LESS_EQUAL: [[fallthrough]];
+    case ast_operator::GREATER: [[fallthrough]];
+    case ast_operator::GREATER_EQUAL: return true;
+    case ast_operator::NOT_EQUAL: return not cudf::is_floating_point(dtype);
+    default: return false;
+  }
+}
+
+}  // namespace
+
+stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
+  : _output_dtypes(output_dtypes)
+{
+  _columns_mask.resize(_output_dtypes.size(), false);
+}
+
+stats_columns_collector::stats_columns_collector(ast::expression const& expr,
+                                                 std::span<cudf::data_type const> output_dtypes)
+  : stats_columns_collector(output_dtypes)
+{
   expr.accept(*this);
 }
 
@@ -33,7 +67,7 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
 {
   CUDF_EXPECTS(expr.get_table_source() == ast::table_reference::LEFT,
                "Statistics AST supports only left table");
-  CUDF_EXPECTS(expr.get_column_index() < _num_columns,
+  CUDF_EXPECTS(static_cast<size_t>(expr.get_column_index()) < _output_dtypes.size(),
                "Column index cannot be more than number of columns in the table");
   return expr;
 }
@@ -72,11 +106,8 @@ std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
 
   if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
     col_ref->accept(*this);
-    if (op == ast_operator::EQUAL or op == ast_operator::NOT_EQUAL or op == ast_operator::LESS or
-        op == ast_operator::LESS_EQUAL or op == ast_operator::GREATER or
-        op == ast_operator::GREATER_EQUAL) {
-      _columns_mask[col_ref->get_column_index()] = true;
-    }
+    auto const col_index = col_ref->get_column_index();
+    if (is_prunable_comparison(op, _output_dtypes[col_index])) { _columns_mask[col_index] = true; }
   } else {
     // Visit the operands and ignore any output as we only want to build the column mask
     std::ignore = visit_operands(expr.get_operands());
@@ -89,15 +120,16 @@ std::pair<thrust::host_vector<bool>, bool> stats_columns_collector::get_stats_co
   return {std::move(_columns_mask), _has_is_null_operator};
 }
 
-stats_expression_converter::stats_expression_converter(ast::expression const& expr,
-                                                       size_type num_columns,
-                                                       bool has_is_null_operator,
-                                                       cuda::stream_ref stream)
-  : _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
+stats_expression_converter::stats_expression_converter(
+  ast::expression const& expr,
+  std::span<cudf::data_type const> output_dtypes,
+  bool has_is_null_operator,
+  cuda::stream_ref stream)
+  : stats_columns_collector{output_dtypes},
+    _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
     _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
 {
   _stats_cols_per_column = has_is_null_operator ? 3 : 2;
-  _num_columns           = num_columns;
   expr.accept(*this);
 }
 
@@ -132,9 +164,11 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         return *_always_true;
       }
     } else {
-      // Special handling for the NOT operator since is necessary as stats transforms use different
-      // columns (vmin, vmax, is_null) for different operators such that NOT(col < val) is not
-      // equivalent to NOT(vmin < val) and instead is equivalent to vmax >= val.
+      // `parquet_filter_normalizer::push_down_negation` deliberately does not complement ordering
+      // comparisons (NaN makes `NOT(a < b)` differ from `a >= b`), so `NOT(col op lit)` forms
+      // reach here. Stats transforms use different columns (vmin, vmax, is_null) for different
+      // operators such that NOT(col < val) is not equivalent to NOT(vmin < val) and instead is
+      // equivalent to vmax >= val.
       if (input_op == ast_operator::NOT) {
         auto const* child_operation =
           dynamic_cast<ast::operation const*>(&expr.get_operands().front().get());
@@ -153,18 +187,27 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
             }
           }  // Binary operation wrapped
           else if (cudf::ast::detail::ast_operator_arity(child_op) == 2) {
+            // For NOT(col op lit) or NOT(lit op col), negate the operator if negatable and visit
+            // the negated operation directly.
             auto const binary_operands = extract_binary_operands(*child_operation);
             auto const lhs_kind        = binary_operands.lhs_type;
             auto const rhs_kind        = binary_operands.rhs_type;
 
-            // For NOT(col op lit) negate the operator if negatable and visit the negated operation
-            // directly
+            // `col_ref` is only non-null for the `col op lit` form, so both checks below must
+            // stay inside this branch
             if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
-              auto const negated_op = transform_operator<operator_transform::NEGATE>(child_op);
-              if (negated_op.has_value()) {
-                auto const& child_operands = child_operation->get_operands();
-                return visit(
-                  ast::operation{*negated_op, child_operands.front(), child_operands.back()});
+              binary_operands.col_ref->accept(*this);
+
+              // A comparison cannot be negated when the column may hold a `NaN` (floating points).
+              if (not cudf::is_floating_point(
+                    _output_dtypes[binary_operands.col_ref->get_column_index()])) {
+                auto const negated_op =
+                  transform_operator<operator_transform::NEGATE>(child_operation->get_operator());
+                if (negated_op.has_value()) {
+                  auto const& child_operands = child_operation->get_operands();
+                  return visit(
+                    ast::operation{*negated_op, child_operands.front(), child_operands.back()});
+                }
               }
             }
           }
@@ -186,13 +229,21 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
     col_ref->accept(*this);
 
     auto const col_index = col_ref->get_column_index();
+
+    // Some Parquet writers exclude `NaN`s from stats, so we can't reliably prune row groups for
+    // columns that may contain them.
+    if (not is_prunable_comparison(op, _output_dtypes[col_index])) {
+      _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+      return *_always_true;
+    }
+
     // Push literal into the ast::tree
     auto const& literal = _stats_expr.push(*literal_ptr);
 
     switch (op) {
       /* transform to stats conditions
       col == val --> vmin <= val && vmax >= val
-      col != val --> !(vmin == val && vmax == val)
+      col != val --> vmin != vmax || vmax != val
       col >  val --> vmax > val
       col <  val --> vmin < val
       col >= val --> vmax >= val
@@ -234,10 +285,7 @@ std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
         _stats_expr.push(ast::operation{op, vmax, literal});
         break;
       }
-      default: {
-        _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-        return *_always_true;
-      }
+      default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
     };
   }  // Visit operands and push expression for `expr op expr` form
   else if (lhs_kind == operand_kind::EXPRESSION and rhs_kind == operand_kind::EXPRESSION) {

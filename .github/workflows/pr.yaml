@@ -167,38 +167,8 @@ jobs:
           - '!java/**'
           - '!notebooks/**'
           - '!python/**'
-        test_cudf_pandas:
-          - '**'
-          - '!**/REVIEW_GUIDELINES.md'
-          - '!.coderabbit.yaml'
-          - '!.clang-format'
-          - '!.devcontainer/**'
-          - '!.github/CODEOWNERS'
-          - '!.github/ISSUE_TEMPLATE/**'
-          - '!.github/PULL_REQUEST_TEMPLATE.md'
-          - '!.github/copy-pr-bot.yaml'
-          - '!.github/labeler.yml'
-          - '!.github/ops-bot.yaml'
-          - '!.github/release.yml'
-          - '!.github/workflows/auto-assign.yml'
-          - '!.github/workflows/build.yaml'
-          - '!.github/workflows/issue-release-scheduled.yml'
-          - '!.github/workflows/labeler.yml'
-          - '!.github/workflows/pr_issue_status_automation.yml'
-          - '!.github/workflows/test.yaml'
-          - '!.github/workflows/trigger-breaking-change-alert.yaml'
-          - '!.pre-commit-config.yaml'
-          - '!.yamllint.yaml'
-          - '!CONTRIBUTING.md'
-          - '!README.md'
-          - '!SECURITY.md'
-          - '!ci/release/update-version.sh'
-          - '!ci/test_java.sh'
-          - '!ci/validate_wheel.sh'
-          - '!docs/**'
-          - '!img/**'
-          - '!java/**'
-          - '!notebooks/**'
+        unit_tests_cudf_pandas:
+          - 'python/cudf/cudf/pandas/**'
         test_java:
           - '**'
           - '!**/REVIEW_GUIDELINES.md'
@@ -527,7 +497,7 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
     with:
       build_type: pull-request
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_java.sh"
@@ -581,7 +551,7 @@ jobs:
     with:
       build_type: pull-request
       arch: ${{ matrix.ARCH }}
-      node_type: "gpu-l4-latest-1"
+      node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
@@ -597,7 +567,7 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_notebooks
     with:
       build_type: pull-request
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_notebooks.sh"
@@ -614,7 +584,7 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).build_docs
     with:
       build_type: pull-request
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/build_docs.sh"
@@ -888,7 +858,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).unit_tests_cudf_pandas
     with:
       # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
       # Filter out GB300 due to https://github.com/NVIDIA/cudf/issues/23498
@@ -911,7 +881,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: |
@@ -932,7 +902,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_cuml_compat.sh"
@@ -974,7 +944,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       container_image: "rapidsai/citestwheel:26.10-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/run.sh pr ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./pr-results.json
@@ -1019,7 +989,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: ci/test_narwhals.sh
   spark-rapids-jni:

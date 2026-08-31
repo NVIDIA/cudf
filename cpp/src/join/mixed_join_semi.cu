@@ -138,8 +138,12 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     cudf::detail::row::equality::preprocessed_table::create(right_conditional, stream, temp_mr);
   auto const row_comparator_conditional_right = cudf::detail::row::equality::two_table_comparator{
     preprocessed_right_condtional, preprocessed_right_condtional};
+  auto const right_conditional_nulls = cudf::nullate::DYNAMIC{cudf::has_nulls(right_conditional)};
+  // `compare_nulls` governs the equality tables. This comparator only deduplicates identical
+  // right conditional rows, so it must remain reflexive when those rows contain nulls. Treating
+  // nulls as unequal would insert every otherwise identical null row into the linear-probing set.
   auto const equality_right_conditional =
-    row_comparator_conditional_right.equal_to<false>(right_nulls, compare_nulls);
+    row_comparator_conditional_right.equal_to<false>(right_conditional_nulls, null_equality::EQUAL);
 
   hash_set_type row_set{{static_cast<std::size_t>(right.num_rows())},
                         cudf::detail::CUCO_DESIRED_LOAD_FACTOR,

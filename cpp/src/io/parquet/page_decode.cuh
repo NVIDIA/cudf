@@ -1458,10 +1458,15 @@ inline __device__ bool setup_local_page_info(auto* const s,
 /**
  * @brief Zero-fill null positions in output data using parallel per-validity-block processing
  *
- * This function processes the validity bitmap and zero-fills all positions in the output
- * data that correspond to null values. It uses a parallel approach where each thread
- * handles one 32-bit validity block at a time, looping only over the zero bits (null positions)
- * within that block.
+ * Each warp handles one 32-bit validity block, with each lane zero-filling a single null position.
+ * Remaining blocks that exceed the warp count are handled `process_block_sequential`.
+ *
+ * @note This handles only nulls in a leaf's own bitmap. Nulls inherited from `optional`
+ * ancestors are zero-filled by `reader_impl::allocate_columns` because an ancestor's validity map
+ * may not be available to this leaf.
+ *
+ * Callers use this for structural outputs: nullable string lengths, list offsets, and dictionary
+ * indices. Fixed-width null values need no initialization because they are masked.
  *
  * @tparam block_size CUDA block size for the kernel
  * @param s Page state containing all necessary information
@@ -1481,7 +1486,7 @@ __device__ void zero_fill_null_positions_shared(
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
   auto const& ni             = s->nesting.nesting_info[leaf_level_index];
 
-  // Check if we have nulls to fill
+  // Check if this leaf has a validity map to zero out nulls
   if ((ni.valid_map == nullptr) || (num_values == 0)) { return; }
 
   auto const data_out = ni.data_out;
